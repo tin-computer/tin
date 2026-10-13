@@ -624,9 +624,11 @@ def test_product_ui_assets_are_packaged_beside_the_application() -> None:
     assert "function renderLockPage()" in script
     assert 'agentRail.hidden = state.projectAccess === "locked"' in script
     assert "Set up Tin from your coding agent" in script
-    assert "Browser setup is not available yet." in script
+    assert "Browser setup is not available yet." not in script
     assert 'api("/api/events/lock-page", {' in script
+    assert "/agent-setup`" in script
     assert ".lock-page-line" in stylesheet
+    assert ".lock-step.is-done .lock-step-mark" in stylesheet
     # State construction calls viewFromLocation(), which reads this constant synchronously.
     assert script.index("const ALLOWED_VIEWS") < script.index("const state")
     assert index.index('data-view="workflows"') < index.index('data-view="chat"')

@@ -131,6 +131,16 @@ def _validate_inventory(*, evidence, inventory, run, project_id):
     if [page["url"] for page in pages] != sorted(seen):
         raise _invalid_source()
     expected, coverage = technical_findings(pages, host, policy_version=policy["version"])
+    if policy.get("next_action_from_repair_plan"):
+        from tin_lite.technical_repair_plan import next_action
+
+        for row in expected:
+            action = next_action(row["check_id"])
+            row["next_action"] = (
+                policy.get("next_action_fix", "technical_fix")
+                if action == "technical_fix"
+                else action
+            )
     if schema >= 2:
         for page in pages:
             context = page.get("provider_context", {})

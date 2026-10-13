@@ -16,13 +16,26 @@ from temporalio import activity
 from temporalio.exceptions import ApplicationError
 
 from tin_lite import paid_ads_launch, paid_ads_monitor
+from tin_lite.billing_contracts import BillingError
+from tin_lite.failures import (
+    Failure,
+    billing_refusal,
+    failure_projection,
+    split_failure_input,
+)
 from tin_lite.google_ads_requests import (
     QUERIES,
     negatives_body,
     pause_ads_body,
     pause_keywords_body,
 )
-from tin_lite.integrations import ADS_PROVIDER, GoogleAdsCallError, IntegrationError
+from tin_lite.integrations import (
+    ADS_PROVIDER,
+    GoogleAdsCallError,
+    IntegrationAuthorizationError,
+    IntegrationError,
+    IntegrationNotConfiguredError,
+)
 from tin_lite.model_providers import (
     MessageRole,
     ModelMessage,
@@ -42,7 +55,9 @@ STEP_TOTAL = 5
 # The provider's own wait for one model step, just inside the step's 240-second budget. Without
 # it the client stops at its 90-second default and a slow but valid answer is lost.
 MODEL_TIMEOUT_SECONDS = 225
+# The account read only supplies its currency; a missing answer falls back to the launch's.
 READS = (
+    ("account", "account", None),
     ("campaign_7d", "campaign_health", 7),
     ("campaign_14d", "campaign_health", 14),
     ("campaign_30d", "campaign_health", 30),
@@ -155,14 +170,16 @@ class PaidAdsMonitorActivities:
                     ):
                         value = await call()
                     result = {"status": "completed", "value": value}
-                except Exception as exc:
-                    from tin_lite.billing_contracts import BillingError
-
-                    result = (
-                        {"status": "unavailable", "reason": "spending_limit"}
-                        if isinstance(exc, BillingError)
-                        else {"status": "unknown", "reason": "provider_result_unavailable"}
-                    )
+                except BillingError as exc:
+                    # Billing refused before the call was bought; keep only its code.
+                    result = {"status": "unavailable", "reason": exc.code}
+                except (IntegrationAuthorizationError, IntegrationNotConfiguredError):
+                    if needs != "google_ads":
+                        raise
+                    # Refused before anything reached Google Ads: the link needs the founder.
+                    result = {"status": "unavailable", "reason": RECONNECT}
+                except Exception:
+                    result = {"status": "unknown", "reason": "provider_result_unavailable"}
             result = {"request_sha256": fingerprint, **saved, **result}
             await self.db.complete_effect(conn, execution_key=key, result=result)
             if activity.in_activity():
@@ -211,11 +228,26 @@ class PaidAdsMonitorActivities:
             needs="model",
         )
         if result["status"] != "completed":
-            await self._save(run_id, "failure", {"code": "model_unavailable", "stage": step})
-            raise ApplicationError(
-                "A model result was unavailable; no replacement was purchased.",
-                non_retryable=True,
-            )
+            reason = result.get("reason")
+            billing = _billing(result["status"], reason)
+            if reason == "spending_limit":
+                code = "spending_limit"
+            elif billing is not None:
+                code = "billing_refused"
+            else:
+                code = "model_unavailable"
+            await self._save(run_id, "failure", {"code": code, "stage": step, "reason": reason})
+            if billing is not None:
+                raise ApplicationError(
+                    f"{billing.message} No replacement was purchased.",
+                    billing.details(),
+                    non_retryable=True,
+                )
+            message = {
+                "spending_limit": "The check's spending limit stopped a model call",
+                "model_unavailable": "A model result was unavailable",
+            }[code]
+            raise ApplicationError(f"{message}; no replacement was purchased.", non_retryable=True)
         if result["value"].get("unusable"):
             raise UnusableModelResult(result["value"]["unusable"])
         return result["value"]["data"]
@@ -380,6 +412,7 @@ class PaidAdsMonitorActivities:
         campaign_id = scope["campaign_id"]
         raw: dict = {}
         unavailable = []
+        campaign_read: dict = {}
         for name, query, days in READS:
             builder = QUERIES[query]
             if query in {"campaign_health", "search_terms", "keywords"}:
@@ -391,6 +424,8 @@ class PaidAdsMonitorActivities:
             else:
                 gaql = builder()
             result = await self._ads(run_id, f"read:{name}", "search", {"query": gaql})
+            if name == "campaign_7d":
+                campaign_read = result
             if result.get("status") != "completed" or result.get("error"):
                 unavailable.append(name)
                 raw[name] = []
@@ -399,12 +434,35 @@ class PaidAdsMonitorActivities:
             if activity.in_activity():
                 activity.heartbeat({"stage": name})
         if "campaign_7d" in unavailable:
+            await self._refuse_read(run_id, campaign_read)
             raise ApplicationError(
                 "Google Ads did not answer the campaign read. Nothing was changed.",
                 non_retryable=False,
             )
         normalized = paid_ads_monitor.normalize_reads(raw)
         await self._save(run_id, "reads", {"normalized": normalized, "unavailable": unavailable})
+
+    async def _refuse_read(self, run_id: str, result: dict) -> None:
+        """Stop on a campaign read the founder must fix: a Google Ads link to reconnect or a
+        billing refusal. Anything else stays the retryable "did not answer" failure."""
+        if result.get("status") != "unavailable":
+            return
+        reason = result.get("reason")
+        if reason == RECONNECT:
+            await self._save(run_id, "failure", {"code": RECONNECT, "stage": "read:campaign_7d"})
+            raise ApplicationError(
+                RECONNECT_MESSAGE, RECONNECT_FAILURE.details(), non_retryable=True
+            )
+        billing = _billing("unavailable", reason)
+        if billing is not None:
+            await self._save(
+                run_id,
+                "failure",
+                {"code": "billing_refused", "stage": "read:campaign_7d", "reason": reason},
+            )
+            raise ApplicationError(
+                f"{billing.message} Nothing was changed.", billing.details(), non_retryable=True
+            )
 
     @activity.defn(name="paid_ads_monitor_decide")
     async def decide(self, run_id: str) -> None:
@@ -659,19 +717,54 @@ class PaidAdsMonitorActivities:
             )
 
     @activity.defn(name="paid_ads_monitor_failure")
-    async def failure(self, run_id: str) -> None:
+    async def failure(self, run_ref: str | dict) -> None:
+        run_id, passed = split_failure_input(run_ref)
         run = await self.db.get_run(UUID(run_id))
         if run is None or run.executor != KEY:
             return
         failure = await self._result(run_id, "failure") or {}
+        code = failure.get("code")
+        known = None
+        if code == "billing_refused":
+            known = _billing("unavailable", failure.get("reason"))
+        elif code == RECONNECT:
+            known = RECONNECT_FAILURE
         message = {
             "model_unavailable": (
                 "The Google Ads check stopped because a model result could not be confirmed. "
                 "Automatic changes already applied stand; nothing else was changed."
             ),
-        }.get(
-            failure.get("code"),
-            "The Google Ads check stopped before finishing. Changes already applied stand; "
-            "the next check reconciles anything unconfirmed.",
-        )
-        await self.db.project_failure(run_id=run.id, error_message=message)
+            "spending_limit": (
+                "The Google Ads check stopped because a model call reached the check's spending "
+                "limit. Automatic changes already applied stand; nothing else was changed."
+            ),
+        }.get(code)
+        if known is not None:
+            message = (
+                f"{known.message} Automatic changes already applied stand; nothing else was "
+                "changed."
+            )
+        projection = failure_projection(passed, FAILURE_FALLBACK, saved=message)
+        if known is not None:
+            projection.update(error_kind=known.kind, error_action=known.action)
+        await self.db.project_failure(run_id=run.id, **projection)
+
+
+FAILURE_FALLBACK = (
+    "The Google Ads check stopped before finishing. Changes already applied stand; "
+    "the next check reconciles anything unconfirmed."
+)
+RECONNECT = "google_ads_reconnect"
+RECONNECT_MESSAGE = (
+    "Tin could not use the linked Google Ads account, so Google Ads was not contacted. "
+    "Reconnect Google Ads under Integrations, then run the check again."
+)
+RECONNECT_FAILURE = Failure("needs_you", RECONNECT_MESSAGE, action="integrations")
+
+
+def _billing(status: str, reason: object) -> Failure | None:
+    """The founder wording for a billing refusal a receipt saved by its code. `spending_limit`
+    is the run's own reservation ceiling and the reconnect label is not billing."""
+    if status != "unavailable" or not reason or reason in {"spending_limit", RECONNECT}:
+        return None
+    return billing_refusal(BillingError(str(reason), ""))

@@ -83,7 +83,6 @@ def skeleton(**overrides):
         assessment=assessment(),
         keywords_csv=keywords_csv(),
         inputs=inputs(**overrides),
-        account=account(),
         marker=MARKER,
         today=TODAY,
     )
@@ -222,9 +221,9 @@ def test_conversion_category_maps_events_and_names_actions():
 def test_plan_skeleton_joins_keywords_and_computes_the_numbers():
     plan = skeleton()
     assert plan["campaign_name"].endswith(MARKER) and len(plan["campaign_name"]) <= 80
-    assert plan["daily_budget_usd"] == 10 and plan["markets"] == ["US", "GB"]
+    assert plan["daily_budget"] == 10 and plan["markets"] == ["US", "GB"]
     # ceiling = min(0.1 × budget, 1.2 × median high bid of the chosen keywords)
-    assert plan["cpc_ceiling_usd"] == 1.0
+    assert plan["cpc_ceiling"] == 1.0
     assert plan["landing_page"] == "https://www.clawmessenger.com/pricing"
     assert plan["start_date"] == "2026-09-23" and plan["currency_code"] == "USD"
     assert [g["name"] for g in plan["ad_groups"]] == [
@@ -242,7 +241,7 @@ def test_plan_skeleton_joins_keywords_and_computes_the_numbers():
     assert len(texts) == len(set(texts)) and "imessage api" not in texts
     assert all(n["match_type"] in {"PHRASE", "EXACT"} for n in plan["negatives"])
     assert plan["competitors"] == ["sendblue"]
-    assert plan["allowable_cpa_usd"] == 30.0 and plan["assessment_run_id"] == RUN_ID
+    assert plan["allowable_cpa"] == 30.0 and plan["assessment_run_id"] == RUN_ID
 
 
 def test_plan_skeleton_honours_founder_overrides_and_refuses_broad():
@@ -252,7 +251,7 @@ def test_plan_skeleton_honours_founder_overrides_and_refuses_broad():
         landing_page_url="https://www.clawmessenger.com/",
         campaign_name="Claw search test",
     )
-    assert plan["daily_budget_usd"] == 40 and plan["cpc_ceiling_usd"] == 2.5
+    assert plan["daily_budget"] == 40 and plan["cpc_ceiling"] == 2.5
     assert plan["landing_page"] == "https://www.clawmessenger.com/"
     assert plan["campaign_name"] == f"Claw search test {MARKER}"
     broad = assessment()
@@ -262,7 +261,6 @@ def test_plan_skeleton_honours_founder_overrides_and_refuses_broad():
             assessment=broad,
             keywords_csv=keywords_csv(),
             inputs=inputs(),
-            account=account(),
             marker=MARKER,
             today=TODAY,
         )
@@ -275,7 +273,6 @@ def test_plan_skeleton_honours_founder_overrides_and_refuses_broad():
             assessment=empty,
             keywords_csv=keywords_csv(),
             inputs=inputs(),
-            account=account(),
             marker=MARKER,
             today=TODAY,
         )
@@ -295,7 +292,6 @@ def test_negatives_never_block_a_keyword_the_campaign_buys(monkeypatch):
         assessment=data,
         keywords_csv=rows,
         inputs=inputs(),
-        account=account(),
         marker=MARKER,
         today=TODAY,
     )
@@ -435,7 +431,7 @@ class FakeModel:
     def _brief(self, user, schema):
         facts = json.loads(user.split("PLAN FACTS (the only numbers you may use):\n", 1)[1])
         return {
-            "summary": f"One search campaign at ${facts['daily_budget_usd']} a day.",
+            "summary": f"One search campaign at ${facts['daily_budget']} a day.",
             "what_tin_will_do": ["Create the campaign paused, then turn it on."],
             "what_tin_will_not_do": ["No broad match.", "No spend before approval."],
             "watch_for": ["Search terms in the first week."],
@@ -495,7 +491,6 @@ def test_prune_copy_drops_rule_breaking_extras_instead_of_failing():
         assessment=assessment(),
         keywords_csv=keywords_csv(),
         inputs=inputs(),
-        account={"customer": {}},
         marker=MARKER,
         today=TODAY,
     )
@@ -610,7 +605,7 @@ def test_renders_stay_readable_and_within_limits():
     )
     assert "The campaign is on." in result["RESULT.md"]
     campaign = json.loads(result["campaign.json"])
-    assert campaign["campaign_id"] == "555" and campaign["allowable_cpa_usd"] == 30.0
+    assert campaign["campaign_id"] == "555" and campaign["allowable_cpa"] == 30.0
     assert campaign["launch_run_id"] == RUN_ID and campaign["marker"] == MARKER
     for name, content in {**tracking, **setup, **result}.items():
         limits = {**launch.TRACKING_DOCS, **launch.SETUP_DOCS, **launch.RESULT_DOCS}
@@ -626,7 +621,6 @@ def test_plan_skeleton_creates_held_back_groups_paused():
         assessment=data,
         keywords_csv=keywords_csv(),
         inputs=inputs(),
-        account={"customer": {}},
         marker=MARKER,
         today=TODAY,
     )

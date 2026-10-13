@@ -597,3 +597,51 @@ async def test_technical_commit_uses_immutable_verified_output_and_one_receipt(
     assert saved.result["outcome"] == ("no_change" if no_change else "pull_request")
     assert saved.result["summary"] != "untrusted model summary"
     assert not (await f.db.get_run(f.run.id)).lease_active
+
+
+async def test_system_failure_names_a_specific_cause_and_hides_an_internal_one():
+    from tin_lite.failures import INTERNAL_MESSAGE
+    from tin_lite.organic_system_activities import FAILURE_AFTERWORD, FAILURE_FALLBACK
+
+    failures = []
+
+    async def project_failure(**values):
+        failures.append(values)
+
+    activities = OrganicSystemActivities(
+        database=SimpleNamespace(project_failure=project_failure),
+        storage=None,
+        settings=None,
+        integrations=None,
+    )
+    run_id = uuid4()
+    await activities.organic_system_failure(str(run_id))
+    await activities.organic_system_failure(
+        {
+            "run_id": str(run_id),
+            "reason": "Your Tin credits ran out. Add credits in Billing, then retry.",
+            "kind": "needs_you",
+            "action": "billing",
+            "detail": "BillingError: insufficient funds",
+        }
+    )
+    await activities.organic_system_failure(
+        {"run_id": str(run_id), "reason": "GitHub could not be reached", "kind": "transient"}
+    )
+    await activities.organic_system_failure(
+        {"run_id": str(run_id), "reason": INTERNAL_MESSAGE, "kind": "internal", "detail": "x"}
+    )
+    plain, billing, transient, internal = failures
+    # The older history's text is unchanged.
+    assert plain["error_message"] == (
+        "Organic traffic system could not finish. Completed child outputs remain available; "
+        "paid requests were not automatically repeated."
+    )
+    assert plain["error_kind"] is None
+    assert billing["error_message"] == (
+        f"Your Tin credits ran out. Add credits in Billing, then retry. {FAILURE_AFTERWORD}"
+    )
+    assert billing["error_kind"] == "needs_you" and billing["error_action"] == "billing"
+    assert transient["error_message"] == f"GitHub could not be reached. {FAILURE_AFTERWORD}"
+    assert internal["error_message"] == f"{FAILURE_FALLBACK} {FAILURE_AFTERWORD}"
+    assert internal["error_kind"] == "internal" and internal["error_detail"] == "x"

@@ -9,6 +9,7 @@ from __future__ import annotations
 
 from uuid import UUID
 
+from tin_lite import ads_currency
 from tin_lite.google_ads_requests import bidding_body, budget_body
 from tin_lite.integrations import (
     GoogleAdsCallError,
@@ -22,11 +23,19 @@ OPERATION = "paid_ads_proposal_apply"
 def _bodies(proposal: dict, campaign: dict) -> tuple[str, dict]:
     proposed = proposal["proposed"]
     customer = campaign["customer_id"]
+    # Proposals saved before amounts carried their currency were in dollars.
+    fx = (
+        {**ads_currency.USD_FX, **{k: proposed[k] for k in ("currency_code", "usd_rate")}}
+        if proposed.get("currency_code")
+        else ads_currency.USD_FX
+    )
     if proposal["kind"] == "budget_change":
         budget = f"customers/{customer}/campaignBudgets/{campaign['external_budget_id']}"
-        return budget_body(budget, proposed["daily_budget_usd"])
+        daily = proposed.get("daily_budget", proposed.get("daily_budget_usd"))
+        return budget_body(budget, daily, fx)
     campaign_resource = f"customers/{customer}/campaigns/{campaign['external_campaign_id']}"
-    return bidding_body(campaign_resource, proposed["strategy"], proposed.get("target_cpa_usd"))
+    target = proposed.get("target_cpa", proposed.get("target_cpa_usd"))
+    return bidding_body(campaign_resource, proposed["strategy"], target, fx)
 
 
 async def _authorized(runtime, proposal_id: UUID, clerk_user_id: str) -> dict:

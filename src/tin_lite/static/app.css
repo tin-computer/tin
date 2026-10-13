@@ -9913,55 +9913,227 @@ html[data-theme="dark"] .md-embed-frame {
 }
 
 /* Locked dashboard: a browser sign-up whose project has no workflow yet. The rail is
-   dimmed by .nav-item:disabled; the main pane makes the case for the coding agent.
-   Source of truth: Paper board "LOCK-A · Browser sign-up · The hero, indoors". */
+   dimmed by .nav-item:disabled; the main pane follows the coding agent in three steps.
+   Source of truth: Paper boards "LOCK-N · A" and "LOCK-N · B and C". */
 .lock-page {
   display: flex;
   flex-direction: column;
   align-items: center;
-  justify-content: center;
   min-height: 100svh;
-  padding: 40px 40px 80px;
+  padding: 136px 40px 80px;
 }
 
 .lock-page-column {
   display: flex;
   flex-direction: column;
-  align-items: center;
+  gap: 40px;
   width: 100%;
-  max-width: 760px;
+  max-width: 632px;
+}
+
+.lock-page-head {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
 }
 
 .lock-page h1 {
-  max-width: 560px;
   margin: 0;
   color: var(--ink);
-  font-size: 26px;
+  font-size: 32px;
   font-weight: 400;
-  letter-spacing: -0.01em;
-  line-height: 32px;
-  text-align: center;
+  letter-spacing: -0.02em;
+  line-height: 40px;
 }
 
-.lock-page p {
-  max-width: 600px;
-  margin: 10px 0 0;
+.lock-page-head p {
+  margin: 0;
   color: var(--ink-secondary);
+  font-size: 17px;
+  line-height: 26px;
+}
+
+.lock-steps {
+  margin: 0;
+  padding: 0;
+  border-top: 1px solid var(--card-hairline);
+  list-style: none;
+}
+
+.lock-step {
+  display: flex;
+  gap: 16px;
+  padding: 20px 0;
+  border-bottom: 1px solid var(--card-hairline);
+}
+
+.lock-step.is-done:not(:has(p)) {
+  align-items: center;
+  padding: 16px 0;
+}
+
+.lock-step-mark {
+  display: flex;
+  flex: 0 0 24px;
+  align-items: center;
+  justify-content: center;
+  width: 24px;
+  height: 24px;
+  border: 1.5px solid rgb(var(--ink-rgb) / 22%);
+  border-radius: var(--radius-pill);
+  color: var(--ink-muted);
+  font-family: var(--mono);
+  font-size: 12px;
+  line-height: 12px;
+}
+
+.lock-step.is-active .lock-step-mark {
+  border-color: var(--ink);
+  color: var(--ink);
+}
+
+.lock-step.is-done .lock-step-mark {
+  background: var(--accent-deep);
+  border-color: transparent;
+  color: var(--on-accent);
+}
+
+.lock-step-mark svg {
+  width: 12px;
+  height: 12px;
+  fill: none;
+  stroke: currentColor;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+  stroke-width: 1.6px;
+}
+
+.lock-step.is-working .lock-step-mark {
+  border-color: rgb(var(--ink-rgb) / 18%);
+  border-top-color: var(--ink);
+  animation: lock-step-spin 1.1s linear infinite;
+}
+
+@keyframes lock-step-spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .lock-step.is-working .lock-step-mark {
+    animation: none;
+  }
+}
+
+.lock-step-body {
+  display: flex;
+  flex: 1;
+  flex-direction: column;
+  gap: 4px;
+  min-width: 0;
+}
+
+.lock-step-title {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 16px;
+  color: var(--ink-secondary);
+  font-size: 17px;
+  line-height: 24px;
+}
+
+.lock-step.is-active .lock-step-title,
+.lock-step.is-working .lock-step-title,
+.lock-step.is-done:has(p) .lock-step-title {
+  color: var(--ink);
+}
+
+.lock-step-title time {
+  flex: 0 0 auto;
+  color: var(--ink-muted);
+  font-family: var(--mono);
+  font-size: 12px;
+  line-height: 16px;
+}
+
+/* Spoken before each title; the mark carries it visually. */
+.lock-step-state {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  overflow: hidden;
+  clip: rect(0 0 0 0);
+  white-space: nowrap;
+}
+
+.lock-step-body p {
+  margin: 0;
+  color: var(--ink-muted);
   font-size: 15px;
   line-height: 22px;
-  text-align: center;
 }
 
-.lock-page p strong {
+.lock-step.is-working .lock-step-body p,
+.lock-step.is-done .lock-step-body p {
+  color: var(--ink-secondary);
+}
+
+.lock-page-status {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin: 0;
+  padding: 18px 0 0 40px;
+  color: var(--ink-muted);
+  font-family: var(--mono);
+  font-size: 12px;
+  line-height: 16px;
+}
+
+.lock-page-status::before {
+  flex: 0 0 6px;
+  width: 6px;
+  height: 6px;
+  background: currentColor;
+  border-radius: var(--radius-pill);
+  content: "";
+}
+
+.lock-page-open {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 16px;
+  padding: 24px 0 0 40px;
+}
+
+.lock-page-open button {
+  min-height: 40px;
+  padding: 0 20px;
+  background: var(--ink);
+  border-radius: var(--radius-pill);
+  color: var(--paper-card);
+  font-size: 14px;
   font-weight: 700;
+  line-height: 16px;
+  cursor: pointer;
+}
+
+.lock-page-open span {
+  color: var(--ink-muted);
+  font-family: var(--mono);
+  font-size: 12px;
+  line-height: 16px;
 }
 
 .lock-page-install {
   display: flex;
   flex-direction: column;
-  gap: 16px;
+  gap: 12px;
   width: 100%;
-  margin-top: 36px;
+  margin-top: 12px;
 }
 
 .lock-page-tabs {
@@ -10012,13 +10184,16 @@ html[data-theme="dark"] .md-embed-frame {
   color: #857c6f;
 }
 
+/* One line, like the website's install box; Copy takes the whole command. */
 .lock-page-line code {
   flex: 1;
   min-width: 0;
-  overflow-wrap: anywhere;
+  overflow: hidden;
   font: inherit;
   /* Geist Mono joins "--" into one glyph and swallows the space before it. */
   font-variant-ligatures: none;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 /* Dark theme: the page ground is already coal, so the line needs its own edge. */
@@ -10064,9 +10239,26 @@ html[data-theme="dark"] .lock-page-line {
     padding: 32px 18px 64px;
   }
 
+  .lock-page h1 {
+    font-size: 26px;
+    line-height: 32px;
+  }
+
   .lock-page-line {
+    align-items: flex-start;
     padding: 14px 16px 14px 20px;
     border-radius: 20px;
+  }
+
+  .lock-page-line button {
+    margin-top: -5px;
+  }
+
+  /* On a phone the box wraps, so the whole command stays readable. */
+  .lock-page-line code {
+    overflow: visible;
+    overflow-wrap: anywhere;
+    white-space: normal;
   }
 }
 

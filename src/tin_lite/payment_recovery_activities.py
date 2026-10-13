@@ -19,7 +19,14 @@ from temporalio import activity
 from temporalio.exceptions import ApplicationError
 
 from tin_lite import payment_recovery
+from tin_lite.billing_contracts import BillingError
 from tin_lite.content_plan_sources import positioning_files
+from tin_lite.failures import (
+    Failure,
+    billing_refusal,
+    failure_projection,
+    split_failure_input,
+)
 from tin_lite.integrations import (
     GOOGLE_WORKSPACE_PROVIDER,
     STRIPE_PROVIDER,
@@ -102,9 +109,17 @@ class PaymentRecoveryActivities:
             await self.db.complete_effect(conn, execution_key=key, result=value)
         return value
 
-    async def _refuse(self, run_id: str, text: str):
-        await self._save(run_id, "failure", {"detail": text})
-        raise ApplicationError(text, non_retryable=True)
+    async def _refuse(self, run_id: str, text: str, refusal: Failure | None = None):
+        """Stop with Tin's own sentence; `refusal` says when the founder can fix it and where."""
+        if refusal is None:
+            await self._save(run_id, "failure", {"detail": text})
+            raise ApplicationError(text, non_retryable=True)
+        carried = Failure(refusal.kind, text, action=refusal.action, code=refusal.code)
+        saved = {"detail": text, "kind": carried.kind}
+        if carried.action:
+            saved["action"] = carried.action
+        await self._save(run_id, "failure", saved)
+        raise ApplicationError(text, carried.details(), non_retryable=True)
 
     async def _progress(self, run_id, step, current, summary):
         await self.db.project_run_progress(
@@ -135,7 +150,9 @@ class PaymentRecoveryActivities:
         )
         granted = (connection.configuration.get("granted_capabilities") or []) if connection else []
         if connection is None or connection.status != "connected":
-            await self._refuse(run_id, "Connect Stripe in Integrations, then run this again.")
+            await self._refuse(
+                run_id, "Connect Stripe in Integrations, then run this again.", RECONNECT
+            )
         missing = [c for c in STRIPE_READS if c not in granted]
         if missing:
             await self._refuse(
@@ -144,10 +161,13 @@ class PaymentRecoveryActivities:
                 + ", ".join(c.split(".")[0] for c in missing)
                 + ". Add those read permissions to the key in Stripe, choose Check again in "
                 "Integrations, then run this again.",
+                RECONNECT,
             )
         if scope and connection.external_account_id != scope["stripe"]["account_id"]:
             await self._refuse(
-                run_id, "A different Stripe account is connected than this run started with."
+                run_id,
+                "A different Stripe account is connected than this run started with.",
+                RECONNECT,
             )
         return connection
 
@@ -167,6 +187,7 @@ class PaymentRecoveryActivities:
                 run_id,
                 "Connect Google Workspace with Gmail send in Integrations: the emails go out "
                 "from your own mailbox.",
+                RECONNECT,
             )
         return connection
 
@@ -191,7 +212,7 @@ class PaymentRecoveryActivities:
             except STRIPE_STOPS as exc:
                 # The key no longer reads this; anything else (a timeout, a rate limit) is
                 # retried by the activity, and pages already read are kept.
-                await self._refuse(run_id, f"{str(exc).rstrip('.')}. Nothing was sent.")
+                await self._refuse(run_id, f"{str(exc).rstrip('.')}. Nothing was sent.", RECONNECT)
             records += result["records"]
             if not result.get("has_more") or not result.get("next_cursor"):
                 return records, True
@@ -210,7 +231,7 @@ class PaymentRecoveryActivities:
         try:
             inputs = payment_recovery.check_inputs(dict(run.input or {}))
         except RecoveryError as exc:
-            await self._refuse(run_id, str(exc))
+            await self._refuse(run_id, str(exc), INPUT)
         if self.router is None or not getattr(self.settings, "luna_api_key", None):
             await self._refuse(run_id, "This Tin deployment has no drafting model configured.")
         if self.integrations is None:
@@ -539,6 +560,7 @@ class PaymentRecoveryActivities:
             reasoning_effort=ReasoningEffort(POLICY["reasoning_effort"]),
         )
         key, fingerprint = self.key(run_id, "model:draft"), digest(asdict(request))
+        refused: Failure | None = None
         async with self.db.effect_lock(key, KEY) as (conn, existing):
             saved = (existing.result or {}) if existing else {}
             if existing and existing.status == "completed":
@@ -573,23 +595,21 @@ class PaymentRecoveryActivities:
                     result = {"parsed": parsed, "model": answer.model}
                 except ModelProviderError as exc:
                     result = {"parsed": None, "reason": str(exc)[:160] or "unusable"}
-                except Exception as exc:
-                    from tin_lite.billing_contracts import BillingError
-
-                    if isinstance(exc, BillingError):
-                        await self.db.complete_effect(
-                            conn, execution_key=key, result={"parsed": None, "reason": exc.code}
-                        )
-                        raise ApplicationError(
-                            "Tin credits or project spending limits do not allow drafting the "
-                            "emails; nothing was sent.",
-                            non_retryable=True,
-                        ) from None
+                except BillingError as exc:
+                    # Refused before the call was bought; the receipt keeps only its code.
+                    refused = billing_refusal(exc)
+                    result = {"parsed": None, "reason": exc.code}
+                except Exception:
                     result = {"parsed": None, "reason": "provider_result_unavailable"}
-            await self.db.complete_effect(
-                conn, execution_key=key, result={"request_sha256": fingerprint, **result}
-            )
-            return result.get("parsed")
+            if refused is not None:
+                # As before: the refusal's receipt carries no request digest.
+                await self.db.complete_effect(conn, execution_key=key, result=result)
+            else:
+                await self.db.complete_effect(
+                    conn, execution_key=key, result={"request_sha256": fingerprint, **result}
+                )
+                return result.get("parsed")
+        await self._refuse(run_id, f"{refused.message} No emails were drafted or sent.", refused)
 
     async def _publish(self, run_id, stage, documents, names, project) -> dict:
         key = self.key(run_id, stage)
@@ -693,6 +713,7 @@ class PaymentRecoveryActivities:
                 run_id,
                 "A different Gmail account is connected than the one you approved; "
                 "nothing was sent.",
+                RECONNECT,
             )
         results, sent_before = [], False
         for email, row in zip(draft["emails"], base, strict=True):
@@ -708,6 +729,7 @@ class PaymentRecoveryActivities:
                     run_id,
                     f"{str(exc).rstrip('.')}. {sent} email(s) were sent before this stopped. Fix "
                     "it, then run it again; invoices already emailed are skipped.",
+                    RECONNECT if isinstance(exc, STRIPE_STOPS) else None,
                 )
             sent_before = result["status"] == "sent" and not result.get("replayed")
             results.append(result)
@@ -870,14 +892,26 @@ class PaymentRecoveryActivities:
         )
 
     @activity.defn(name="payment_recovery_failure")
-    async def failure(self, run_id: str) -> None:
+    async def failure(self, run_ref: str | dict) -> None:
+        run_id, passed = split_failure_input(run_ref)
         run = await self.db.get_run(UUID(run_id))
         if run is None or run.executor != KEY:
             return
         failure = await self._result(run_id, "failure") or {}
-        await self.db.project_failure(
-            run_id=run.id,
-            error_message=failure.get("detail")
-            or "The payment recovery stopped before finishing. Check your Sent folder before "
-            "trying again; Tin never emails about the same invoice twice.",
-        )
+        saved = failure.get("detail")
+        projection = failure_projection(passed, FAILURE_FALLBACK, saved=saved)
+        if saved and failure.get("kind") in {"needs_you", "transient", "internal"}:
+            action = failure.get("action")
+            projection.update(
+                error_kind=failure["kind"],
+                error_action=action if failure["kind"] == "needs_you" else None,
+            )
+        await self.db.project_failure(run_id=run.id, **projection)
+
+
+FAILURE_FALLBACK = (
+    "The payment recovery stopped before finishing. Check your Sent folder before "
+    "trying again; Tin never emails about the same invoice twice."
+)
+RECONNECT = Failure("needs_you", "", action="integrations")
+INPUT = Failure("needs_you", "", action="input")

@@ -15,6 +15,13 @@ from temporalio import activity
 from temporalio.exceptions import ApplicationError
 
 from tin_lite import paid_ads
+from tin_lite.billing_contracts import BillingError
+from tin_lite.failures import (
+    Failure,
+    billing_refusal,
+    failure_projection,
+    split_failure_input,
+)
 from tin_lite.growth_plan_site import evidence_text, read_site
 from tin_lite.integrations import GSC_PROVIDER
 from tin_lite.keyword_data import ENDPOINTS, KeywordData, request_for
@@ -163,15 +170,12 @@ class PaidAdsActivities:
                     ):
                         value = await call()
                     result = {"status": "completed", "value": value}
-                except Exception as exc:
-                    from tin_lite.billing_contracts import BillingError
-
+                except BillingError as exc:
+                    # Billing refused before the call was bought; keep only its code.
+                    result = {"status": "unavailable", "reason": exc.code}
+                except Exception:
                     # Raw SDK/provider errors, headers and credentials never enter evidence.
-                    result = (
-                        {"status": "unavailable", "reason": "spending_limit"}
-                        if isinstance(exc, BillingError)
-                        else {"status": "unknown", "reason": "provider_result_unavailable"}
-                    )
+                    result = {"status": "unknown", "reason": "provider_result_unavailable"}
             result = {"request_sha256": fingerprint, **saved, **result}
             await self.db.complete_effect(conn, execution_key=key, result=result)
             if activity.in_activity():
@@ -224,9 +228,27 @@ class PaidAdsActivities:
             needs="model",
         )
         if result["status"] != "completed":
-            await self._save(run_id, "failure", {"code": "model_unavailable", "stage": step})
+            reason = result.get("reason")
+            billing = _billing(result["status"], reason)
+            if reason in {"spending_limit", "run_limit", "project_limit"}:
+                code = "spending_limit"
+            elif result["status"] == "unavailable":
+                code = "billing_refused"
+            else:
+                code = "model_unavailable"
+            await self._save(run_id, "failure", {"code": code, "stage": step, "reason": reason})
+            if billing is not None:
+                raise ApplicationError(
+                    f"{billing.message} No replacement was purchased.",
+                    billing.details(),
+                    non_retryable=True,
+                )
+            message = {
+                "spending_limit": "The spending limit stopped a model call",
+                "model_unavailable": "A model result was unavailable",
+            }[code]
             raise ApplicationError(
-                "A model result was unavailable; no replacement was purchased.",
+                f"{message}; no replacement was purchased.",
                 non_retryable=True,
             )
         if result["value"].get("unusable"):
@@ -442,7 +464,10 @@ class PaidAdsActivities:
         try:
             paid_ads.check_inputs(inputs)
         except (ValueError, TypeError, KeyError) as exc:
-            raise ApplicationError(str(exc) or "Invalid inputs.", non_retryable=True) from None
+            reason = str(exc) or "Invalid inputs."
+            raise ApplicationError(
+                reason, Failure("needs_you", reason, action="input").details(), non_retryable=True
+            ) from None
         maximum = min(
             Decimal(str(getattr(self.settings, "paid_ads_max_cost_usd", 0))),
             Decimal(str(inputs.get("max_cost_usd", 6))),
@@ -950,12 +975,22 @@ class PaidAdsActivities:
             )
 
     @activity.defn(name="paid_ads_failure")
-    async def failure(self, run_id: str) -> None:
+    async def failure(self, run_ref: str | dict) -> None:
+        run_id, passed = split_failure_input(run_ref)
         run = await self.db.get_run(UUID(run_id))
         if run is None or run.executor != KEY:
             return
         failure = await self._result(run_id, "failure") or {}
+        billing = (
+            _billing("unavailable", failure.get("reason"))
+            if failure.get("code") in {"billing_refused", "spending_limit"}
+            else None
+        )
         message = {
+            "spending_limit": (
+                "The paid ads assessment stopped because a model call reached the spending limit. "
+                "Saved research was retained; no replacement call was purchased."
+            ),
             "validation": (
                 "The paid ads assessment stopped because a model result failed validation. "
                 "Nothing was published; saved research was retained."
@@ -969,12 +1004,26 @@ class PaidAdsActivities:
                 "for these terms. Check the product URL and try again."
             ),
         }.get(failure.get("code"))
-        await self.db.project_failure(
-            run_id=run.id,
-            error_message=message
-            or (
-                "The paid ads assessment could not finish. Check the inputs, provider "
-                "configuration and spending limit. Saved calls were retained; uncertain "
-                "requests were not purchased again."
-            ),
-        )
+        if billing is not None:
+            message = (
+                f"{billing.message} Saved research was retained; no replacement call was purchased."
+            )
+        projection = failure_projection(passed, FAILURE_FALLBACK, saved=message)
+        if billing is not None:
+            projection.update(error_kind=billing.kind, error_action=billing.action)
+        await self.db.project_failure(run_id=run.id, **projection)
+
+
+FAILURE_FALLBACK = (
+    "The paid ads assessment could not finish. Check the inputs, provider "
+    "configuration and spending limit. Saved calls were retained; uncertain "
+    "requests were not purchased again."
+)
+
+
+def _billing(status: str, reason: object) -> Failure | None:
+    """The founder wording for a billing refusal a receipt saved by its code. `spending_limit`
+    is the run's own reservation ceiling and keeps its fixed wording."""
+    if status != "unavailable" or not reason or reason == "spending_limit":
+        return None
+    return billing_refusal(BillingError(str(reason), ""))

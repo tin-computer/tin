@@ -39,13 +39,13 @@ from tin_lite.domain import (
     WEEKLY_BRIEF_WORKFLOW_NAME,
     WORKFLOW_NAME,
 )
+from tin_lite.failures import classify_workflow_cause, failure_payload
 
 FAILURE_REASON_LIMIT = 600
 PREREQUISITE_POLL_INTERVAL = timedelta(seconds=30)
 
 
-def failure_reason(exc: BaseException) -> str:
-    """The innermost cause's own words, so the run row says what failed, not just that it did."""
+def _innermost(exc: BaseException) -> BaseException:
     cause: BaseException = exc
     depth = 0
     while (
@@ -55,14 +55,30 @@ def failure_reason(exc: BaseException) -> str:
     ):
         cause = cause.cause
         depth += 1
-    if isinstance(cause, ApplicationError):
-        label = cause.type or type(cause).__name__
-        text = cause.message
-    else:
-        label = type(cause).__name__
-        text = str(cause)
-    text = " ".join(text.split()) if text else ""
-    return f"{label}: {text or 'workflow failed'}"[:FAILURE_REASON_LIMIT]
+    return cause
+
+
+def failure_fields(exc: BaseException) -> dict:
+    """What a failure activity stores: the founder-safe reason for the innermost cause, its
+    kind, and the raw text for operators only (see failures.py)."""
+    failure, raw = classify_workflow_cause(_innermost(exc))
+    return failure_payload(failure, raw or "workflow failed")
+
+
+FAILURE_REASON_PATCH = "failure-reason-v1"
+
+
+def failure_input(run_id: str, exc: BaseException) -> str | dict:
+    """A run-ID-only failure activity's argument. Since failure-reason-v1 it also carries the
+    classified cause, so the run can say what the founder can fix instead of a fixed line."""
+    if workflow.patched(FAILURE_REASON_PATCH):
+        return {"run_id": run_id, **failure_fields(exc)}
+    return run_id
+
+
+def failure_reason(exc: BaseException) -> str:
+    """The founder-safe reason for the innermost cause."""
+    return failure_fields(exc)["reason"][:FAILURE_REASON_LIMIT]
 
 
 async def wait_for_prerequisites(run_id: str) -> None:
@@ -141,7 +157,7 @@ class DesignMdWorkflow:
         except BaseException as exc:
             await workflow.execute_activity(
                 "project_design_failure",
-                {"run_id": run_id, "reason": failure_reason(exc)},
+                {"run_id": run_id, **failure_fields(exc)},
                 start_to_close_timeout=timedelta(minutes=1),
                 retry_policy=RetryPolicy(maximum_attempts=3),
             )
@@ -174,7 +190,7 @@ class ProjectMemoryWorkflow:
         except BaseException as exc:
             await workflow.execute_activity(
                 "project_memory_failure",
-                {"run_id": run_id, "reason": failure_reason(exc)},
+                {"run_id": run_id, **failure_fields(exc)},
                 start_to_close_timeout=timedelta(minutes=1),
                 retry_policy=RetryPolicy(maximum_attempts=3),
             )
@@ -207,7 +223,7 @@ class ScanReportWorkflow:
         except BaseException as exc:
             await workflow.execute_activity(
                 "project_scan_failure",
-                {"run_id": run_id, "reason": failure_reason(exc)},
+                {"run_id": run_id, **failure_fields(exc)},
                 start_to_close_timeout=timedelta(minutes=1),
                 retry_policy=RetryPolicy(maximum_attempts=3),
             )
@@ -245,7 +261,7 @@ class SiteHealthWorkflow:
         except BaseException as exc:
             await workflow.execute_activity(
                 "project_site_health_failure",
-                {"run_id": run_id, "reason": failure_reason(exc)},
+                {"run_id": run_id, **failure_fields(exc)},
                 start_to_close_timeout=timedelta(minutes=1),
                 retry_policy=RetryPolicy(maximum_attempts=3),
             )
@@ -364,10 +380,10 @@ class OrganicAuditWorkflow:
                 start_to_close_timeout=timedelta(minutes=1),
                 retry_policy=RetryPolicy(maximum_attempts=10),
             )
-        except BaseException:
+        except BaseException as exc:
             await workflow.execute_activity(
                 "organic_failure",
-                run_id,
+                failure_input(run_id, exc),
                 start_to_close_timeout=timedelta(minutes=2),
                 retry_policy=RetryPolicy(maximum_attempts=3),
             )
@@ -430,7 +446,7 @@ class VisibilityAuditWorkflow:
         except BaseException as exc:
             await workflow.execute_activity(
                 "project_visibility_failure",
-                {"run_id": run_id, "reason": failure_reason(exc)},
+                {"run_id": run_id, **failure_fields(exc)},
                 start_to_close_timeout=timedelta(minutes=1),
                 retry_policy=RetryPolicy(maximum_attempts=3),
             )
@@ -486,7 +502,7 @@ class AnswerPageWorkflow:
         except BaseException as exc:
             await workflow.execute_activity(
                 "project_answer_page_failure",
-                {"run_id": run_id, "reason": failure_reason(exc)},
+                {"run_id": run_id, **failure_fields(exc)},
                 start_to_close_timeout=timedelta(minutes=1),
                 retry_policy=RetryPolicy(maximum_attempts=3),
             )
@@ -550,7 +566,7 @@ class CharacterDesignWorkflow:
         except BaseException as exc:
             await workflow.execute_activity(
                 "character_failure",
-                {"run_id": run_id, "reason": failure_reason(exc)},
+                {"run_id": run_id, **failure_fields(exc)},
                 start_to_close_timeout=timedelta(minutes=1),
                 retry_policy=RetryPolicy(maximum_attempts=3),
             )
@@ -644,7 +660,7 @@ class ProjectTaskWorkflow:
         except BaseException as exc:
             await workflow.execute_activity(
                 "project_task_failure",
-                {"run_id": run_id, "reason": failure_reason(exc)},
+                {"run_id": run_id, **failure_fields(exc)},
                 start_to_close_timeout=timedelta(minutes=1),
                 retry_policy=RetryPolicy(maximum_attempts=3),
             )
@@ -691,10 +707,10 @@ class CodeWorkflow:
                 start_to_close_timeout=timedelta(minutes=1),
                 retry_policy=RetryPolicy(maximum_attempts=5),
             )
-        except BaseException:
+        except BaseException as exc:
             await workflow.execute_activity(
                 "fail_code_workflow",
-                run_id,
+                failure_input(run_id, exc),
                 start_to_close_timeout=timedelta(minutes=1),
                 retry_policy=RetryPolicy(maximum_attempts=3),
             )
@@ -795,7 +811,7 @@ class CodexProcedureWorkflow:
         except BaseException as exc:
             await workflow.execute_activity(
                 "project_codex_procedure_failure",
-                {"run_id": run_id, "reason": failure_reason(exc)},
+                {"run_id": run_id, **failure_fields(exc)},
                 start_to_close_timeout=timedelta(minutes=1),
                 retry_policy=RetryPolicy(maximum_attempts=3),
             )
@@ -859,7 +875,7 @@ class WeeklyBriefWorkflow:
         except BaseException as exc:
             await workflow.execute_activity(
                 "project_weekly_brief_failure",
-                {"run_id": run_id, "reason": failure_reason(exc)},
+                {"run_id": run_id, **failure_fields(exc)},
                 start_to_close_timeout=timedelta(minutes=1),
                 retry_policy=RetryPolicy(maximum_attempts=3),
             )
@@ -999,7 +1015,7 @@ class EmailCampaignWorkflow:
         except BaseException as exc:
             await workflow.execute_activity(
                 "project_email_campaign_failure",
-                {"run_id": run_id, "reason": failure_reason(exc)},
+                {"run_id": run_id, **failure_fields(exc)},
                 start_to_close_timeout=timedelta(minutes=1),
                 retry_policy=RetryPolicy(maximum_attempts=3),
             )
@@ -1026,10 +1042,10 @@ class PaidAdsLaunchWorkflow:
 
     @workflow.run
     async def run(self, run_id: str) -> None:
-        async def execute(name, *, minutes, heartbeat=None):
+        async def execute(name, argument=run_id, *, minutes, heartbeat=None):
             return await workflow.execute_activity(
                 name,
-                run_id,
+                argument,
                 start_to_close_timeout=timedelta(minutes=minutes),
                 heartbeat_timeout=timedelta(minutes=heartbeat) if heartbeat else None,
                 retry_policy=RetryPolicy(
@@ -1059,9 +1075,9 @@ class PaidAdsLaunchWorkflow:
             if self._stopped:
                 return
             await execute("paid_ads_launch_publish", minutes=5)
-        except BaseException:
+        except BaseException as exc:
             if not self._stopped:
-                await execute("paid_ads_launch_failure", minutes=2)
+                await execute("paid_ads_launch_failure", failure_input(run_id, exc), minutes=2)
                 raise
 
 
@@ -1085,10 +1101,10 @@ class AwesomeSubmitWorkflow:
 
     @workflow.run
     async def run(self, run_id: str) -> None:
-        async def execute(name, *, minutes, heartbeat=None):
+        async def execute(name, argument=run_id, *, minutes, heartbeat=None):
             return await workflow.execute_activity(
                 name,
-                run_id,
+                argument,
                 start_to_close_timeout=timedelta(minutes=minutes),
                 heartbeat_timeout=timedelta(minutes=heartbeat) if heartbeat else None,
                 retry_policy=RetryPolicy(
@@ -1110,9 +1126,9 @@ class AwesomeSubmitWorkflow:
             await execute("awesome_submit_record_approval", minutes=2)
             await execute("awesome_submit_apply", minutes=20, heartbeat=5)
             await execute("awesome_submit_publish", minutes=5)
-        except BaseException:
+        except BaseException as exc:
             if not self._stopped:
-                await execute("awesome_submit_failure", minutes=2)
+                await execute("awesome_submit_failure", failure_input(run_id, exc), minutes=2)
                 raise
 
 
@@ -1140,10 +1156,10 @@ class PaymentRecoveryWorkflow:
 
     @workflow.run
     async def run(self, run_id: str) -> None:
-        async def execute(name, *, minutes, heartbeat=None):
+        async def execute(name, argument=run_id, *, minutes, heartbeat=None):
             return await workflow.execute_activity(
                 name,
-                run_id,
+                argument,
                 start_to_close_timeout=timedelta(minutes=minutes),
                 heartbeat_timeout=timedelta(minutes=heartbeat) if heartbeat else None,
                 retry_policy=RetryPolicy(
@@ -1183,9 +1199,9 @@ class PaymentRecoveryWorkflow:
                 await execute("payment_recovery_record_approval", minutes=2)
                 await execute("payment_recovery_apply", minutes=30, heartbeat=5)
             await execute("payment_recovery_publish", minutes=5)
-        except BaseException:
+        except BaseException as exc:
             if not self._stopped:
-                await execute("payment_recovery_failure", minutes=2)
+                await execute("payment_recovery_failure", failure_input(run_id, exc), minutes=2)
                 raise
 
 
@@ -1203,10 +1219,10 @@ class PaidAdsMonitorWorkflow:
 
     @workflow.run
     async def run(self, run_id: str) -> None:
-        async def execute(name, *, minutes, heartbeat=None):
+        async def execute(name, argument=run_id, *, minutes, heartbeat=None):
             return await workflow.execute_activity(
                 name,
-                run_id,
+                argument,
                 start_to_close_timeout=timedelta(minutes=minutes),
                 heartbeat_timeout=timedelta(minutes=heartbeat) if heartbeat else None,
                 retry_policy=RetryPolicy(
@@ -1226,9 +1242,9 @@ class PaidAdsMonitorWorkflow:
                 if self._stopped:
                     return
                 await execute(name, minutes=minutes, heartbeat=heartbeat)
-        except BaseException:
+        except BaseException as exc:
             if not self._stopped:
-                await execute("paid_ads_monitor_failure", minutes=2)
+                await execute("paid_ads_monitor_failure", failure_input(run_id, exc), minutes=2)
                 raise
 
 
@@ -1285,9 +1301,9 @@ class KeywordPlanWorkflow:
                     return
                 # The review's model call may wait seven minutes; the activity must outlast it.
                 await execute(name, minutes=10 if name == "keyword_review" else 5)
-        except BaseException:
+        except BaseException as exc:
             if not self._stopped:
-                await execute("keyword_failure")
+                await execute("keyword_failure", failure_input(run_id, exc))
                 raise
 
 
@@ -1305,10 +1321,10 @@ class PaidAdsAssessmentWorkflow:
 
     @workflow.run
     async def run(self, run_id: str) -> None:
-        async def execute(name, *, minutes, heartbeat=None):
+        async def execute(name, argument=run_id, *, minutes, heartbeat=None):
             return await workflow.execute_activity(
                 name,
-                run_id,
+                argument,
                 start_to_close_timeout=timedelta(minutes=minutes),
                 heartbeat_timeout=timedelta(minutes=heartbeat) if heartbeat else None,
                 retry_policy=RetryPolicy(
@@ -1328,9 +1344,9 @@ class PaidAdsAssessmentWorkflow:
                 if self._stopped:
                     return
                 await execute(name, minutes=minutes, heartbeat=heartbeat)
-        except BaseException:
+        except BaseException as exc:
             if not self._stopped:
-                await execute("paid_ads_failure", minutes=1)
+                await execute("paid_ads_failure", failure_input(run_id, exc), minutes=1)
                 raise
 
 
@@ -1378,12 +1394,12 @@ class ContentPlanWorkflow:
                     maximum_attempts=3, maximum_interval=timedelta(seconds=10)
                 ),
             )
-        except BaseException:
+        except BaseException as exc:
             if self._stopped:
                 return
             await workflow.execute_activity(
                 "content_plan_failure",
-                run_id,
+                failure_input(run_id, exc),
                 start_to_close_timeout=timedelta(minutes=1),
                 retry_policy=RetryPolicy(maximum_attempts=3),
             )
@@ -1505,8 +1521,8 @@ class OrganicTrafficSystemWorkflow:
             succeeded = await call("organic_system_finish", run_id, minutes=5)
             if not succeeded:
                 raise ApplicationError("One or more organic system steps could not finish.")
-        except BaseException:
-            await call("organic_system_failure", run_id)
+        except BaseException as exc:
+            await call("organic_system_failure", failure_input(run_id, exc))
             raise
 
 
@@ -1559,10 +1575,10 @@ class StyleCaptureWorkflow:
                 start_to_close_timeout=timedelta(minutes=5),
                 retry_policy=RetryPolicy(maximum_attempts=3),
             )
-        except BaseException:
+        except BaseException as exc:
             await workflow.execute_activity(
                 "style_failure",
-                run_id,
+                failure_input(run_id, exc),
                 start_to_close_timeout=timedelta(minutes=1),
                 retry_policy=RetryPolicy(maximum_attempts=3),
             )
@@ -1597,8 +1613,8 @@ class XDraftWorkflow:
                         cancellation_type=workflow.ChildWorkflowCancellationType.ABANDON,
                     )
             await call("x_draft_finish", run_id)
-        except BaseException:
-            await call("x_draft_failure", run_id)
+        except BaseException as exc:
+            await call("x_draft_failure", failure_input(run_id, exc))
             raise
 
 
@@ -1606,10 +1622,10 @@ class XDraftWorkflow:
 class XFeedbackWorkflow:
     @workflow.run
     async def run(self, run_id: str) -> None:
-        async def call(name):
+        async def call(name, argument=run_id):
             return await workflow.execute_activity(
                 name,
-                run_id,
+                argument,
                 start_to_close_timeout=MODEL_STEP_TIMEOUT
                 if name == "x_feedback_generate"
                 else timedelta(minutes=5),
@@ -1619,8 +1635,8 @@ class XFeedbackWorkflow:
         try:
             await call("x_feedback_generate")
             await call("x_feedback_publish")
-        except BaseException:
-            await call("x_feedback_failure")
+        except BaseException as exc:
+            await call("x_feedback_failure", failure_input(run_id, exc))
             raise
 
 
@@ -1635,10 +1651,10 @@ class XStyleWorkflow:
 
     @workflow.run
     async def run(self, run_id: str) -> None:
-        async def call(name):
+        async def call(name, argument=run_id):
             return await workflow.execute_activity(
                 name,
-                run_id,
+                argument,
                 start_to_close_timeout=MODEL_STEP_TIMEOUT
                 if name == "x_style_extract"
                 else timedelta(minutes=5),
@@ -1652,8 +1668,8 @@ class XStyleWorkflow:
                 await workflow.wait_condition(lambda: self._approved)
                 await call("x_style_record_approval")
             await call("x_style_publish")
-        except BaseException:
-            await call("x_style_failure")
+        except BaseException as exc:
+            await call("x_style_failure", failure_input(run_id, exc))
             raise
 
 
@@ -1669,10 +1685,10 @@ class XPublishWorkflow:
                 heartbeat_timeout=timedelta(minutes=2),
                 retry_policy=RetryPolicy(maximum_attempts=3),
             )
-        except BaseException:
+        except BaseException as exc:
             await workflow.execute_activity(
                 "x_publish_failure",
-                run_id,
+                failure_input(run_id, exc),
                 start_to_close_timeout=timedelta(minutes=1),
                 retry_policy=RetryPolicy(maximum_attempts=3),
             )
@@ -1708,10 +1724,10 @@ class GrowthOnboardingPlanWorkflow:
                 start_to_close_timeout=timedelta(minutes=5),
                 retry_policy=RetryPolicy(maximum_attempts=3),
             )
-        except BaseException:
+        except BaseException as exc:
             await workflow.execute_activity(
                 "growth_plan_failure",
-                run_id,
+                failure_input(run_id, exc),
                 start_to_close_timeout=timedelta(minutes=1),
                 retry_policy=RetryPolicy(maximum_attempts=3),
             )
@@ -1765,8 +1781,8 @@ class GrowthOnboardingWorkflow:
                     cancellation_type=workflow.ChildWorkflowCancellationType.ABANDON,
                 )
             await call("growth_onboarding_report", run_id, minutes=5)
-        except BaseException:
-            await call("growth_onboarding_failure", run_id)
+        except BaseException as exc:
+            await call("growth_onboarding_failure", failure_input(run_id, exc))
             raise
 
 
@@ -1774,10 +1790,10 @@ class GrowthOnboardingWorkflow:
 class ConnectionCollectionWorkflow:
     @workflow.run
     async def run(self, run_id: str) -> None:
-        async def call(name, seconds=60):
+        async def call(name, seconds=60, argument=run_id):
             return await workflow.execute_activity(
                 name,
-                run_id,
+                argument,
                 start_to_close_timeout=timedelta(seconds=seconds),
                 retry_policy=RetryPolicy(maximum_attempts=3),
             )
@@ -1797,8 +1813,8 @@ class ConnectionCollectionWorkflow:
             await call("collection_publish", 180)
         except workflow.ContinueAsNewError:
             raise
-        except BaseException:
-            await asyncio.shield(call("collection_failure"))
+        except BaseException as exc:
+            await asyncio.shield(call("collection_failure", argument=failure_input(run_id, exc)))
             raise
 
 

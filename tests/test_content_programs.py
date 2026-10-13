@@ -1,20 +1,25 @@
 """Real SQL + changing code.storage model. No paid services or production writes."""
 
+import json
+from contextlib import asynccontextmanager
 from copy import deepcopy
 from datetime import UTC, datetime, timedelta
 from types import SimpleNamespace
-from uuid import uuid4
+from uuid import UUID, uuid4
 
 import pytest
+from temporalio.exceptions import ApplicationError
 from test_procedure_publication import HistoryStorage
 from test_procedure_publication import publication_db as publication_db
 
 from tin_lite import content_plan as legacy
+from tin_lite.billing_contracts import BillingError
 from tin_lite.catalog import BUILTIN_WORKFLOWS
 from tin_lite.code_storage import ProjectStateChangedError
 from tin_lite.content_plan import KEY, plan_path
-from tin_lite.content_plan_activities import ContentPlanActivities
+from tin_lite.content_plan_activities import FAILURE_FALLBACK, ContentPlanActivities
 from tin_lite.content_programs import ContentPrograms
+from tin_lite.failures import INTERNAL_MESSAGE, failure_payload, from_details
 from tin_lite.organic_audit import canonical_json
 from tin_lite.project_files import StaleProjectRevisionError
 from tin_lite.publication import PublicationPendingError
@@ -623,3 +628,132 @@ async def test_editorial_validation_failure_is_receipted_without_repair_purchase
             await activities.execute(str(run.id))
     assert model.calls == 1 and len(model.fetches) == 1 and storage.repo.writes == 0
     assert (await db.get_effect(f"content:{run.id}:model")).status == "completed"
+
+
+class FailureDb:
+    """Receipts and the run projection content planning's failure path reads and writes."""
+
+    def __init__(self, run=None):
+        self.run = run
+        self.receipts: dict = {}
+        self.failures: list[dict] = []
+
+    async def get_run(self, run_id, conn=None):
+        return self.run
+
+    async def get_effect(self, key, conn=None):
+        return self.receipts.get(key)
+
+    @asynccontextmanager
+    async def effect_lock(self, key, operation):
+        yield None, self.receipts.get(key)
+
+    async def start_effect(self, conn, *, execution_key, operation):
+        self.receipts.setdefault(execution_key, SimpleNamespace(status="started", result=None))
+
+    async def save_effect_progress(self, conn, *, execution_key, result):
+        self.receipts[execution_key] = SimpleNamespace(status="started", result=result)
+
+    async def complete_effect(self, conn, *, execution_key, result):
+        self.receipts[execution_key] = SimpleNamespace(status="completed", result=result)
+
+    async def project_failure(self, **values):
+        self.failures.append(values)
+
+
+def failing_plan(run=None, router=None, settings=None):
+    db = FailureDb(run)
+    return db, ContentPlanActivities(database=db, storage=None, settings=settings, router=router)
+
+
+async def test_plan_failure_from_an_older_history_keeps_its_fixed_text():
+    db, activities = failing_plan()
+    run_id = uuid4()
+    await activities.content_plan_failure(str(run_id))
+    assert db.failures == [
+        {
+            "run_id": run_id,
+            "error_message": FAILURE_FALLBACK,
+            "error_kind": None,
+            "error_action": None,
+            "error_detail": None,
+        }
+    ]
+
+
+async def test_plan_failure_shows_a_fixable_cause_and_hides_an_internal_one():
+    db, activities = failing_plan()
+    run_id = str(uuid4())
+    await activities.content_plan_failure(
+        {
+            "run_id": run_id,
+            "reason": "Your Tin credits ran out. Add credits in Billing, then retry.",
+            "kind": "needs_you",
+            "action": "billing",
+            "detail": "BillingError: insufficient funds",
+        }
+    )
+    await activities.content_plan_failure(
+        {"run_id": run_id, "reason": INTERNAL_MESSAGE, "kind": "internal", "detail": "KeyError: x"}
+    )
+    shown, hidden = db.failures
+    assert shown["error_message"].startswith("Your Tin credits ran out")
+    assert shown["error_kind"] == "needs_you" and shown["error_action"] == "billing"
+    assert hidden["error_message"] == FAILURE_FALLBACK and hidden["error_kind"] == "internal"
+    assert hidden["error_detail"] == "KeyError: x"
+
+
+def refuse_credits():
+    raise BillingError("insufficient_funds", "No credits left")
+
+
+@pytest.mark.parametrize(
+    ("raise_", "summary", "kind"),
+    [
+        # Tin's own sentence (raised in tin_lite) is kept.
+        (None, "Content planning is no longer active.", "explained"),
+        (lambda: json.loads("{not json"), None, "internal"),
+        (lambda: UUID("not-a-uuid"), None, "internal"),
+        (lambda: b"\xff".decode(), None, "internal"),
+        (
+            refuse_credits,
+            "Your Tin credits ran out. Add credits in Billing, then retry.",
+            "needs_you",
+        ),
+    ],
+)
+async def test_plan_refusals_keep_only_tins_own_words(monkeypatch, raise_, summary, kind):
+    db, activities = failing_plan()
+    run_id = str(uuid4())
+    if raise_ is not None:
+
+        async def execute(run_id, *, research_only=False):
+            raise_()
+
+        monkeypatch.setattr(activities, "execute", execute)
+    with pytest.raises(ApplicationError) as raised:
+        await activities.content_plan_execute(run_id)
+    assert raised.value.non_retryable and from_details(raised.value).kind == kind
+    saved = await activities.saved(run_id, "failure")
+    assert saved.get("summary") == summary and saved["kind"] == kind and saved["detail"]
+    await activities.content_plan_failure(
+        {"run_id": run_id, **failure_payload(from_details(raised.value), "ApplicationError")}
+    )
+    [projected] = db.failures
+    assert projected["error_message"] == (summary or FAILURE_FALLBACK)
+    assert projected["error_kind"] == kind
+    # The operator detail names the original exception, never the founder text.
+    assert projected["error_detail"] == saved["detail"]
+
+
+async def test_a_billing_refusal_of_the_plan_model_is_not_called_unconfirmed():
+    run = SimpleNamespace(id=uuid4(), executor=KEY, status=SimpleNamespace(value="running"))
+
+    class Refusing:
+        async def generate(self, *args, **kwargs):
+            raise BillingError("project_limit", "The project's spending limit was reached.")
+
+    settings = SimpleNamespace(luna_api_key="key", content_plan_max_cost_usd=1)
+    db, activities = failing_plan(run, Refusing(), settings)
+    with pytest.raises(BillingError):
+        await activities.model(run, {"sources": []})

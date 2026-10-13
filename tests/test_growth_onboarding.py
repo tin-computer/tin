@@ -2,6 +2,7 @@
 """Growth onboarding parent: shared form, pinned plan child, one hold, then Tin sets up."""
 
 import json
+from contextlib import asynccontextmanager
 from types import SimpleNamespace
 from unittest.mock import AsyncMock
 from uuid import UUID, uuid4
@@ -13,6 +14,7 @@ from test_procedure_publication import publication_db as publication_db
 
 from tin_lite import growth_onboarding
 from tin_lite.catalog import BUILTIN_WORKFLOWS, PARENT_CHILD_KEYS
+from tin_lite.failures import INTERNAL_MESSAGE, failure_payload, from_details
 from tin_lite.growth_onboarding import (
     apply_plan_picks,
     apply_priority,
@@ -32,6 +34,7 @@ from tin_lite.growth_onboarding import (
     ui_links,
 )
 from tin_lite.growth_onboarding_activities import (
+    FAILURE_FALLBACK,
     GrowthOnboardingActivities,
     coerce_enum_inputs,
     tidy_known_inputs,
@@ -709,6 +712,15 @@ async def test_setup_fails_clearly_when_no_system_is_ticked(publication_db, monk
     assert await f.db.get_effect(f"onboarding:{run_id}:setup") is None
     run = await f.db.get_run(f.run.id)
     assert run.status.value == "running"
+    # The typed refusal carries Tin's sentence, so the founder reads it instead of the fallback.
+    refusal = from_details(failure.value)
+    assert refusal.kind == "explained" and "no saved approval snapshot" in refusal.message
+    await f.activities.growth_onboarding_failure(
+        {"run_id": run_id, **failure_payload(refusal, "onboarding_approval_missing")}
+    )
+    run = await f.db.get_run(f.run.id)
+    assert run.status.value == "failed" and run.error_message == refusal.message
+    assert run.error_kind == "explained"
 
 
 def test_setup_repairs_inputs_the_plan_padded_or_got_wrong() -> None:
@@ -882,7 +894,8 @@ async def test_exhausted_setup_closes_undispatched_runs_and_retains_schedule(
     child = await f.db.get_run(UUID(admitted[0]["run_id"]))
     assert child.status.value == "failed"
     assert "before this run was dispatched" in child.error_message
-    assert (await f.db.get_run(f.run.id)).status.value == "failed"
+    parent = await f.db.get_run(f.run.id)
+    assert parent.status.value == "failed" and parent.error_message == FAILURE_FALLBACK
     assert (
         await f.db.pool.fetchval("SELECT count(*) FROM project_workflows WHERE status='active'")
         == 1
@@ -902,3 +915,95 @@ async def test_setup_receipts_share_connection_in_a_small_pool(publication_db, m
     )
     result = await asyncio.wait_for(f.activities.growth_onboarding_setup(str(f.run.id)), timeout=10)
     assert len(result) == 2
+
+
+class OnboardingFailureDb:
+    def __init__(self, run):
+        self.run = run
+        self.failures: list[dict] = []
+
+    async def get_run(self, run_id, conn=None):
+        return self.run
+
+    async def get_effect(self, key, conn=None):
+        # Setup finished, so no prepared child is left to close.
+        return SimpleNamespace(status="completed", result={})
+
+    @asynccontextmanager
+    async def effect_lock(self, key, operation, conn=None):
+        yield None, None
+
+    async def project_failure(self, **values):
+        self.failures.append(values)
+
+
+async def test_onboarding_failure_shows_a_fixable_cause_and_hides_an_internal_one():
+    run = SimpleNamespace(id=uuid4(), project_id=uuid4(), status=SimpleNamespace(value="running"))
+    db = OnboardingFailureDb(run)
+    activities = GrowthOnboardingActivities(
+        database=db, storage=None, settings=None, integrations=None
+    )
+    await activities.growth_onboarding_failure(str(run.id))
+    await activities.growth_onboarding_failure(
+        {
+            "run_id": str(run.id),
+            "reason": "Finish the keyword plan first, then start it again.",
+            "kind": "needs_you",
+            "action": "prerequisite",
+            "detail": "prerequisite_missing",
+        }
+    )
+    await activities.growth_onboarding_failure(
+        {
+            "run_id": str(run.id),
+            "reason": INTERNAL_MESSAGE,
+            "kind": "internal",
+            "detail": "onboarding_setup_interrupted: Onboarding setup interrupted (KeyError)",
+        }
+    )
+    plain, fixable, internal = db.failures
+    assert plain["error_message"] == FAILURE_FALLBACK and plain["error_kind"] is None
+    assert fixable["error_message"].startswith("Finish the keyword plan first")
+    assert fixable["error_kind"] == "needs_you" and fixable["error_action"] == "prerequisite"
+    assert internal["error_message"] == FAILURE_FALLBACK and internal["error_kind"] == "internal"
+    assert internal["error_detail"].startswith("onboarding_setup_interrupted")
+
+
+async def test_a_child_start_refusal_says_the_founder_can_fix_it(monkeypatch):
+    from tin_lite.organic_audit import digest
+    from tin_lite.workflow_prerequisites import PrerequisiteError
+
+    run = SimpleNamespace(
+        id=uuid4(),
+        project_id=uuid4(),
+        executor=growth_onboarding.KEY,
+        status=SimpleNamespace(value="running"),
+        input={},
+        started_by_clerk_user_id="user_test",
+    )
+
+    class Db(OnboardingFailureDb):
+        async def get_effect(self, key, conn=None):
+            if key.endswith(":prepare"):
+                prepared = {"definitions": {}, "input_sha256": digest({})}
+                return SimpleNamespace(status="completed", result=prepared)
+            return None
+
+        async def has_project_access(self, **_):
+            return True
+
+    activities = GrowthOnboardingActivities(
+        database=Db(run), storage=None, settings=None, integrations=None
+    )
+
+    async def refuse(*args, **kwargs):
+        raise PrerequisiteError("prerequisite_missing", "Run the site audit first.")
+
+    monkeypatch.setattr(activities, "_start_child", refuse)
+    with pytest.raises(ApplicationError) as raised:
+        await activities.growth_onboarding_step({"run_id": str(run.id), "step": "plan"})
+    # The type still names the code for retry policy; the details carry the founder's fix.
+    assert raised.value.type == "prerequisite_missing" and raised.value.non_retryable
+    refusal = from_details(raised.value)
+    assert refusal.kind == "needs_you" and refusal.action == "prerequisite"
+    assert refusal.message == "Run the site audit first."

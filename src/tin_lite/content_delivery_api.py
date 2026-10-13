@@ -11,6 +11,7 @@ from temporalio.exceptions import WorkflowAlreadyStartedError
 from tin_lite.auth import AuthContext, require_user
 from tin_lite.content_delivery import WORKFLOW, ContentDelivery, DeliverySettings
 from tin_lite.domain import RunStatus
+from tin_lite.failures import public_error_text
 from tin_lite.integrations import IntegrationError
 from tin_lite.project_files import ProjectFileError
 
@@ -211,7 +212,7 @@ async def get_settings(
     try:
         return await service.settings(project_id=project_id, program_id=program_id)
     except (LookupError, ValueError) as exc:
-        raise HTTPException(status_code=409, detail=str(exc)) from exc
+        raise HTTPException(status_code=409, detail=public_error_text(exc)) from exc
 
 
 @router.get("/content-drafts/delivery-sources")
@@ -241,7 +242,7 @@ async def save_settings(
             actor=user.clerk_user_id,
         )
     except (LookupError, ValueError, ProjectFileError, IntegrationError) as exc:
-        raise HTTPException(status_code=409, detail=str(exc)) from exc
+        raise HTTPException(status_code=409, detail=public_error_text(exc)) from exc
 
 
 @router.get("/content-drafts/{run_id}/delivery")
@@ -279,4 +280,4 @@ async def retry(project_id: UUID, run_id: UUID, request: Request, user: AuthCont
             run_id=run_id,
         )
     except (LookupError, ValueError) as exc:
-        raise HTTPException(status_code=409, detail=str(exc)) from exc
+        raise HTTPException(status_code=409, detail=public_error_text(exc)) from exc

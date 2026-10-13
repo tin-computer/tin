@@ -496,6 +496,25 @@ def v10_documents(*, pages=None, site=None, policy=AUDIT_POLICY, crawl_status="c
     )
 
 
+def test_content_review_does_not_claim_search_impressions_without_search_data():
+    _, report, inventory, _ = v10_documents(
+        site={
+            "files": files(urls=["/guide"]),
+            "pages": [facts("/guide")],
+            "content_review": {
+                "status": "completed",
+                "pages": [{"url": BASE + "/guide", "query": "", "gaps": ["date"]}],
+            },
+        }
+    )
+    finding = next(f for f in inventory["findings"] if f["check_id"] == "aeo.answer_structure")
+    assert finding["evidence"][0] == (
+        "Reviewed 1 selected content page against answer-engine practice."
+    )
+    assert "Selected content pages, reviewed for how AI answers quote pages" in report
+    assert "The pages with the most search impressions" not in report
+
+
 def test_every_v10_finding_uses_the_five_field_format_including_crawl_findings():
     _, report, inventory, _ = v10_documents()
     assert inventory["schema_version"] == 3 and inventory["coverage_status"] == "complete"

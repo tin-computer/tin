@@ -483,8 +483,9 @@ class Database:
     async def complete_payment_recovery_projection(self, conn, **values):
         self.projected = values
 
-    async def project_failure(self, *, run_id, error_message):
+    async def project_failure(self, *, run_id, error_message, **fields):
         self.failed = error_message
+        self.failed_fields = fields
 
 
 class Router:
@@ -1333,3 +1334,70 @@ def test_only_the_newest_invoice_counts_as_already_emailed():
     old = {"to": "a@b.dev", "state": "sent", "invoice": "in_old", "at": NOW - 60 * DAY}
     assert pr.held_back(person, [old], NOW) is None
     assert pr.throwaway("x@mail.yopmail.com") and not pr.throwaway("x@yopmail.company")
+
+
+@pytest.mark.parametrize("code", ["project_limit", "insufficient_funds", "unpriced_model"])
+async def test_a_billing_refused_draft_names_its_cause_and_is_not_bought_again(monkeypatch, code):
+    from tin_lite.billing_contracts import BillingError
+    from tin_lite.failures import billing_refusal
+
+    s = setup(monkeypatch, answer=BillingError(code, "Private diagnostic"))
+    await s.activities.prepare(s.run_id)
+    await s.activities.gather(s.run_id)
+    with pytest.raises(ApplicationError) as refused:
+        await s.activities.draft(s.run_id)
+    expected = billing_refusal(BillingError(code, ""))
+    assert str(refused.value).startswith(expected.message)
+    assert len(s.router.requests) == 1
+    receipt = s.db.effects[s.activities.key(s.run_id, "model:draft")].result
+    assert receipt == {"parsed": None, "reason": code}
+    # A retried draft reads the receipt; it never asks the model again.
+    try:
+        await s.activities.draft(s.run_id)
+    except ApplicationError:
+        pass
+    assert len(s.router.requests) == 1
+    await s.activities.failure(s.run_id)
+    assert s.db.failed.startswith(expected.message)
+    assert "Sent folder" not in s.db.failed and "Private diagnostic" not in s.db.failed
+    assert s.db.failed_fields["error_kind"] == expected.kind
+    assert s.db.failed_fields["error_action"] == expected.action
+    if code == "unpriced_model":
+        assert "spending limit" not in s.db.failed and "credits" not in s.db.failed
+
+
+async def test_a_missing_connection_is_founder_fixable(monkeypatch):
+    s = setup(monkeypatch, stripe_capabilities=["customers.read"], answer=model_answer())
+    with pytest.raises(ApplicationError):
+        await s.activities.prepare(s.run_id)
+    await s.activities.failure(s.run_id)
+    assert "cannot read invoices" in s.db.failed
+    assert s.db.failed_fields["error_kind"] == "needs_you"
+    assert s.db.failed_fields["error_action"] == "integrations"
+
+
+async def test_failure_input_shapes(monkeypatch):
+    from tin_lite.payment_recovery_activities import FAILURE_FALLBACK
+
+    s = setup(monkeypatch, answer=model_answer())
+    await s.activities.failure(s.run_id)
+    assert s.db.failed == FAILURE_FALLBACK and s.db.failed_fields["error_kind"] is None
+
+    await s.activities.failure(
+        {
+            "run_id": s.run_id,
+            "reason": "Your Tin credits ran out. Add credits in Billing, then retry.",
+            "kind": "needs_you",
+            "action": "billing",
+            "detail": "BillingError: insufficient",
+        }
+    )
+    assert s.db.failed.startswith("Your Tin credits ran out")
+    assert s.db.failed_fields["error_action"] == "billing"
+
+    await s.activities.failure(
+        {"run_id": s.run_id, "reason": "x", "kind": "internal", "detail": "KeyError: 'scope'"}
+    )
+    assert s.db.failed == FAILURE_FALLBACK
+    assert s.db.failed_fields["error_kind"] == "internal"
+    assert s.db.failed_fields["error_detail"] == "KeyError: 'scope'"

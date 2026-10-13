@@ -5,7 +5,7 @@ import json
 import sys
 from pathlib import Path
 from types import ModuleType, SimpleNamespace
-from unittest.mock import AsyncMock
+from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 from mcp.server.mcpserver.exceptions import ToolError
@@ -77,3 +77,22 @@ async def test_mcp_registers_image_output_and_resize_inputs(browser_tools):
     registered = {t.name: t for t in await tools.server.list_tools()}
     assert registered["screenshot"].input_schema["properties"] == {}
     assert set(registered["set_viewport"].input_schema["required"]) == {"width", "height"}
+
+
+@pytest.mark.asyncio
+async def test_click_role_requires_one_exact_name(browser_tools, monkeypatch):
+    tools, page = browser_tools
+    locator = MagicMock(click=AsyncMock())
+    locator.first.click = AsyncMock()
+    page.get_by_role = MagicMock(return_value=locator)
+    monkeypatch.setattr(tools, "_describe", AsyncMock(return_value="selected 50"))
+
+    assert await tools.click_role("button", "50") == "selected 50"
+    page.get_by_role.assert_called_once_with("button", name="50", exact=True)
+    locator.click.assert_awaited_once_with(timeout=tools.ACTION_TIMEOUT_MS)
+    locator.first.click.assert_not_awaited()
+
+    locator.click.side_effect = RuntimeError("strict mode violation: two matching buttons")
+    with pytest.raises(ToolError, match="two matching buttons"):
+        await tools.click_role("button", "50")
+    locator.first.click.assert_not_awaited()

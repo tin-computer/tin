@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 from dataclasses import replace
+from typing import NoReturn
 from uuid import UUID
 
 from temporalio import activity
@@ -14,6 +15,13 @@ from tin_lite.code_project_files import CodeProjectFileError, CodeProjectFiles
 from tin_lite.code_project_files import saved_source as saved_project_files
 from tin_lite.code_services import CodeServiceError, CodeServices
 from tin_lite.e2b_runtime import CodeExecutionError
+from tin_lite.failures import (
+    Failure,
+    failure_payload,
+    failure_projection,
+    payload_failure,
+    split_failure_input,
+)
 from tin_lite.procedures import SandboxProfile
 from tin_lite.publication import OutputCheckpoint, OutputConflictError, PublicationPendingError
 from tin_lite.workflow_code import (
@@ -24,6 +32,20 @@ from tin_lite.workflow_code import (
     validate_code_result,
 )
 from tin_lite.workflow_inputs import normalize_workflow_inputs
+
+FAILURE_FALLBACK = "The code workflow could not confirm completion."
+# Billing refused the run's spending: credits and limits are the founder's to change.
+SPENDING_CODES = frozenset({"model_spending_stopped", "spending_stopped"})
+
+
+def tin_failure(exc: BaseException, message: str | None = None) -> Failure:
+    """Tin's own refusal text, written by execute() for the founder to read as it is."""
+    code = getattr(exc, "code", None)
+    code = code if isinstance(code, str) else None
+    text = message or str(exc)
+    if code in SPENDING_CODES:
+        return Failure("needs_you", text, action="billing", code=code)
+    return Failure("explained", text, code=code)
 
 
 class CodeActivities:
@@ -260,39 +282,27 @@ class CodeActivities:
                     sandbox_stage="code_workflow",
                 )
             except CodeModelError as exc:
-                await self.db.fail_effect(
-                    conn, execution_key=key, error_message=f"{exc.code}: {exc}"
-                )
-                raise ApplicationError(f"{exc.code}: {exc}", non_retryable=True) from None
+                await self._refuse(conn, key, f"{exc.code}: {exc}", tin_failure(exc))
             except CodeServiceError as exc:
-                await self.db.fail_effect(conn, execution_key=key, error_message=str(exc))
-                raise ApplicationError(str(exc), non_retryable=True) from None
+                await self._refuse(conn, key, str(exc), tin_failure(exc))
             except CodeProjectFileError as exc:
                 # Only a revoked lease escapes the file bridge; say so, not "failed validation".
-                message = (
-                    f"{exc.code}: The run no longer has permission to read project files."
+                text = (
+                    "The run no longer has permission to read project files."
                     if exc.code == "file_access_revoked"
-                    else f"{exc.code}: A project file request was refused."
+                    else "A project file request was refused."
                 )
-                await self.db.fail_effect(conn, execution_key=key, error_message=message)
-                raise ApplicationError(message, non_retryable=True) from None
+                await self._refuse(conn, key, f"{exc.code}: {text}", tin_failure(exc, text))
             except CodeExecutionError as exc:
                 if exc.deterministic:
                     # The package ran and exited without a valid result. A fresh sandbox runs
                     # the same code on the same inputs, so another attempt repeats the failure.
-                    await self.db.fail_effect(conn, execution_key=key, error_message=str(exc))
-                    raise ApplicationError(str(exc), non_retryable=True) from None
+                    await self._refuse(conn, key, str(exc), tin_failure(exc))
                 await self._retain_failure(conn, key, str(exc))
                 raise
             except (ValueError, UnicodeError):
-                await self.db.fail_effect(
-                    conn,
-                    execution_key=key,
-                    error_message="The code package, inputs or result failed validation.",
-                )
-                raise ApplicationError(
-                    "The code package, inputs or result failed validation.", non_retryable=True
-                ) from None
+                text = "The code package, inputs or result failed validation."
+                await self._refuse(conn, key, text, Failure("explained", text))
             except BaseException as exc:
                 # Retain the failed stage without exposing arbitrary sandbox/provider text.
                 # Temporal still retries; completed model/service receipts are reused.
@@ -303,6 +313,20 @@ class CodeActivities:
             finally:
                 if sandbox_id:
                     await self.sandboxes.kill(sandbox_id)
+
+    async def _refuse(self, conn, key, text, failure: Failure) -> NoReturn:
+        """Fail the receipt with its operator text and stop without retrying. The receipt
+        also keeps Tin's own sentence, and the ApplicationError carries it to the workflow,
+        so the founder reads it rather than the operator text."""
+        current = await self.db.get_effect(key, conn=conn)
+        if current and current.status == "started":
+            await self.db.save_effect_progress(
+                conn,
+                execution_key=key,
+                result={**(current.result or {}), "failure": failure_payload(failure, text)},
+            )
+        await self.db.fail_effect(conn, execution_key=key, error_message=text)
+        raise ApplicationError(text, failure.details(), non_retryable=True) from None
 
     async def _retain_failure(self, conn, key, reason):
         current = await self.db.get_effect(key, conn=conn)
@@ -411,12 +435,27 @@ class CodeActivities:
         await self.common.project_codex_procedure_result(run_id)
 
     @activity.defn(name="fail_code_workflow")
-    async def failure(self, run_id: str):
+    async def failure(self, value: str | dict):
+        run_id, passed = split_failure_input(value)
         receipt = await self.db.get_effect(f"{run_id}:procedure_artifact_persist")
-        reason = (receipt.result or {}).get("failure_reason") if receipt else None
-        await self.common.project_codex_procedure_failure(
-            {
-                "run_id": run_id,
-                "reason": reason or "The code workflow could not confirm completion.",
-            }
-        )
+        result = (receipt.result if receipt else None) or {}
+        refused = receipt is not None and receipt.status == "failed"
+        written = payload_failure(result.get("failure")) if refused else None
+        saved = None
+        if written is not None:
+            # execute() wrote Tin's own sentence beside the receipt's operator text.
+            passed = failure_payload(written, receipt.error_message or written.message)
+        elif not refused:
+            # A retained stage from an attempt that did not finish, such as a lost worker.
+            saved = result.get("failure_reason")
+        projection = failure_projection(passed, FAILURE_FALLBACK, saved=saved)
+        payload = {"run_id": run_id, "reason": projection["error_message"]}
+        if projection["error_kind"] is not None:
+            payload["kind"] = projection["error_kind"]
+            if projection["error_action"]:
+                payload["action"] = projection["error_action"]
+            if projection["error_detail"]:
+                payload["detail"] = projection["error_detail"]
+        # The procedure failure would read a refused receipt as operator text; this payload
+        # already holds Tin's words for it.
+        await self.common.project_procedure_failure(payload, prefer_payload=refused)

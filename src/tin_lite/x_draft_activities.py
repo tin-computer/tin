@@ -9,6 +9,7 @@ from temporalio import activity
 from temporalio.exceptions import ApplicationError
 
 from tin_lite import x_draft, x_style
+from tin_lite.failures import classify, failure_projection, split_failure_input
 from tin_lite.integrations import X_PROVIDER
 from tin_lite.workflow_packages import decode_workflow_source
 
@@ -164,7 +165,10 @@ class XDraftActivities:
 
     @activity.defn(name="x_draft_step")
     async def step(self, payload: dict[str, str]):
+        from tin_lite.billing_contracts import BillingError
         from tin_lite.run_service import start_workflow_run
+        from tin_lite.workflow_inputs import WorkflowInputError
+        from tin_lite.workflow_prerequisites import PrerequisiteError
 
         run_id, step = payload["run_id"], payload["step"]
         if step not in x_draft.STEPS:
@@ -212,24 +216,30 @@ class XDraftActivities:
                 definition = prepared["definitions"][step]
                 if template is None or template.executor != definition["executor"]:
                     raise ValueError("X drafting child executor changed")
-                child = await start_workflow_run(
-                    runtime=SimpleNamespace(
-                        database=self.db, storage=self.storage, integrations=self.integrations
-                    ),
-                    settings=self.settings,
-                    workflow=replace(template, definition=definition),
-                    project_id=run.project_id,
-                    started_by_clerk_user_id=run.started_by_clerk_user_id,
-                    start_idempotency_key=key,
-                    input_payload=inputs,
-                    definition_commit_sha=prepared["definition_revision"],
-                    input_schema=definition["input_schema"],
-                    trigger_source=run.trigger_source,
-                    trigger_client=run.trigger_client,
-                    started_by_oauth_client_id=run.started_by_oauth_client_id,
-                    _prepare_only=True,
-                    _billing_parent_run_id=run.id if getattr(self.db, "billing", None) else None,
-                )
+                billing_parent = run.id if getattr(self.db, "billing", None) else None
+                try:
+                    child = await start_workflow_run(
+                        runtime=SimpleNamespace(
+                            database=self.db, storage=self.storage, integrations=self.integrations
+                        ),
+                        settings=self.settings,
+                        workflow=replace(template, definition=definition),
+                        project_id=run.project_id,
+                        started_by_clerk_user_id=run.started_by_clerk_user_id,
+                        start_idempotency_key=key,
+                        input_payload=inputs,
+                        definition_commit_sha=prepared["definition_revision"],
+                        input_schema=definition["input_schema"],
+                        trigger_source=run.trigger_source,
+                        trigger_client=run.trigger_client,
+                        started_by_oauth_client_id=run.started_by_oauth_client_id,
+                        _prepare_only=True,
+                        _billing_parent_run_id=billing_parent,
+                    )
+                except (BillingError, PrerequisiteError, WorkflowInputError) as exc:
+                    # Admission refused the child: a limit, credits, a prerequisite or an
+                    # input. Retrying cannot change that, and the founder can.
+                    raise ApplicationError(classify(exc).message, non_retryable=True) from exc
                 result = {
                     "run_id": str(child.id),
                     "executor": child.executor,
@@ -295,9 +305,10 @@ class XDraftActivities:
                 )
 
     @activity.defn(name="x_draft_failure")
-    async def failure(self, run_id: str):
+    async def failure(self, argument: str | dict):
         from tin_lite.db import SideEffectConflictError
 
+        run_id, passed = split_failure_input(argument)
         run = await self.db.get_run(UUID(run_id))
         if run and run.executor == x_draft.KEY:
             style = await self.saved(run.id, "style")
@@ -318,10 +329,23 @@ class XDraftActivities:
                 except SideEffectConflictError:
                     pass  # Already finished.
                 return
+            compose = await self.saved(run.id, "compose")
+            # Point at a child run only when one was started.
+            children = [
+                name
+                for name, saved in (("voice", style), ("composition", compose))
+                if saved and saved.get("run_id")
+            ]
+            where = (
+                f" Check the {' and '.join(children)} run{'s' if len(children) > 1 else ''} "
+                "in Activity."
+                if children
+                else ""
+            )
             await self.db.project_failure(
                 run_id=run.id,
-                error_message=(
-                    "X drafting could not finish. Check the voice or composition run in Activity. "
-                    "Saved guides and drafts remain in Files."
+                **failure_projection(
+                    passed,
+                    f"X drafting could not finish.{where} Saved guides and drafts remain in Files.",
                 ),
             )

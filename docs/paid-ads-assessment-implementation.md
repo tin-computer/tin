@@ -88,6 +88,9 @@ for the Start here plan so the plan never schedules it.
 
 ## Limitations
 
+A model call refused by the spending limit is reported as a spending-limit stop.
+Unconfirmed calls keep their separate error and are not purchased again.
+
 Google Search only. Country-level targeting in English markets. The tracking scan is
 heuristic. Ads history comes from the founder's numbers, not from an ad account. Provider
 forecasts and benchmarks are estimates, never traffic or revenue.

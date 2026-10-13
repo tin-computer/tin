@@ -22,6 +22,7 @@ from tin_lite.workflow_diagrams import (
     validate_workflow_diagram,
 )
 from tin_lite.workflow_packages import decode_workflow_source
+from tin_lite.workflow_services import MAX_SERVICE_CALLS, MAX_SERVICE_RESPONSE_BYTES
 
 
 def saveable(workflow) -> bool:
@@ -115,6 +116,14 @@ def test_the_creator_draws_its_candidates_and_itself() -> None:
     skill = files["workflow_packages/custom.workflow_create/skills/create-workflow/SKILL.md"]
     contract = files["workflow_packages/custom.workflow_create/skills/create-workflow/CONTRACT.md"]
     assert "presentation.flow" in skill and "presentation" in contract
+
+
+def test_creator_service_limits_match_the_validator() -> None:
+    contract = creator_files()[
+        "workflow_packages/custom.workflow_create/skills/create-workflow/CONTRACT.md"
+    ]
+    assert f"{MAX_SERVICE_CALLS} total provider calls" in contract
+    assert f"1024–{MAX_SERVICE_RESPONSE_BYTES} bytes per alias" in contract
 
 
 SAVED = {"key": "content.generate", "version": "1.15.0", "executor": "codex.procedure"}

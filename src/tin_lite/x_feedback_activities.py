@@ -1,6 +1,7 @@
 """Bounded, receipted X revisions. Draft and remembered preferences commit together."""
 
 import asyncio
+import contextlib
 import hashlib
 import json
 from uuid import UUID
@@ -9,7 +10,9 @@ from temporalio import activity
 from temporalio.exceptions import ApplicationError
 
 from tin_lite import x_feedback, x_style
+from tin_lite.billing_contracts import BillingError
 from tin_lite.domain import result_line
+from tin_lite.failures import billing_refusal, failure_projection, split_failure_input
 from tin_lite.model_providers import (
     DEFAULT_TIMEOUT_SECONDS,
     MessageRole,
@@ -192,6 +195,17 @@ class XFeedbackActivities:
                         "remembered": remembered,
                     },
                 )
+            except BillingError as exc:
+                # A billing refusal is not an invalid revision: say what stopped it. The
+                # receipt stays started, so a retry still never buys the call again.
+                message = billing_refusal(exc).message
+                with contextlib.suppress(Exception):
+                    await self.db.save_effect_progress(
+                        conn,
+                        execution_key=key,
+                        result={"failure_code": exc.code, "failure_message": message},
+                    )
+                raise ApplicationError(message, non_retryable=True) from exc
             except Exception:
                 raise ApplicationError(
                     "The X revision could not be validated. No files were changed and no "
@@ -287,11 +301,22 @@ class XFeedbackActivities:
                     )
 
     @activity.defn(name="x_feedback_failure")
-    async def failure(self, run_id: str):
+    async def failure(self, argument: str | dict):
+        run_id, passed = split_failure_input(argument)
         run = await self.db.get_run(UUID(run_id))
         if run and run.executor == x_feedback.KEY:
+            receipt = await self.db.get_effect(f"{run.id}:x_feedback_model")
+            saved = (
+                (receipt.result or {}).get("failure_message")
+                if receipt and receipt.status != "completed"
+                else None
+            )
             await self.db.project_failure(
                 run_id=run.id,
-                error_message="The X revision did not finish. Read the current file before "
-                "requesting another revision; newer edits were kept.",
+                **failure_projection(
+                    passed,
+                    "The X revision did not finish. Read the current file before "
+                    "requesting another revision; newer edits were kept.",
+                    saved=saved if isinstance(saved, str) else None,
+                ),
             )

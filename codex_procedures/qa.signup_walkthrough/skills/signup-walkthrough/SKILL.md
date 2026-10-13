@@ -22,6 +22,8 @@ happen; a result you did not see is unknown. Write only the artifact path declar
      text and the accessibility tree.
    - `camoufox.click(selector)`, `camoufox.click_role(role, name)`,
      `camoufox.fill(selector, value)`, and `camoufox.press(key)` act like a user.
+     Use the exact accessible name from `snapshot` for `click_role`; duplicate names need a
+     specific selector, not a guessed first match.
    - `camoufox.wait_for(selector | text, timeout_seconds)` waits for something to appear.
    - `camoufox.evaluate(expression)` runs JavaScript and returns JSON.
    - `camoufox.console_messages()` and `camoufox.network_failures()` are your evidence

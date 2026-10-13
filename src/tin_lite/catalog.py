@@ -4214,13 +4214,13 @@ BUILTIN_WORKFLOWS = (
                     "check",
                     "step",
                     "Read the assessment and account",
-                    "link, billing, conversions, tag on the page",
+                    "link, billing, currency, conversions, page tag",
                 ),
                 DiagramNode(
                     "plan",
                     "step",
                     "Set budget, bids and groups",
-                    "code only, up to 5 groups, never broad match",
+                    "code only, account currency at the ECB rate",
                 ),
                 DiagramNode(
                     "tracking",
@@ -4613,6 +4613,9 @@ PARENT_CHILD_KEYS: dict[str, tuple[str, ...]] = {
         organic_system.REFRESH_KEY,
         # v7 pins the two weekly measurement packages, with their code, beside the steps.
         *organic_system.MEASURE_STEPS.values(),
+        # v6 on, the technical and delivery steps run website.change; without it here a fresh
+        # registry has no website.change file at the system's revision.
+        organic_system.WEBSITE_KEY,
     ),
     growth_onboarding.KEY: tuple(growth_onboarding.STEPS.values()),
     # content.plan 1.0.0 starts its planning agent at the plan's own pinned revision.

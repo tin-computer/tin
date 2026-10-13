@@ -15,7 +15,7 @@ from datetime import date, datetime
 from pathlib import Path
 from uuid import UUID
 
-from tin_lite import paid_ads
+from tin_lite import ads_currency, paid_ads
 from tin_lite.domain import PAID_ADS_MONITOR_WORKFLOW_NAME
 from tin_lite.model_providers import ModelRoute
 
@@ -27,7 +27,7 @@ SKILL = (ASSETS / "RULES.md").read_text()
 ROUTES: tuple[ModelRoute, ...] = (paid_ads.JUDGMENT_ROUTE, paid_ads.DRAFTING_ROUTE)
 JUDGMENT_STEPS = frozenset({"brief"})
 POLICY = {
-    "version": 1,
+    "version": 2,
     "quiet_days": 3,
     "search_terms_min_clicks": 2,
     "keyword_pause_multiple": 3.0,
@@ -173,6 +173,7 @@ def check_inputs(inputs: dict) -> None:
 
 
 def _usd(micros) -> float:
+    """Micros to the account's own currency units; the name predates other currencies."""
     try:
         value = float(micros or 0)
     except (TypeError, ValueError):
@@ -221,11 +222,11 @@ def _window(row: dict) -> dict:
     return {
         "impressions": impressions,
         "clicks": clicks,
-        "cost_usd": cost,
+        "cost": cost,
         "conversions": round(conversions, 2),
         "ctr": round(clicks / impressions, 4) if impressions else 0.0,
-        "cpc_usd": round(cost / clicks, 2) if clicks else 0.0,
-        "cpa_usd": round(cost / conversions, 2) if conversions else None,
+        "cpc": round(cost / clicks, 2) if clicks else 0.0,
+        "cpa": round(cost / conversions, 2) if conversions else None,
         "impression_share": _share(metrics.get("searchImpressionShare")),
         "budget_lost_share": _share(metrics.get("searchBudgetLostImpressionShare")),
         "rank_lost_share": _share(metrics.get("searchRankLostImpressionShare")),
@@ -249,12 +250,12 @@ def _campaign(row: dict) -> dict:
         "primary_status": str(campaign.get("primaryStatus") or "UNKNOWN"),
         "primary_status_reasons": [str(r) for r in campaign.get("primaryStatusReasons") or []],
         "bidding_strategy_type": str(campaign.get("biddingStrategyType") or "UNKNOWN"),
-        "cpc_ceiling_usd": _usd(ceiling) if ceiling is not None else None,
-        "target_cpa_usd": _usd(tcpa) if tcpa is not None else None,
+        "cpc_ceiling": _usd(ceiling) if ceiling is not None else None,
+        "target_cpa": _usd(tcpa) if tcpa is not None else None,
         "ai_max_enabled": bool((campaign.get("aiMaxSetting") or {}).get("enableAiMax")),
         "migration_dates": dates,
-        "budget_usd": _usd(budget.get("amountMicros")),
-        "recommended_budget_usd": (
+        "budget": _usd(budget.get("amountMicros")),
+        "recommended_budget": (
             _usd(budget["recommendedBudgetAmountMicros"])
             if budget.get("recommendedBudgetAmountMicros") is not None
             else None
@@ -274,7 +275,7 @@ def _search_term(row: dict) -> dict:
         "source": str((row.get("segments") or {}).get("searchTermMatchSource") or ""),
         "ad_group_id": str((row.get("adGroup") or {}).get("id") or ""),
         "clicks": _int(metrics.get("clicks")),
-        "cost_usd": _usd(metrics.get("costMicros")),
+        "cost": _usd(metrics.get("costMicros")),
         "conversions": round(_float(metrics.get("conversions")), 2),
     }
 
@@ -292,7 +293,7 @@ def _keyword(row: dict) -> dict:
         "status": str(criterion.get("status") or "UNKNOWN"),
         "quality_score": _int(quality) if quality is not None else None,
         "clicks": _int(metrics.get("clicks")),
-        "cost_usd": _usd(metrics.get("costMicros")),
+        "cost": _usd(metrics.get("costMicros")),
         "conversions": round(_float(metrics.get("conversions")), 2),
         "impressions": _int(metrics.get("impressions")),
     }
@@ -339,8 +340,10 @@ def normalize_reads(reads: dict) -> dict:
     rows = lambda name: [r for r in (reads.get(name) or []) if isinstance(r, dict)]  # noqa: E731
     head = _first(reads.get("campaign_7d")) or _first(reads.get("campaign_30d"))
     terms = [t for t in map(_search_term, rows("search_terms")) if t["term"]]
-    terms.sort(key=lambda t: (-t["cost_usd"], -t["clicks"], t["term"]))
+    terms.sort(key=lambda t: (-t["cost"], -t["clicks"], t["term"]))
+    customer = _first(reads.get("account")).get("customer") or {}
     return {
+        "currency_code": customer.get("currencyCode") or None,
         "campaign": _campaign(head),
         "windows": {
             "7d": _window(_first(reads.get("campaign_7d"))),
@@ -474,12 +477,23 @@ def _iso_date(value) -> date | None:
             return None
 
 
-def _money(value: float) -> float:
-    return round(float(value) + 1e-9, 2)
+def _money(value: float, code: str = "USD") -> float:
+    rounded = round(float(value) + 1e-9, 2)
+    return ads_currency.round_to_unit(rounded, code) if ads_currency.supported(code) else rounded
+
+
+def _show(value, code) -> str:
+    return ads_currency.money(value, code, cents=True)
+
+
+def _fx(campaign: dict) -> dict:
+    """The rate pinned at launch; a launch from before currencies were pinned ran in dollars."""
+    fx = campaign.get("fx")
+    return fx if isinstance(fx, dict) and fx.get("currency_code") else dict(ads_currency.USD_FX)
 
 
 def _allowable(campaign: dict) -> float | None:
-    value = campaign.get("allowable_cpa_usd")
+    value = campaign.get("allowable_cpa" if "fx" in campaign else "allowable_cpa_usd")
     if isinstance(value, bool) or not isinstance(value, (int, float)) or value <= 0:
         return None
     return float(value)
@@ -495,19 +509,19 @@ def _term_totals(search_terms: list[dict]) -> list[dict]:
             {
                 "term": row["term"],
                 "clicks": 0,
-                "cost_usd": 0.0,
+                "cost": 0.0,
                 "conversions": 0.0,
                 "excluded": False,
             },
         )
         total["clicks"] += row["clicks"]
-        total["cost_usd"] = _money(total["cost_usd"] + row["cost_usd"])
+        total["cost"] = _money(total["cost"] + row["cost"])
         total["conversions"] += row["conversions"]
         total["excluded"] = total["excluded"] or row["status"] in EXCLUDED_TERM_STATES
-    return sorted(totals.values(), key=lambda t: (-t["cost_usd"], -t["clicks"], t["term"]))
+    return sorted(totals.values(), key=lambda t: (-t["cost"], -t["clicks"], t["term"]))
 
 
-def _negatives(reads: dict, labels: dict, cap: int) -> list[dict]:
+def _negatives(reads: dict, labels: dict, cap: int, code: str) -> list[dict]:
     chosen = []
     for term in _term_totals(reads["search_terms"]):
         if len(chosen) >= cap:
@@ -524,9 +538,9 @@ def _negatives(reads: dict, labels: dict, cap: int) -> list[dict]:
                 "text": term["term"],
                 "match_type": "PHRASE",
                 "clicks": term["clicks"],
-                "cost_usd": term["cost_usd"],
+                "cost": term["cost"],
                 "why": (
-                    f"{term['clicks']} clicks and ${term['cost_usd']:.2f} with no conversion; "
+                    f"{term['clicks']} clicks and {_show(term['cost'], code)} with no conversion; "
                     + (
                         "the searcher wanted something else."
                         if label == "irrelevant"
@@ -552,7 +566,7 @@ def _pause_ads(reads: dict) -> list[dict]:
     ]
 
 
-def _pause_keywords(reads: dict, allowable: float | None, days_live: int) -> list[dict]:
+def _pause_keywords(reads: dict, allowable: float | None, days_live: int, code: str) -> list[dict]:
     if allowable is None or days_live < POLICY["keyword_pause_min_days"]:
         return []
     threshold = allowable * POLICY["keyword_pause_multiple"]
@@ -560,18 +574,20 @@ def _pause_keywords(reads: dict, allowable: float | None, days_live: int) -> lis
         {
             "resource_name": kw["resource_name"],
             "text": kw["text"],
-            "cost_usd": kw["cost_usd"],
+            "cost": kw["cost"],
             "why": (
-                f"${kw['cost_usd']:.2f} spent over thirty days with no conversion, more than "
-                f"{POLICY['keyword_pause_multiple']:.0f} times the ${allowable:.2f} you can pay for one."
+                f"{_show(kw['cost'], code)} spent over thirty days with no conversion, more than "
+                f"{POLICY['keyword_pause_multiple']:.0f} times the {_show(allowable, code)} you can pay for one."
             ),
         }
         for kw in reads["keywords"]
-        if kw["status"] == "ENABLED" and kw["conversions"] == 0 and kw["cost_usd"] >= threshold
+        if kw["status"] == "ENABLED" and kw["conversions"] == 0 and kw["cost"] >= threshold
     ]
 
 
-def _bid_proposal(reads: dict, allowable: float | None) -> dict | None:
+def _bid_proposal(reads: dict, allowable: float | None, fx: dict) -> dict | None:
+    code = fx["currency_code"]
+    money = {"currency_code": code, "usd_rate": fx["usd_rate"]}
     campaign, month = reads["campaign"], reads["windows"]["30d"]
     strategy, conversions = campaign["bidding_strategy_type"], month["conversions"]
     if strategy == "TARGET_SPEND" and conversions >= POLICY["max_conv_threshold"]:
@@ -579,9 +595,10 @@ def _bid_proposal(reads: dict, allowable: float | None) -> dict | None:
             "kind": "bid_strategy_change",
             "previous": {
                 "strategy": "maximize_clicks",
-                "cpc_ceiling_usd": campaign["cpc_ceiling_usd"],
+                "cpc_ceiling": campaign["cpc_ceiling"],
+                **money,
             },
-            "proposed": {"strategy": "maximize_conversions", "target_cpa_usd": None},
+            "proposed": {"strategy": "maximize_conversions", "target_cpa": None, **money},
             "rationale": (
                 f"{conversions:g} conversions in thirty days is enough for Google to bid for "
                 "conversions instead of clicks. Nothing else changes; the daily budget still caps spend."
@@ -589,22 +606,22 @@ def _bid_proposal(reads: dict, allowable: float | None) -> dict | None:
         }
     if (
         strategy == "MAXIMIZE_CONVERSIONS"
-        and campaign["target_cpa_usd"] is None
+        and campaign["target_cpa"] is None
         and conversions >= POLICY["tcpa_threshold"]
-        and month["cpa_usd"] is not None
+        and month["cpa"] is not None
     ):
-        target = month["cpa_usd"] * POLICY["tcpa_multiplier"]
+        target = month["cpa"] * POLICY["tcpa_multiplier"]
         if allowable is not None:
             target = min(target, allowable)
         return {
             "kind": "bid_strategy_change",
-            "previous": {"strategy": "maximize_conversions", "target_cpa_usd": None},
-            "proposed": {"strategy": "target_cpa", "target_cpa_usd": _money(target)},
+            "previous": {"strategy": "maximize_conversions", "target_cpa": None, **money},
+            "proposed": {"strategy": "target_cpa", "target_cpa": _money(target, code), **money},
             "rationale": (
-                f"{conversions:g} conversions in thirty days at ${month['cpa_usd']:.2f} each. "
-                f"A target of ${_money(target):.2f} tells Google what a conversion may cost"
+                f"{conversions:g} conversions in thirty days at {_show(month['cpa'], code)} each. "
+                f"A target of {_show(_money(target, code), code)} tells Google what a conversion may cost"
                 + (
-                    f", never above the ${allowable:.2f} you can pay for one."
+                    f", never above the {_show(allowable, code)} you can pay for one."
                     if allowable is not None
                     else "."
                 )
@@ -613,41 +630,45 @@ def _bid_proposal(reads: dict, allowable: float | None) -> dict | None:
     return None
 
 
-def _budget_proposal(reads: dict, allowable: float | None) -> dict | None:
+def _budget_proposal(reads: dict, allowable: float | None, fx: dict) -> dict | None:
+    code = fx["currency_code"]
+    money = {"currency_code": code, "usd_rate": fx["usd_rate"]}
     campaign, fortnight = reads["campaign"], reads["windows"]["14d"]
-    budget = campaign["budget_usd"]
+    budget = campaign["budget"]
     if allowable is None or budget <= 0:
         return None
     step = POLICY["budget_step"]
     if (
         "BUDGET_CONSTRAINED" in campaign["primary_status_reasons"]
-        and fortnight["cpa_usd"] is not None
-        and fortnight["cpa_usd"] <= allowable
+        and fortnight["cpa"] is not None
+        and fortnight["cpa"] <= allowable
     ):
-        proposed = _money(budget * (1 + step))
+        proposed = _money(budget * (1 + step), code)
         return {
             "kind": "budget_change",
-            "previous": {"daily_budget_usd": budget},
-            "proposed": {"daily_budget_usd": proposed},
+            "previous": {"daily_budget": budget, **money},
+            "proposed": {"daily_budget": proposed, **money},
             "rationale": (
-                f"The budget ran out on most days while a conversion cost ${fortnight['cpa_usd']:.2f}, "
-                f"under the ${allowable:.2f} you can pay. A {step:.0%} step from ${budget:.2f} to "
-                f"${proposed:.2f} a day buys more of the same."
+                f"The budget ran out on most days while a conversion cost {_show(fortnight['cpa'], code)}, "
+                f"under the {_show(allowable, code)} you can pay. A {step:.0%} step from {_show(budget, code)} to "
+                f"{_show(proposed, code)} a day buys more of the same."
             ),
         }
     if (
         fortnight["conversions"] == 0
-        and fortnight["cost_usd"] >= allowable * POLICY["keyword_pause_multiple"]
+        and fortnight["cost"] >= allowable * POLICY["keyword_pause_multiple"]
     ):
-        proposed = max(1.0, _money(budget * (1 - step)))
+        # Never below a dollar's worth a day, the floor the launch set.
+        floor = ads_currency.convert(1, fx, floor_usd=1)
+        proposed = max(floor, _money(budget * (1 - step), code))
         return {
             "kind": "budget_change",
-            "previous": {"daily_budget_usd": budget},
-            "proposed": {"daily_budget_usd": proposed},
+            "previous": {"daily_budget": budget, **money},
+            "proposed": {"daily_budget": proposed, **money},
             "rationale": (
-                f"${fortnight['cost_usd']:.2f} in two weeks brought no conversion, more than "
-                f"{POLICY['keyword_pause_multiple']:.0f} times the ${allowable:.2f} you can pay for one. "
-                f"A {step:.0%} step down from ${budget:.2f} to ${proposed:.2f} a day slows the loss while "
+                f"{_show(fortnight['cost'], code)} in two weeks brought no conversion, more than "
+                f"{POLICY['keyword_pause_multiple']:.0f} times the {_show(allowable, code)} you can pay for one. "
+                f"A {step:.0%} step down from {_show(budget, code)} to {_show(proposed, code)} a day slows the loss while "
                 "the negatives and keyword pauses take effect."
             ),
         }
@@ -751,23 +772,43 @@ def decide(
     """
     enabled_on = _iso_date(campaign.get("enabled_at"))
     days_live = max(0, (today - enabled_on).days) if enabled_on else 0
-    allowable = _allowable(campaign)
+    fx = _fx(campaign)
+    planned, billed = fx["currency_code"], reads.get("currency_code")
+    code = billed or planned
+    # Costs come back in the account's currency. If that is not the currency the launch planned
+    # in, the plan's figures cannot be compared with them: report plain costs and change nothing
+    # that depends on cost until the campaign is launched again in the right currency.
+    mismatch = billed is not None and billed != planned
+    allowable = None if mismatch else _allowable(campaign)
     quiet = enabled_on is None or days_live < POLICY["quiet_days"]
     cap = max(0, min(50, int(auto_negatives_cap)))
     alerts, findings = _alerts_and_findings(reads, days_live, labels)
+    if mismatch:
+        alerts.append(
+            {
+                "code": "currency_mismatch",
+                "text": (
+                    f"The account bills in {billed}, but this campaign was planned in {planned}: "
+                    f"its budget and bids were sent as {planned} figures and Google read them as "
+                    f"{billed}. Tin reports plain costs and proposes no budget, bidding or keyword "
+                    "changes for it. Check the budget in Google Ads, or launch it again so Tin "
+                    f"plans it in {billed}."
+                ),
+            }
+        )
     week = reads["windows"]["7d"]
     if (
         allowable is not None
-        and week["cpa_usd"] is not None
+        and week["cpa"] is not None
         and week["ctr"] >= POLICY["landing_page_ctr"]
-        and week["cpa_usd"] >= allowable * POLICY["landing_page_cpa_multiple"]
+        and week["cpa"] >= allowable * POLICY["landing_page_cpa_multiple"]
     ):
         findings.append(
             {
                 "code": "landing_page",
                 "text": (
-                    f"Click-through is {week['ctr']:.1%} but a conversion costs ${week['cpa_usd']:.2f}, "
-                    f"well above the ${allowable:.2f} you can pay: the ad works and the page does not. "
+                    f"Click-through is {week['ctr']:.1%} but a conversion costs {_show(week['cpa'], code)}, "
+                    f"well above the {_show(allowable, code)} you can pay: the ad works and the page does not. "
                     "The landing page, not the campaign, is the thing to fix."
                 ),
             }
@@ -783,13 +824,16 @@ def decide(
         auto, proposals = {"negatives": [], "pause_ads": [], "pause_keywords": []}, []
     else:
         auto = {
-            "negatives": _negatives(reads, labels, cap),
+            "negatives": _negatives(reads, labels, cap, code),
             "pause_ads": _pause_ads(reads),
-            "pause_keywords": _pause_keywords(reads, allowable, days_live),
+            "pause_keywords": _pause_keywords(reads, allowable, days_live, code),
         }
-        proposal = _bid_proposal(reads, allowable) or _budget_proposal(reads, allowable)
+        proposal = None
+        if not mismatch:
+            proposal = _bid_proposal(reads, allowable, fx) or _budget_proposal(reads, allowable, fx)
         proposals = [proposal] if proposal else []
     return {
+        "currency_code": code,
         "quiet": quiet,
         "days_live": days_live,
         "auto": auto,
@@ -797,7 +841,7 @@ def decide(
         "alerts": alerts,
         "findings": findings,
         "metrics": {
-            "allowable_cpa_usd": allowable,
+            "allowable_cpa": allowable,
             "windows": reads["windows"],
             "campaign": reads["campaign"],
             "search_terms": len(reads["search_terms"]),
@@ -819,16 +863,16 @@ def _plural(count, word) -> str:
     return f"{count} {word}{'' if count == 1 else 's'}"
 
 
-def _window_line(name: str, window: dict) -> str:
+def _window_line(name: str, window: dict, code: str) -> str:
     cpa = (
-        f"${window['cpa_usd']:.2f} per conversion"
-        if window["cpa_usd"] is not None
+        f"{_show(window['cpa'], code)} per conversion"
+        if window["cpa"] is not None
         else "no conversion yet"
     )
     return (
-        f"- {name}: {_plural(window['clicks'], 'click')} for ${window['cost_usd']:.2f} "
+        f"- {name}: {_plural(window['clicks'], 'click')} for {_show(window['cost'], code)} "
         f"({window['ctr']:.1%} of {window['impressions']} impressions clicked, "
-        f"${window['cpc_usd']:.2f} a click), {window['conversions']:g} conversions, {cpa}."
+        f"{_show(window['cpc'], code)} a click), {window['conversions']:g} conversions, {cpa}."
     )
 
 
@@ -852,9 +896,10 @@ def _applied_lines(applied: dict) -> list[str]:
 def proposal_document(proposal: dict, campaign: dict, number: int, today: date) -> str:
     kind = proposal["kind"]
     previous, proposed = proposal["previous"], proposal["proposed"]
+    code = proposed.get("currency_code") or "USD"
     if kind == "budget_change":
         title = "Change the daily budget"
-        change = f"From ${previous['daily_budget_usd']:.2f} a day to ${proposed['daily_budget_usd']:.2f} a day."
+        change = f"From {_show(previous['daily_budget'], code)} a day to {_show(proposed['daily_budget'], code)} a day."
     else:
         title = "Change how Google bids"
         names = {
@@ -863,8 +908,8 @@ def proposal_document(proposal: dict, campaign: dict, number: int, today: date) 
             "target_cpa": "conversions at a target cost each",
         }
         change = f"From {names.get(previous.get('strategy'), previous.get('strategy'))} to {names.get(proposed.get('strategy'), proposed.get('strategy'))}"
-        if proposed.get("target_cpa_usd") is not None:
-            change += f", target ${proposed['target_cpa_usd']:.2f} per conversion"
+        if proposed.get("target_cpa") is not None:
+            change += f", target {_show(proposed['target_cpa'], code)} per conversion"
         change += "."
     return (
         f"# Proposal {number}: {title}\n\n"
@@ -895,7 +940,8 @@ def render(
         campaign.get("name") or campaign.get("campaign_name") or "your Google Search campaign"
     )
     windows = reads_normalized["windows"]
-    allowable = decision["metrics"].get("allowable_cpa_usd")
+    allowable = decision["metrics"].get("allowable_cpa")
+    code = decision.get("currency_code") or "USD"
     lines = [
         f"# Google Ads check, {today.isoformat()}",
         "",
@@ -905,12 +951,12 @@ def render(
         "",
         "## The numbers",
         "",
-        _window_line("Last 7 days", windows["7d"]),
-        _window_line("Last 30 days", windows["30d"]),
+        _window_line("Last 7 days", windows["7d"], code),
+        _window_line("Last 30 days", windows["30d"], code),
     ]
     if allowable is not None:
         lines.append(
-            f"- The most you can pay for one conversion, from the assessment: ${allowable:.2f}."
+            f"- The most you can pay for one conversion, from the assessment: {_show(allowable, code)}."
         )
     campaign_facts = reads_normalized["campaign"]
     lines.append(
@@ -920,7 +966,7 @@ def render(
             if campaign_facts["primary_status_reasons"]
             else ""
         )
-        + f"; daily budget ${campaign_facts['budget_usd']:.2f}."
+        + f"; daily budget {_show(campaign_facts['budget'], code)}."
     )
     lines += ["", "## What Tin did"]
     applied_lines = _applied_lines(applied)

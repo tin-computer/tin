@@ -355,9 +355,9 @@ async def click(selector: str) -> str:
 @server.tool()
 @_reported
 async def click_role(role: str, name: str) -> str:
-    """Click the first element with an ARIA role and accessible name, then describe the page."""
+    """Click one element with an ARIA role and exact accessible name; reject ambiguous matches."""
     page = await _page()
-    await page.get_by_role(role, name=name).first.click(timeout=ACTION_TIMEOUT_MS)
+    await page.get_by_role(role, name=name, exact=True).click(timeout=ACTION_TIMEOUT_MS)
     return await _describe(page, 2000)
 
 

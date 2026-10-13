@@ -341,6 +341,37 @@ def test_site_wide_field_data_is_labelled_and_lighthouse_categories_are_reported
     assert "Document does not have a meta description" in lighthouse["evidence"][1]
 
 
+@pytest.mark.parametrize(
+    "target_indexed, coverage_state, declared_target, expected_failure",
+    [
+        (True, "Page with redirect", "/destination", False),
+        (False, "Page with redirect", "/destination", True),
+        (None, "Page with redirect", "/destination", True),
+        (True, "Page with redirect", "/different", True),
+        (True, "Crawled - currently not indexed", "/destination", True),
+    ],
+)
+def test_redirect_to_inspected_indexed_canonical_is_not_missing_index(
+    target_indexed, coverage_state, declared_target, expected_failure
+):
+    target = f"{BASE}/destination"
+    redirected = {
+        "url": f"{BASE}/old-page",
+        "status": "observed",
+        "indexed": False,
+        "coverage_state": coverage_state,
+        "google_canonical": target,
+        "user_canonical": f"{BASE}{declared_target}",
+    }
+    target_row = {"url": target, "status": "observed", "indexed": target_indexed}
+    findings = site_findings(
+        view([], url_inspection={"status": "observed", "results": [redirected, target_row]}),
+        home=f"{BASE}/",
+        pagespeed={},
+    )
+    assert ("indexation.not_indexed_by_google" in ids(findings)) is expected_failure
+
+
 def test_url_inspection_rows_and_findings():
     payload = {
         "inspectionResult": {

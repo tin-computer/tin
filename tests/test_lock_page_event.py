@@ -55,6 +55,26 @@ async def test_lock_page_events_carry_the_project_and_agent(monkeypatch) -> None
 
 
 @pytest.mark.asyncio
+async def test_lock_page_steps_it_watched_are_events(monkeypatch) -> None:
+    app, captured = lock_page_app(monkeypatch)
+    async with httpx.AsyncClient(
+        transport=httpx.ASGITransport(app=app), base_url="http://test"
+    ) as client:
+        for action in ("agent_connected", "setup_started", "plan_ready"):
+            response = await client.post(
+                "/api/events/lock-page",
+                json={"action": action, "agent": "claude", "project_id": "project-1"},
+            )
+            assert response.status_code == 204
+    assert [item["event"] for item in captured] == [
+        "lock_page_agent_connected",
+        "lock_page_setup_started",
+        "lock_page_plan_ready",
+    ]
+    assert all(item["properties"]["agent"] == "claude" for item in captured)
+
+
+@pytest.mark.asyncio
 async def test_lock_page_event_rejects_free_text(monkeypatch) -> None:
     app, captured = lock_page_app(monkeypatch)
     async with httpx.AsyncClient(

@@ -14,6 +14,7 @@ from uuid import UUID
 from temporalio import activity
 from temporalio.exceptions import ApplicationError
 
+from tin_lite.failures import failure_projection, split_failure_input
 from tin_lite.organic_audit_publication import publish_artifacts
 from tin_lite.x_posts import KEY, approved_payload
 
@@ -354,23 +355,29 @@ class XPublishActivities:
             )
 
     @activity.defn(name="x_publish_failure")
-    async def failure(self, run_id: str) -> None:
+    async def failure(self, argument: str | dict) -> None:
+        run_id, passed = split_failure_input(argument)
         run = await self.db.get_run(UUID(str(run_id)))
         if not run or run.executor != KEY:
             return
         approval_id = str((run.input or {}).get("approval_id", ""))
         receipt = await self.db.get_effect(_post_key(approval_id))
+        saved = None
         if receipt and receipt.status == "completed":
             value = (receipt.result or {}).get("value") or {}
-            detail = (
+            saved = (
                 f"X accepted the post at {value.get('url', 'its account')}, "
                 "but Tin could not save the final report. Do not post again."
             )
         elif receipt and receipt.status == "started":
-            detail = "X may have published this post. Check the account before trying again."
-        else:
-            detail = (
-                "X publication stopped before Tin confirmed a post. "
-                "Check the run details before trying again."
-            )
-        await self.db.project_failure(run_id=run.id, error_message=detail)
+            saved = "X may have published this post. Check the account before trying again."
+        # Without a post receipt the post was never sent: the cause (a reconnect, a changed
+        # account, changed media) says what stopped it, and this line covers the rest.
+        await self.db.project_failure(
+            run_id=run.id,
+            **failure_projection(
+                passed,
+                "X publication stopped before Tin sent the post, so nothing was posted. Try again.",
+                saved=saved,
+            ),
+        )

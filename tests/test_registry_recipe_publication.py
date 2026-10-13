@@ -52,7 +52,12 @@ async def test_parent_publication_pins_children_on_first_sync_and_child_only_upg
     await catalog.sync_builtin_workflows(database=db, storage=storage, system_wiki=WIKI)
     first = db.rows[parent.id].current_commit_sha
     for child in catalog.BUILTIN_WORKFLOWS:
-        if child.key not in (*organic_system.STEPS.values(), organic_system.REFRESH_KEY):
+        if child.key not in (
+            *organic_system.STEPS.values(),
+            *organic_system.WEBSITE_STEPS.values(),
+            *organic_system.MEASURE_STEPS.values(),
+            organic_system.REFRESH_KEY,
+        ):
             continue
         definition, resources = child.definition_and_files_with_wiki(WIKI)
         assert json.loads(storage.revisions[first][child.definition_path]) == definition
@@ -72,6 +77,18 @@ async def test_parent_publication_pins_children_on_first_sync_and_child_only_upg
     assert second != first
     assert json.loads(storage.revisions[second][child.definition_path])["title"] == upgraded.title
     assert json.loads(storage.revisions[first][child.definition_path])["title"] == child.title
+
+
+def test_the_organic_system_pins_every_workflow_its_prepare_step_reads():
+    # A fresh registry (staging, a new install) only has these files at the system's revision
+    # if they are pinned; an older registry hid the gap because earlier commits carried them.
+    read = {
+        *organic_system.STEPS.values(),
+        *organic_system.WEBSITE_STEPS.values(),
+        *organic_system.MEASURE_STEPS.values(),
+        organic_system.REFRESH_KEY,
+    }
+    assert read <= set(catalog.pinned_children(organic_system.KEY))
 
 
 async def test_content_plan_revisions_carry_the_planning_agent():

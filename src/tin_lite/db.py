@@ -18,7 +18,7 @@ from zoneinfo import ZoneInfo
 
 import asyncpg
 
-from tin_lite import analytics
+from tin_lite import ads_currency, analytics
 from tin_lite.domain import (
     PROJECT_TASK_WORKFLOW_NAME,
     ActivityEvent,
@@ -1941,6 +1941,76 @@ class Database:
             oauth_client_id,
             tool_name[:100],
         )
+
+    async def agent_setup_status(self, clerk_user_id: str) -> dict[str, Any]:
+        """How far this person's coding agent has come, across the projects they belong to.
+
+        The locked dashboard follows along with it. The agent counts as connected once a
+        project call (project_mcp_usage) or an MCP-started run carries this person's identity.
+        project_mcp_usage keeps the latest call per project, so the time can be later than
+        the very first call. Setup is this person's latest growth.onboarding run that was not
+        superseded; its plan is ready once it waits for picks or has finished.
+        """
+        row = await self.pool.fetchrow(
+            """
+            WITH mine AS (
+                SELECT projects.id, projects.name
+                FROM project_memberships
+                JOIN projects ON projects.id = project_memberships.project_id
+                WHERE project_memberships.clerk_user_id = $1 AND projects.deleted_at IS NULL
+            ),
+            setup AS (
+                SELECT runs.id, runs.project_id, mine.name AS project_name, runs.status,
+                       runs.created_at, runs.trigger_client
+                FROM workflow_runs AS runs
+                JOIN mine ON mine.id = runs.project_id
+                WHERE runs.executor = 'growth.onboarding'
+                  AND runs.started_by_clerk_user_id = $1
+                  AND runs.status <> 'superseded'
+                ORDER BY runs.created_at DESC, runs.id DESC
+                LIMIT 1
+            ),
+            agent_runs AS (
+                SELECT runs.created_at, runs.trigger_client
+                FROM workflow_runs AS runs
+                JOIN mine ON mine.id = runs.project_id
+                WHERE runs.started_by_clerk_user_id = $1 AND runs.trigger_source = 'mcp'
+            )
+            SELECT
+                (SELECT min(usage.used_at) FROM project_mcp_usage AS usage
+                 JOIN mine ON mine.id = usage.project_id
+                 WHERE usage.clerk_user_id = $1) AS usage_at,
+                (SELECT min(created_at) FROM agent_runs) AS agent_run_at,
+                (SELECT trigger_client FROM agent_runs
+                 WHERE trigger_client IS NOT NULL
+                 ORDER BY created_at DESC LIMIT 1) AS client,
+                setup.id AS setup_run_id,
+                setup.project_id AS setup_project_id,
+                setup.project_name AS setup_project_name,
+                setup.status AS setup_status,
+                setup.created_at AS setup_started_at
+            FROM (SELECT 1) AS one
+            LEFT JOIN setup ON true
+            """,
+            clerk_user_id,
+        )
+        assert row is not None
+        connected = [value for value in (row["usage_at"], row["agent_run_at"]) if value]
+        status = row["setup_status"]
+        return {
+            "agent": {
+                "connected_at": min(connected) if connected else None,
+                "client": row["client"],
+            },
+            "setup": {
+                "run_id": row["setup_run_id"],
+                "project_id": row["setup_project_id"],
+                "project_name": row["setup_project_name"],
+                "started_at": row["setup_started_at"],
+                "status": status,
+                "plan_ready": status in {"needs_input", "succeeded"},
+            },
+        }
 
     async def create_project_workflow(
         self,
@@ -5264,6 +5334,9 @@ class Database:
         canonical_commit_sha: str | None = None,
         artifact_path: str | None = None,
         artifact_ref: str | None = None,
+        error_kind: str | None = None,
+        error_action: str | None = None,
+        error_detail: str | None = None,
     ) -> None:
         """A launch that cannot proceed ends failed with a founder-readable reason; when a
         setup note was published first it stays linked as the run's artifact."""
@@ -5272,6 +5345,7 @@ class Database:
                 """
                 UPDATE workflow_runs
                 SET status = 'failed', error_message = $2,
+                    error_kind = $6, error_action = $7, error_detail = $8,
                     canonical_commit_sha = COALESCE($3, canonical_commit_sha),
                     artifact_path = COALESCE($4, artifact_path),
                     artifact_ref = COALESCE($5, artifact_ref),
@@ -5286,6 +5360,9 @@ class Database:
                 canonical_commit_sha,
                 artifact_path,
                 artifact_ref,
+                error_kind,
+                (error_action or None) and error_action[:40],
+                (error_detail or None) and error_detail[:2000],
             )
             if row is None:
                 return
@@ -6780,6 +6857,16 @@ class Database:
             "DELETE FROM run_rollouts WHERE run_id IN "
             "(SELECT id FROM workflow_runs WHERE project_id = $1)",
             "DELETE FROM project_test_identities WHERE project_id = $1",
+            "DELETE FROM project_task_entries WHERE run_id IN "
+            "(SELECT id FROM workflow_runs WHERE project_id = $1)",
+            "DELETE FROM project_authors WHERE project_id = $1",
+            # LinkedIn collection holds other people's names, headlines and page text. Jobs (and
+            # their pages) go before the connections: a job interrupted mid-lease still points at
+            # its extension device, which would block the devices' cascade.
+            "DELETE FROM connection_collection_jobs WHERE project_id = $1",
+            "DELETE FROM connection_collection_account_leases WHERE run_id IN "
+            "(SELECT id FROM workflow_runs WHERE project_id = $1)",
+            "DELETE FROM connection_extension_devices WHERE project_id = $1",
             "DELETE FROM integration_auth_attempts WHERE project_id = $1",
             "DELETE FROM integration_call_receipts WHERE project_id = $1",
             # Failed-payment recovery keeps Stripe and mailbox evidence in its run receipts and
@@ -7946,13 +8033,38 @@ class Database:
                 artifact_path,
             )
 
-    async def project_failure(self, *, run_id: UUID, error_message: str) -> None:
+    async def project_failure(
+        self,
+        *,
+        run_id: UUID,
+        error_message: str,
+        error_kind: str | None = None,
+        error_action: str | None = None,
+        error_detail: str | None = None,
+    ) -> None:
+        """Mark a run failed. A run that already failed with a message keeps it: the first
+        failure written is the specific one, and a later generic projection must not hide it."""
         async with self.pool.acquire() as conn, conn.transaction():
             row = await conn.fetchrow(
                 """
                 UPDATE workflow_runs
                 SET status = 'failed',
-                    error_message = $2,
+                    error_message = CASE
+                        WHEN status = 'failed' AND error_message IS NOT NULL THEN error_message
+                        ELSE $2
+                    END,
+                    error_kind = CASE
+                        WHEN status = 'failed' AND error_message IS NOT NULL THEN error_kind
+                        ELSE $3
+                    END,
+                    error_action = CASE
+                        WHEN status = 'failed' AND error_message IS NOT NULL THEN error_action
+                        ELSE $4
+                    END,
+                    error_detail = CASE
+                        WHEN status = 'failed' AND error_message IS NOT NULL THEN error_detail
+                        ELSE $5
+                    END,
                     task_phase = CASE
                         WHEN executor = 'project.task' THEN 'failed'
                         ELSE task_phase
@@ -7968,6 +8080,9 @@ class Database:
                 """,
                 run_id,
                 error_message[:2000],
+                error_kind,
+                (error_action or None) and error_action[:40],
+                (error_detail or None) and error_detail[:2000],
             )
             if row is None:
                 return
@@ -8375,9 +8490,10 @@ def _proposal(row: asyncpg.Record) -> dict[str, Any]:
 def _proposal_summary(proposal: dict[str, Any]) -> str:
     proposed = proposal.get("proposed") or {}
     if proposal.get("kind") == "budget_change":
+        amount = proposed.get("daily_budget", proposed.get("daily_budget_usd"))
         return (
             f"Proposal {proposal.get('proposal_number')}: change the daily budget to "
-            f"${proposed.get('daily_budget_usd')}."
+            f"{ads_currency.money(amount, proposed.get('currency_code') or 'USD', cents=True)}."
         )
     return (
         f"Proposal {proposal.get('proposal_number')}: switch bidding to "
@@ -8431,6 +8547,8 @@ def _run(row: asyncpg.Record) -> WorkflowRun:
             else None
         ),
         error_message=row["error_message"],
+        error_kind=row.get("error_kind"),
+        error_action=row.get("error_action"),
         input=_json_object(row.get("input", {}), field="run input"),
         task_title=row.get("task_title"),
         task_phase=row.get("task_phase"),

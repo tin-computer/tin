@@ -66,7 +66,11 @@ class WeeklyBriefReporter:
             }
         )
         body = _output_text(response)
-        body = body.split("\n## Sources\n", 1)[0].rstrip()
+        body = ("\n" + body).split("\n## Sources\n", 1)[0].strip()
+        if not body:
+            raise WeeklyBriefProtocolError("weekly brief response returned no summary")
+        if not body.startswith("# "):
+            body = f"# Weekly brief\n\n{body}"
         source_lines = (
             "\n".join(f"- {source.label}: `{source.artifact_ref}`" for source in sources)
             if sources

@@ -149,6 +149,8 @@ class FakeDB:
         return self.run
 
     async def get_effect(self, key):
+        if key.endswith(":x_style_model"):
+            return self.model_receipt
         assert key.endswith(":x_style_context")
         result = {"revision": "a" * 40, "existing_guide": self.existing_guide}
         if self.policy_version is not None:
@@ -164,7 +166,12 @@ class FakeDB:
         yield object(), self.model_receipt
 
     async def start_effect(self, conn, *, execution_key, operation):
-        self.model_receipt = SimpleNamespace(status="started")
+        self.model_receipt = SimpleNamespace(status="started", result={})
+
+    async def save_effect_progress(self, conn, *, execution_key, result):
+        assert execution_key.endswith(":x_style_model")
+        assert self.model_receipt.status == "started"
+        self.model_receipt.result = result
 
     async def complete_effect(self, conn, *, execution_key, result):
         self.completed = result
@@ -488,3 +495,122 @@ async def test_an_extraction_failure_says_what_stopped_it(monkeypatch):
     with pytest.raises(ApplicationError) as failure:
         await run_extract(monkeypatch, {"sample_source": "connected"}, FailingX([]))
     assert "X returned an incomplete result. No replacement was purchased" in str(failure.value)
+    from tin_lite.failures import classify
+
+    assert classify(failure.value).kind == "transient"
+
+
+FALLBACK = "X voice capture could not confirm completion."
+
+
+def failing_worker(monkeypatch, error):
+    from unittest.mock import AsyncMock
+
+    import tin_lite.x_style_activities as activities
+
+    monkeypatch.setattr(activities, "model_usage_scope", lambda **kwargs: nullcontext())
+    run = SimpleNamespace(
+        id=RUN_ID,
+        executor=x_style.KEY,
+        status=SimpleNamespace(value="running"),
+        project_id=UUID("a0000000-0000-0000-0000-000000000061"),
+        input={},
+    )
+    db = FakeDB(run)
+    db.project_failure = AsyncMock()
+    x = FakeX()
+    x.timeline = AsyncMock(side_effect=error)
+    router = FakeRouter()
+    return XStyleActivities(database=db, storage=None, router=router, x_connection=x), db, router
+
+
+async def test_a_library_value_error_reads_as_internal_and_buys_nothing_again(monkeypatch):
+    # Every ValueError used to pass its text: a parser's words are not Tin's sentence.
+    def parse():
+        return UUID("not-a-uuid private provider text")
+
+    try:
+        parse()
+    except ValueError as exc:
+        error = exc
+    worker, db, router = failing_worker(monkeypatch, error)
+    with pytest.raises(ApplicationError) as raised:
+        await worker.extract(str(RUN_ID))
+    assert "not-a-uuid" not in raised.value.message
+    assert raised.value.message.startswith("X voice extraction could not be confirmed. No ")
+    assert raised.value.__cause__ is None
+    # A retry replays the refusal; nothing is bought again.
+    with pytest.raises(ApplicationError, match="no replacement was purchased"):
+        await worker.extract(str(RUN_ID))
+    assert router.calls == 0 and db.model_receipt.status == "started"
+    # An old history passes only the run ID; the saved sentence is shown.
+    await worker.failure(str(RUN_ID))
+    kwargs = db.project_failure.await_args.kwargs
+    assert kwargs["error_message"] == raised.value.message
+    assert kwargs["error_kind"] == "explained"
+
+
+async def test_a_spending_limit_during_extraction_is_yours_to_fix(monkeypatch):
+    from tin_lite.billing_contracts import BillingError
+    from tin_lite.failures import classify
+
+    worker, db, _ = failing_worker(
+        monkeypatch, BillingError("project_limit", "Project limit of $5.00 reached")
+    )
+    with pytest.raises(ApplicationError) as raised:
+        await worker.extract(str(RUN_ID))
+    assert "spending limit stopped the run" in raised.value.message
+    assert "No replacement was purchased" in raised.value.message
+    assert isinstance(raised.value.__cause__, BillingError)
+    failure = classify(raised.value)
+    assert (failure.kind, failure.action) == ("needs_you", "billing")
+
+
+async def test_failure_shows_the_passed_cause_by_kind(monkeypatch):
+    worker, db, _ = failing_worker(monkeypatch, ConnectionError("x"))
+    # Plain run ID, no receipt: the fixed sentence, as before.
+    await worker.failure(str(RUN_ID))
+    kwargs = db.project_failure.await_args.kwargs
+    assert kwargs["error_message"].startswith(FALLBACK) and kwargs["error_kind"] is None
+    # A founder-fixable cause is shown with its action.
+    await worker.failure(
+        {
+            "run_id": str(RUN_ID),
+            "reason": "Reconnect X under Integrations.",
+            "kind": "needs_you",
+            "action": "integrations",
+            "detail": "IntegrationAuthorizationError: Reconnect X under Integrations.",
+        }
+    )
+    kwargs = db.project_failure.await_args.kwargs
+    assert kwargs["error_message"] == "Reconnect X under Integrations."
+    assert (kwargs["error_kind"], kwargs["error_action"]) == ("needs_you", "integrations")
+    # An internal cause shows the fixed sentence and keeps the raw text for operators.
+    await worker.failure(
+        {
+            "run_id": str(RUN_ID),
+            "reason": "Tin hit a problem on its side.",
+            "kind": "internal",
+            "detail": "KeyError: 'guide'",
+        }
+    )
+    kwargs = db.project_failure.await_args.kwargs
+    assert kwargs["error_message"].startswith(FALLBACK)
+    assert kwargs["error_kind"] == "internal" and kwargs["error_detail"] == "KeyError: 'guide'"
+
+
+async def test_a_guide_that_copies_a_source_post_says_so_after_the_paid_call(monkeypatch):
+    worker, db, router = failing_worker(monkeypatch, None)
+    worker.x.timeline = FakeX().timeline
+    copied = (
+        "My full own post describes an exact review step in Tin; "
+        "the source text is private to this extraction request."
+    )
+    router.parsed = {**MODEL_STYLE, "demonstration": copied}
+    with pytest.raises(ApplicationError) as raised:
+        await worker.extract(str(RUN_ID))
+    assert "The proposed guide copied a source post." in raised.value.message
+    assert copied not in raised.value.message
+    assert router.calls == 1 and db.model_receipt.status == "started"
+    await worker.failure(str(RUN_ID))
+    assert "copied a source post" in db.project_failure.await_args.kwargs["error_message"]

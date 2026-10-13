@@ -55,6 +55,7 @@ from tin_lite.domain import (
     StaleSettingsRevisionError,
     TriggerClient,
 )
+from tin_lite.failures import run_failure_view
 from tin_lite.growth_onboarding import KEY as GROWTH_ONBOARDING_KEY
 from tin_lite.growth_onboarding_control import (
     ConnectionPick,
@@ -3068,6 +3069,8 @@ def create_mcp_app(
             "selected_sources": selected_sources,
             "allowed_actions": _run_allowed_actions(run),
             "error": run.error_message,
+            # needs_you (with error_fix), transient, explained or internal; see failures.py.
+            **run_failure_view(run),
             "review_summary": review_summary,
             "content_delivery": delivery,
             # Where a proposed page will appear, and whether Tin has found it live.
@@ -4428,6 +4431,9 @@ def create_mcp_app(
                 "review_decision": run.review_decision,
                 "allowed_actions": _run_allowed_actions(run),
                 "error": run.error_message,
+                **run_failure_view(run),
+                # needs_you (with error_fix), transient, explained or internal; see failures.py.
+                **run_failure_view(run),
                 **(
                     {
                         "task": {

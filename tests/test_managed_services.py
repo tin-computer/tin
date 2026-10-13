@@ -27,9 +27,10 @@ from test_workflow_code import setup, start
 from tin_lite import managed_services
 from tin_lite.code_activities import CodeActivities
 from tin_lite.code_models import model_terms
-from tin_lite.code_services import OPERATION, SPENDING_STOPPED, CodeServiceError
+from tin_lite.code_services import OPERATION, CodeServiceError
 from tin_lite.connection_records import ServiceArgumentError
 from tin_lite.domain import RunStatus
+from tin_lite.failures import BILLING_FOUNDER_TEXT
 from tin_lite.integrations import (
     IntegrationRateLimitedError,
     IntegrationService,
@@ -800,9 +801,10 @@ async def test_a_replayed_spending_stop_keeps_its_reason(billed, monkeypatch):
     from tin_lite.billing_contracts import BillingError
 
     async def refuse(*args, **kwargs):
-        raise BillingError("budget_exhausted", "The run budget is spent.")
+        raise BillingError("project_limit", "Current project limits block further spending.")
 
     monkeypatch.setattr(f.db.billing, "begin_operation", refuse)
     await finish(code, run_id)
-    assert compute.results == [{"error": SPENDING_STOPPED}] * 2
+    stopped = f"{BILLING_FOUNDER_TEXT['project_limit'][1]} No request was made."
+    assert compute.results == [{"error": stopped}] * 2
     assert not provider.requests

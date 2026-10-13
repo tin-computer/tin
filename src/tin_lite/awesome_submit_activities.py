@@ -27,6 +27,7 @@ from tin_lite.awesome_submit import (
     paths,
     source_path,
 )
+from tin_lite.failures import failure_projection, split_failure_input
 from tin_lite.github_account import SubmissionRefused
 from tin_lite.integrations import (
     GITHUB_USER_PROVIDER,
@@ -37,6 +38,10 @@ from tin_lite.organic_audit import digest
 from tin_lite.organic_audit_publication import publish_artifacts
 
 STEP_TOTAL = 5
+FAILURE_CAUTION = (
+    "Check the result on GitHub before trying again; Tin never sends the same list twice."
+)
+FAILURE_FALLBACK = f"The list submission stopped before finishing. {FAILURE_CAUTION}"
 
 
 class AwesomeSubmitActivities:
@@ -511,14 +516,18 @@ class AwesomeSubmitActivities:
             )
 
     @activity.defn(name="awesome_submit_failure")
-    async def failure(self, run_id: str) -> None:
+    async def failure(self, value: str | dict) -> None:
+        run_id, passed = split_failure_input(value)
         run = await self.db.get_run(UUID(run_id))
         if run is None or run.executor != KEY:
             return
         failure = await self._result(run_id, "failure") or {}
-        await self.db.project_failure(
-            run_id=run.id,
-            error_message=failure.get("detail")
-            or "The list submission stopped before finishing. Check the result on GitHub before "
-            "trying again; Tin never sends the same list twice.",
-        )
+        # Tin's saved refusal first; else the cause, such as GitHub not answering mid-draft.
+        projection = failure_projection(passed, FAILURE_FALLBACK, saved=failure.get("detail"))
+        if not failure.get("detail") and projection["error_message"] != FAILURE_FALLBACK:
+            # A send may have been in flight when the cause stopped the run.
+            reason = projection["error_message"].rstrip()
+            if not reason.endswith((".", "!", "?")):
+                reason += "."
+            projection["error_message"] = f"{reason} {FAILURE_CAUTION}"
+        await self.db.project_failure(run_id=run.id, **projection)

@@ -752,7 +752,12 @@ async def test_model_failure_names_its_cause_without_provider_text(error, reason
     with pytest.raises(ApplicationError, match="no replacement"):
         await activities.keyword_review(run_id)
     failure = await activities._result(run_id, "failure")
-    assert failure == {"code": "model_unavailable", "stage": "review", "reason": reason}
+    assert failure == {
+        "code": "model_unavailable",
+        "stage": "review",
+        "reason": reason,
+        "status": "unknown",
+    }
     receipt = await activities._result(run_id, "review")
     assert receipt["reason"] == reason and "secret" not in json.dumps(receipt)
     await activities.keyword_failure(run_id)
@@ -864,3 +869,99 @@ def test_markdown_url_keeps_http_urls_literal_and_escapes_everything_else() -> N
     assert markdown_url(" https://example.com/​ ") == "<https://example.com/>"
     assert markdown_url("javascript:alert(1)") == "javascript:alert\\(1\\)"
     assert markdown_url("https://example.com/<b>") == "https://example\\.com/&lt;b&gt;"
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("code", ["run_limit", "project_limit", "insufficient_funds"])
+async def test_a_billing_limit_on_the_review_reads_as_billing_and_is_not_bought_again(code):
+    from tin_lite.billing_contracts import BillingError
+
+    activities, db, _, _, model = await fixture()
+    run_id = str(db.run.id)
+    await activities.keyword_collect(run_id)
+    model.generate.side_effect = BillingError(code, "Private diagnostic must not escape")
+    for _ in range(2):
+        with pytest.raises(ApplicationError, match="Billing"):
+            await activities.keyword_review(run_id)
+    assert model.generate.await_count == 1
+    receipt = await activities._result(run_id, "review")
+    assert receipt["status"] == "unavailable" and receipt["reason"] == code
+    await activities.keyword_failure(run_id)
+    kwargs = db.project_failure.await_args.kwargs
+    assert "Billing" in kwargs["error_message"]
+    assert "Private diagnostic" not in kwargs["error_message"]
+    assert kwargs["error_kind"] == "needs_you" and kwargs["error_action"] == "billing"
+
+
+@pytest.mark.asyncio
+async def test_an_internal_billing_code_is_not_called_a_spending_limit():
+    from tin_lite.billing_contracts import BillingError
+
+    activities, db, _, _, model = await fixture()
+    run_id = str(db.run.id)
+    await activities.keyword_collect(run_id)
+    model.generate.side_effect = BillingError("unpriced_model", "Private diagnostic")
+    with pytest.raises(ApplicationError):
+        await activities.keyword_review(run_id)
+    await activities.keyword_failure(run_id)
+    kwargs = db.project_failure.await_args.kwargs
+    assert "spending limit" not in kwargs["error_message"]
+    assert "unpriced_model" not in kwargs["error_message"]
+    assert "could not be confirmed" not in kwargs["error_message"]
+    assert kwargs["error_kind"] == "internal"
+
+
+@pytest.mark.asyncio
+async def test_an_older_spending_limit_receipt_still_reads_as_before():
+    activities, db, *_ = await fixture()
+    run_id = str(db.run.id)
+    await activities._save(
+        run_id,
+        "failure",
+        {"code": "model_unavailable", "stage": "review", "reason": "spending_limit"},
+    )
+    await activities.keyword_failure(run_id)
+    text = db.project_failure.await_args.kwargs["error_message"]
+    assert "would have gone past the run's spending limit" in text
+
+
+@pytest.mark.asyncio
+async def test_keyword_failure_input_shapes():
+    from tin_lite.keyword_plan_activities import FAILURE_FALLBACK
+
+    activities, db, *_ = await fixture()
+    run_id = str(db.run.id)
+    await activities.keyword_failure(run_id)
+    kwargs = db.project_failure.await_args.kwargs
+    assert kwargs["error_message"] == FAILURE_FALLBACK and kwargs["error_kind"] is None
+
+    await activities.keyword_failure(
+        {
+            "run_id": run_id,
+            "reason": "Configure DataForSEO, the native model, and a keyword-plan ceiling of "
+            "at least $5.",
+            "kind": "explained",
+            "detail": "ApplicationError",
+        }
+    )
+    assert "ceiling of at least $5" in db.project_failure.await_args.kwargs["error_message"]
+
+    await activities.keyword_failure(
+        {
+            "run_id": run_id,
+            "reason": "Connect Google Search Console again.",
+            "kind": "needs_you",
+            "action": "integrations",
+            "detail": "IntegrationAuthorizationError: expired",
+        }
+    )
+    kwargs = db.project_failure.await_args.kwargs
+    assert kwargs["error_message"] == "Connect Google Search Console again."
+    assert kwargs["error_kind"] == "needs_you" and kwargs["error_action"] == "integrations"
+
+    await activities.keyword_failure(
+        {"run_id": run_id, "reason": "x", "kind": "internal", "detail": "KeyError: 'scope'"}
+    )
+    kwargs = db.project_failure.await_args.kwargs
+    assert kwargs["error_message"] == FAILURE_FALLBACK and kwargs["error_kind"] == "internal"
+    assert kwargs["error_detail"] == "KeyError: 'scope'"

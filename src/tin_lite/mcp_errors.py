@@ -5,7 +5,8 @@ reported as a bare ``Error executing tool <name>`` with the text kept server-sid
 bodies and services raise ``LookupError``, ``ValueError``, ``PermissionError`` and
 ``RuntimeError`` subclasses for failures the agent is meant to read and act on, so
 ``GuardedMCPServer`` wraps every registered tool and translates those. Programming errors
-(``TypeError``, ``AttributeError``, ``AssertionError``, driver and transport errors) stay masked.
+(``TypeError``, ``AttributeError``, ``AssertionError``, driver and transport errors) stay masked,
+and so does the text of a provider, sandbox or Temporal ``RuntimeError`` (failures.py).
 """
 
 from __future__ import annotations
@@ -19,6 +20,8 @@ from typing import Any
 from mcp.server import MCPServer
 from mcp.server.mcpserver.exceptions import ToolError
 from pydantic import ValidationError
+
+from tin_lite.failures import public_error_text
 
 BOUNDARY_MARKER = "__tin_mcp_boundary__"
 
@@ -48,7 +51,10 @@ def tool_error(exc: BaseException) -> ToolError | None:
         return ToolError(f"{code}: {exc}")
     for cls, prefix in _PREFIXES:
         if isinstance(exc, cls):
-            return ToolError(f"{prefix}: {exc}")
+            # Input and lookup errors help the calling agent fix its call. A RuntimeError from
+            # a provider, sandbox or Temporal client describes Tin's internals instead.
+            text = public_error_text(exc) if cls is RuntimeError else str(exc)
+            return ToolError(f"{prefix}: {text}")
     return None
 
 

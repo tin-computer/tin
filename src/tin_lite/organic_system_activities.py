@@ -12,6 +12,7 @@ from temporalio import activity
 from temporalio.exceptions import ApplicationError
 
 from tin_lite import technical_fix
+from tin_lite.failures import classify, failure_projection, split_failure_input
 from tin_lite.organic_audit import digest
 from tin_lite.organic_system import (
     KEY,
@@ -35,6 +36,12 @@ from tin_lite.technical_fix_sources import TechnicalFixSources
 from tin_lite.workflow_definitions import ensure_schedule_allowed
 from tin_lite.workflow_inputs import WorkflowInputError, normalize_workflow_inputs
 from tin_lite.workflow_prerequisites import PrerequisiteError
+
+FAILURE_FALLBACK = "Organic traffic system could not finish."
+# Said after any reason: what stays and what was not bought again.
+FAILURE_AFTERWORD = (
+    "Completed child outputs remain available; paid requests were not automatically repeated."
+)
 
 # The first scheduled draft comes a week after the system's own first article at the earliest.
 WEEKLY_START_DELAY = timedelta(days=7)
@@ -764,7 +771,10 @@ class OrganicSystemActivities:
                         ),
                     )
                 except PrerequisiteError as exc:
-                    raise ApplicationError(str(exc), type=exc.code, non_retryable=True) from exc
+                    # The type keeps the code; the details say the founder can fix it.
+                    raise ApplicationError(
+                        str(exc), classify(exc).details(), type=exc.code, non_retryable=True
+                    ) from exc
                 result = {
                     "run_id": str(child.id),
                     "executor": child.executor,
@@ -1333,10 +1343,11 @@ class OrganicSystemActivities:
         return not failed
 
     @activity.defn
-    async def organic_system_failure(self, run_id: str):
-        await self.db.project_failure(
-            run_id=UUID(run_id),
-            error_message="Organic traffic system could not finish. "
-            "Completed child outputs remain available; "
-            "paid requests were not automatically repeated.",
-        )
+    async def organic_system_failure(self, value: str | dict):
+        run_id, passed = split_failure_input(value)
+        projection = failure_projection(passed, FAILURE_FALLBACK)
+        reason = projection["error_message"].rstrip()
+        if not reason.endswith((".", "!", "?")):
+            reason += "."
+        projection["error_message"] = f"{reason} {FAILURE_AFTERWORD}"
+        await self.db.project_failure(run_id=UUID(run_id), **projection)

@@ -51,6 +51,7 @@ async def _create_project(name: str, repo_id: str) -> None:
     storage = CodeStorage(
         organization=settings.code_storage_org,
         private_key=settings.code_storage_api_key.get_secret_value(),
+        repo_prefix=settings.code_storage_repo_prefix,
     )
     await storage.ensure_repo(repo_id)
     database = Database(settings.runtime_dsn)
@@ -67,6 +68,7 @@ async def _sync_builtins() -> None:
     storage = CodeStorage(
         organization=settings.code_storage_org,
         private_key=settings.code_storage_api_key.get_secret_value(),
+        repo_prefix=settings.code_storage_repo_prefix,
     )
     database = Database(settings.runtime_dsn)
     await database.connect()

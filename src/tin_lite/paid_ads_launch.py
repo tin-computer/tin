@@ -19,6 +19,7 @@ from statistics import median
 from urllib.parse import urlsplit
 from uuid import UUID
 
+from tin_lite import ads_currency
 from tin_lite.domain import PAID_ADS_LAUNCH_WORKFLOW_NAME as KEY
 from tin_lite.model_providers import ModelRoute, ProviderName
 from tin_lite.organic_audit import MARKETS, digest
@@ -38,7 +39,7 @@ COPY_ROUTE = ModelRoute(
 )
 ROUTES = (COPY_ROUTE,)
 POLICY = {
-    "version": 1,
+    "version": 2,
     "reasoning_effort": "medium",
     "repair_reasoning_effort": "low",
     "max_parallel_calls": 2,
@@ -79,6 +80,7 @@ OUTCOMES = (
     "campaign_exists",
     "account_disabled",
     "not_recommended",
+    "unsupported_currency",
 )
 LAUNCHABLE = {"test", "continue", "go", "restart", "restructure"}
 LIMITS = {
@@ -91,7 +93,20 @@ LIMITS = {
     "keyword": 80,
     "campaign_name": 80,
 }
-ACRONYMS = {"AI", "API", "SEO", "CRM", "B2B", "B2C", "SAAS", "IOS", "SMS", "PDF", "USD", "UK"}
+ACRONYMS = {
+    "AI",
+    "API",
+    "SEO",
+    "CRM",
+    "B2B",
+    "B2C",
+    "SAAS",
+    "IOS",
+    "SMS",
+    "PDF",
+    "UK",
+    *ads_currency.MINIMUM_UNIT_MICROS,
+}
 SUPERLATIVES = ("click here", "best", "#1", "no.1", "number one", "guaranteed", "cheapest")
 TRACKING_TEMPLATE = "{lpurl}?utm_source=google&utm_medium=cpc&utm_campaign={campaignid}"
 # The assessment sometimes shapes a group it wants held back until there is purchase
@@ -176,12 +191,18 @@ INPUT_SCHEMA = {
         ),
         "daily_budget_usd": _num(
             title="Daily budget (USD)",
-            description="What Google may spend on an average day. Zero uses the assessment's minimum.",
+            description=(
+                "What Google may spend on an average day. Zero uses the assessment's minimum. "
+                "Tin converts it to the account's currency and shows both before you approve."
+            ),
             **{"x-tin-ui": {"control": "number", "order": 20}},
         ),
         "cpc_ceiling_usd": _num(
             title="Most to pay per click (USD)",
-            description="The bid ceiling for the Maximise clicks strategy. Zero lets Tin compute it.",
+            description=(
+                "The bid ceiling for the Maximise clicks strategy, converted like the budget. "
+                "Zero lets Tin compute it."
+            ),
             **{"x-tin-ui": {"control": "number", "order": 21}},
         ),
         "landing_page_url": _text(
@@ -384,6 +405,22 @@ def gate(*, assessment: dict, account: dict, site: dict, inputs: dict, existing_
             ),
             "conversion_action": None,
         }
+    currency = customer.get("currency_code")
+    if not ads_currency.supported(currency):
+        return {
+            "outcome": "unsupported_currency",
+            "text": (
+                f"The Google Ads account bills in {currency}, and Tin has no daily reference "
+                "rate for it, so it cannot set a budget or bids it can stand behind. Nothing "
+                "will be created. Tin supports accounts in "
+                + ", ".join(sorted(ads_currency.MINIMUM_UNIT_MICROS))
+                + "."
+                if currency
+                else "Google Ads did not report the account's currency, so Tin cannot set a "
+                "budget or bids in it. Nothing will be created; run the launch again later."
+            ),
+            "conversion_action": None,
+        }
     if not (account.get("billing") or {}).get("approved"):
         return {
             "outcome": "needs_billing",
@@ -509,9 +546,16 @@ def _dedupe_negatives(items, cap: int) -> list[dict]:
 
 
 def plan_skeleton(
-    *, assessment: dict, keywords_csv: str, inputs: dict, account: dict, marker: str, today: date
+    *,
+    assessment: dict,
+    keywords_csv: str,
+    inputs: dict,
+    marker: str,
+    today: date,
+    fx: dict | None = None,
 ) -> dict:
-    """Everything about the campaign that code decides; the model only adds words."""
+    """Everything about the campaign that code decides; the model only adds words. Budget
+    and bids are worked out in dollars, like the assessment, then converted once at `fx`."""
     campaign = assessment.get("campaign") or {}
     profile = assessment.get("profile") or {}
     rows = _rows(keywords_csv)
@@ -552,6 +596,7 @@ def plan_skeleton(
             break
     if len(groups) < POLICY["min_ad_groups"]:
         raise ValueError("No keyword in the assessment could be placed in an ad group.")
+    fx = fx or ads_currency.USD_FX
     budget = _number(inputs.get("daily_budget_usd")) or 0
     if budget <= 0:
         budget = _number((campaign.get("daily_budget_usd") or {}).get("min")) or 0
@@ -562,6 +607,8 @@ def plan_skeleton(
         by_bid = POLICY["ceiling_bid_multiplier"] * median(bids) if bids else 1.0
         ceiling = min(POLICY["ceiling_share_of_budget"] * budget, by_bid)
     ceiling = max(round(ceiling, 2), 0.05)
+    allowable = _number(assessment.get("allowable_cpa_usd")) or None
+    target = _number(campaign.get("target_cpa_usd")) or None
     landing = str(inputs.get("landing_page_url") or "").strip() or str(
         campaign.get("landing_page") or ""
     )
@@ -588,22 +635,44 @@ def plan_skeleton(
         "campaign_name": name,
         "marker": marker,
         "business_name": business,
-        "daily_budget_usd": budget,
-        "cpc_ceiling_usd": ceiling,
+        "currency_code": fx["currency_code"],
+        "fx": dict(fx),
+        "daily_budget": ads_currency.convert(budget, fx, floor_usd=1),
+        "cpc_ceiling": ads_currency.convert(ceiling, fx, floor_usd=0.05),
         "markets": markets,
         "landing_page": landing,
         "start_date": (today + timedelta(days=1)).isoformat(),
         "tracking_template": TRACKING_TEMPLATE,
-        "currency_code": (account.get("customer") or {}).get("currency_code") or "USD",
         "ad_groups": groups,
         "negatives": _dedupe_negatives(negatives, POLICY["max_negatives"]),
         "sitelinks": [],
         "callouts": [],
         "competitors": competitors,
         "assessment_run_id": assessment.get("run_id"),
-        "allowable_cpa_usd": assessment.get("allowable_cpa_usd"),
-        "target_cpa_usd": campaign.get("target_cpa_usd"),
+        "allowable_cpa": ads_currency.convert(allowable, fx) if allowable else None,
+        "target_cpa": ads_currency.convert(target, fx) if target else None,
         "conversion_event": (assessment.get("inputs") or {}).get("conversion_event"),
+    }
+
+
+def upgrade_plan(plan: dict) -> dict:
+    """A plan drafted before amounts carried their currency was worked out and sent in
+    dollars; read it as a USD plan so an approval waiting across a deploy still applies."""
+    if not isinstance(plan, dict) or "fx" in plan:
+        return plan
+    upgraded = {
+        k: v
+        for k, v in plan.items()
+        if k not in {"daily_budget_usd", "cpc_ceiling_usd", "allowable_cpa_usd", "target_cpa_usd"}
+    }
+    return {
+        **upgraded,
+        "currency_code": "USD",
+        "fx": dict(ads_currency.USD_FX),
+        "daily_budget": plan.get("daily_budget_usd"),
+        "cpc_ceiling": plan.get("cpc_ceiling_usd"),
+        "allowable_cpa": plan.get("allowable_cpa_usd"),
+        "target_cpa": plan.get("target_cpa_usd"),
     }
 
 
@@ -682,7 +751,8 @@ def _plan_for_prompt(plan: dict) -> dict:
         "campaign_name": plan["campaign_name"],
         "business_name": plan["business_name"],
         "landing_page": plan["landing_page"],
-        "daily_budget_usd": plan["daily_budget_usd"],
+        "currency_code": plan["currency_code"],
+        "daily_budget": plan["daily_budget"],
         "markets": plan["markets"],
         "ad_groups": [
             {
@@ -721,13 +791,14 @@ def brief_prompt(plan: dict, assessment: dict):
     system = f"{WRITING}\n\n{BRIEF_RULES}\n\n{OUTPUT_RULES}"
     facts = {
         **_plan_for_prompt(plan),
-        "cpc_ceiling_usd": plan["cpc_ceiling_usd"],
-        "monthly_ceiling_usd": round(plan["daily_budget_usd"] * 30.4, 2),
+        "cpc_ceiling": plan["cpc_ceiling"],
+        "monthly_ceiling": round(plan["daily_budget"] * 30.4, 2),
         "negatives": len(plan["negatives"]),
         "headlines": {g["name"]: g["headlines"] for g in plan["ad_groups"]},
         "sitelinks": [s["text"] for s in plan.get("sitelinks") or []],
         "callouts": plan.get("callouts") or [],
-        "allowable_cpa_usd": plan.get("allowable_cpa_usd"),
+        "allowable_cpa": plan.get("allowable_cpa"),
+        "money_note": ads_currency.rate_line(plan.get("fx")),
         "assessment_decision": assessment.get("decision"),
         "assessment_binding_constraint": assessment.get("binding_constraint"),
     }
@@ -1020,11 +1091,11 @@ def _md(value) -> str:
     return re.sub(r"[\r\n]+", " ", str(value)).strip()
 
 
-def _money(value) -> str:
+def _money(value, plan: dict) -> str:
     number = _number(value)
     if number is None:
         return "unknown"
-    return f"${number:,.0f}" if number >= 100 else f"${number:,.2f}"
+    return ads_currency.with_usd(number, plan.get("fx"))
 
 
 def _bounded(documents: dict[str, str], limits: dict[str, int]) -> dict[str, str]:
@@ -1049,7 +1120,7 @@ def operation_count(plan: dict) -> int:
 
 
 def render_plan(plan: dict, brief: dict, assessment: dict, inputs: dict) -> dict[str, str]:
-    monthly = plan["daily_budget_usd"] * 30.4
+    monthly = plan["daily_budget"] * 30.4
     lines = [
         "# Google Ads campaign plan",
         "",
@@ -1063,13 +1134,14 @@ def render_plan(plan: dict, brief: dict, assessment: dict, inputs: dict) -> dict
         "",
         "## What it costs",
         "",
-        f"- Google may spend up to {_money(plan['daily_budget_usd'])} on an average day, at most about {_money(monthly)} in a month. On a busy day it can spend up to twice the daily amount, never more than the monthly ceiling.",
-        f"- Tin never pays more than {_money(plan['cpc_ceiling_usd'])} for one click. Google chooses bids below that ceiling to get the most clicks the budget allows.",
+        f"- Google may spend up to {_money(plan['daily_budget'], plan)} on an average day, at most about {_money(monthly, plan)} in a month. On a busy day it can spend up to twice the daily amount, never more than the monthly ceiling.",
+        f"- Tin never pays more than {_money(plan['cpc_ceiling'], plan)} for one click. Google chooses bids below that ceiling to get the most clicks the budget allows.",
         (
-            f"- The assessment judged {_money(plan['allowable_cpa_usd'])} an affordable cost per customer; the monitor compares real results to it."
-            if plan.get("allowable_cpa_usd")
+            f"- The assessment judged {_money(plan['allowable_cpa'], plan)} an affordable cost per customer; the monitor compares real results to it."
+            if plan.get("allowable_cpa")
             else "- The assessment did not set an affordable cost per customer; the monitor reports plain costs."
         ),
+        f"- {ads_currency.rate_line(plan.get('fx'))}",
         "",
         "## The campaign",
         "",
@@ -1251,7 +1323,7 @@ def render_result(plan: dict, created: dict, review: dict, gate_summary: str) ->
         "",
         "## What was created",
         "",
-        f"- One Search campaign with a budget of {_money(plan['daily_budget_usd'])} a day and a click ceiling of {_money(plan['cpc_ceiling_usd'])}.",
+        f"- One Search campaign with a budget of {_money(plan['daily_budget'], plan)} a day and a click ceiling of {_money(plan['cpc_ceiling'], plan)}.",
         f"- {len(plan['ad_groups'])} ad groups with {sum(len(g['keywords']) for g in plan['ad_groups'])} keywords, one ad each.",
         f"- {len(plan['negatives'])} negative phrases in a shared list attached to the campaign.",
         f"- {len(plan.get('sitelinks') or [])} sitelinks and {len(plan.get('callouts') or [])} callouts.",
@@ -1283,13 +1355,15 @@ def render_result(plan: dict, created: dict, review: dict, gate_summary: str) ->
         "campaign_id": created.get("campaign_id"),
         "budget_id": created.get("budget_id"),
         "shared_set_id": created.get("shared_set_id"),
-        "daily_budget_usd": plan["daily_budget_usd"],
-        "cpc_ceiling_usd": plan["cpc_ceiling_usd"],
+        "currency_code": plan["currency_code"],
+        "fx": plan.get("fx"),
+        "daily_budget": plan["daily_budget"],
+        "cpc_ceiling": plan["cpc_ceiling"],
         "markets": plan["markets"],
         "landing_page": plan["landing_page"],
         "conversion_action": created.get("conversion_action"),
-        "allowable_cpa_usd": plan.get("allowable_cpa_usd"),
-        "target_cpa_usd": plan.get("target_cpa_usd"),
+        "allowable_cpa": plan.get("allowable_cpa"),
+        "target_cpa": plan.get("target_cpa"),
         "enabled": None if unconfirmed else enabled,
         "enabled_at": created.get("enabled_at"),
         "created_at": created.get("created_at"),
@@ -1318,12 +1392,12 @@ def summary_line(outcome: str, plan: dict | None = None) -> str:
     if outcome == "ready" and plan:
         return (
             f"Google Ads campaign live: {plan['campaign_name']} at "
-            f"{_money(plan['daily_budget_usd'])} a day."
+            f"{_money(plan['daily_budget'], plan)} a day."
         )
     if outcome == "unconfirmed" and plan:
         return (
             f"Google Ads campaign may be running: {plan['campaign_name']} at "
-            f"{_money(plan['daily_budget_usd'])} a day. Tin keeps watching it."
+            f"{_money(plan['daily_budget'], plan)} a day. Tin keeps watching it."
         )
     if outcome == "needs_tracking":
         return "Install tracking, then run the launch again."
@@ -1449,6 +1523,7 @@ __all__ = [
     "route_for",
     "schema_name",
     "summary_line",
+    "upgrade_plan",
     "validate_copy",
     "validate_tag_install",
 ]

@@ -483,6 +483,73 @@ async def test_no_model_repurchase_or_invalid_guide_replacement(publication_db):
     assert f.router.generate.await_count == 1 and f.storage.repo.writes == 0
 
 
+async def test_a_spending_limit_on_the_model_call_is_reported_once(publication_db):
+    # The refusal used to read "could not be confirmed", as if the call were uncertain.
+    from tin_lite.billing_contracts import BillingError
+    from tin_lite.failures import classify
+
+    f = await capture_fixture(publication_db)
+    run = await start(f)
+    await f.activities.prepare(str(run.id))
+    f.router.generate.side_effect = BillingError("run_limit", "Run limit of $1.00 reached.")
+    with pytest.raises(ApplicationError) as raised:
+        await f.activities.extract(str(run.id))
+    assert raised.value.message.startswith("The run reached its spending maximum.")
+    assert isinstance(raised.value.__cause__, BillingError)
+    assert classify(raised.value).action == "billing"
+    receipt = await f.db.get_effect(f"{run.id}:style_model")
+    assert receipt.status == "started" and receipt.result["failure_code"] == "run_limit"
+    with pytest.raises(ApplicationError, match="no replacement was purchased"):
+        await f.activities.extract(str(run.id))
+    assert f.router.generate.await_count == 1
+    # An old history passes only the run ID; the saved sentence is shown.
+    await f.activities.failure(str(run.id))
+    failed = await f.db.get_run(run.id)
+    assert failed.error_message.startswith("The run reached its spending maximum.")
+
+
+async def test_failure_shows_the_passed_cause_by_kind(publication_db):
+    f = await capture_fixture(publication_db)
+    run = await start(f)
+    await f.activities.prepare(str(run.id))
+
+    async def project(argument):
+        await f.db.pool.execute(
+            "UPDATE workflow_runs SET status='running', error_message=NULL WHERE id=$1", run.id
+        )
+        await f.activities.failure(argument)
+        return await f.db.pool.fetchrow(
+            "SELECT error_message,error_kind,error_action,error_detail FROM workflow_runs "
+            "WHERE id=$1",
+            run.id,
+        )
+
+    row = await project(str(run.id))
+    assert row["error_message"].startswith("Style capture could not confirm completion.")
+    assert row["error_kind"] is None
+    row = await project(
+        {
+            "run_id": str(run.id),
+            "reason": "Your Tin credits ran out. Add credits in Billing, then retry.",
+            "kind": "needs_you",
+            "action": "billing",
+            "detail": "BillingError: insufficient funds",
+        }
+    )
+    assert row["error_message"].startswith("Your Tin credits ran out.")
+    assert (row["error_kind"], row["error_action"]) == ("needs_you", "billing")
+    row = await project(
+        {
+            "run_id": str(run.id),
+            "reason": "Tin hit a problem on its side.",
+            "kind": "internal",
+            "detail": "KeyError: 'packet'",
+        }
+    )
+    assert row["error_message"].startswith("Style capture could not confirm completion.")
+    assert row["error_kind"] == "internal" and row["error_detail"] == "KeyError: 'packet'"
+
+
 async def test_http_mcp_preflight_and_upload_authorization(publication_db, monkeypatch):
     f = await capture_fixture(publication_db)
     server = mcp(f, monkeypatch)

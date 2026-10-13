@@ -75,6 +75,14 @@ from tin_lite.email_outreach import (
     parse_selected_shortlist,
     render_email_template,
 )
+from tin_lite.failures import (
+    billing_refusal,
+    classify,
+    failure_payload,
+    payload_failure,
+    receipt_failure,
+)
+from tin_lite.failures import detail as failure_detail
 from tin_lite.integrations import (
     GOOGLE_WORKSPACE_PROVIDER,
     GitHubFileChange,
@@ -150,6 +158,7 @@ from tin_lite.workflow_prerequisites import (
     PrerequisiteError,
     can_wait_for_prerequisites,
     evaluate_prerequisites,
+    pinned_artifact_revision,
     prerequisite_wait_run_ids,
     waited_evidence,
 )
@@ -191,24 +200,36 @@ def restarted_recently() -> bool:
     return process_uptime_seconds() < RESTART_WINDOW_SECONDS
 
 
-def failure_message(
+def failure_record(
     payload: dict | None,
     exc: BaseException | None = None,
     *,
     default: str = "workflow failed",
     restarted: bool | None = None,
-) -> str:
-    """The failure text a run row stores: the first reason the payload or exception carries."""
-    message = None
-    if isinstance(payload, dict):
+) -> dict[str, str | None]:
+    """What a run row stores for a failure: founder-safe message, kind, action and operator
+    detail, as `project_failure` keyword arguments.
+
+    A payload from `workflows.failure_fields` is already classified. An older payload's
+    first reason key is kept as it was. An exception is classified here (failures.py), so
+    library and driver text stays in the detail.
+    """
+    message = kind = action = detail = None
+    carried = payload_failure(payload)
+    if carried is not None:
+        message, kind, action = carried.message, carried.kind, carried.action
+        raw = payload.get("detail") if isinstance(payload, dict) else None
+        detail = raw if isinstance(raw, str) else None
+    elif isinstance(payload, dict):
         for key in _FAILURE_MESSAGE_KEYS:
             value = payload.get(key)
             if isinstance(value, str) and value.strip():
                 message = value.strip()
                 break
     if message is None and exc is not None:
-        text = str(exc).strip()
-        message = f"{type(exc).__name__}: {text}" if text else type(exc).__name__
+        failure = classify(exc)
+        message, kind, action = failure.message, failure.kind, failure.action
+        detail = failure_detail(exc)
     if message is None:
         message = default
     message = scrub_secrets(message)
@@ -216,7 +237,23 @@ def failure_message(
         restarted = restarted_recently()
     if restarted and not message.endswith(RESTART_SUFFIX):
         message = message[: FAILURE_MESSAGE_LIMIT - len(RESTART_SUFFIX)] + RESTART_SUFFIX
-    return message[:FAILURE_MESSAGE_LIMIT]
+    return {
+        "error_message": message[:FAILURE_MESSAGE_LIMIT],
+        "error_kind": kind,
+        "error_action": action,
+        "error_detail": scrub_secrets(detail) if detail else None,
+    }
+
+
+def failure_message(
+    payload: dict | None,
+    exc: BaseException | None = None,
+    *,
+    default: str = "workflow failed",
+    restarted: bool | None = None,
+) -> str:
+    """The founder-safe failure text a run row stores."""
+    return failure_record(payload, exc, default=default, restarted=restarted)["error_message"]
 
 
 def transient_failure(message: str | None, *, restarted: bool = False) -> bool:
@@ -406,7 +443,9 @@ class TinActivities:
                 )
                 return {}
             except (ValueError, KeyError, IntegrationError) as exc:
-                await pause_for_issue(self, configured, str(exc))
+                from tin_lite.code_schedules import schedule_issue
+
+                await pause_for_issue(self, configured, schedule_issue(exc))
                 return {}
         try:
             run, created = await self._db.create_run(
@@ -425,9 +464,17 @@ class TinActivities:
                 **selection,
             )
         except BillingError as exc:
-            from tin_lite.code_schedules import pause_for_issue
+            from tin_lite.code_schedules import pause_for_issue, schedule_issue
 
-            await pause_for_issue(self, configured, str(exc))
+            if billing_refusal(exc).kind == "transient":
+                # An earlier paid step is still settling: skip this occurrence only.
+                await self._db.advance_project_workflow_schedule(
+                    project_workflow_id=configured.id,
+                    next_run_at=next_run_after(schedule, scheduled_for),
+                    expected_settings_revision=configured.settings_revision,
+                )
+                return {}
+            await pause_for_issue(self, configured, schedule_issue(exc))
             return {}
         except ScheduledWorkflowSkip:
             await self._db.advance_project_workflow_schedule(
@@ -905,11 +952,21 @@ class TinActivities:
     ) -> str:
         """Store the failure with its reason, then start one retry if the cause was transient."""
         restarted = restarted_recently()
-        if message is None:
-            message = failure_message(payload, exc, default=default, restarted=restarted)
-        await self._db.project_failure(run_id=run_id, error_message=message)
-        await self._auto_retry_after_transient_failure(run_id, message=message, restarted=restarted)
-        return message
+        record = (
+            failure_record(payload, exc, default=default, restarted=restarted)
+            if message is None
+            else {"error_message": message}
+        )
+        await self._db.project_failure(run_id=run_id, **record)
+        # The raw detail still decides a silent retry (a 502 or a reset connection), exactly
+        # as the message did before failures were classified; the kind does not widen it.
+        detail = record.get("error_detail")
+        await self._auto_retry_after_transient_failure(
+            run_id,
+            message=record["error_message"] + (f" {detail}" if detail else ""),
+            restarted=restarted,
+        )
+        return record["error_message"]
 
     async def _auto_retry_eligible(self, run: WorkflowRun) -> bool:
         """Only unattended starts get a silent second attempt: schedules and onboarding setup."""
@@ -2504,15 +2561,25 @@ class TinActivities:
                     raise RuntimeError(
                         "Google Workspace does not grant the email campaign capabilities"
                     )
-                shortlist_history = await self._storage.canonical_file_history(
-                    repo_id=project.state_repo_id,
-                    branch=project.canonical_branch,
-                    path=EMAIL_SHORTLIST_PATH,
-                    limit=1,
+                # Read the shortlist exactly as admission found it, however many commits have
+                # landed since. A retry keeps the revision an earlier attempt already recorded.
+                campaign = await self._db.get_email_campaign(run_id)
+                shortlist_commit_sha = (
+                    campaign["source_commit_sha"]
+                    if campaign is not None
+                    else pinned_artifact_revision(run.prerequisite_evidence, EMAIL_SHORTLIST_PATH)
                 )
-                if not shortlist_history:
-                    raise RuntimeError("project state has no email shortlist revision")
-                shortlist_commit_sha = shortlist_history[0]["revision"]
+                if shortlist_commit_sha is None:
+                    # Runs admitted before admission pinned the shortlist look it up as before.
+                    shortlist_history = await self._storage.canonical_file_history(
+                        repo_id=project.state_repo_id,
+                        branch=project.canonical_branch,
+                        path=EMAIL_SHORTLIST_PATH,
+                        limit=1,
+                    )
+                    if not shortlist_history:
+                        raise RuntimeError("project state has no email shortlist revision")
+                    shortlist_commit_sha = shortlist_history[0]["revision"]
                 shortlist = await self._storage.read_canonical_artifact(
                     repo_id=project.state_repo_id,
                     commit_sha=shortlist_commit_sha,
@@ -4673,20 +4740,37 @@ class TinActivities:
 
     @activity.defn(name="project_codex_procedure_failure")
     async def project_codex_procedure_failure(self, payload: dict[str, str]) -> None:
+        await self.project_procedure_failure(payload)
+
+    async def project_procedure_failure(
+        self, payload: dict[str, str], *, prefer_payload: bool = False
+    ) -> None:
+        """`prefer_payload`: a code workflow already chose Tin's sentence for its failed
+        receipt; otherwise the first failed procedure receipt names the cause."""
         run_id = UUID(payload["run_id"])
         run = await self._db.get_run(run_id)
-        reason = failure_message(payload, default="Codex procedure failed", restarted=False)
+        failed_payload = payload
         for step in (
-            "procedure_sandbox_create",
-            "procedure_artifact_persist",
-            "procedure_canonical_commit",
-            "procedure_projection",
+            ()
+            if prefer_payload
+            else (
+                "procedure_sandbox_create",
+                "procedure_artifact_persist",
+                "procedure_canonical_commit",
+                "procedure_projection",
+            )
         ):
             receipt = await self._db.get_effect(f"{run_id}:{step}")
             if receipt is not None and receipt.status == "failed" and receipt.error_message:
-                reason = receipt.error_message
+                # The receipt keeps the raw text for operators; the founder reads Tin's words.
+                stored = receipt_failure(receipt.error_message)
+                if stored is not None:
+                    failed_payload = {
+                        **failure_payload(stored, receipt.error_message),
+                        "run_id": str(run_id),
+                    }
                 break
-        reason = await self._fail_run(run_id, {"reason": reason})
+        reason = await self._fail_run(run_id, failed_payload, default="Codex procedure failed")
         await self._db.finalize_pending_test_identity(
             run_id=run_id,
             status="failed",
@@ -5261,14 +5345,21 @@ class TinActivities:
         )
         for source_run in runs:
             ref = source_run.artifact_ref or f"tin.run://{source_run.id}"
+            body = None
             if source_run.canonical_commit_sha is not None and source_run.artifact_path is not None:
                 content = await self._storage.read_canonical_artifact(
                     repo_id=project.state_repo_id,
                     commit_sha=source_run.canonical_commit_sha,
                     path=source_run.artifact_path,
                 )
-                body = content.decode("utf-8")
-            else:
+                try:
+                    text = content.decode("utf-8")
+                except UnicodeDecodeError:
+                    pass  # Media stays represented by its run receipt and artifact reference.
+                else:
+                    if "\x00" not in text:
+                        body = text
+            if body is None:
                 body = json.dumps(
                     {
                         "workflow": source_run.executor,
@@ -5897,7 +5988,8 @@ class TinActivities:
 
 
 def _safe_failure(exc: BaseException) -> str:
-    """Name the exception with its text, so a failed receipt says what actually went wrong."""
+    """Name the exception with its text, so a failed receipt says what actually went wrong.
+    Receipts are operator records; founder text comes from failures.receipt_failure."""
     text = scrub_secrets(" ".join(str(exc).split()))
     return f"{type(exc).__name__}: {text or 'operation failed'}"[:FAILURE_MESSAGE_LIMIT]
 

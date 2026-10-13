@@ -11,6 +11,7 @@ from temporalio.exceptions import ApplicationError
 
 from tin_lite import analytics, organic_system
 from tin_lite.content_delivery import ContentDelivery, DeliverySettings
+from tin_lite.failures import Failure, classify, failure_projection, split_failure_input
 from tin_lite.growth_onboarding import (
     CONTENT_DRAFT_KEYS,
     KEY,
@@ -131,6 +132,13 @@ def child_handles(actions):
         for row in actions
         if row.get("run_id")
     ]
+
+
+FAILURE_FALLBACK = (
+    "Growth onboarding could not finish. A finished plan stays in project Files; "
+    "Check My system for schedules already created; they keep their current state. "
+    "Prepared first runs were not dispatched if setup did not complete."
+)
 
 
 class GrowthOnboardingActivities:
@@ -287,7 +295,10 @@ class GrowthOnboardingActivities:
                     run, prepared, step=step, workflow_key=STEPS[step], inputs=inputs
                 )
             except PrerequisiteError as exc:
-                raise ApplicationError(str(exc), type=exc.code, non_retryable=True) from exc
+                # The type keeps the code; the details say the founder can fix it.
+                raise ApplicationError(
+                    str(exc), classify(exc).details(), type=exc.code, non_retryable=True
+                ) from exc
             await self.db.start_effect(conn, execution_key=key, operation=KEY)
             await self.db.complete_effect(conn, execution_key=key, result=result)
             return result
@@ -406,11 +417,13 @@ class GrowthOnboardingActivities:
                 return child_handles(receipt.result["actions"])
             approved = await self.saved(run_id, "approved_plan")
             if not approved:
+                missing = (
+                    "This run has no saved approval snapshot. Start a new onboarding "
+                    "run and approve its plan before setup."
+                )
                 raise ApplicationError(
-                    (
-                        "This run has no saved approval snapshot. Start a new onboarding "
-                        "run and approve its plan before setup."
-                    ),
+                    missing,
+                    Failure("explained", missing).details(),
                     type="onboarding_approval_missing",
                     non_retryable=True,
                 )
@@ -433,8 +446,10 @@ class GrowthOnboardingActivities:
                     step="setup",
                     summary=f"{problem}; nothing was set up.",
                 )
+                refusal = f"{problem} (offered: {', '.join(offered) or 'none'})."
                 raise ApplicationError(
-                    f"{problem} (offered: {', '.join(offered) or 'none'}).",
+                    refusal,
+                    Failure("explained", refusal).details(),
                     type="onboarding_no_systems",
                     non_retryable=True,
                 )
@@ -862,7 +877,8 @@ class GrowthOnboardingActivities:
         return True
 
     @activity.defn
-    async def growth_onboarding_failure(self, run_id: str) -> None:
+    async def growth_onboarding_failure(self, value: str | dict) -> None:
+        run_id, passed = split_failure_input(value)
         run = await self.db.get_run(UUID(run_id))
         if run.status.value == "superseded":
             return  # A newer onboarding replaced it before approval; nothing failed.
@@ -890,10 +906,5 @@ class GrowthOnboardingActivities:
                         error_message="Onboarding setup failed before this run was dispatched.",
                     )
         await self.db.project_failure(
-            run_id=UUID(run_id),
-            error_message=(
-                "Growth onboarding could not finish. A finished plan stays in project Files; "
-                "Check My system for schedules already created; they keep their current state. "
-                "Prepared first runs were not dispatched if setup did not complete."
-            ),
+            run_id=UUID(run_id), **failure_projection(passed, FAILURE_FALLBACK)
         )

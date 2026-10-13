@@ -538,6 +538,24 @@ def prerequisite_wait_run_ids(evidence: Any) -> list[str]:
     return list(dict.fromkeys(ids))  # A run and its identity can wait on the same run.
 
 
+def pinned_artifact_revision(evidence: Any, path: str) -> str | None:
+    """The project revision at which admission (or a settled wait) found the file at `path`.
+
+    None when the run pinned no such evidence, as runs admitted before artifact evidence did.
+    """
+    items = evidence.get("items") if isinstance(evidence, Mapping) else None
+    for item in items if isinstance(items, list) else []:
+        if not isinstance(item, Mapping) or not item.get("satisfied"):
+            continue
+        found = item.get("evidence")
+        if not isinstance(found, Mapping) or found.get("path") != path:
+            continue
+        revision = found.get("revision")
+        if isinstance(revision, str) and re.fullmatch(r"[0-9a-f]{40}", revision):
+            return revision
+    return None
+
+
 def _wait_hint(result: PrerequisiteResult) -> str:
     return (
         f"Tin waits up to {PREREQUISITE_WAIT_MINUTES} minutes for "

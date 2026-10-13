@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import contextlib
 import hashlib
 import json
 from dataclasses import asdict
@@ -14,9 +15,9 @@ from temporalio.exceptions import ApplicationError
 
 from tin_lite import x_style
 from tin_lite.billing_contracts import BillingError
+from tin_lite.failures import classify, failure_projection, split_failure_input
 from tin_lite.integrations import (
     IntegrationAuthorizationError,
-    IntegrationError,
     IntegrationNotConfiguredError,
 )
 from tin_lite.model_providers import (
@@ -359,17 +360,24 @@ class XStyleActivities:
                     },
                 )
             except Exception as exc:
-                # Tin's own refusals say what stopped the guide; anything else stays generic.
-                reason = (
-                    f"{str(exc).rstrip('.')}. "
-                    if isinstance(exc, (ValueError, IntegrationError, BillingError))
-                    else ""
-                )
-                raise ApplicationError(
+                # Tin's own refusals say what stopped the guide; anything else (a parser, a
+                # driver, a provider's text) stays generic and reaches operators only.
+                failure = classify(exc)
+                reason = f"{failure.message.rstrip('.')}. " if failure.kind != "internal" else ""
+                message = (
                     f"X voice extraction could not be confirmed. {reason}No replacement was "
-                    "purchased. The current guide is unchanged.",
-                    non_retryable=True,
-                ) from None
+                    "purchased. The current guide is unchanged."
+                )
+                # The receipt stays started, so a retry never buys the call again; the saved
+                # sentence lets the failure step show it for histories without a cause. Saving
+                # it is best effort: it must never replace the refusal itself.
+                with contextlib.suppress(Exception):
+                    await self.db.save_effect_progress(
+                        conn, execution_key=key, result={"failure_message": message}
+                    )
+                # A billing refusal keeps its cause so the run is classified as yours to fix.
+                cause = exc if isinstance(exc, BillingError) else None
+                raise ApplicationError(message, non_retryable=True) from cause
 
     @activity.defn(name="x_style_propose")
     async def propose(self, run_id: str) -> bool:
@@ -591,13 +599,22 @@ class XStyleActivities:
                 raise
 
     @activity.defn(name="x_style_failure")
-    async def failure(self, run_id: str):
+    async def failure(self, argument: str | dict):
+        run_id, passed = split_failure_input(argument)
         run = await self.db.get_run(UUID(run_id))
         if run and run.executor == x_style.KEY:
+            receipt = await self.db.get_effect(f"{run.id}:x_style_model")
+            saved = (
+                (receipt.result or {}).get("failure_message")
+                if receipt and receipt.status != "completed"
+                else None
+            )
             await self.db.project_failure(
                 run_id=run.id,
-                error_message=(
+                **failure_projection(
+                    passed,
                     "X voice capture could not confirm completion. Check the current guide "
-                    "and any saved result before trying again."
+                    "and any saved result before trying again.",
+                    saved=saved if isinstance(saved, str) else None,
                 ),
             )

@@ -13,7 +13,9 @@ from uuid import UUID
 from temporalio import activity
 from temporalio.exceptions import ApplicationError
 
+from tin_lite.billing_contracts import BillingError
 from tin_lite.dataforseo import DataForSEO, DataForSEOError
+from tin_lite.failures import failure_projection, is_spending_limit, split_failure_input
 from tin_lite.organic_audit import (
     AUDIT_KEY,
     AUDIT_POLICY,
@@ -233,10 +235,16 @@ class OrganicAuditActivities:
                     with external_usage_scope(self.db, conn, run_id, stage, maximum_usd=amount):
                         result = {"status": "completed", "value": await call()}
                 except Exception as exc:
-                    from tin_lite.billing_contracts import BillingError
-
                     if isinstance(exc, BillingError):
-                        result = {"status": "unavailable", "reason": "spending_limit"}
+                        # Refused before the request was bought: a project or run limit reads
+                        # as the spending limit; any other refusal keeps its code, not a claim.
+                        result = {
+                            "status": "unavailable",
+                            "reason": (
+                                "spending_limit" if is_spending_limit(exc) else "billing_refused"
+                            ),
+                            "billing_code": exc.code,
+                        }
                     # Preserve only a safe product fact, not raw provider errors.
                     # Leave crawl intent incomplete so a later attempt can recover it.
                     elif recover:
@@ -1626,13 +1634,16 @@ class OrganicAuditActivities:
             )
 
     @activity.defn
-    async def organic_failure(self, run_id: str) -> None:
+    async def organic_failure(self, run_ref: str | dict) -> None:
+        run_id, passed = split_failure_input(run_ref)
         await self.organic_end_crawl(run_id)
         await self.db.project_failure(
-            run_id=UUID(run_id),
-            error_message=(
-                "Organic audit could not finish. Check DataForSEO configuration "
-                "and the explicit audit spending limit. Paid requests with uncertain outcomes "
-                "were not blindly repeated; the website was not changed."
-            ),
+            run_id=UUID(run_id), **failure_projection(passed, FAILURE_FALLBACK)
         )
+
+
+FAILURE_FALLBACK = (
+    "Organic audit could not finish. Check DataForSEO configuration "
+    "and the explicit audit spending limit. Paid requests with uncertain outcomes "
+    "were not blindly repeated; the website was not changed."
+)

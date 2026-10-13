@@ -301,6 +301,9 @@ class WorkflowRun:
     retained_output: dict[str, Any] | None = None
     output_resolution: dict[str, Any] | None = None
     error_message: str | None = None
+    # failures.py kinds; the raw cause (error_detail) stays in the database for operators.
+    error_kind: str | None = None
+    error_action: str | None = None
     input: dict[str, Any] | None = None
     task_title: str | None = None
     task_phase: str | None = None

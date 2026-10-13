@@ -26,6 +26,7 @@ from tin_lite.connection_collection import (
 from tin_lite.connection_collection_activities import artifacts
 from tin_lite.connection_collection_store import CollectionStore, record, token_hash
 from tin_lite.db import Database, apply_migrations
+from tin_lite.failures import INTERNAL_MESSAGE, failure_payload, from_details
 
 ACTOR = {
     "key": "https://www.linkedin.com/in/owner",
@@ -665,6 +666,20 @@ async def test_publication_retains_coverage_without_hiding_failure(
     if state == "failed":
         with pytest.raises(ApplicationError, match="collection_failed"):
             await implementation.publish(str(f.run.id))
+        # The workflow's failure step runs next; the run keeps the message publish recorded.
+        await implementation.failure(
+            {
+                "run_id": str(f.run.id),
+                "reason": INTERNAL_MESSAGE,
+                "kind": "internal",
+                "detail": "ApplicationError: collection_failed",
+            }
+        )
+        failed = await collection_db.get_run(f.run.id)
+        assert failed.error_message == (
+            "Connection collection failed. Saved results include its coverage and reason."
+        )
+        assert failed.error_kind == "explained"
     else:
         await implementation.publish(str(f.run.id))
     projected = await collection_db.get_run(f.run.id)
@@ -711,3 +726,81 @@ async def test_http_extension_origin_and_secret_errors_are_closed(collection_db)
             json={"generation": 1, "lease": 5},
         )
         assert bad.status_code == 422
+
+
+class CollectionFailureDb:
+    def __init__(self):
+        self.failures: list[dict] = []
+        self.pool = SimpleNamespace(execute=_nothing, fetchrow=_nothing)
+
+    async def get_workflow(self, workflow_id):
+        return SimpleNamespace(definition_repo_id="registry/workflows", definition_path="c.json")
+
+    async def project_failure(self, **values):
+        self.failures.append(values)
+
+
+async def _nothing(*args, **kwargs):
+    return None
+
+
+def failing_collection():
+    from tin_lite.connection_collection_activities import CollectionActivities
+
+    db = CollectionFailureDb()
+    return db, CollectionActivities(database=db, storage=None, settings=SimpleNamespace())
+
+
+async def test_a_refused_collection_start_tells_the_founder_what_to_fix(monkeypatch):
+    from temporalio.exceptions import ApplicationError
+
+    from tin_lite import connection_collection_activities as activities
+
+    db, implementation = failing_collection()
+    run = SimpleNamespace(id=uuid4(), workflow_id=uuid4(), definition_commit_sha="d" * 40)
+
+    async def active(run_id):
+        return run
+
+    async def source(**_):
+        return SimpleNamespace(definition={"executor": KEY, "collection_policy": POLICY})
+
+    async def refuse(run, policy):
+        raise CollectionError("account_owner_required")
+
+    monkeypatch.setattr(implementation, "run", active)
+    monkeypatch.setattr(activities, "load_workflow_source", source)
+    monkeypatch.setattr(implementation.store, "prepare", refuse)
+    with pytest.raises(ApplicationError, match="^account_owner_required$") as raised:
+        await implementation.prepare(str(run.id))
+    refusal = from_details(raised.value)
+    assert refusal.kind == "needs_you" and refusal.action == "integrations"
+    await implementation.failure({"run_id": str(run.id), **failure_payload(refusal, "x")})
+    [projected] = db.failures
+    assert projected["error_message"].startswith("Only the person who connected LinkedIn")
+    assert projected["error_kind"] == "needs_you"
+
+
+async def test_collection_failure_reads_codes_and_keeps_its_fixed_text():
+    from tin_lite.connection_collection_activities import FAILURE_FALLBACK
+
+    db, implementation = failing_collection()
+    run_id = str(uuid4())
+    await implementation.failure(run_id)
+    # A bare code from an older history: its sentence, or the fallback for an unknown one.
+    await implementation.failure(
+        {"run_id": run_id, "reason": "account_busy", "kind": "explained", "detail": "x"}
+    )
+    await implementation.failure(
+        {"run_id": run_id, "reason": "stale_lease", "kind": "explained", "detail": "y"}
+    )
+    await implementation.failure(
+        {"run_id": run_id, "reason": INTERNAL_MESSAGE, "kind": "internal", "detail": "z"}
+    )
+    plain, busy, unknown, internal = db.failures
+    assert plain["error_message"] == FAILURE_FALLBACK and plain["error_kind"] is None
+    assert busy["error_message"].startswith("Another collection is using")
+    assert busy["error_kind"] == "transient"
+    assert unknown["error_message"] == FAILURE_FALLBACK and unknown["error_kind"] == "internal"
+    assert unknown["error_detail"] == "y"
+    assert internal["error_message"] == FAILURE_FALLBACK and internal["error_detail"] == "z"

@@ -17,7 +17,10 @@ first. Workflow pull requests that don't meet it are closed automatically.
   frontend framework, provider fallback or plugin marketplace as incidental work.
 - Preserve unrelated edits and use an isolated worktree when another agent is working.
   Do not deploy, change provider configuration, rewrite history or publish repositories
-  without explicit authority. A merged PR is not a production deployment.
+  without explicit authority. Merging to main deploys to production: once ci passes, the
+  deploy workflow ships that commit to staging and then production, so a merge needs the
+  same authority as a deploy. Run a service change on staging before merging it; see
+  [staging](docs/staging.md).
 - Do not copy runtime dependencies from unrelated repositories. Keep the import-linter
   boundaries and the explicit registry; no wildcard workflow registration.
 
@@ -145,6 +148,13 @@ outside marketing, or were written without ever being run. Full rules:
 - Limits are runaway guards set well above normal use, not estimates that stop ordinary runs.
 - A failure names its cause. Never wrap Tin's own refusal in a generic message; keep the
   reason on the run and its receipt, bounded and without provider text or secrets.
+- Show the founder a cause they can act on, not Tin's internals. `failures.py` sorts every
+  failure: needs you (reconnect, credits or limits, input), temporary, Tin's own sentence,
+  or internal (a plain line for the founder, the raw text in `error_detail` for operators).
+  Raise founder-fixable failures as their own types (`IntegrationAuthorizationError`,
+  `WorkflowInputError`, `BillingError`) and use `billing_refusal` for billing wording; not
+  every billing refusal is a spending limit. Failure activities take `failure_input` and
+  project with `failure_projection`; HTTP and MCP bodies use `public_error_text`.
 - Fixture tests prove the contract; a real run proves the workflow. Before calling a workflow
   change done, run it once for real where a provider, sandbox or outside site is involved.
 

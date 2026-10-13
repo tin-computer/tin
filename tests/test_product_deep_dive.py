@@ -586,6 +586,33 @@ def _fenced_section(skill_path: Path, heading: str) -> str:
     return text[start + 4 : end] + "\n"
 
 
+def test_product_audit_distinguishes_expected_responses_from_failures() -> None:
+    text = (
+        ROOT / "codex_procedures" / "qa.product_audit" / "skills" / "product-audit" / "SKILL.md"
+    ).read_text()
+    recipe = text.split("2. Failed requests:", 1)[1].split("3. Console errors:", 1)[0]
+    for rule in (
+        "Expected permission denials and invalid-input responses are observations",
+        "when the UI handles them clearly and no promised action fails",
+        "A failed valid action, an unexplained lock, or a raw server error is still a finding",
+    ):
+        assert rule in " ".join(recipe.split())
+    classification = text.split("6. Decide one Result:", 1)[1].split("7. Record one", 1)[0]
+    for rule in (
+        "clearly handled expected permission or validation responses do not prevent this result",
+        "produced an unexpected error",
+        "excluding clearly handled expected permission or validation responses",
+    ):
+        assert rule in " ".join(classification.split())
+    validation = text.split("4. Form validation", 1)[1].split("5. Empty states:", 1)[0]
+    assert "A clearly handled invalid-input response does not fail this check" in " ".join(
+        validation.split()
+    )
+    assert "a raw server error, or a submitted empty record is a finding" in " ".join(
+        validation.split()
+    )
+
+
 def test_package_skill_templates_satisfy_the_memory_section_validator() -> None:
     feature_template = _fenced_section(
         ROOT

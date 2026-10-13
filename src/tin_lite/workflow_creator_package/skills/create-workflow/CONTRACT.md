@@ -84,8 +84,8 @@ Keep rubric questions independent; no overall score. Maintainers review cases an
   at $0.01 each on the stated provider plan", "pricing_url": "https://provider.example/pricing"}.
   It is optional, advisory, and separate from Tin credits. Cite actual official pricing and
   per-run usage assumptions; omit the field rather than inventing a price.
-  Up to four aliases, eight total provider calls, 16000-byte requests, and responses bounded
-  to 1024–64000 bytes per alias. Use these exact byte counts, not KiB conversions.
+  Up to four aliases, 32 total provider calls, 16000-byte requests, and responses bounded
+  to 1024–1000000 bytes per alias. Use these exact byte counts, not KiB conversions.
   The byte bound, not a provider row limit, caps results: GSC search_analytics.read returns
   the rows that fit plus truncated/next_start_row, and accepts start_row and dimension_filters.
   Prefer first-party connections over custom ones when they exist: payments.stripe

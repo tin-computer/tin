@@ -181,10 +181,16 @@ class CodeStorage:
     _http: httpx.AsyncClient | None = None
     _http_loop: asyncio.AbstractEventLoop | None = None
 
-    def __init__(self, *, organization: str, private_key: str) -> None:
+    def __init__(self, *, organization: str, private_key: str, repo_prefix: str = "") -> None:
         self._organization = organization
         self._private_key = private_key
+        # A deployment sharing an organization (staging) keeps its repositories apart by name.
+        # Callers and stored references always use the unprefixed ID.
+        self._repo_prefix = repo_prefix
         self._client = GitStorage({"name": organization, "key": private_key})
+
+    def _upstream_id(self, repo_id: str) -> str:
+        return f"{self._repo_prefix}{repo_id}"
 
     # Per-instance and created on first use, so every CodeStorage has its own caches.
     @functools.cached_property
@@ -221,7 +227,7 @@ class CodeStorage:
         initial_readme: str = "# Project state\n\nManaged by the Tin Lite switchboard.\n",
     ) -> Repo:
         try:
-            repo = await self._client.find_one(id=repo_id)
+            repo = await self._client.find_one(id=self._upstream_id(repo_id))
         except ApiError as exc:
             # An empty organization currently answers 403 for a repo-scoped lookup before create.
             if exc.status_code != 403:
@@ -229,11 +235,13 @@ class CodeStorage:
             repo = None
         if repo is None:
             try:
-                repo = await self._client.create_repo(id=repo_id, default_branch="main", ttl=300)
+                repo = await self._client.create_repo(
+                    id=self._upstream_id(repo_id), default_branch="main", ttl=300
+                )
             except ApiError as exc:
                 if exc.status_code != 409:
                     raise
-                repo = await self._client.find_one(id=repo_id)
+                repo = await self._client.find_one(id=self._upstream_id(repo_id))
                 if repo is None:
                     raise
         if await self.head_sha(repo, "main") is None:
@@ -256,7 +264,7 @@ class CodeStorage:
         """True when the repository is gone after this call; upstream cleanup is asynchronous."""
         self._forget_repo(repo_id)
         try:
-            await self._client.delete_repo(id=repo_id, ttl=300)
+            await self._client.delete_repo(id=self._upstream_id(repo_id), ttl=300)
         except ApiError as exc:
             # 404: never created or already removed; 409: a deletion is already in progress.
             if exc.status_code not in {404, 409}:
@@ -282,7 +290,7 @@ class CodeStorage:
         if cached is not None and cached[1] > now:
             self._repos.move_to_end(repo_id)
             return cached[0]
-        repo = await self._client.find_one(id=repo_id)
+        repo = await self._client.find_one(id=self._upstream_id(repo_id))
         if repo is None:
             self._repos.pop(repo_id, None)
             raise LookupError(f"code.storage repository {repo_id!r} does not exist")
@@ -315,7 +323,7 @@ class CodeStorage:
                 ["*", ["no-push"]],
             ],
         )
-        base_url = f"https://{self._organization}.code.storage/{repo_id}"
+        base_url = f"https://{self._organization}.code.storage/{self._upstream_id(repo_id)}"
         return SandboxRemotes(
             canonical_url=f"{base_url}.git",
             canonical_auth_header=_basic_auth_header(canonical_token),
@@ -1702,7 +1710,7 @@ class CodeStorage:
         payload: dict[str, Any] = {
             "iss": self._organization,
             "sub": subject,
-            "repo": repo_id,
+            "repo": self._upstream_id(repo_id),
             "scopes": scopes,
             "iat": now,
             "exp": now + ttl,

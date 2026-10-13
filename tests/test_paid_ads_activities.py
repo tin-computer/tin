@@ -17,10 +17,16 @@ from test_paid_ads import PROJECT_ID, FakeModel, volume_items
 from test_procedure_publication import HistoryStorage
 
 from tin_lite import paid_ads
+from tin_lite.billing_contracts import BillingError
 from tin_lite.catalog import BUILTIN_WORKFLOWS
+from tin_lite.failures import billing_refusal
 from tin_lite.model_providers import ModelProviderError, ModelResult, ModelUsage, ProviderName
 from tin_lite.organic_audit import canonical_json
-from tin_lite.paid_ads_activities import MODEL_TIMEOUT_SECONDS, PaidAdsActivities
+from tin_lite.paid_ads_activities import (
+    FAILURE_FALLBACK,
+    MODEL_TIMEOUT_SECONDS,
+    PaidAdsActivities,
+)
 
 INPUTS = {
     "project_id": PROJECT_ID,
@@ -320,6 +326,136 @@ async def test_an_unconfirmed_model_step_stops_instead_of_buying_again():
     assert db.effects[activities.key(run_id, "failure")].result["code"] == "model_unavailable"
     await activities.failure(run_id)
     assert "could not be confirmed" in db.project_failure.await_args.kwargs["error_message"]
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "limit_source", ["reservation", "spending_limit", "run_limit", "project_limit"]
+)
+async def test_a_model_spending_limit_is_not_reported_as_an_unconfirmed_call(limit_source):
+
+    activities, db, *_rest, router, _ = await fixture()
+    run_id = str(db.run.id)
+    await activities.prepare(run_id)
+    if limit_source == "reservation":
+        assert await activities._reserve(run_id, "earlier", "6")
+    else:
+        router.generate.side_effect = BillingError(limit_source, "Spending limit reached")
+    for _ in range(2):
+        with pytest.raises(ApplicationError):
+            await activities._model(run_id, "profile", "system", "user", {}, 100, "low")
+    receipt = db.effects[activities.key(run_id, "model:profile")].result
+    assert receipt["status"] == "unavailable"
+    assert receipt["reason"] == (
+        "spending_limit" if limit_source == "reservation" else limit_source
+    )
+    assert router.generate.await_count == (0 if limit_source == "reservation" else 1)
+    assert db.effects[activities.key(run_id, "failure")].result["code"] == "spending_limit"
+    await activities.failure(run_id)
+    kwargs = db.project_failure.await_args.kwargs
+    message = kwargs["error_message"]
+    assert "could not be confirmed" not in message
+    if limit_source in {"run_limit", "project_limit"}:
+        # A limit the founder can raise reads with the Billing wording and its action.
+        assert "Billing" in message and "Spending limit reached" not in message
+        assert kwargs["error_kind"] == "needs_you" and kwargs["error_action"] == "billing"
+    else:
+        # The run's own reservation ceiling, and older receipts that saved `spending_limit`.
+        assert "spending limit" in message
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "code",
+    [
+        "unpriced_model",
+        "unmetered_operation",
+        "operation_already_attempted",
+        "usage_pending",
+        "insufficient_funds",
+        "spending_stopped",
+    ],
+)
+async def test_billing_refusal_keeps_its_cause_without_claiming_a_spending_limit(code):
+
+    activities, db, *_rest, router, _ = await fixture()
+    run_id = str(db.run.id)
+    await activities.prepare(run_id)
+    router.generate.side_effect = BillingError(code, "Private billing diagnostic must not escape")
+    for _ in range(2):
+        with pytest.raises(ApplicationError):
+            await activities._model(run_id, "profile", "system", "user", {}, 100, "low")
+    receipt = db.effects[activities.key(run_id, "model:profile")].result
+    assert receipt["status"] == "unavailable" and receipt["reason"] == code
+    failure = db.effects[activities.key(run_id, "failure")].result
+    assert failure["code"] == "billing_refused" and failure["reason"] == code
+    assert router.generate.await_count == 1
+    await activities.failure(run_id)
+    kwargs = db.project_failure.await_args.kwargs
+    message = kwargs["error_message"]
+    assert "spending limit" not in message and "could not be confirmed" not in message
+    assert code not in message and "Private billing diagnostic" not in message
+    expected = billing_refusal(BillingError(code, ""))
+    assert message.startswith(expected.message)
+    assert kwargs["error_kind"] == expected.kind
+
+
+@pytest.mark.asyncio
+async def test_failure_accepts_a_plain_run_id_and_keeps_the_fixed_sentence():
+    activities, db, *_ = await fixture()
+    run_id = str(db.run.id)
+    await activities.failure(run_id)
+    kwargs = db.project_failure.await_args.kwargs
+    assert kwargs["error_message"] == FAILURE_FALLBACK
+    assert kwargs["error_kind"] is None and kwargs["error_detail"] is None
+
+
+@pytest.mark.asyncio
+async def test_failure_shows_a_cause_the_founder_can_fix():
+    activities, db, *_ = await fixture()
+    run_id = str(db.run.id)
+    await activities.failure(
+        {
+            "run_id": run_id,
+            "reason": "Google Search Console needs to be reconnected.",
+            "kind": "needs_you",
+            "action": "integrations",
+            "detail": "IntegrationAuthorizationError: token expired",
+        }
+    )
+    kwargs = db.project_failure.await_args.kwargs
+    assert kwargs["error_message"] == "Google Search Console needs to be reconnected."
+    assert kwargs["error_kind"] == "needs_you" and kwargs["error_action"] == "integrations"
+    assert kwargs["error_detail"] == "IntegrationAuthorizationError: token expired"
+
+
+@pytest.mark.asyncio
+async def test_failure_hides_an_internal_cause_behind_the_fixed_sentence():
+    activities, db, *_ = await fixture()
+    run_id = str(db.run.id)
+    await activities.failure(
+        {
+            "run_id": run_id,
+            "reason": "Tin hit a problem on its side.",
+            "kind": "internal",
+            "detail": "KeyError: 'scope'",
+        }
+    )
+    kwargs = db.project_failure.await_args.kwargs
+    assert kwargs["error_message"] == FAILURE_FALLBACK
+    assert kwargs["error_kind"] == "internal"
+    assert kwargs["error_detail"] == "KeyError: 'scope'"
+
+
+@pytest.mark.asyncio
+async def test_invalid_inputs_are_founder_fixable():
+    from tin_lite.failures import from_details
+
+    activities, db, *_ = await fixture(inputs={"market": "Atlantis"})
+    with pytest.raises(ApplicationError) as raised:
+        await activities.prepare(str(db.run.id))
+    carried = from_details(raised.value)
+    assert carried is not None and carried.kind == "needs_you" and carried.action == "input"
 
 
 @pytest.mark.asyncio

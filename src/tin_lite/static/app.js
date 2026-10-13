@@ -276,6 +276,11 @@ const state = {
   agentTab: "claude",
   // The lock page starts on Codex like the website hero; a click moves both surfaces.
   lockTab: null,
+  // The agent's progress the lock page follows, its poll, and the switch to the plan's project.
+  lockSetup: null,
+  lockPollTimer: null,
+  lockOpenTimer: null,
+  lockOpenAt: null,
   integrationFilter: "all",
   integrationSearch: "",
   expandedIntegration: null,
@@ -1305,60 +1310,273 @@ function updateAgentRail() {
   });
 }
 
-// The locked dashboard. One install line per agent, no comment lines: the sign-in opens
-// by itself and the rail block carries the longer version once the project unlocks.
+// The locked dashboard: a browser sign-up whose project has no workflow or run yet.
+// Three steps follow the coding agent as Tin sees it: the install line, the agent's
+// sign-in and setup. Paper boards "LOCK-N · A" and "LOCK-N · B and C".
 const LOCK_PAGE_TABS = [
   { tab: "codex", label: "Codex" },
   { tab: "claude", label: "Claude Code" },
   { tab: "api", label: "API" },
 ];
+// The first message rides on the install line, so the agent starts fresh in the project
+// folder and asks for the sign-in itself. Change the lines here and nowhere else.
+const LOCK_PAGE_FIRST_ASK = "Set up Tin";
+const LOCK_PAGE_COMMANDS = {
+  codex: (mcpUrl) => `codex mcp add tin --url ${mcpUrl} && codex "${LOCK_PAGE_FIRST_ASK}"`,
+  claude: (mcpUrl) => `claude mcp add -s user -t http tin ${mcpUrl} && claude "${LOCK_PAGE_FIRST_ASK}"`,
+};
+const LOCK_PAGE_AGENT_NAMES = { codex: "Codex", claude: "Claude Code", claude_code: "Claude Code" };
+const LOCK_PAGE_POLL_MS = 5000;
+const LOCK_PAGE_OPEN_SECONDS = 3;
 
 function lockPageLine(tab) {
   if (tab === "api") return { prompt: "GET", command: `${new URL(MCP_URL).origin}/api/workflows?project_id={project_id}` };
-  return { prompt: "$", command: agentCommandFor(tab).split("\n")[0] };
+  return { prompt: "$", command: LOCK_PAGE_COMMANDS[tab](MCP_URL) };
+}
+
+function currentLockTab() {
+  return LOCK_PAGE_TABS.some((item) => item.tab === state.lockTab) ? state.lockTab : "codex";
+}
+
+// What the agent has done so far, from /agent-setup. The agent may set up a new project
+// for the business, so the setup project is often not the one this tab has open.
+function lockProgress(setup, tab = currentLockTab()) {
+  const agent = setup?.agent || {};
+  const run = setup?.setup || {};
+  const started = Boolean(run.started_at && run.project_id);
+  return {
+    connected: Boolean(agent.connected_at) || started,
+    connectedAt: agent.connected_at || run.started_at || null,
+    agentName: LOCK_PAGE_AGENT_NAMES[agent.client] || LOCK_PAGE_AGENT_NAMES[tab] || "your agent",
+    started,
+    startedAt: run.started_at || null,
+    stopped: started && ["failed", "stopped"].includes(run.status),
+    ready: started && Boolean(run.plan_ready),
+    projectId: run.project_id || null,
+    projectName: run.project_name || "your project",
+  };
+}
+
+function lockFingerprint(setup) {
+  const progress = lockProgress(setup);
+  return [progress.connected, progress.agentName, progress.started, progress.stopped, progress.ready, progress.projectId].join(":");
+}
+
+function lockStep({ state: stepState, number, title, detail = "", time = "", body = "" }) {
+  const mark = stepState === "done"
+    ? '<svg viewBox="0 0 12 12"><path d="M2.5 6.2L5 8.7L9.5 3.5" /></svg>'
+    : stepState === "working" ? "" : String(number);
+  const spoken = { done: "Done", working: "In progress", active: "Next", pending: "Later" }[stepState];
+  return `
+    <li class="lock-step is-${stepState}">
+      <span class="lock-step-mark" aria-hidden="true">${mark}</span>
+      <div class="lock-step-body">
+        <div class="lock-step-title"><span><span class="lock-step-state">${spoken}: </span>${escapeHtml(title)}</span>${time ? `<time>${escapeHtml(time)}</time>` : ""}</div>
+        ${detail ? `<p>${escapeHtml(detail)}</p>` : ""}
+        ${body}
+      </div>
+    </li>`;
+}
+
+function lockInstall(tab) {
+  const line = lockPageLine(tab);
+  return `
+    <div class="lock-page-install">
+      <div class="lock-page-tabs" role="tablist" aria-label="Coding agent">
+        ${LOCK_PAGE_TABS.map((item) => `<button type="button" role="tab" data-lock-tab="${item.tab}" aria-selected="${String(item.tab === tab)}">${item.label}</button>`).join("")}
+      </div>
+      <div class="lock-page-line">
+        <span aria-hidden="true">${escapeHtml(line.prompt)}</span>
+        <code id="lock-page-command" title="${escapeHtml(line.command)}">${escapeHtml(line.command)}</code>
+        <button type="button" id="copy-lock-command" aria-label="Copy">
+          <svg aria-hidden="true" viewBox="0 0 16 16"><rect x="5" y="5" width="9" height="9" rx="1.5" /><path d="M11 5V3.5A1.5 1.5 0 0 0 9.5 2h-6A1.5 1.5 0 0 0 2 3.5v6A1.5 1.5 0 0 0 3.5 11H5" /></svg>
+        </button>
+      </div>
+    </div>`;
 }
 
 function renderLockPage() {
-  const tab = LOCK_PAGE_TABS.some((item) => item.tab === state.lockTab) ? state.lockTab : "codex";
-  const line = lockPageLine(tab);
   main.innerHTML = `
     <section class="lock-page" aria-labelledby="lock-page-title">
       <div class="lock-page-column">
-        <h1 id="lock-page-title">Set up Tin from your coding agent</h1>
-        <p>Your coding agent already knows your repo and how you write. Connect Tin, and it will pick the workflows that fit and get the first ones running for you in a few minutes.</p>
-        <p><strong>Browser setup is not available yet.</strong></p>
-        <div class="lock-page-install">
-          <div class="lock-page-tabs" role="tablist" aria-label="Coding agent">
-            ${LOCK_PAGE_TABS.map((item) => `<button type="button" role="tab" data-lock-tab="${item.tab}" aria-selected="${String(item.tab === tab)}">${item.label}</button>`).join("")}
-          </div>
-          <div class="lock-page-line">
-            <span aria-hidden="true">${escapeHtml(line.prompt)}</span>
-            <code id="lock-page-command">${escapeHtml(line.command)}</code>
-            <button type="button" id="copy-lock-command" aria-label="Copy">
-              <svg aria-hidden="true" viewBox="0 0 16 16"><rect x="5" y="5" width="9" height="9" rx="1.5" /><path d="M11 5V3.5A1.5 1.5 0 0 0 9.5 2h-6A1.5 1.5 0 0 0 2 3.5v6A1.5 1.5 0 0 0 3.5 11H5" /></svg>
-            </button>
-          </div>
-        </div>
+        <header class="lock-page-head">
+          <h1 id="lock-page-title">Set up Tin from your coding agent</h1>
+          <p>Your agent reads your repo, picks the workflows that fit and starts the first ones. This page follows along.</p>
+        </header>
+        <div class="lock-page-progress" id="lock-page-progress"></div>
       </div>
     </section>`;
-  main.querySelectorAll("[data-lock-tab]").forEach((button) => {
+  renderLockSteps();
+  if (!lockProgress(state.lockSetup).ready) scheduleLockPolling({ immediate: !state.lockSetup });
+}
+
+// Codex opens the sign-in tab itself. Claude Code only prints the link, and goes on once
+// the person writes back.
+function lockSignIn(tab, agentName) {
+  if (tab === "claude") return {
+    title: "Open the link Claude Code shows and click Allow",
+    detail: "Then tell Claude Code you're done and it carries on.",
+  };
+  return {
+    title: `Click Allow in the tab ${agentName} opens`,
+    detail: "That lets your agent use your Tin account. It's Tin's page; nothing to fill in.",
+  };
+}
+
+function renderLockSteps() {
+  const container = main.querySelector("#lock-page-progress");
+  if (!container) return;
+  const tab = currentLockTab();
+  const progress = lockProgress(state.lockSetup, tab);
+  const steps = [
+    progress.connected
+      ? lockStep({ state: "done", title: `Tin added to ${progress.agentName}` })
+      : lockStep({ state: "active", number: 1, title: "Run this in a terminal, inside your project", body: lockInstall(tab) }),
+    progress.connected
+      ? lockStep({ state: "done", title: `${progress.agentName} connected`, time: clockTime(progress.connectedAt) })
+      : lockStep({ state: "pending", number: 2, ...lockSignIn(tab, progress.agentName) }),
+  ];
+  let after = '<p class="lock-page-status" role="status">waiting for your agent · this page updates by itself</p>';
+  if (progress.ready) {
+    steps.push(lockStep({
+      state: "done", title: `${progress.projectName}'s plan is ready`,
+      detail: "Pick what runs here or in your agent. Nothing starts until you approve it.",
+    }));
+    after = `
+      <div class="lock-page-open">
+        <button type="button" data-lock-open>Open ${escapeHtml(progress.projectName)} →</button>
+        <span id="lock-page-countdown" role="status">opening in ${lockOpenSecondsLeft()} s</span>
+      </div>`;
+  } else if (progress.stopped) {
+    steps.push(lockStep({
+      state: "active", number: 3, title: `Setup stopped in ${progress.projectName}`,
+      detail: "Ask your agent to start it again; it can read why it stopped.",
+    }));
+    after = '<p class="lock-page-status" role="status">this page updates by itself</p>';
+  } else if (progress.started) {
+    steps.push(lockStep({
+      state: "working", title: "Tin is reading your project",
+      detail: "Your agent may ask a few things in the terminal meanwhile. About five minutes.",
+    }));
+    after = `<p class="lock-page-status" role="status">started ${escapeHtml(clockTime(progress.startedAt))} · this page opens the project when the plan is ready</p>`;
+  } else {
+    steps.push(lockStep({
+      state: progress.connected ? "active" : "pending", number: 3, title: "Tin reads your project and drafts a plan",
+      detail: "About five minutes. Your new project opens here when it's ready.",
+    }));
+  }
+  container.innerHTML = `<ol class="lock-steps">${steps.join("")}</ol>${after}`;
+  container.querySelectorAll("[data-lock-tab]").forEach((button) => {
     button.addEventListener("click", () => {
       state.lockTab = button.dataset.lockTab;
       state.agentTab = button.dataset.lockTab;
-      renderLockPage();
+      renderLockSteps();
       updateAgentRail();
     });
   });
-  main.querySelector("#copy-lock-command").addEventListener("click", async () => {
+  container.querySelector("#copy-lock-command")?.addEventListener("click", async () => {
+    const command = lockPageLine(tab).command;
     try {
-      await navigator.clipboard.writeText(line.command);
+      await navigator.clipboard.writeText(command);
     } catch (_error) {
       showToast("Copy did not work. Select the command and copy it from here.");
       return;
     }
-    showToast(tab === "api" ? "Copied." : `Copied. Run it, then ask your coding agent: “${AGENT_PROMPT}”`);
+    showToast(tab === "api" ? "Copied." : "Copied. Paste it in a terminal inside your project.");
     recordLockPageEvent("install_copied", tab);
   });
+  container.querySelector("[data-lock-open]")?.addEventListener("click", () => openLockProject());
+  if (progress.ready) startLockOpenCountdown();
+}
+
+function scheduleLockPolling({ immediate = false } = {}) {
+  window.clearTimeout(state.lockPollTimer);
+  state.lockPollTimer = null;
+  if (document.hidden || state.projectAccess !== "locked" || !state.project) return;
+  state.lockPollTimer = window.setTimeout(pollLockSetup, immediate ? 0 : LOCK_PAGE_POLL_MS);
+}
+
+function stopLockPolling() {
+  window.clearTimeout(state.lockPollTimer);
+  state.lockPollTimer = null;
+}
+
+async function pollLockSetup() {
+  state.lockPollTimer = null;
+  if (document.hidden || state.projectAccess !== "locked" || !state.project || !main.querySelector(".lock-page")) return;
+  const generation = state.projectGeneration;
+  let setup = null;
+  try {
+    setup = await api(`/api/projects/${encodeURIComponent(state.project.id)}/agent-setup`);
+  } catch (_error) {
+    // Keep the last known steps; the next poll tries again.
+  }
+  if (generation !== state.projectGeneration || state.projectAccess !== "locked") return;
+  if (setup && typeof setup === "object" && !Array.isArray(setup)) {
+    const before = state.lockSetup;
+    state.lockSetup = setup;
+    recordLockSteps(before, setup);
+    if (!before || lockFingerprint(before) !== lockFingerprint(setup)) renderLockSteps();
+  }
+  if (!lockProgress(state.lockSetup).ready) scheduleLockPolling();
+}
+
+// A step counts once per page view, and only when this page watched it happen.
+function recordLockSteps(before, after) {
+  if (!before) return;
+  const was = lockProgress(before);
+  const now = lockProgress(after);
+  const tab = currentLockTab();
+  if (!was.connected && now.connected) recordLockPageEvent("agent_connected", tab);
+  if (!was.started && now.started) recordLockPageEvent("setup_started", tab);
+  if (!was.ready && now.ready) recordLockPageEvent("plan_ready", tab);
+}
+
+function lockOpenSecondsLeft() {
+  if (!state.lockOpenAt) return LOCK_PAGE_OPEN_SECONDS;
+  return Math.max(1, Math.ceil((state.lockOpenAt - Date.now()) / 1000));
+}
+
+function startLockOpenCountdown() {
+  if (state.lockOpenTimer) return;
+  state.lockOpenAt = Date.now() + LOCK_PAGE_OPEN_SECONDS * 1000;
+  state.lockOpenTimer = window.setInterval(() => {
+    const countdown = main.querySelector("#lock-page-countdown");
+    if (!countdown) {
+      clearLockOpenCountdown();
+      return;
+    }
+    if (Date.now() >= state.lockOpenAt) {
+      openLockProject();
+      return;
+    }
+    countdown.textContent = `opening in ${lockOpenSecondsLeft()} s`;
+  }, 250);
+}
+
+function clearLockOpenCountdown() {
+  window.clearInterval(state.lockOpenTimer);
+  state.lockOpenTimer = null;
+  state.lockOpenAt = null;
+}
+
+// The plan's project is usually new to this tab: fetch the list before switching to it.
+async function openLockProject() {
+  clearLockOpenCountdown();
+  stopLockPolling();
+  const { projectId, projectName } = lockProgress(state.lockSetup);
+  if (!projectId) return;
+  try {
+    let project = state.projects.find((item) => item.id === projectId);
+    if (!project) {
+      state.projects = await api("/api/projects");
+      project = state.projects.find((item) => item.id === projectId);
+    }
+    if (!project) throw new Error("project not listed");
+    await loadProject(project, { announce: project.id !== state.project?.id });
+  } catch (_error) {
+    showToast(`Could not open ${projectName}. Refresh to try again.`);
+  }
 }
 
 function recordLockPageEvent(action, agent = null) {
@@ -2445,6 +2663,17 @@ function emailCampaignRunDetail(run, detail) {
   </section>`;
 }
 
+// A failure the founder can fix links to where it is fixed (failures.py error_action).
+const RUN_FAILURE_FIX_VIEWS = { integrations: ["integrations", "Open Integrations"], billing: ["billing", "Open Billing"] };
+
+function runFailureFixLink(run) {
+  if (run.error_kind !== "needs_you") return "";
+  const fix = RUN_FAILURE_FIX_VIEWS[run.error_action];
+  return fix && ALLOWED_VIEWS.has(fix[0])
+    ? ` <a href="/${fix[0]}" data-run-failure-fix="${fix[0]}">${fix[1]} →</a>`
+    : "";
+}
+
 function systemRunDetailHtml(run, includeClose = true) {
   const workflow = workflowForRun(run);
   const available = availableRunOutput(run);
@@ -2468,7 +2697,7 @@ function systemRunDetailHtml(run, includeClose = true) {
       <span><code>result</code><strong>${output}</strong></span>
     </div>
     ${selectedSources ? `<div class="system-run-facts is-sources">${selectedSources}</div>` : ""}
-    ${run.error_message ? `<p class="system-run-error">${escapeHtml(run.error_message)}</p>` : ""}
+    ${run.error_message ? `<p class="system-run-error">${escapeHtml(run.error_message)}${runFailureFixLink(run)}</p>` : ""}
     ${run.status === "failed" && run.progress_summary ? `<p class="system-run-error">Last update before it stopped: ${escapeHtml(run.progress_summary)}</p>` : ""}
     ${run.retained_output && (!run.error_message || run.retained_output.reason === "execution_interrupted") ? `<p class="system-run-error">${escapeHtml(retainedOutputMessage(run))}</p>` : ""}
     ${run.workflow_name === "outreach.email_campaign" ? emailCampaignRunDetail(run, detail) : ""}
@@ -2997,6 +3226,12 @@ function bindRunDetailControls(root) {
   });
   root.querySelectorAll("[data-run-detail-artifact]").forEach((button) => {
     button.addEventListener("click", () => openRunArtifact(button.dataset.runDetailArtifact, state.view));
+  });
+  root.querySelectorAll("[data-run-failure-fix]").forEach((link) => {
+    link.addEventListener("click", (event) => {
+      event.preventDefault();
+      navigate(link.dataset.runFailureFix);
+    });
   });
   root.querySelectorAll("[data-campaign-plan]").forEach((button) => {
     button.addEventListener("click", () => {
@@ -7250,6 +7485,9 @@ function resetProjectState(project) {
   if (state.project) state.chatDrafts.set(state.project.id, state.chatDraft);
   window.clearTimeout(state.pollTimer);
   state.pollTimer = null;
+  stopLockPolling();
+  clearLockOpenCountdown();
+  state.lockSetup = null;
   disposeDocument();
   disposeFilesTree();
   state.projectGeneration += 1;
@@ -8393,8 +8631,11 @@ document.addEventListener("visibilitychange", () => {
   if (document.hidden) {
     window.clearTimeout(state.pollTimer);
     state.pollTimer = null;
+    stopLockPolling();
   } else {
     schedulePolling({ immediate: state.view === "workflows" });
+    // Back from the terminal: show what the agent did while this tab was hidden.
+    if (main.querySelector(".lock-page") && !lockProgress(state.lockSetup).ready) scheduleLockPolling({ immediate: true });
   }
 });
 

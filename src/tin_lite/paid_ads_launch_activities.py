@@ -15,7 +15,14 @@ from uuid import UUID
 from temporalio import activity
 from temporalio.exceptions import ApplicationError
 
-from tin_lite import paid_ads, paid_ads_launch
+from tin_lite import ads_currency, paid_ads, paid_ads_launch
+from tin_lite.billing_contracts import BillingError
+from tin_lite.failures import (
+    Failure,
+    billing_refusal,
+    failure_projection,
+    split_failure_input,
+)
 from tin_lite.google_ads_requests import (
     QUERIES,
     SUBSCRIPTION_TYPES,
@@ -33,7 +40,9 @@ from tin_lite.integrations import (
     GITHUB_PROVIDER,
     GitHubFileChange,
     GoogleAdsCallError,
+    IntegrationAuthorizationError,
     IntegrationError,
+    IntegrationNotConfiguredError,
     ads_health_summary,
 )
 from tin_lite.model_providers import (
@@ -76,9 +85,39 @@ def _rows(result: dict) -> list[dict]:
     return [row for row in rows if isinstance(row, dict)]
 
 
+RECONNECT = "google_ads_reconnect"
+
+
+def _billing(status: str, reason: object) -> Failure | None:
+    """The founder wording for a billing refusal a receipt saved by its code. `spending_limit`
+    is the run's own reservation ceiling and the reconnect label is not billing."""
+    if status != "unavailable" or not reason or reason in {"spending_limit", RECONNECT}:
+        return None
+    return billing_refusal(BillingError(str(reason), ""))
+
+
+def _refusal(result: dict) -> Failure | None:
+    """What the founder can do about a request Tin refused before contacting Google Ads."""
+    if result.get("status") == "unavailable" and result.get("reason") == RECONNECT:
+        return Failure("needs_you", RECONNECT, action="integrations")
+    return _billing(str(result.get("status")), result.get("reason"))
+
+
 def _failed(result: dict, action: str, outcome: str) -> str:
     """Name the side that failed: Tin's own gate, a Google Ads refusal, or a lost answer."""
     if result.get("status") == "unavailable":
+        if result.get("reason") == RECONNECT:
+            return (
+                f"Tin could not use the linked Google Ads account for {action}, so Google Ads "
+                f"was not contacted; {outcome}. Reconnect Google Ads under Integrations, then "
+                "try again."
+            )
+        billing = _billing("unavailable", result.get("reason"))
+        if billing is not None:
+            return (
+                f"Tin could not authorize {action}, so Google Ads was not contacted; "
+                f"{outcome}. {billing.message}"
+            )
         return (
             f"Tin could not authorize {action} ({result.get('reason') or 'unavailable'}), so "
             f"Google Ads was not contacted; {outcome}. Check the project's spending limits, "
@@ -94,11 +133,20 @@ def _failed(result: dict, action: str, outcome: str) -> str:
 
 class PaidAdsLaunchActivities:
     def __init__(
-        self, *, database, storage, settings, router=None, integrations=None, site_reader=None
+        self,
+        *,
+        database,
+        storage,
+        settings,
+        router=None,
+        integrations=None,
+        site_reader=None,
+        rate_reader=None,
     ):
         self.db, self.storage, self.settings = database, storage, settings
         self.router, self.integrations = router, integrations
         self.read_site = site_reader or read_site
+        self.read_rates = rate_reader or ads_currency.read_ecb
 
     # ------------------------------------------------------------ receipts
 
@@ -190,16 +238,17 @@ class PaidAdsLaunchActivities:
                     ):
                         value = await call()
                     result = {"status": "completed", "value": value}
-                except Exception as exc:
-                    from tin_lite.billing_contracts import BillingError
-
-                    # Raw provider errors, headers and credentials never enter evidence.
+                except BillingError as exc:
                     # A billing refusal keeps its fixed code so the failure names it.
-                    result = (
-                        {"status": "unavailable", "reason": exc.code}
-                        if isinstance(exc, BillingError)
-                        else {"status": "unknown", "reason": "provider_result_unavailable"}
-                    )
+                    result = {"status": "unavailable", "reason": exc.code}
+                except (IntegrationAuthorizationError, IntegrationNotConfiguredError):
+                    if needs != "google_ads":
+                        raise
+                    # Refused before anything reached Google Ads: the link needs the founder.
+                    result = {"status": "unavailable", "reason": RECONNECT}
+                except Exception:
+                    # Raw provider errors, headers and credentials never enter evidence.
+                    result = {"status": "unknown", "reason": "provider_result_unavailable"}
             result = {"request_sha256": fingerprint, **saved, **result}
             await self.db.complete_effect(conn, execution_key=key, result=result)
             if activity.in_activity():
@@ -250,11 +299,26 @@ class PaidAdsLaunchActivities:
             needs="model",
         )
         if result["status"] != "completed":
-            await self._save(run_id, "failure", {"code": "model_unavailable", "stage": step})
-            raise ApplicationError(
-                "A model result was unavailable; no replacement was purchased.",
-                non_retryable=True,
-            )
+            reason = result.get("reason")
+            billing = _billing(result["status"], reason)
+            if reason == "spending_limit":
+                code = "spending_limit"
+            elif billing is not None:
+                code = "billing_refused"
+            else:
+                code = "model_unavailable"
+            await self._save(run_id, "failure", {"code": code, "stage": step, "reason": reason})
+            if billing is not None:
+                raise ApplicationError(
+                    f"{billing.message} No replacement was purchased.",
+                    billing.details(),
+                    non_retryable=True,
+                )
+            message = {
+                "spending_limit": "The launch's spending limit stopped a model call",
+                "model_unavailable": "A model result was unavailable",
+            }[code]
+            raise ApplicationError(f"{message}; no replacement was purchased.", non_retryable=True)
         if result["value"].get("unusable"):
             raise UnusableModelResult(result["value"]["unusable"])
         return result["value"]["data"]
@@ -411,20 +475,6 @@ class PaidAdsLaunchActivities:
             return
         await self._progress(run_id, "gather", 1, "Reading the assessment and the Ads account")
         assessment, keywords_csv = await self._assessment(run_id, scope)
-        try:
-            skeleton = paid_ads_launch.plan_skeleton(
-                assessment=assessment,
-                keywords_csv=keywords_csv,
-                inputs=scope["inputs"],
-                account={"customer": {}},
-                marker=scope["marker"],
-                today=datetime.fromisoformat(scope["today"]).date(),
-            )
-        except (ValueError, KeyError, TypeError) as exc:
-            skeleton = None
-            skeleton_error = str(exc)[:200]
-        else:
-            skeleton_error = None
         reads = {}
         for name, query in (
             ("account", QUERIES["account"]()),
@@ -433,16 +483,6 @@ class PaidAdsLaunchActivities:
             ("subscriptions", QUERIES["subscriptions"]()),
         ):
             reads[name] = await self._ads(run_id, f"gather:{name}", "search", {"query": query})
-        existing = None
-        if skeleton is not None:
-            lookup = await self._ads(
-                run_id,
-                "gather:campaign_lookup",
-                "search",
-                {"query": QUERIES["campaign_by_name"](bundle_names(skeleton)["campaign"])},
-            )
-            rows = _rows(lookup)
-            existing = rows[0].get("campaign") if rows else None
         health = ads_health_summary(
             {name: _rows(result) for name, result in reads.items() if name != "subscriptions"}
         )
@@ -476,11 +516,40 @@ class PaidAdsLaunchActivities:
             ],
         }
         if reads["account"].get("status") != "completed" or reads["account"].get("error"):
+            text = _failed(reads["account"], "the account read", "nothing was changed")
+            refusal = _refusal(reads["account"])
             raise ApplicationError(
-                _failed(reads["account"], "the account read", "nothing was changed"),
+                text,
+                *([_carried(refusal, text).details()] if refusal else []),
                 non_retryable=reads["account"].get("error") is not None,
             )
         await self._save(run_id, "gathered:account", {"status": "completed", "value": account})
+        # Budget and bids are only drafted in a currency Tin can price; the gate names any other.
+        currency = account["customer"].get("currency_code")
+        fx = await self._fx(run_id, currency) if ads_currency.supported(currency) else None
+        skeleton, skeleton_error = None, None
+        if fx is not None:
+            try:
+                skeleton = paid_ads_launch.plan_skeleton(
+                    assessment=assessment,
+                    keywords_csv=keywords_csv,
+                    inputs=scope["inputs"],
+                    marker=scope["marker"],
+                    today=datetime.fromisoformat(scope["today"]).date(),
+                    fx=fx,
+                )
+            except (ValueError, KeyError, TypeError) as exc:
+                skeleton_error = str(exc)[:200]
+        existing = None
+        if skeleton is not None:
+            lookup = await self._ads(
+                run_id,
+                "gather:campaign_lookup",
+                "search",
+                {"query": QUERIES["campaign_by_name"](bundle_names(skeleton)["campaign"])},
+            )
+            rows = _rows(lookup)
+            existing = rows[0].get("campaign") if rows else None
         landing = (
             skeleton["landing_page"]
             if skeleton
@@ -519,6 +588,27 @@ class PaidAdsLaunchActivities:
             {"gate": gate, "skeleton": skeleton, "existing_campaign": existing},
         )
 
+    async def _fx(self, run_id: str, currency: str) -> dict:
+        """The day's rate for the account's currency, read once and receipted so a retry or a
+        later step uses the same rate the founder approves."""
+        if currency == "USD":
+            return dict(ads_currency.USD_FX)
+        saved = await self._result(run_id, "gather:fx")
+        if saved:
+            return saved["value"]
+        try:
+            fx = ads_currency.fx_for(currency, ads_currency.parse_ecb(await self.read_rates()))
+        except ads_currency.RateUnavailable as exc:
+            # Nothing was written; the activity retries and reads the rate again.
+            raise ApplicationError(
+                f"Tin could not read the day's {currency} exchange rate ({exc.code}). "
+                "Nothing was changed.",
+                non_retryable=False,
+            ) from None
+        return (await self._save(run_id, "gather:fx", {"status": "completed", "value": fx}))[
+            "value"
+        ]
+
     @activity.defn(name="paid_ads_launch_draft")
     async def draft(self, run_id: str) -> str:
         """Returns the mode as a small control fact: launch, tracking or setup."""
@@ -531,7 +621,6 @@ class PaidAdsLaunchActivities:
         run = await self._active(run_id)
         project = await self.db.get_project(run.project_id)
         assessment, _ = await self._assessment(run_id, scope)
-        account = (await self._result(run_id, "gathered:account"))["value"]
         site = ((await self._result(run_id, "gather:site")) or {}).get("value") or {}
         business = str((assessment.get("profile") or {}).get("business_name") or "the business")
         await self._progress(run_id, "draft", 2, "Drafting the campaign for your approval")
@@ -542,10 +631,11 @@ class PaidAdsLaunchActivities:
             return await self._model(run_id, step, system, user, schema, max_out, effort)
 
         record: dict = {"mode": None, "gate": gate}
+        fx = ((await self._result(run_id, "gather:fx")) or {}).get("value") or ads_currency.USD_FX
         if gate["outcome"] == "ready":
             record["mode"] = "launch"
             evidence = {
-                "plan": gathered["skeleton"],
+                "plan": paid_ads_launch.upgrade_plan(gathered["skeleton"]),
                 "assessment": assessment,
                 "readable": site.get("readable") or [],
                 "site_text": evidence_text(site) if site.get("pages") else "",
@@ -576,8 +666,11 @@ class PaidAdsLaunchActivities:
                     "name": paid_ads_launch.conversion_action_name(business, scope["marker"]),
                     "category": category,
                     "counting_type": counting,
-                    "default_value": float(assessment.get("allowable_cpa_usd") or 0) or 1.0,
-                    "currency": account["customer"].get("currency_code") or "USD",
+                    "default_value": ads_currency.convert(
+                        float(assessment.get("allowable_cpa_usd") or 0) or 1.0,
+                        fx,
+                    ),
+                    "currency": ads_currency.code_of(fx),
                     "create": True,
                 }
             record["action"] = action
@@ -605,8 +698,8 @@ class PaidAdsLaunchActivities:
             source_commit_sha=scope["assessment"]["revision"],
             plan_path=names[artifact],
             plan_commit_sha=publication["canonical_commit_sha"],
-            daily_budget_micros=int(micros(plan["daily_budget_usd"])) if plan else None,
-            cpc_ceiling_micros=int(micros(plan["cpc_ceiling_usd"])) if plan else None,
+            daily_budget_micros=int(micros(plan["daily_budget"], maximum=1e12)) if plan else None,
+            cpc_ceiling_micros=int(micros(plan["cpc_ceiling"], maximum=1e12)) if plan else None,
         )
         await self._save(run_id, "draft", record)
         return record["mode"]
@@ -725,11 +818,11 @@ class PaidAdsLaunchActivities:
             f"/{publication['artifact_path']}"
         )
         if draft["mode"] == "launch":
-            plan = draft["plan"]
+            plan = paid_ads_launch.upgrade_plan(draft["plan"])
             summary = (
                 f"Approve and launch: one Google Search campaign, {plan['campaign_name']}, at "
-                f"${plan['daily_budget_usd']:.2f} a day in your Google Ads account. Nothing is "
-                "created until you approve it."
+                f"{ads_currency.with_usd(plan['daily_budget'], plan['fx'])} a day in your Google "
+                "Ads account. Nothing is created until you approve it."
             )
         else:
             action = draft["action"]
@@ -779,14 +872,31 @@ class PaidAdsLaunchActivities:
         else:
             await self._apply_tracking(run_id, draft)
 
-    async def _refuse(self, run_id: str, code: str, text: str):
-        await self._save(run_id, "failure", {"code": "google_ads", "stage": code, "detail": text})
-        raise ApplicationError(text, non_retryable=True)
+    async def _refuse(self, run_id: str, code: str, text: str, refusal: Failure | None = None):
+        value = {"code": "google_ads", "stage": code, "detail": text}
+        if refusal is None:
+            await self._save(run_id, "failure", value)
+            raise ApplicationError(text, non_retryable=True)
+        carried = _carried(refusal, text)
+        await self._save(
+            run_id, "failure", {**value, "kind": carried.kind, "action": carried.action}
+        )
+        raise ApplicationError(text, carried.details(), non_retryable=True)
 
     async def _apply_launch(self, run_id: str, draft: dict) -> None:
         scope = await self._result(run_id, "scope")
-        plan = draft["plan"]
+        plan = paid_ads_launch.upgrade_plan(draft["plan"])
         run = await self._active(run_id)
+        account = (await self._result(run_id, "gathered:account"))["value"]
+        billed_in = account["customer"].get("currency_code")
+        if billed_in != plan["currency_code"]:
+            await self._refuse(
+                run_id,
+                "currency",
+                f"The plan's amounts are in {plan['currency_code']} but the account bills in "
+                f"{billed_in or 'an unreported currency'}, so nothing was created. Run the "
+                "launch again to draft it in the account's currency.",
+            )
         operations = campaign_bundle(plan, customer_id=scope["customer_id"])
         await self.db.update_paid_ads_campaign(run_id=run.id, status="creating")
         validated = await self._ads(
@@ -797,7 +907,10 @@ class PaidAdsLaunchActivities:
         )
         if validated.get("status") != "completed" or validated.get("error"):
             await self._refuse(
-                run_id, "validate", _failed(validated, "the plan check", "nothing was created")
+                run_id,
+                "validate",
+                _failed(validated, "the plan check", "nothing was created"),
+                _refusal(validated),
             )
         created = await self._ads(
             run_id, "apply:create", "mutate", {"operations": operations, "validate_only": False}
@@ -841,6 +954,7 @@ class PaidAdsLaunchActivities:
                     run_id,
                     "create",
                     _failed(created, "creating the campaign", "nothing was created"),
+                    _refusal(created),
                 )
             elif created.get("error"):
                 await self._refuse(
@@ -866,7 +980,6 @@ class PaidAdsLaunchActivities:
                 str(resources.get("shared_set") or "").rsplit("/", 1)[-1] or None
             ),
         )
-        account = (await self._result(run_id, "gathered:account"))["value"]
         enabled_types = sorted(
             {
                 str(item.get("type"))
@@ -919,6 +1032,7 @@ class PaidAdsLaunchActivities:
                     "the campaign was created and is paused in your account; enable it there "
                     "or run the launch again",
                 ),
+                _refusal(enabled),
             )
         # For an unconfirmed switch this is the earliest it could have started spending.
         enabled_at = datetime.now(UTC).isoformat()
@@ -989,6 +1103,7 @@ class PaidAdsLaunchActivities:
                             "creating the conversion action",
                             "check the account before running the launch again",
                         ),
+                        _refusal(created),
                     )
                 results = created["value"].get("results") or []
                 resource = (results[0] or {}).get("resourceName") if results else None
@@ -1082,8 +1197,9 @@ class PaidAdsLaunchActivities:
         business = str((assessment.get("profile") or {}).get("business_name") or "the business")
         await self._progress(run_id, "publish", 5, "Saving the result to your project files")
         if draft["mode"] == "launch":
+            plan = paid_ads_launch.upgrade_plan(draft["plan"])
             documents = paid_ads_launch.render_result(
-                draft["plan"],
+                plan,
                 applied,
                 {
                     "summary": (
@@ -1096,7 +1212,7 @@ class PaidAdsLaunchActivities:
             status = "live"
             event = "paid_ads_launch_ready"
             summary = paid_ads_launch.summary_line(
-                "unconfirmed" if applied.get("enable_unconfirmed") else "ready", draft["plan"]
+                "unconfirmed" if applied.get("enable_unconfirmed") else "ready", plan
             )
         else:
             rendered = paid_ads_launch.render_tracking(
@@ -1137,11 +1253,19 @@ class PaidAdsLaunchActivities:
             )
 
     @activity.defn(name="paid_ads_launch_failure")
-    async def failure(self, run_id: str) -> None:
+    async def failure(self, run_ref: str | dict) -> None:
+        run_id, passed = split_failure_input(run_ref)
         run = await self.db.get_run(UUID(run_id))
         if run is None or run.executor != KEY:
             return
         failure = await self._result(run_id, "failure") or {}
+        code = failure.get("code")
+        known = None
+        if code == "billing_refused":
+            known = _billing("unavailable", failure.get("reason"))
+        elif code == "google_ads" and failure.get("kind") in {"needs_you", "transient", "internal"}:
+            action = failure.get("action")
+            known = Failure(failure["kind"], "", action=action if isinstance(action, str) else None)
         message = {
             "validation": (
                 "The Google Ads launch stopped because a model result failed validation. "
@@ -1151,11 +1275,36 @@ class PaidAdsLaunchActivities:
                 "The Google Ads launch stopped because a model result could not be confirmed. "
                 "Nothing was created in Google Ads; no replacement call was purchased."
             ),
+            "spending_limit": (
+                "The Google Ads launch stopped because a model call reached the launch's "
+                "spending limit. Nothing was created in Google Ads; no replacement call was "
+                "purchased."
+            ),
             "google_ads": failure.get("detail")
             or "Google Ads did not accept a request. Check the account before trying again.",
-        }.get(
-            failure.get("code"),
-            "The Google Ads launch stopped before finishing. Check the account before "
-            "trying again.",
+        }.get(code)
+        if code == "billing_refused" and known is not None:
+            message = (
+                f"{known.message} Nothing was created in Google Ads; no replacement call was "
+                "purchased."
+            )
+        projection = failure_projection(passed, FAILURE_FALLBACK, saved=message)
+        if known is not None:
+            projection.update(error_kind=known.kind, error_action=known.action)
+        await self.db.fail_paid_ads_launch(
+            run_id=run.id,
+            message=projection["error_message"],
+            error_kind=projection["error_kind"],
+            error_action=projection["error_action"],
+            error_detail=projection["error_detail"],
         )
-        await self.db.fail_paid_ads_launch(run_id=run.id, message=message)
+
+
+FAILURE_FALLBACK = (
+    "The Google Ads launch stopped before finishing. Check the account before trying again."
+)
+
+
+def _carried(refusal: Failure, text: str) -> Failure:
+    """The refusal's kind and fix with the launch's own sentence."""
+    return Failure(refusal.kind, text, action=refusal.action, code=refusal.code)

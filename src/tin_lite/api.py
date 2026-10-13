@@ -17,7 +17,14 @@ from fastapi import APIRouter, Depends, Header, HTTPException, Query, Request, R
 from fastapi.exceptions import RequestValidationError
 from fastapi.responses import HTMLResponse, JSONResponse, RedirectResponse
 from fastapi.routing import APIRoute
-from pydantic import BaseModel, ConfigDict, Field, ValidationError, field_validator
+from pydantic import (
+    BaseModel,
+    ConfigDict,
+    Field,
+    ValidationError,
+    field_validator,
+    model_validator,
+)
 
 from tin_lite import analytics, project_task_control
 from tin_lite.auth import AuthContext, require_user
@@ -49,6 +56,7 @@ from tin_lite.domain import (
     WorkflowStatus,
     Workspace,
 )
+from tin_lite.failures import public_error_text
 from tin_lite.growth_onboarding import KEY as GROWTH_ONBOARDING_KEY
 from tin_lite.growth_onboarding import expectation as workflow_expectation
 from tin_lite.growth_onboarding_control import OnboardingPickError, ensure_onboarding_approvable
@@ -169,18 +177,23 @@ SEARCH_PATHS = Query(default=None, max_length=100)
 WEEK_START = Query(description="The first of seven local days, usually a Monday.")
 
 
+LOCK_PAGE_ACTIONS = frozenset(
+    {"viewed", "install_copied", "agent_connected", "setup_started", "plan_ready"}
+)
+
+
 @router.post("/api/events/lock-page", status_code=204)
 async def record_lock_page_event(request: Request, user: AuthContext = AUTHENTICATED_USER):
-    """A browser sign-up met the locked dashboard: opened it, or copied the install line.
+    """A browser sign-up met the locked dashboard and how far it watched the agent get.
 
-    The lock stands in for browser onboarding until it exists; these two events show how
-    many people it sends to their coding agent. The body is a fixed vocabulary, never
-    free text.
+    The lock stands in for browser onboarding until it exists. Opened and copied show how
+    many people it sends to their coding agent; the other three are its steps ticking while
+    the page was open. The body is a fixed vocabulary, never free text.
     """
     body = await request.json() if await request.body() else {}
     body = body if isinstance(body, dict) else {}
     action = body.get("action")
-    if action not in {"viewed", "install_copied"}:
+    if action not in LOCK_PAGE_ACTIONS:
         raise HTTPException(status_code=400, detail="Unknown lock page action.")
     agent = body.get("agent")
     project_id = body.get("project_id")
@@ -194,6 +207,24 @@ async def record_lock_page_event(request: Request, user: AuthContext = AUTHENTIC
         project_id=str(project_id) if isinstance(project_id, str) and project_id else None,
     )
     return Response(status_code=204)
+
+
+@router.get("/api/projects/{project_id}/agent-setup")
+async def get_agent_setup(
+    project_id: UUID, request: Request, user: AuthContext = AUTHENTICATED_USER
+) -> dict[str, Any]:
+    """What the locked dashboard shows while the coding agent sets Tin up.
+
+    Asked from the project the browser has open, usually the empty personal one, and
+    answered for the person: the agent often creates and onboards a separate project for
+    the business. Every project named in the answer is one they belong to.
+    """
+    database = request.app.state.runtime.database
+    if not await database.has_project_access(
+        project_id=project_id, clerk_user_id=user.clerk_user_id
+    ):
+        raise HTTPException(status_code=404, detail="project not found")
+    return await database.agent_setup_status(user.clerk_user_id)
 
 
 BILLING_QUOTE_HEADER = Header(default=None, alias="Tin-Billing-Quote")
@@ -244,7 +275,7 @@ async def preview_writing_sample(
     try:
         sample = extract_sample(filename, bytes(content))
     except ValueError as exc:
-        raise HTTPException(status_code=422, detail=str(exc)) from None
+        raise HTTPException(status_code=422, detail=public_error_text(exc)) from None
     return JSONResponse(sample, headers={"Cache-Control": "no-store"})
 
 
@@ -261,7 +292,7 @@ async def stop_codex_procedure_run(
     except LookupError as exc:
         raise HTTPException(status_code=404, detail="run not found") from exc
     except SideEffectConflictError as exc:
-        raise HTTPException(status_code=409, detail=str(exc)) from exc
+        raise HTTPException(status_code=409, detail=public_error_text(exc)) from exc
 
 
 @router.post("/api/workflows/runs/{run_id}/stop-organic-audit")
@@ -275,7 +306,7 @@ async def stop_organic_audit_run(
     except LookupError as exc:
         raise HTTPException(status_code=404, detail="run not found") from exc
     except (ValueError, SideEffectConflictError) as exc:
-        raise HTTPException(status_code=409, detail=str(exc)) from exc
+        raise HTTPException(status_code=409, detail=public_error_text(exc)) from exc
     return {"id": str(run.id), "status": run.status.value}
 
 
@@ -290,7 +321,7 @@ async def stop_paid_ads_assessment_run(
     except LookupError as exc:
         raise HTTPException(status_code=404, detail="run not found") from exc
     except (ValueError, SideEffectConflictError) as exc:
-        raise HTTPException(status_code=409, detail=str(exc)) from exc
+        raise HTTPException(status_code=409, detail=public_error_text(exc)) from exc
     return {"id": str(run.id), "status": run.status.value}
 
 
@@ -305,7 +336,7 @@ async def stop_paid_ads_launch_run(
     except LookupError as exc:
         raise HTTPException(status_code=404, detail="run not found") from exc
     except (ValueError, SideEffectConflictError) as exc:
-        raise HTTPException(status_code=409, detail=str(exc)) from exc
+        raise HTTPException(status_code=409, detail=public_error_text(exc)) from exc
     return {"id": str(run.id), "status": run.status.value}
 
 
@@ -320,7 +351,7 @@ async def stop_paid_ads_monitor_run(
     except LookupError as exc:
         raise HTTPException(status_code=404, detail="run not found") from exc
     except (ValueError, SideEffectConflictError) as exc:
-        raise HTTPException(status_code=409, detail=str(exc)) from exc
+        raise HTTPException(status_code=409, detail=public_error_text(exc)) from exc
     return {"id": str(run.id), "status": run.status.value}
 
 
@@ -352,7 +383,7 @@ async def approve_paid_ads_proposal_route(
     except LookupError as exc:
         raise HTTPException(status_code=404, detail="proposal not found") from exc
     except (RuntimeError, ValueError, SideEffectConflictError) as exc:
-        raise HTTPException(status_code=409, detail=str(exc)) from exc
+        raise HTTPException(status_code=409, detail=public_error_text(exc)) from exc
     return _proposal_view(row)
 
 
@@ -369,7 +400,7 @@ async def discard_paid_ads_proposal_route(
     except LookupError as exc:
         raise HTTPException(status_code=404, detail="proposal not found") from exc
     except (RuntimeError, ValueError, SideEffectConflictError) as exc:
-        raise HTTPException(status_code=409, detail=str(exc)) from exc
+        raise HTTPException(status_code=409, detail=public_error_text(exc)) from exc
     return _proposal_view(row)
 
 
@@ -404,7 +435,7 @@ async def stop_keyword_plan_run(
     except LookupError as exc:
         raise HTTPException(status_code=404, detail="run not found") from exc
     except (ValueError, SideEffectConflictError) as exc:
-        raise HTTPException(status_code=409, detail=str(exc)) from exc
+        raise HTTPException(status_code=409, detail=public_error_text(exc)) from exc
     return {"id": str(run.id), "status": run.status.value}
 
 
@@ -692,7 +723,18 @@ class RunView(BaseModel):
     artifact_title: str | None = None
     canonical_commit_sha: str | None
     error_message: str | None
+    # needs_you, transient, explained or internal (failures.py), with where to fix a
+    # needs_you failure: integrations, billing, input or prerequisite.
+    error_kind: str | None = None
+    error_action: str | None = None
     task_title: str | None = None
+
+    @model_validator(mode="after")
+    def _kind_needs_message(self) -> RunView:
+        if not self.error_message:
+            self.error_kind = self.error_action = None
+        return self
+
     task_phase: str | None = None
     task_summary: str | None = None
     task_question: str | None = None
@@ -1505,10 +1547,12 @@ async def github_webhook(
         )
     except IntegrationNotConfiguredError as exc:
         raise HTTPException(
-            status_code=status.HTTP_503_SERVICE_UNAVAILABLE, detail=str(exc)
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE, detail=public_error_text(exc)
         ) from exc
     except IntegrationAuthorizationError as exc:
-        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail=str(exc)) from exc
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED, detail=public_error_text(exc)
+        ) from exc
     return {"accepted": accepted}
 
 
@@ -1598,7 +1642,7 @@ async def bootstrap_personal_project(
     except ProjectProvisioningError as exc:
         raise HTTPException(
             status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
-            detail=str(exc),
+            detail=public_error_text(exc),
         ) from exc
     return ProjectView.model_validate(project)
 
@@ -1633,7 +1677,7 @@ async def bootstrap_personal_workspace(
     except ProjectProvisioningError as exc:
         raise HTTPException(
             status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
-            detail=str(exc),
+            detail=public_error_text(exc),
         ) from exc
     workspaces: list[Workspace] = await request.app.state.runtime.database.list_workspaces_for_user(
         user.clerk_user_id
@@ -1668,11 +1712,13 @@ async def create_workspace_project(
     except LookupError as exc:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND) from exc
     except ProjectCreationConflictError as exc:
-        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail=str(exc)) from exc
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT, detail=public_error_text(exc)
+        ) from exc
     except ProjectProvisioningError as exc:
         raise HTTPException(
             status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
-            detail=str(exc),
+            detail=public_error_text(exc),
         ) from exc
     return ProjectView.model_validate(project)
 
@@ -1755,7 +1801,9 @@ async def accept_project_invitation(
             status_code=status.HTTP_404_NOT_FOUND, detail="invitation not found"
         ) from exc
     except RuntimeError as exc:
-        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail=str(exc)) from exc
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT, detail=public_error_text(exc)
+        ) from exc
     project = await database.get_project(accepted.project_id)
     if project is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="project not found")
@@ -2227,7 +2275,9 @@ async def chat(
                 author_clerk_user_id=user.clerk_user_id,
             )
         except ValueError as exc:
-            raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail=str(exc)) from exc
+            raise HTTPException(
+                status_code=status.HTTP_409_CONFLICT, detail=public_error_text(exc)
+            ) from exc
 
         existing = await database.get_chat_assistant_message(
             project_id=payload.project_id,
@@ -2428,7 +2478,9 @@ async def delete_project(
             status_code=status.HTTP_404_NOT_FOUND, detail="project not found"
         ) from exc
     except ValueError as exc:
-        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc)) from exc
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST, detail=public_error_text(exc)
+        ) from exc
     try:
         confirmed = normalize_project_name(confirm_name)
     except ValueError:
@@ -2447,12 +2499,16 @@ async def delete_project(
             status_code=status.HTTP_404_NOT_FOUND, detail="project not found"
         ) from exc
     except ValueError as exc:
-        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc)) from exc
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST, detail=public_error_text(exc)
+        ) from exc
     except SideEffectConflictError as exc:
-        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail=str(exc)) from exc
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT, detail=public_error_text(exc)
+        ) from exc
     except ProjectDeletionPending as exc:
         raise HTTPException(
-            status_code=status.HTTP_503_SERVICE_UNAVAILABLE, detail=str(exc)
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE, detail=public_error_text(exc)
         ) from exc
     return ProjectDeletionView(**result)
 
@@ -2472,7 +2528,7 @@ async def read_x_drafts(
     try:
         return await _x_posts_service(request).read(project_id, user.clerk_user_id, path)
     except LookupError as exc:
-        raise HTTPException(status_code=404, detail=str(exc)) from exc
+        raise HTTPException(status_code=404, detail=public_error_text(exc)) from exc
     except (ValueError, ValidationError) as exc:
         raise HTTPException(status_code=422, detail="X draft is invalid or unavailable.") from exc
 
@@ -2496,7 +2552,7 @@ async def save_x_draft(
             client_id="browser",
         )
     except (StaleProjectRevisionError, SideEffectConflictError) as exc:
-        raise HTTPException(status_code=409, detail=str(exc)) from exc
+        raise HTTPException(status_code=409, detail=public_error_text(exc)) from exc
     except (ValueError, ValidationError) as exc:
         raise HTTPException(
             status_code=422, detail="X draft has an invalid field or path."
@@ -2516,13 +2572,13 @@ async def preview_x_post(
             project_id, user.clerk_user_id, path=payload.path, post_id=payload.post_id
         )
     except LookupError as exc:
-        raise HTTPException(status_code=404, detail=str(exc)) from exc
+        raise HTTPException(status_code=404, detail=public_error_text(exc)) from exc
     except IntegrationError as exc:
         raise _integration_http_error(exc) from exc
     except ValidationError as exc:
         raise HTTPException(status_code=422, detail="X draft is invalid.") from exc
     except ValueError as exc:
-        raise HTTPException(status_code=409, detail=str(exc)) from exc
+        raise HTTPException(status_code=409, detail=public_error_text(exc)) from exc
 
 
 @router.post("/api/projects/{project_id}/x/publish")
@@ -2542,15 +2598,15 @@ async def publish_x_post(
             client_id="browser",
         )
     except LookupError as exc:
-        raise HTTPException(status_code=404, detail=str(exc)) from exc
+        raise HTTPException(status_code=404, detail=public_error_text(exc)) from exc
     except IntegrationError as exc:
         raise _integration_http_error(exc) from exc
     except ValidationError as exc:
         raise HTTPException(status_code=422, detail="X draft is invalid.") from exc
     except (ValueError, SideEffectConflictError) as exc:
-        raise HTTPException(status_code=409, detail=str(exc)) from exc
+        raise HTTPException(status_code=409, detail=public_error_text(exc)) from exc
     except BillingError as exc:
-        raise HTTPException(status_code=402, detail=str(exc)) from exc
+        raise HTTPException(status_code=exc.status, detail=exc.diagnostic()) from exc
     except (TemporalStartError, WorkflowExecutorUnavailableError) as exc:
         raise HTTPException(
             status_code=503, detail="X delivery could not start; retry the same request ID."
@@ -2607,9 +2663,9 @@ async def upload_project_media(
             media_type=actual_media_type,
         )
     except (StaleProjectRevisionError, SideEffectConflictError) as exc:
-        raise HTTPException(status_code=409, detail=str(exc)) from exc
+        raise HTTPException(status_code=409, detail=public_error_text(exc)) from exc
     except ValueError as exc:
-        raise HTTPException(status_code=422, detail=str(exc)) from exc
+        raise HTTPException(status_code=422, detail=public_error_text(exc)) from exc
 
 
 @router.get(
@@ -2691,7 +2747,7 @@ async def search_project_files(
         ) from exc
     except ValueError as exc:
         raise HTTPException(
-            status_code=status.HTTP_422_UNPROCESSABLE_CONTENT, detail=str(exc)
+            status_code=status.HTTP_422_UNPROCESSABLE_CONTENT, detail=public_error_text(exc)
         ) from exc
     except Exception as exc:
         storage_status = getattr(exc, "status_code", None)
@@ -2749,10 +2805,12 @@ async def commit_project_files(
             changes=[item.model_dump() for item in payload.changes],
         )
     except (StaleProjectRevisionError, SideEffectConflictError) as exc:
-        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail=str(exc)) from exc
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT, detail=public_error_text(exc)
+        ) from exc
     except ValueError as exc:
         raise HTTPException(
-            status_code=status.HTTP_422_UNPROCESSABLE_CONTENT, detail=str(exc)
+            status_code=status.HTTP_422_UNPROCESSABLE_CONTENT, detail=public_error_text(exc)
         ) from exc
     return ProjectFileCommitView(
         project_id=result.project_id,
@@ -2785,10 +2843,12 @@ async def revert_project_files(
             expected_revision=payload.expected_revision,
         )
     except (StaleProjectRevisionError, SideEffectConflictError) as exc:
-        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail=str(exc)) from exc
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT, detail=public_error_text(exc)
+        ) from exc
     except ValueError as exc:
         raise HTTPException(
-            status_code=status.HTTP_422_UNPROCESSABLE_CONTENT, detail=str(exc)
+            status_code=status.HTTP_422_UNPROCESSABLE_CONTENT, detail=public_error_text(exc)
         ) from exc
     return ProjectFileCommitView(
         project_id=result.project_id,
@@ -2978,9 +3038,9 @@ async def workflow_setup(
             **payload.model_dump(),
         )
     except LookupError as exc:
-        raise HTTPException(status_code=404, detail=str(exc)) from exc
+        raise HTTPException(status_code=404, detail=public_error_text(exc)) from exc
     except ValueError as exc:
-        raise HTTPException(status_code=422, detail=str(exc)) from exc
+        raise HTTPException(status_code=422, detail=public_error_text(exc)) from exc
 
 
 @router.get("/api/projects/{project_id}/system", response_model=ProjectSystemView)
@@ -3117,9 +3177,9 @@ async def apply_decision(
         except LookupError as exc:
             raise HTTPException(status_code=404, detail="decision not found") from exc
         except project_task_control.ProjectTaskDeliveryError as exc:
-            raise HTTPException(status_code=502, detail=str(exc)) from exc
+            raise HTTPException(status_code=502, detail=public_error_text(exc)) from exc
         except (ValueError, RuntimeError) as exc:
-            raise HTTPException(status_code=409, detail=str(exc)) from exc
+            raise HTTPException(status_code=409, detail=public_error_text(exc)) from exc
         return RunView.model_validate(discarded)
     if decision["workflow_name"] == PROJECT_TASK_WORKFLOW_NAME:
         result = await approve_project_task(decision["run_id"], request, user)
@@ -3170,7 +3230,7 @@ async def create_project_workflow(
             project_id=project_id,
         )
     except ValueError as exc:
-        raise HTTPException(status_code=422, detail=str(exc)) from exc
+        raise HTTPException(status_code=422, detail=public_error_text(exc)) from exc
     if workflow.definition.get("kind", "workflow") != "workflow":
         raise HTTPException(
             status_code=status.HTTP_409_CONFLICT,
@@ -3210,10 +3270,12 @@ async def create_project_workflow(
         )
         configured = await _sync_project_workflow_schedule(configured, request)
     except LookupError as exc:
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(exc)) from exc
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND, detail=public_error_text(exc)
+        ) from exc
     except ValueError as exc:
         raise HTTPException(
-            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail=str(exc)
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail=public_error_text(exc)
         ) from exc
     return ProjectWorkflowView.model_validate(configured)
 
@@ -3285,12 +3347,16 @@ async def update_project_workflow(
             configured, request, previous_schedule=existing.schedule
         )
     except StaleSettingsRevisionError as exc:
-        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail=str(exc)) from exc
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT, detail=public_error_text(exc)
+        ) from exc
     except LookupError as exc:
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(exc)) from exc
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND, detail=public_error_text(exc)
+        ) from exc
     except ValueError as exc:
         raise HTTPException(
-            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail=str(exc)
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail=public_error_text(exc)
         ) from exc
     return ProjectWorkflowView.model_validate(configured)
 
@@ -3380,7 +3446,9 @@ async def start_project_workflow_run(
     except IntegrationError as exc:
         raise _integration_http_error(exc) from exc
     except (LookupError, RuntimeError, ValueError) as exc:
-        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail=str(exc)) from exc
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT, detail=public_error_text(exc)
+        ) from exc
     return RunView.model_validate(run).model_copy(
         update={
             "selected_sources": await selected_run_sources(
@@ -3474,7 +3542,9 @@ async def retry_project_workflow_run(
     except IntegrationError as exc:
         raise _integration_http_error(exc) from exc
     except (LookupError, RuntimeError, ValueError) as exc:
-        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail=str(exc)) from exc
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT, detail=public_error_text(exc)
+        ) from exc
     return RunView.model_validate(run)
 
 
@@ -3537,7 +3607,9 @@ async def skip_project_workflow_once(
             workflow_title=configured.name,
         )
     except RuntimeError as exc:
-        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail=str(exc)) from exc
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT, detail=public_error_text(exc)
+        ) from exc
     return ProjectWorkflowView.model_validate(skipped)
 
 
@@ -3575,7 +3647,9 @@ async def remove_project_workflow(
             expected_settings_revision=expected_settings_revision,
         )
     except StaleSettingsRevisionError as exc:
-        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail=str(exc)) from exc
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT, detail=public_error_text(exc)
+        ) from exc
     except Exception as exc:
         raise HTTPException(
             status_code=status.HTTP_502_BAD_GATEWAY,
@@ -3787,9 +3861,13 @@ async def _start_workflow_run(
     except PrerequisiteError as exc:
         raise HTTPException(status_code=exc.status, detail=exc.diagnostic()) from exc
     except LookupError as exc:
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(exc)) from exc
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND, detail=public_error_text(exc)
+        ) from exc
     except WorkflowExecutorUnavailableError as exc:
-        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail=str(exc)) from exc
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT, detail=public_error_text(exc)
+        ) from exc
     except TemporalStartError as exc:
         raise HTTPException(
             status_code=status.HTTP_502_BAD_GATEWAY,
@@ -3798,10 +3876,12 @@ async def _start_workflow_run(
     except IntegrationError as exc:
         raise _integration_http_error(exc) from exc
     except RuntimeError as exc:
-        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail=str(exc)) from exc
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT, detail=public_error_text(exc)
+        ) from exc
     except ValueError as exc:
         raise HTTPException(
-            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail=str(exc)
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail=public_error_text(exc)
         ) from exc
     return RunView.model_validate(run).model_copy(
         update={
@@ -3883,7 +3963,9 @@ async def _set_project_workflow_pause(
             paused=paused,
         )
     except (LookupError, RuntimeError, ValueError) as exc:
-        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail=str(exc)) from exc
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT, detail=public_error_text(exc)
+        ) from exc
 
 
 @router.get("/api/workflows/runs/{run_id}", response_model=RunView)
@@ -4092,9 +4174,13 @@ async def revise_outreach_campaign(
             clerk_user_id=user.clerk_user_id,
         )
     except LookupError as exc:
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(exc)) from exc
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND, detail=public_error_text(exc)
+        ) from exc
     except (RuntimeError, SideEffectConflictError, ValueError) as exc:
-        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail=str(exc)) from exc
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT, detail=public_error_text(exc)
+        ) from exc
     return OutreachCampaignRevisionView.model_validate(revision)
 
 
@@ -4120,9 +4206,13 @@ async def approve_outreach_campaign_revision(
             clerk_user_id=user.clerk_user_id,
         )
     except LookupError as exc:
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(exc)) from exc
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND, detail=public_error_text(exc)
+        ) from exc
     except RuntimeError as exc:
-        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail=str(exc)) from exc
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT, detail=public_error_text(exc)
+        ) from exc
     return RunView.model_validate(updated)
 
 
@@ -4148,9 +4238,13 @@ async def discard_outreach_campaign_revision(
             clerk_user_id=user.clerk_user_id,
         )
     except LookupError as exc:
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(exc)) from exc
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND, detail=public_error_text(exc)
+        ) from exc
     except RuntimeError as exc:
-        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail=str(exc)) from exc
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT, detail=public_error_text(exc)
+        ) from exc
     return RunView.model_validate(updated)
 
 
@@ -4248,11 +4342,17 @@ async def send_project_task_message(
             request_id=payload.request_id,
         )
     except LookupError as exc:
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(exc)) from exc
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND, detail=public_error_text(exc)
+        ) from exc
     except project_task_control.ProjectTaskConflictError as exc:
-        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail=str(exc)) from exc
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT, detail=public_error_text(exc)
+        ) from exc
     except project_task_control.ProjectTaskDeliveryError as exc:
-        raise HTTPException(status_code=status.HTTP_502_BAD_GATEWAY, detail=str(exc)) from exc
+        raise HTTPException(
+            status_code=status.HTTP_502_BAD_GATEWAY, detail=public_error_text(exc)
+        ) from exc
     return ProjectTaskView(
         run=RunView.model_validate(result.run),
         entries=[TaskEntryView.model_validate(item) for item in result.entries],
@@ -4283,7 +4383,9 @@ async def pause_project_task(
         if not delivered and run.sandbox_id is not None:
             await request.app.state.runtime.sandboxes.kill(run.sandbox_id)
     except RuntimeError as exc:
-        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail=str(exc)) from exc
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT, detail=public_error_text(exc)
+        ) from exc
     except Exception as exc:
         raise HTTPException(
             status_code=status.HTTP_502_BAD_GATEWAY, detail="task pause was not accepted"
@@ -4302,11 +4404,17 @@ async def resume_project_task(
             runtime=request.app.state.runtime, run_id=run_id, clerk_user_id=user.clerk_user_id
         )
     except LookupError as exc:
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(exc)) from exc
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND, detail=public_error_text(exc)
+        ) from exc
     except project_task_control.ProjectTaskConflictError as exc:
-        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail=str(exc)) from exc
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT, detail=public_error_text(exc)
+        ) from exc
     except project_task_control.ProjectTaskDeliveryError as exc:
-        raise HTTPException(status_code=status.HTTP_502_BAD_GATEWAY, detail=str(exc)) from exc
+        raise HTTPException(
+            status_code=status.HTTP_502_BAD_GATEWAY, detail=public_error_text(exc)
+        ) from exc
     return RunView.model_validate(run)
 
 
@@ -4322,11 +4430,17 @@ async def stop_project_task(
             runtime=request.app.state.runtime, run_id=run_id, clerk_user_id=user.clerk_user_id
         )
     except LookupError as exc:
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(exc)) from exc
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND, detail=public_error_text(exc)
+        ) from exc
     except project_task_control.ProjectTaskConflictError as exc:
-        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail=str(exc)) from exc
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT, detail=public_error_text(exc)
+        ) from exc
     except project_task_control.ProjectTaskDeliveryError as exc:
-        raise HTTPException(status_code=status.HTTP_502_BAD_GATEWAY, detail=str(exc)) from exc
+        raise HTTPException(
+            status_code=status.HTTP_502_BAD_GATEWAY, detail=public_error_text(exc)
+        ) from exc
     return RunView.model_validate(run)
 
 
@@ -4345,11 +4459,17 @@ async def approve_project_task(
             runtime=request.app.state.runtime, run_id=run_id, clerk_user_id=user.clerk_user_id
         )
     except LookupError as exc:
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(exc)) from exc
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND, detail=public_error_text(exc)
+        ) from exc
     except project_task_control.ProjectTaskConflictError as exc:
-        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail=str(exc)) from exc
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT, detail=public_error_text(exc)
+        ) from exc
     except project_task_control.ProjectTaskDeliveryError as exc:
-        raise HTTPException(status_code=status.HTTP_502_BAD_GATEWAY, detail=str(exc)) from exc
+        raise HTTPException(
+            status_code=status.HTTP_502_BAD_GATEWAY, detail=public_error_text(exc)
+        ) from exc
     return RunView.model_validate(run)
 
 
@@ -4366,9 +4486,9 @@ async def workflow_review(
     try:
         return await _workflow_reviews(request).view(run_id, user.clerk_user_id, post_id)
     except LookupError as exc:
-        raise HTTPException(status_code=404, detail=str(exc)) from exc
+        raise HTTPException(status_code=404, detail=public_error_text(exc)) from exc
     except ValueError as exc:
-        raise HTTPException(status_code=409, detail=str(exc)) from exc
+        raise HTTPException(status_code=409, detail=public_error_text(exc)) from exc
 
 
 @router.post("/api/workflows/runs/{run_id}/proposal-revisions", status_code=201)
@@ -4401,11 +4521,11 @@ async def revise_capture_proposal(
         )
         view = await review_view(runtime.database, runtime.storage, run_id, user.clerk_user_id)
     except LookupError as exc:
-        raise HTTPException(status_code=404, detail=str(exc)) from exc
+        raise HTTPException(status_code=404, detail=public_error_text(exc)) from exc
     except RevisionInvalid as exc:
-        raise HTTPException(status_code=422, detail=str(exc)) from exc
+        raise HTTPException(status_code=422, detail=public_error_text(exc)) from exc
     except (RevisionRefused, ReviewConflict) as exc:
-        raise HTTPException(status_code=409, detail=str(exc)) from exc
+        raise HTTPException(status_code=409, detail=public_error_text(exc)) from exc
     return {
         **result,
         "review_token": view["review_token"],
@@ -4440,11 +4560,11 @@ async def request_workflow_changes(
     except BillingError as exc:
         raise HTTPException(status_code=exc.status, detail=exc.diagnostic()) from exc
     except LookupError as exc:
-        raise HTTPException(status_code=404, detail=str(exc)) from exc
+        raise HTTPException(status_code=404, detail=public_error_text(exc)) from exc
     except (ReviewConflict, RuntimeError) as exc:
-        raise HTTPException(status_code=409, detail=str(exc)) from exc
+        raise HTTPException(status_code=409, detail=public_error_text(exc)) from exc
     except ValueError as exc:
-        raise HTTPException(status_code=422, detail=str(exc)) from exc
+        raise HTTPException(status_code=422, detail=public_error_text(exc)) from exc
 
 
 @router.get("/api/workflows/runs/{run_id}/review/compare")
@@ -4456,9 +4576,9 @@ async def compare_workflow_versions(
     try:
         return await _workflow_reviews(request).compare(run_id, user.clerk_user_id)
     except LookupError as exc:
-        raise HTTPException(status_code=404, detail=str(exc)) from exc
+        raise HTTPException(status_code=404, detail=public_error_text(exc)) from exc
     except ValueError as exc:
-        raise HTTPException(status_code=409, detail=str(exc)) from exc
+        raise HTTPException(status_code=409, detail=public_error_text(exc)) from exc
 
 
 @router.get("/api/workflows/runs/{run_id}/review/document", response_model=MarkdownDocumentView)
@@ -4485,9 +4605,9 @@ async def read_previous_review_copy(
         run, _ = await service.source(run_id, user.clerk_user_id)
         artifact_run, _ = await service.artifact(run)
     except LookupError as exc:
-        raise HTTPException(status_code=404, detail=str(exc)) from exc
+        raise HTTPException(status_code=404, detail=public_error_text(exc)) from exc
     except ValueError as exc:
-        raise HTTPException(status_code=409, detail=str(exc)) from exc
+        raise HTTPException(status_code=409, detail=public_error_text(exc)) from exc
     response.headers["X-Tin-Review-Copy-Run"] = str(artifact_run.id)
     return await get_artifact_document(artifact_run.id, request, response, user)
 
@@ -4541,7 +4661,7 @@ async def approve_run(
                 token=payload.review_token if payload else None,
             )
         except ReviewConflict as exc:
-            raise HTTPException(status_code=409, detail=str(exc)) from exc
+            raise HTTPException(status_code=409, detail=public_error_text(exc)) from exc
         return await _approval_view(updated, request, user, payload)
     if run.workflow_name == EMAIL_CAMPAIGN_WORKFLOW_NAME and run.status == RunStatus.NEEDS_INPUT:
         revision = await request.app.state.runtime.database.get_pending_email_campaign_revision(
@@ -4555,13 +4675,17 @@ async def approve_run(
                     clerk_user_id=user.clerk_user_id,
                 )
             except RuntimeError as exc:
-                raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail=str(exc)) from exc
+                raise HTTPException(
+                    status_code=status.HTTP_409_CONFLICT, detail=public_error_text(exc)
+                ) from exc
             return RunView.model_validate(updated)
     if run.workflow_name == GROWTH_ONBOARDING_KEY and run.status == RunStatus.NEEDS_INPUT:
         try:
             await ensure_onboarding_approvable(runtime=request.app.state.runtime, run=run)
         except OnboardingPickError as exc:
-            raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail=str(exc)) from exc
+            raise HTTPException(
+                status_code=status.HTTP_409_CONFLICT, detail=public_error_text(exc)
+            ) from exc
     if not run.review_required:
         raise HTTPException(
             status_code=status.HTTP_409_CONFLICT,
@@ -4610,7 +4734,9 @@ async def stop_email_campaign(
     try:
         stopped = await request.app.state.runtime.database.stop_email_campaign(run_id=run_id)
     except RuntimeError as exc:
-        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail=str(exc)) from exc
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT, detail=public_error_text(exc)
+        ) from exc
     try:
         handle = request.app.state.runtime.temporal.get_workflow_handle(
             stopped.temporal_workflow_id
@@ -4642,7 +4768,7 @@ async def get_project_brand(
     try:
         return await resolve_brand(runtime.storage, project, revision)
     except ValueError as exc:
-        raise HTTPException(status_code=422, detail=str(exc)) from exc
+        raise HTTPException(status_code=422, detail=public_error_text(exc)) from exc
 
 
 @router.get("/api/projects/{project_id}/memory", response_model=ProjectMemoryView)
@@ -4827,7 +4953,9 @@ async def _choose_content_delivery(
         IntegrationError,
         SideEffectConflictError,
     ) as exc:
-        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail=str(exc)) from exc
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT, detail=public_error_text(exc)
+        ) from exc
 
 
 async def _approval_view(
@@ -4891,19 +5019,19 @@ def _integration_http_error(exc: IntegrationError) -> HTTPException:
     if isinstance(exc, IntegrationNotConfiguredError):
         return HTTPException(
             status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
-            detail=str(exc),
+            detail=public_error_text(exc),
         )
     if isinstance(exc, IntegrationInputError):
-        return HTTPException(status_code=422, detail=str(exc))
+        return HTTPException(status_code=422, detail=public_error_text(exc))
     if isinstance(exc, ServiceCallRefused):
         # The provider answered and refused; the message is Tin's own.
         code = 429 if exc.code == "rate_limited" else status.HTTP_409_CONFLICT
-        return HTTPException(status_code=code, detail=str(exc))
+        return HTTPException(status_code=code, detail=public_error_text(exc))
     if isinstance(exc, IntegrationAuthorizationError):
-        return HTTPException(status_code=status.HTTP_409_CONFLICT, detail=str(exc))
+        return HTTPException(status_code=status.HTTP_409_CONFLICT, detail=public_error_text(exc))
     if isinstance(exc, IntegrationUpstreamError):
-        return HTTPException(status_code=status.HTTP_502_BAD_GATEWAY, detail=str(exc))
-    return HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(exc))
+        return HTTPException(status_code=status.HTTP_502_BAD_GATEWAY, detail=public_error_text(exc))
+    return HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=public_error_text(exc))
 
 
 async def _run_from_postgres(

@@ -161,7 +161,7 @@ class FakeDatabase:
         assert pinned_definition == self.workflow.definition
         return self.run, True
 
-    async def project_failure(self, *, run_id, error_message):
+    async def project_failure(self, *, run_id, error_message, **_):
         self.run = replace(self.run, status=RunStatus.FAILED, error_message=error_message)
 
     async def validate_lease(self, **values) -> bool:

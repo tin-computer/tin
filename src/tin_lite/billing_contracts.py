@@ -19,7 +19,9 @@ class BillingError(RuntimeError):
         self.code, self.status = code, status
 
     def diagnostic(self):
-        return {"code": self.code, "message": str(self)}
+        from tin_lite.failures import billing_public_message
+
+        return {"code": self.code, "message": billing_public_message(self)}
 
 
 class ProjectSpendingPolicy(BaseModel):

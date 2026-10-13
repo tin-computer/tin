@@ -1368,6 +1368,43 @@ async def test_an_unconfirmed_model_step_stops_the_run_instead_of_buying_again(
     )
 
 
+async def test_a_spending_limit_on_a_plan_step_is_reported_and_never_repurchased(
+    publication_db, monkeypatch
+):
+    # The refusal used to read "a plan model request could not be confirmed".
+    from temporalio.exceptions import ApplicationError
+
+    from tin_lite.billing_contracts import BillingError
+    from tin_lite.failures import classify
+
+    f = await activity_fixture(publication_db, monkeypatch)
+    run = await start_plan(f)
+    await f.activities.prepare(str(run.id))
+    f.router.generate.side_effect = BillingError("project_limit", "Project limit reached.")
+    with pytest.raises(ApplicationError) as raised:
+        await f.activities.write(str(run.id))
+    assert raised.value.message.startswith("This project's spending limit stopped the run.")
+    assert isinstance(raised.value.__cause__, BillingError)
+    assert classify(raised.value).kind == "needs_you"
+    refused = [
+        r
+        for r in await publication_db.pool.fetch(
+            "SELECT status, result FROM effect_receipts WHERE execution_key LIKE $1",
+            f"{run.id}:plan:%",
+        )
+        if r["result"] and "project_limit" in r["result"]
+    ]
+    assert refused and all(r["status"] == "started" for r in refused)
+    with pytest.raises(ApplicationError):
+        await f.activities.write(str(run.id))
+    # A retry never buys a refused step again.
+    steps = [
+        step_of(call.kwargs["request"].output_schema_name)
+        for call in f.router.generate.await_args_list
+    ]
+    assert len(steps) == len(set(steps))
+
+
 async def test_unusable_results_are_receipted_and_fail_without_saving(publication_db, monkeypatch):
     from temporalio.exceptions import ApplicationError
 
@@ -1448,7 +1485,7 @@ class ReceiptsOnly:
 
         from tin_lite.domain import EffectReceipt
 
-        self.run, self.receipts, self.failures = run, {}, []
+        self.run, self.receipts, self.failures, self.projections = run, {}, [], []
         self.Receipt = EffectReceipt
 
         @asynccontextmanager
@@ -1480,8 +1517,9 @@ class ReceiptsOnly:
     async def complete_effect(self, conn, *, execution_key, result):
         self.receipts[execution_key] = self.Receipt(execution_key, plan.KEY, "completed", result)
 
-    async def project_failure(self, *, run_id, error_message):
+    async def project_failure(self, *, run_id, error_message, **kwargs):
         self.failures.append(error_message)
+        self.projections.append({"error_message": error_message, **kwargs})
 
 
 def receipts_fixture(monkeypatch, model):
@@ -1570,3 +1608,33 @@ def test_onboarding_offers_no_social_channel():
     # chosen as a setup first run for them.
     offered = {key for row in plan.PROGRAMS["programs"] for key in row["tin"]["workflows"]}
     assert not {key for key in offered if key.startswith("social.")}
+
+
+async def test_failure_shows_the_passed_cause_by_kind(monkeypatch):
+    db, activities, run = receipts_fixture(monkeypatch, FakeModel())
+    await activities.failure(
+        {
+            "run_id": str(run.id),
+            "reason": "This project's spending limit stopped the run. Raise the limit in "
+            "Billing, then retry.",
+            "kind": "needs_you",
+            "action": "billing",
+            "detail": "BillingError: Project limit reached.",
+        }
+    )
+    shown = db.projections[-1]
+    assert shown["error_message"].startswith("This project's spending limit stopped the run.")
+    assert (shown["error_kind"], shown["error_action"]) == ("needs_you", "billing")
+    await activities.failure(
+        {
+            "run_id": str(run.id),
+            "reason": "Tin hit a problem on its side.",
+            "kind": "internal",
+            "detail": "KeyError: 'plan'",
+        }
+    )
+    shown = db.projections[-1]
+    assert shown["error_message"] == (
+        "The growth plan could not be written. Nothing was saved; try again."
+    )
+    assert shown["error_kind"] == "internal" and shown["error_detail"] == "KeyError: 'plan'"

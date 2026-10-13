@@ -45,7 +45,7 @@ async def test_a_spending_limit_fails_the_rows_without_a_request(billed, monkeyp
     from tin_lite.billing_contracts import BillingError
 
     async def refuse(*args, **kwargs):
-        raise BillingError("budget_exhausted", "The run budget is spent.")
+        raise BillingError("run_limit", "The run budget is spent.")
 
     monkeypatch.setattr(f.billing, "begin_operation", refuse)
     request = AIAnswersRequest.from_inputs(inputs(engines=["chatgpt"], prompts=["best form"]))

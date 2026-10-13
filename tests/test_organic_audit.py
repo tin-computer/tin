@@ -555,3 +555,63 @@ def test_registry_pins_policy_and_instructions_without_github_or_review():
     assert definition["audit_instructions"] == ai_contract(AUDIT_POLICY["version"])
     assert definition["schedule_modes"] == ["on_demand", "monthly"]
     assert not definition.get("human_review") and not definition.get("integration_requirements")
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("code", "reason"),
+    [
+        ("run_limit", "spending_limit"),
+        ("project_limit", "spending_limit"),
+        ("unpriced_model", "billing_refused"),
+        ("insufficient_funds", "billing_refused"),
+    ],
+)
+async def test_a_billing_refusal_keeps_its_code_and_is_not_bought_again(code, reason):
+    from tin_lite.billing_contracts import BillingError
+    from tin_lite.organic_audit import AUDIT_GAP_REASONS
+
+    activities, db, *_ = await activities_fixture()
+    run_id = str(db.run.id)
+    call = AsyncMock(side_effect=BillingError(code, "Private diagnostic"))
+    first = await activities._paid(run_id, "answer:0", {"question": "x"}, "0.20", call)
+    second = await activities._paid(run_id, "answer:0", {"question": "x"}, "0.20", call)
+    assert first == second and call.await_count == 1
+    assert first["status"] == "unavailable" and first["reason"] == reason
+    assert first["billing_code"] == code and "Private diagnostic" not in json.dumps(first)
+    assert reason in AUDIT_GAP_REASONS
+    if reason == "billing_refused":
+        assert "spending limit" not in AUDIT_GAP_REASONS[reason]
+
+
+@pytest.mark.asyncio
+async def test_organic_failure_input_shapes():
+    from tin_lite.organic_audit_activities import FAILURE_FALLBACK
+
+    activities, db, *_ = await activities_fixture()
+    run_id = str(db.run.id)
+    await activities.organic_failure(run_id)
+    kwargs = db.project_failure.await_args.kwargs
+    assert kwargs["error_message"] == FAILURE_FALLBACK and kwargs["error_kind"] is None
+
+    await activities.organic_failure(
+        {
+            "run_id": run_id,
+            "reason": "This project's spending limit stopped the run. Raise the limit in "
+            "Billing, then retry.",
+            "kind": "needs_you",
+            "action": "billing",
+            "code": "project_limit",
+            "detail": "BillingError: limit",
+        }
+    )
+    kwargs = db.project_failure.await_args.kwargs
+    assert kwargs["error_message"].startswith("This project's spending limit")
+    assert kwargs["error_kind"] == "needs_you" and kwargs["error_action"] == "billing"
+
+    await activities.organic_failure(
+        {"run_id": run_id, "reason": "x", "kind": "internal", "detail": "KeyError: 'crawl'"}
+    )
+    kwargs = db.project_failure.await_args.kwargs
+    assert kwargs["error_message"] == FAILURE_FALLBACK and kwargs["error_kind"] == "internal"
+    assert kwargs["error_detail"] == "KeyError: 'crawl'"

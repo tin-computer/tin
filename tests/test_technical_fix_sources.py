@@ -140,6 +140,25 @@ async def inspect(f):
     return await f.service.inspect(project_id=f.project.id, audit_run_id=f.run.id)
 
 
+@pytest.mark.parametrize("policy", [f"organic-audit-v{version}" for version in range(11, 16)])
+async def test_published_duplicate_metadata_uses_the_pinned_repair_routing(policy):
+    f = source_fixture(
+        count=2,
+        checks={"canonical": True, "duplicate_title": True, "duplicate_description": True},
+        policy=policy,
+        site={},
+    )
+    technical = [row for row in f.inventory["findings"] if row["category"] == "technical"]
+    assert len(technical) == 2
+    assert {row["next_action"] for row in technical} == {"content_plan"}
+    view = await inspect(f)
+    assert {row["finding"]["id"] for row in view["findings"]} == {row["id"] for row in technical}
+    technical[0]["next_action"] = "website_change"
+    f.seal()
+    with pytest.raises(TechnicalFixError, match="failed source verification"):
+        await inspect(f)
+
+
 def content_source_fixture(*, checks=None, policy="organic-audit-v2"):
     from test_organic_audit_results import frozen_panel, scored
 

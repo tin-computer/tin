@@ -617,7 +617,7 @@ def report_lines(
             [
                 "## Answer-engine readiness of top pages",
                 "",
-                "The pages with the most search impressions, reviewed for how AI answers quote "
+                "Selected content pages, reviewed for how AI answers quote "
                 "pages: a direct answer near the top, question-shaped headings, sections that "
                 "stand alone, specific facts, sources, a date and an author. The direct-answer, "
                 "section and fact judgments come from a model and are hypotheses; the rest is "

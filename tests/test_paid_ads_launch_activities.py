@@ -177,6 +177,7 @@ class Script:
         self.lookup_found = False
         self.enable_lost = False
         self.status_after_enable = None
+        self.currency = "USD"
         self.sent = []
         self.calls = []
 
@@ -263,7 +264,7 @@ class Script:
                     "customer": {
                         "id": CUSTOMER,
                         "descriptiveName": "Claw Messenger",
-                        "currencyCode": "USD",
+                        "currencyCode": self.currency,
                         "timeZone": "America/New_York",
                         "status": "ENABLED",
                         "autoTaggingEnabled": True,
@@ -362,7 +363,7 @@ def assessment_documents(run_id):
     }
 
 
-async def fixture(*, script=None, model=None, github=None, site=None):
+async def fixture(*, script=None, model=None, github=None, site=None, rate_reader=None):
     db, storage = LaunchDB(), HistoryStorage()
     script = script or Script()
     documents = assessment_documents(str(db.assessment_run.id))
@@ -418,6 +419,7 @@ async def fixture(*, script=None, model=None, github=None, site=None):
         router=router,
         integrations=integrations,
         site_reader=read_site,
+        rate_reader=rate_reader,
     )
     return activities, db, storage, script, router, integrations, model
 
@@ -486,7 +488,7 @@ async def test_ready_path_validates_then_creates_once_and_a_replay_buys_nothing(
     assert set(results.values()) <= set(tree) and storage.repo.writes == 2
     saved = json.loads(tree[results["campaign.json"]][1])
     assert saved["campaign_id"] == "2" and saved["launch_run_id"] == run_id
-    assert saved["allowable_cpa_usd"] == 30.0 and saved["enabled"] is True
+    assert saved["allowable_cpa"] == 30.0 and saved["enabled"] is True
     assert b"The campaign is on" in tree[results["RESULT.md"]][1]
     assert db.completions[0]["campaign_status"] == "live"
     assert db.completions[0]["event_type"] == "paid_ads_launch_ready"
@@ -819,9 +821,103 @@ def test_failure_text_names_which_side_failed():
         "the plan check",
         "nothing was created",
     )
-    assert "Tin could not authorize" in gated and "spending_stopped" in gated
-    assert "Google Ads was not contacted" in gated
+    assert "Tin could not authorize" in gated and "spending_stopped" not in gated
+    assert "Google Ads was not contacted" in gated and "spending limit" not in gated
+    limited = _failed({"status": "unavailable", "reason": "project_limit"}, "the plan check", "x")
+    assert "Raise the limit in Billing" in limited
+    reserved = _failed({"status": "unavailable", "reason": "spending_limit"}, "the plan check", "x")
+    assert "spending limits" in reserved  # the run's own reservation, as stored before
+    reconnect = _failed(
+        {"status": "unavailable", "reason": "google_ads_reconnect"}, "the plan check", "x"
+    )
+    assert "Reconnect Google Ads" in reconnect
     refused = _failed({"status": "completed", "error": "POLICY"}, "the plan check", "x")
     assert refused.startswith("Google Ads refused the plan check (POLICY)")
     lost = _failed({"status": "unknown", "reason": "provider_result_unavailable"}, "a", "x")
     assert "did not receive Google Ads' answer" in lost
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("code", ["run_limit", "insufficient_funds", "unpriced_model"])
+async def test_a_billing_refused_model_call_is_named_and_not_bought_again(code):
+    from tin_lite.billing_contracts import BillingError
+    from tin_lite.failures import billing_refusal
+
+    activities, db, _, _, router, _, _ = await fixture()
+    run_id = str(db.run.id)
+    await activities.prepare(run_id)
+    router.generate.side_effect = BillingError(code, "Private diagnostic")
+    for _ in range(2):
+        with pytest.raises(ApplicationError):
+            await activities._model(run_id, "copy", "system", "user", {}, 100, "low")
+    assert router.generate.await_count == 1
+    receipt = db.effects[activities.key(run_id, "model:copy")].result
+    assert receipt["status"] == "unavailable" and receipt["reason"] == code
+    failure = await activities._result(run_id, "failure")
+    assert failure["code"] == "billing_refused" and failure["reason"] == code
+    await activities.failure(run_id)
+    (projected,) = db.failures
+    expected = billing_refusal(BillingError(code, ""))
+    assert projected["message"].startswith(expected.message)
+    assert "could not be confirmed" not in projected["message"]
+    assert "Private diagnostic" not in projected["message"]
+    assert projected["error_kind"] == expected.kind
+    assert projected["error_action"] == expected.action
+    if code == "unpriced_model":
+        assert "spending limit" not in projected["message"]
+
+
+@pytest.mark.asyncio
+async def test_a_google_ads_link_refused_at_create_asks_to_reconnect():
+    from tin_lite.integrations import IntegrationAuthorizationError
+
+    activities, db, _, script, _, integrations, _ = await fixture()
+    run_id, _ = await run_through_approval(activities, db)
+    answer = integrations.google_ads_call.side_effect
+
+    async def refuse_writes(**kwargs):
+        if kwargs["kind"] == "mutate" and not kwargs["request"].get("validate_only"):
+            raise IntegrationAuthorizationError("Google Ads campaign changes are not enabled")
+        return await answer(**kwargs)
+
+    integrations.google_ads_call.side_effect = refuse_writes
+    for _ in range(2):
+        with pytest.raises(ApplicationError) as failed:
+            await activities.apply(run_id)
+        assert "Reconnect Google Ads" in str(failed.value)
+    assert mutates(script, validate_only=False) == []
+    receipt = db.effects[activities.key(run_id, "apply:create")].result
+    assert receipt["status"] == "unavailable" and receipt["reason"] == "google_ads_reconnect"
+    await activities.failure(run_id)
+    (projected,) = db.failures
+    assert "Reconnect Google Ads" in projected["message"]
+    assert projected["error_kind"] == "needs_you" and projected["error_action"] == "integrations"
+
+
+@pytest.mark.asyncio
+async def test_failure_accepts_a_plain_run_id_and_a_classified_cause():
+    from tin_lite.paid_ads_launch_activities import FAILURE_FALLBACK
+
+    activities, db, *_ = await fixture()
+    run_id = str(db.run.id)
+    await activities.failure(run_id)
+    assert db.failures[-1]["message"] == FAILURE_FALLBACK
+    assert db.failures[-1]["error_kind"] is None
+    await activities.failure(
+        {
+            "run_id": run_id,
+            "reason": "Reconnect Google Ads under Integrations.",
+            "kind": "needs_you",
+            "action": "integrations",
+            "detail": "IntegrationAuthorizationError: integration is not connected",
+        }
+    )
+    assert db.failures[-1]["message"] == "Reconnect Google Ads under Integrations."
+    assert db.failures[-1]["error_kind"] == "needs_you"
+    assert db.failures[-1]["error_action"] == "integrations"
+    await activities.failure(
+        {"run_id": run_id, "reason": "x", "kind": "internal", "detail": "KeyError: 'plan'"}
+    )
+    assert db.failures[-1]["message"] == FAILURE_FALLBACK
+    assert db.failures[-1]["error_kind"] == "internal"
+    assert db.failures[-1]["error_detail"] == "KeyError: 'plan'"

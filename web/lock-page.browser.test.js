@@ -9,9 +9,15 @@ import test from "node:test";
 import { chromium } from "playwright";
 
 const assets = path.resolve("src/tin_lite/static");
+// GET /api/projects/{id}/agent-setup before the agent has done anything.
+const WAITING = {agent: {connected_at: null, client: null}, setup: {run_id: null, project_id: null, project_name: null, started_at: null, status: null, plan_ready: false}};
 
-async function serve({ lockEnabled, projectWorkflows, runs = [], connections = false }) {
+async function serve({ lockEnabled, projectWorkflows, runs = [], connections = false, agentSetup = null }) {
   const project = {id: "project-1", name: "QA’s project", workspace_id: "ws", workspace_name: "QA", member_count: 1, hidden: false};
+  // The agent's progress the lock page polls; a test moves it along by replacing `.value`.
+  const setup = {value: agentSetup};
+  const business = {...project, id: "project-acme", name: "Acme"};
+  const businessRun = {id: "run-acme", workflow_id: "wf-onboarding", workflow: "growth.onboarding", status: "needs_input", created_at: "2026-10-11T21:42:00Z"};
   const integrations = connections ? [
     {key: "infra.github", name: "GitHub", badge: "GH", description: "Repositories", unlocks: [], configured: true, status: "available", connection_id: null},
     {key: "analytics.gsc", name: "Search Console", badge: "SC", description: "Search performance", unlocks: [], configured: true, status: "available", connection_id: null},
@@ -52,8 +58,11 @@ async function serve({ lockEnabled, projectWorkflows, runs = [], connections = f
       }
       response.statusCode = 204; return response.end();
     }
-    if (url.pathname === "/api/projects") return send(connections ? [project, {...project, id: "project-2", name: "Second project"}] : [project]);
+    const planReady = Boolean(setup.value?.setup?.plan_ready);
+    if (url.pathname === "/api/projects") return send(connections ? [project, {...project, id: "project-2", name: "Second project"}] : planReady ? [project, business] : [project]);
+    if (url.pathname.endsWith("/agent-setup")) return send(setup.value || WAITING);
     if (/\/api\/projects\/[^/]+\/workflows$/.test(url.pathname)) return send(projectWorkflows);
+    if (url.pathname === `/api/projects/${business.id}/runs`) return send([businessRun]);
     if (/\/api\/projects\/[^/]+\/runs$/.test(url.pathname)) return send(runs);
     if (url.pathname.endsWith("/integrations")) return send(integrations);
     if (url.pathname.endsWith("/infra.github/options")) return send([{id: "repo-1", label: "example/site"}]);
@@ -62,17 +71,17 @@ async function serve({ lockEnabled, projectWorkflows, runs = [], connections = f
     response.writeHead(404).end();
   });
   await new Promise(resolve => server.listen(0, "127.0.0.1", resolve));
-  return {server, writes, base: `http://127.0.0.1:${server.address().port}`};
+  return {server, writes, setup, base: `http://127.0.0.1:${server.address().port}`};
 }
 
-async function open(browser, base, {viewport = {width: 1440, height: 900}, url = "/system", signedIn = true} = {}) {
+async function open(browser, base, {viewport = {width: 1440, height: 900}, url = "/system", signedIn = true, theme = "light"} = {}) {
   const errors = [];
   const context = await browser.newContext({viewport});
   await context.route("**/*", route => route.request().url().startsWith(base) ? route.continue() : route.abort());
-  await context.addInitScript(signedIn => {
+  await context.addInitScript(({signedIn, theme}) => {
     window.Clerk = {load: async () => {}, isSignedIn: signedIn, user: {id: "member", firstName: "QA"}, session: {getToken: async () => "synthetic"}, mountSignIn: () => {}};
-    localStorage.setItem("tin-lite:theme", "light");
-  }, signedIn);
+    localStorage.setItem("tin-lite:theme", theme);
+  }, {signedIn, theme});
   const page = await context.newPage(); page.on("pageerror", error => errors.push(error.message));
   await page.goto(base + url);
   return {page, context, errors};
@@ -85,40 +94,137 @@ test("lock page: no workflow yet locks the rail and sends the person to their co
     const {page, context, errors} = await open(browser, base, {url: "/decisions"});
     await page.locator(".lock-page").waitFor();
     assert.equal(await page.locator(".lock-page h1").textContent(), "Set up Tin from your coding agent");
-    assert.equal(await page.locator(".lock-page p strong").textContent(), "Browser setup is not available yet.");
+    assert.equal(await page.locator(".lock-page-head p").textContent(), "Your agent reads your repo, picks the workflows that fit and starts the first ones. This page follows along.");
+    assert.equal(await page.getByText("Browser setup is not available yet.").count(), 0);
     // Every rail item is dimmed and dead; the coding-agent block is gone because the page is that block.
     assert.deepEqual(await page.locator(".nav-list .nav-item").evaluateAll(items => items.map(item => item.disabled)), [true, true, true, true, true]);
     assert.equal(await page.locator("#agent-rail").isHidden(), true);
     assert.equal(await page.locator("#project-switcher").isDisabled(), false);
-    // Codex first, like the website hero; one line, no comment lines.
+    // Three steps; the first holds the install line and is the only active one.
+    assert.deepEqual(await page.locator(".lock-step").evaluateAll(items => items.map(item => item.className)), ["lock-step is-active", "lock-step is-pending", "lock-step is-pending"]);
+    assert.deepEqual(await stepTitles(page), [
+      "Run this in a terminal, inside your project",
+      "Click Allow in the tab Codex opens",
+      "Tin reads your project and drafts a plan",
+    ]);
+    assert.equal(await page.locator(".lock-page-status").textContent(), "waiting for your agent · this page updates by itself");
+    // Codex first, like the website hero. The line also starts the agent with the first message.
     assert.equal(await page.locator('[data-lock-tab][aria-selected="true"]').getAttribute("data-lock-tab"), "codex");
-    assert.equal(await page.locator("#lock-page-command").textContent(), "codex mcp add tin --url https://app.tin.test/mcp");
+    assert.equal(await page.locator("#lock-page-command").textContent(), 'codex mcp add tin --url https://app.tin.test/mcp && codex "Set up Tin"');
     await page.locator('[data-lock-tab="claude"]').click();
-    assert.equal(await page.locator("#lock-page-command").textContent(), "claude mcp add -t http tin https://app.tin.test/mcp");
+    assert.equal(await page.locator("#lock-page-command").textContent(), 'claude mcp add -s user -t http tin https://app.tin.test/mcp && claude "Set up Tin"');
+    // Claude Code prints the sign-in link instead of opening a tab, then waits for a reply.
+    assert.equal((await stepTitles(page))[1], "Open the link Claude Code shows and click Allow");
+    assert.equal(await page.locator(".lock-step").nth(1).locator("p").textContent(), "Then tell Claude Code you're done and it carries on.");
+    // One line on a desktop: the long Claude Code line is clipped with an ellipsis, never wrapped.
+    const command = await page.locator("#lock-page-command").evaluate(node => ({clipped: node.scrollWidth > node.clientWidth, lines: Math.round(node.getBoundingClientRect().height / 18)}));
+    assert.deepEqual(command, {clipped: true, lines: 1});
     await page.locator('[data-lock-tab="api"]').click();
     assert.equal(await page.locator("#lock-page-command").textContent(), "https://app.tin.test/api/workflows?project_id={project_id}");
     await page.locator('[data-lock-tab="codex"]').click();
     await context.grantPermissions(["clipboard-read", "clipboard-write"], {origin: base});
     await page.locator("#copy-lock-command").click();
-    assert.equal(await page.evaluate(() => navigator.clipboard.readText()), "codex mcp add tin --url https://app.tin.test/mcp");
+    assert.equal(await page.evaluate(() => navigator.clipboard.readText()), 'codex mcp add tin --url https://app.tin.test/mcp && codex "Set up Tin"');
+    await page.getByText("Copied. Paste it in a terminal inside your project.").waitFor();
     await page.waitForTimeout(150);
-    assert.deepEqual(writes.map(item => item.body), [
+    assert.deepEqual(writes.filter(item => item.path === "/api/events/lock-page").map(item => item.body), [
       {action: "viewed", agent: null, project_id: "project-1"},
       {action: "install_copied", agent: "codex", project_id: "project-1"},
     ]);
-    // Centered in the pane at desktop width.
+    // Centered in the pane at desktop width, starting high so the steps can fold without a jump.
     const box = await page.locator(".lock-page-column").boundingBox();
     const pane = await page.locator("#main").boundingBox();
     assert.ok(Math.abs((box.x + box.width / 2) - (pane.x + pane.width / 2)) < 2, "column is horizontally centered");
-    assert.ok(box.y > 150 && box.y + box.height < pane.height - 150, "column sits in the middle of the pane");
+    assert.equal(Math.round(box.width), 632);
+    assert.ok(box.y > 100 && box.y + box.height < pane.height - 40, "column sits in the upper middle of the pane");
     assert.deepEqual(errors, []);
     await context.close();
     // Narrow: the rail is a top strip and the page still fits without a horizontal scroll.
     const narrow = await open(browser, base, {viewport: {width: 390, height: 844}});
-    await narrow.page.locator(".lock-page").waitFor();
+    await narrow.page.locator(".lock-step").first().waitFor();
     assert.equal(await narrow.page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth), true);
+    if (process.env.TIN_LOCK_SCREENSHOTS) await narrow.page.screenshot({path: path.join(process.env.TIN_LOCK_SCREENSHOTS, "lock-a-mobile.png"), fullPage: true});
     assert.deepEqual(narrow.errors, []);
     await narrow.context.close();
+  } finally {
+    await browser.close();
+    server.close();
+  }
+});
+
+async function stepTitles(page) {
+  return page.locator(".lock-step-title > span").evaluateAll(items => items.map(item => item.lastChild.textContent));
+}
+
+// Polls run every 5 s; coming back to the tab polls at once, as after the terminal.
+async function pollNow(page) {
+  await page.evaluate(() => document.dispatchEvent(new Event("visibilitychange")));
+}
+
+const CONNECTED = {...WAITING, agent: {connected_at: "2026-10-11T21:41:00Z", client: "claude_code"}};
+const STARTED = {...CONNECTED, setup: {run_id: "run-acme", project_id: "project-acme", project_name: "Acme", started_at: "2026-10-11T21:42:00Z", status: "running", plan_ready: false}};
+const READY = {...STARTED, setup: {...STARTED.setup, status: "needs_input", plan_ready: true}};
+
+test("lock page: the steps tick as the agent connects, sets up, and the plan opens in its project", async () => {
+  const {server, writes, setup, base} = await serve({lockEnabled: true, projectWorkflows: []});
+  const browser = await chromium.launch({headless: true});
+  const shots = process.env.TIN_LOCK_SCREENSHOTS;
+  try {
+    for (const theme of shots ? ["light", "dark"] : ["light"]) {
+      setup.value = null;
+      writes.length = 0;
+      const {page, context, errors} = await open(browser, base, {theme});
+      await page.locator(".lock-step").first().waitFor();
+      if (shots) await page.screenshot({path: path.join(shots, `lock-a-${theme}.png`)});
+
+      // B: the agent's first signed-in project call. The install line folds away.
+      setup.value = CONNECTED;
+      await pollNow(page);
+      await page.getByText("Claude Code connected").waitFor();
+      assert.deepEqual(await stepTitles(page), [
+        "Tin added to Claude Code",
+        "Claude Code connected",
+        "Tin reads your project and drafts a plan",
+      ]);
+      assert.equal(await page.locator("#lock-page-command").count(), 0);
+      assert.equal(await page.locator(".lock-step").nth(2).getAttribute("class"), "lock-step is-active");
+      assert.ok(await page.locator(".lock-step time").textContent());
+
+      // Setup started in the business project the agent made.
+      setup.value = STARTED;
+      await pollNow(page);
+      await page.getByText("Tin is reading your project").waitFor();
+      assert.equal(await page.locator(".lock-step").nth(2).getAttribute("class"), "lock-step is-working");
+      assert.match(await page.locator(".lock-page-status").textContent(), /^started .+ · this page opens the project when the plan is ready$/);
+      if (shots) await page.screenshot({path: path.join(shots, `lock-b-${theme}.png`)});
+
+      // C: the plan waits for picks. The tab moves to that project after a short countdown.
+      setup.value = READY;
+      await pollNow(page);
+      await page.getByText("Acme's plan is ready").waitFor();
+      assert.equal(await page.locator("[data-lock-open]").textContent(), "Open Acme →");
+      assert.match(await page.locator("#lock-page-countdown").textContent(), /^opening in [1-3] s$/);
+      if (shots) await page.screenshot({path: path.join(shots, `lock-c-${theme}.png`)});
+      await page.waitForFunction(() => document.querySelector("#project-name")?.textContent === "Acme", null, {timeout: 6000});
+      await page.locator(".system-view").waitFor();
+      assert.equal(await page.locator(".lock-page").count(), 0);
+      assert.equal(new URL(page.url()).searchParams.get("project"), "project-acme");
+
+      // Each step counts once, and only because this page watched it happen.
+      assert.deepEqual(writes.filter(item => item.path === "/api/events/lock-page").map(item => item.body.action), ["viewed", "agent_connected", "setup_started", "plan_ready"]);
+      assert.deepEqual(errors, []);
+      await context.close();
+    }
+
+    // Opened once the plan is already ready: no step events, and the button switches at once.
+    setup.value = READY;
+    writes.length = 0;
+    const {page, context, errors} = await open(browser, base);
+    await page.locator("[data-lock-open]").click();
+    await page.waitForFunction(() => document.querySelector("#project-name")?.textContent === "Acme");
+    assert.deepEqual(writes.filter(item => item.path === "/api/events/lock-page").map(item => item.body.action), ["viewed"]);
+    assert.deepEqual(errors, []);
+    await context.close();
   } finally {
     await browser.close();
     server.close();

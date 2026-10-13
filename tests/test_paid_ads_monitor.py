@@ -211,18 +211,18 @@ def test_normalize_reads_converts_micros_and_tolerates_missing_fields():
     picture = reads()
     campaign = picture["campaign"]
     assert campaign["id"] == "24143450789" and campaign["bidding_strategy_type"] == "TARGET_SPEND"
-    assert campaign["cpc_ceiling_usd"] == 2.0 and campaign["target_cpa_usd"] is None
-    assert campaign["budget_usd"] == 20.0 and campaign["recommended_budget_usd"] == 30.0
+    assert campaign["cpc_ceiling"] == 2.0 and campaign["target_cpa"] is None
+    assert campaign["budget"] == 20.0 and campaign["recommended_budget"] == 30.0
     assert campaign["ai_max_enabled"] is False and campaign["migration_dates"] == []
     week = picture["windows"]["7d"]
     assert week == {
         "impressions": 1000,
         "clicks": 40,
-        "cost_usd": 80.0,
+        "cost": 80.0,
         "conversions": 4.0,
         "ctr": 0.04,
-        "cpc_usd": 2.0,
-        "cpa_usd": 20.0,
+        "cpc": 2.0,
+        "cpa": 20.0,
         "impression_share": 0.2,
         "budget_lost_share": 0.1,
         "rank_lost_share": 0.5,
@@ -233,9 +233,7 @@ def test_normalize_reads_converts_micros_and_tolerates_missing_fields():
         "imessage api jobs",
     ]
     assert picture["search_terms"][0]["conversions"] == 1.0
-    assert (
-        picture["keywords"][0]["quality_score"] == 6 and picture["keywords"][0]["cost_usd"] == 100.0
-    )
+    assert picture["keywords"][0]["quality_score"] == 6 and picture["keywords"][0]["cost"] == 100.0
     assert picture["ads"][1]["approval_status"] == "DISAPPROVED" and picture["ads"][1][
         "topics"
     ] == ["TRADEMARKS"]
@@ -245,7 +243,7 @@ def test_normalize_reads_converts_micros_and_tolerates_missing_fields():
     assert picture["subscriptions"] == [{"type": "KEYWORD", "status": "PAUSED"}]
 
     empty = monitor.normalize_reads({})
-    assert empty["campaign"]["status"] == "UNKNOWN" and empty["windows"]["7d"]["cpa_usd"] is None
+    assert empty["campaign"]["status"] == "UNKNOWN" and empty["windows"]["7d"]["cpa"] is None
     assert empty["windows"]["7d"]["impression_share"] is None and empty["search_terms"] == []
     junk = monitor.normalize_reads(
         {"search_terms": ["x", {"metrics": {"clicks": "nan"}}], "ads": [{}]}
@@ -381,7 +379,7 @@ def test_negatives_judge_a_term_across_every_row_it_appears_in():
         ]
     )
     negatives = decide(split)["auto"]["negatives"]
-    assert [(n["text"], n["clicks"], n["cost_usd"]) for n in negatives] == [
+    assert [(n["text"], n["clicks"], n["cost"]) for n in negatives] == [
         ("send imessage from python free", 2, 5.5)
     ]
     assert negatives[0]["why"].startswith("2 clicks and $5.50")
@@ -415,8 +413,13 @@ def test_bid_strategy_proposals_follow_conversion_thresholds():
     assert len(decision["proposals"]) == 1
     proposal = decision["proposals"][0]
     assert proposal["kind"] == "bid_strategy_change"
-    assert proposal["proposed"] == {"strategy": "maximize_conversions", "target_cpa_usd": None}
-    assert proposal["previous"]["cpc_ceiling_usd"] == 2.0
+    assert proposal["proposed"] == {
+        "strategy": "maximize_conversions",
+        "target_cpa": None,
+        "currency_code": "USD",
+        "usd_rate": "1",
+    }
+    assert proposal["previous"]["cpc_ceiling"] == 2.0
 
     few = reads(campaign_30d=[campaign_row(metrics={"conversions": 14.0})])
     assert decide(few)["proposals"] == []
@@ -435,10 +438,15 @@ def test_bid_strategy_proposals_follow_conversion_thresholds():
         ],
     )
     proposal = decide(max_conv)["proposals"][0]
-    assert proposal["proposed"] == {"strategy": "target_cpa", "target_cpa_usd": 22.0}  # 20 × 1.1
+    assert proposal["proposed"] == {
+        "strategy": "target_cpa",
+        "target_cpa": 22.0,
+        "currency_code": "USD",
+        "usd_rate": "1",
+    }  # 20 × 1.1
     assert "$22.00" in proposal["rationale"]
     capped = decide(max_conv, allowable_cpa_usd=21.0)["proposals"][0]
-    assert capped["proposed"]["target_cpa_usd"] == 21.0
+    assert capped["proposed"]["target_cpa"] == 21.0
 
     already = reads(
         campaign_7d=[
@@ -468,8 +476,8 @@ def test_budget_proposals_step_twenty_percent_and_yield_to_bid_changes():
     )
     proposal = decide(constrained)["proposals"][0]
     assert proposal["kind"] == "budget_change"
-    assert proposal["previous"] == {"daily_budget_usd": 20.0}
-    assert proposal["proposed"] == {"daily_budget_usd": 24.0}
+    assert proposal["previous"] == {"daily_budget": 20.0, "currency_code": "USD", "usd_rate": "1"}
+    assert proposal["proposed"] == {"daily_budget": 24.0, "currency_code": "USD", "usd_rate": "1"}
     assert "under the $30.00" in proposal["rationale"]
 
     expensive = reads(
@@ -486,13 +494,13 @@ def test_budget_proposals_step_twenty_percent_and_yield_to_bid_changes():
         campaign_30d=[campaign_row(metrics={"conversions": 5.0})],
     )
     proposal = decide(wasteful)["proposals"][0]
-    assert proposal["proposed"] == {"daily_budget_usd": 16.0}
+    assert proposal["proposed"] == {"daily_budget": 16.0, "currency_code": "USD", "usd_rate": "1"}
     tiny = reads(
         campaign_7d=[campaign_row(budget={"amountMicros": "1000000"})],
         campaign_14d=[campaign_row(metrics={"costMicros": "95000000", "conversions": 0.0})],
         campaign_30d=[campaign_row(metrics={"conversions": 5.0})],
     )
-    assert decide(tiny)["proposals"][0]["proposed"]["daily_budget_usd"] == 1.0
+    assert decide(tiny)["proposals"][0]["proposed"]["daily_budget"] == 1.0
 
     # A due bidding change wins and only one proposal is ever made per check.
     both = reads(
@@ -556,7 +564,7 @@ def test_decision_is_deterministic_and_json_serialisable():
     first, second = decide(), decide()
     assert first == second
     json.dumps(first)
-    assert first["metrics"]["allowable_cpa_usd"] == 30.0 and first["metrics"]["search_terms"] == 5
+    assert first["metrics"]["allowable_cpa"] == 30.0 and first["metrics"]["search_terms"] == 5
 
 
 # ---------------------------------------------------------------- rendering
@@ -657,16 +665,26 @@ def test_proposal_documents_explain_the_change_and_the_approval():
     assert "Nothing changes until you approve" in text
     budget = {
         "kind": "budget_change",
-        "previous": {"daily_budget_usd": 20.0},
-        "proposed": {"daily_budget_usd": 24.0},
+        "previous": {"daily_budget": 20.0, "currency_code": "USD", "usd_rate": "1"},
+        "proposed": {"daily_budget": 24.0, "currency_code": "USD", "usd_rate": "1"},
         "rationale": "The budget ran out.",
     }
     text = monitor.proposal_document(budget, {"campaign_name": "Core"}, 2, TODAY)
     assert "From $20.00 a day to $24.00 a day." in text and "Campaign: Core." in text
     tcpa = {
         "kind": "bid_strategy_change",
-        "previous": {"strategy": "maximize_conversions", "target_cpa_usd": None},
-        "proposed": {"strategy": "target_cpa", "target_cpa_usd": 22.0},
+        "previous": {
+            "strategy": "maximize_conversions",
+            "target_cpa": None,
+            "currency_code": "USD",
+            "usd_rate": "1",
+        },
+        "proposed": {
+            "strategy": "target_cpa",
+            "target_cpa": 22.0,
+            "currency_code": "USD",
+            "usd_rate": "1",
+        },
         "rationale": "Enough conversions.",
     }
     assert "target $22.00 per conversion" in monitor.proposal_document(tcpa, CAMPAIGN, 3, TODAY)

@@ -204,8 +204,10 @@ async def test_revoked_file_access_is_reported_as_revoked_not_as_validation(bill
     run, reason = await failed_execution(
         billed, monkeypatch, CodeProjectFileError("file_access_revoked")
     )
+    # The receipt keeps the code for operators; the founder reads Tin's sentence.
     assert reason.startswith("file_access_revoked:")
-    assert "validation" not in reason and run.error_message == reason
+    assert run.error_message == "The run no longer has permission to read project files."
+    assert "validation" not in run.error_message
 
 
 async def test_a_package_that_exits_non_zero_fails_once_with_its_reason(billed, monkeypatch):

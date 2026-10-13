@@ -23,6 +23,8 @@ of `/home/user/project/wiki/INDEX.md`.
      and form fields; never guess them from the text.
    - `camoufox.click(selector)`, `camoufox.click_role(role, name)`,
      `camoufox.fill(selector, value)`, and `camoufox.press(key)` act like a user.
+     Use the exact accessible name from `snapshot` for `click_role`; duplicate names need a
+     specific selector, not a guessed first match.
    - `camoufox.wait_for(selector | text, timeout_seconds)` waits for something to appear.
    - `camoufox.evaluate(expression)` runs JavaScript and returns JSON; use it to list hrefs
      and to read state, never to bypass a guard or call an API the UI does not call.

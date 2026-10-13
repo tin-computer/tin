@@ -108,7 +108,8 @@ continuing permission or a reusable session. Expired sessions, revoked devices a
 membership are purged independently of workflow runs. Switching to browser-only clears the
 session immediately and fences active cloud uploads; disconnecting uses the existing
 integration revocation path. Old single-run transfers remain run-bound and are deleted on
-finalization. An account change or LinkedIn challenge requires attention, not an automatic
+finalization. Deleting the project removes its collection jobs, collected pages, leases and
+devices. An account change or LinkedIn challenge requires attention, not an automatic
 cloud/local retry.
 
 Setup verifies and saves the login without requiring a search-query identifier. The current

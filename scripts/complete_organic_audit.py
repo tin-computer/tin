@@ -79,6 +79,7 @@ async def main():
             storage = CodeStorage(
                 organization=settings.code_storage_org,
                 private_key=settings.code_storage_api_key.get_secret_value(),
+                repo_prefix=settings.code_storage_repo_prefix,
             )
             definition = json.loads(
                 await storage.read_canonical_artifact(
