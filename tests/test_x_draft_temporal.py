@@ -49,6 +49,12 @@ async def test_review_sequence_and_replay(mode):
     if not binary:
         pytest.skip("local Temporal CLI required")
     parent, style, compose = (str(uuid4()) for _ in range(3))
+    failure = {
+        "run_id": parent,
+        "reason": "Capture failed",
+        "kind": "explained",
+        "detail": "ApplicationError",
+    }
     started = []
     calls = []
     waiting = asyncio.Event()
@@ -100,7 +106,7 @@ async def test_review_sequence_and_replay(mode):
                 with pytest.raises(WorkflowFailureError):
                     await handle.result()
                 assert started == [style]
-                assert calls[-1] == ("x_draft_failure", parent)
+                assert calls[-1] == ("x_draft_failure", failure)
             else:
                 await handle.result()
                 assert started == ([compose] if mode == "reuse" else [style, compose])
@@ -116,4 +122,5 @@ async def test_review_sequence_and_replay(mode):
                     parent,
                     {"run_id": parent, "step": "style"},
                     {"run_id": parent, "step": "compose"},
+                    failure,
                 ]

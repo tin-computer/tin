@@ -3984,7 +3984,9 @@ async def get_run(
     delivery = await delivery_service(runtime).status(run)
     return RunView.model_validate(run).model_copy(
         update={
-            "x_draft": await x_draft_facts(runtime.database, run)
+            "x_draft": await x_draft_facts(
+                runtime.database, run, settings=request.app.state.settings
+            )
             if run.executor == "social.x_draft"
             else None,
             "content_delivery": delivery,

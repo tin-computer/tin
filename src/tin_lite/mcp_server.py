@@ -3035,6 +3035,12 @@ def create_mcp_app(
         run = await require_run(_mcp_uuid(run_id, field="run_id"), token, tool_name="get_run")
         from tin_lite.x_draft import facts as x_draft_facts
 
+        draft = (
+            await x_draft_facts(runtime().database, run, settings=settings)
+            if run.executor == "social.x_draft"
+            else None
+        )
+        review_links = draft["review_links"] if draft else []
         review_summary = await _review_summary(runtime().database, run)
         delivery = await delivery_service(runtime()).status(run)
         selected_sources = await selected_run_sources(
@@ -3045,13 +3051,11 @@ def create_mcp_app(
             "project_id": str(run.project_id),
             "workflow_id": str(run.workflow_id),
             "workflow": run.workflow_name,
-            **(
-                {"x_draft": await x_draft_facts(runtime().database, run)}
-                if run.executor == "social.x_draft"
-                else {}
-            ),
+            **({"x_draft": draft} if draft else {}),
             "status": run.status.value,
-            "status_label": STATUS_LABELS.get(run.status.value, run.status.value),
+            "status_label": STATUS_LABELS["needs_input"]
+            if review_links
+            else STATUS_LABELS.get(run.status.value, run.status.value),
             "artifact_path": run.artifact_path,
             "artifact_revision": run.canonical_commit_sha,
             "related_documents": await related_output_documents(runtime().database, run),
@@ -3101,7 +3105,7 @@ def create_mcp_app(
             },
             "service": _service_view(),
             "links": _project_links(settings, run.project_id),
-            "result_links": result_links(settings, run),
+            "result_links": result_links(settings, run) + review_links,
             "delivery_destination": delivery_destination(settings, run.project_id),
             **await _founder_words_for_run(run, review_summary),
             **(

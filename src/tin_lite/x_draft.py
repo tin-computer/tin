@@ -3,6 +3,7 @@
 from uuid import UUID
 
 from tin_lite import x_style
+from tin_lite.onboarding_experience import result_links
 
 KEY = "social.x_draft"
 WORKFLOW_ID = UUID("13a31bac-6a89-4789-9d66-c0ab03a5da0d")
@@ -84,11 +85,11 @@ def matching_guide(guide, account):
     return bool(owner and (owner == account if account else True))
 
 
-async def facts(database, run):
+async def facts(database, run, *, settings):
     """The same small Postgres projection for HTTP and MCP; never reads Temporal."""
     prepared = await database.get_effect(f"x-draft:{run.id}:prepare")
     source = prepared.result if prepared and prepared.status == "completed" else {}
-    steps = []
+    steps, review_links = [], []
     for step, workflow_key in STEPS.items():
         receipt = await database.get_effect(f"x-draft:{run.id}:{step}")
         value = receipt.result if receipt and receipt.status == "completed" else {}
@@ -98,6 +99,13 @@ async def facts(database, run):
             child.project_id != run.project_id or not template or child.workflow_id != template.id
         ):
             raise ValueError("X drafting child does not belong to this recipe")
+        if (
+            run.status.value in {"pending", "running"}
+            and child
+            and child.status.value == "needs_input"
+            and child.review_required
+        ):
+            review_links.extend(result_links(settings, child))
         steps.append(
             {
                 "step": step,
@@ -107,4 +115,4 @@ async def facts(database, run):
                 "artifact_path": child.artifact_path if child else None,
             }
         )
-    return {"voice": source.get("voice"), "steps": steps}
+    return {"voice": source.get("voice"), "steps": steps, "review_links": review_links}

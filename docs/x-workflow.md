@@ -136,7 +136,10 @@ run receipt under `reports/x/`, with the public post link.
 Use normal workflow discovery and `start_workflow` with `social.x_draft` for the full
 drafting request, or select a step directly when that is what you need. `get_run` returns
 the voice choice and child run IDs/statuses from Postgres; a waiting style child uses
-the existing review action.
+the existing review action. While that child waits, the parent’s MCP status label says
+“waiting for you” and `result_links` points to the child’s guide. The HTTP/MCP
+`x_draft.review_links` field holds the same links. Approve the child, not the parent;
+a stopped parent advertises no review link.
 Then use `read_x_drafts`, `save_x_draft`, `preview_x_post` and `publish_x_post` to edit
 and deliver the selected post. Publishing consumes the preview token and a stable request
 ID; retry the same request after a lost acknowledgement. Show the exact preview and obtain

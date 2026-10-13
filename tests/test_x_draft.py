@@ -197,7 +197,7 @@ async def test_parent_projects_existing_draft_and_http_mcp_agree(publication_db,
         )
         == 1
     )
-    facts = await x_draft.facts(f.db, done)
+    facts = await x_draft.facts(f.db, done, settings=f.settings)
     assert facts["steps"][0]["status"] == "skipped"
     assert facts["steps"][1]["status"] == "succeeded"
     mcp_view = structured(await server.call_tool("get_run", {"run_id": str(run.id)}))
@@ -305,6 +305,55 @@ async def test_discarding_the_voice_guide_stops_the_draft_instead_of_failing_it(
         "SELECT count(*) FROM activity_events WHERE run_id=$1 AND event_type='x_draft_stopped'",
         run.id,
     )
+
+
+@pytest.mark.parametrize("parent_status", ["running", "stopped"])
+async def test_parent_advertises_child_review_only_while_active(
+    publication_db, monkeypatch, parent_status
+):
+    f = await fixture(publication_db)
+    parent = await start(
+        f, supplied_samples="A useful update with clear technical details and a short ending."
+    )
+    await f.activities.prepare(str(parent.id))
+    style = await step(f, parent, "style")
+    child_id = UUID(style["run_id"])
+    path = "style/proposals/x-writing-style.md"
+    sha = f.storage.repo.edit({path: b"# X writing style\n\nWrite clear short updates.\n"})
+    await f.db.pool.execute(
+        "UPDATE workflow_runs SET status='needs_input', artifact_path=$2, "
+        "canonical_commit_sha=$3 WHERE id=$1",
+        child_id,
+        path,
+        sha,
+    )
+    await f.db.pool.execute(
+        "UPDATE workflow_runs SET status=$2 WHERE id=$1", parent.id, parent_status
+    )
+    view = structured(await mcp(f, monkeypatch).call_tool("get_run", {"run_id": str(parent.id)}))
+    assert view["status"] == parent_status
+    assert view["status_label"] == ("waiting for you" if parent_status == "running" else "stopped")
+    links = view["x_draft"]["review_links"]
+    if parent_status == "running":
+        assert len(links) == 1
+        assert links[0]["run_id"] == str(child_id) and links[0]["kind"] == "review"
+        assert str(child_id) in links[0]["url"]
+        assert links[0] in view["result_links"]
+        assert not view["review_required"] and "approve" not in view["allowed_actions"]
+    else:
+        assert links == [] and view["result_links"] == []
+    async with httpx.AsyncClient(
+        transport=httpx.ASGITransport(app=app(f)), base_url="https://tin.test"
+    ) as client:
+        response = await client.get(f"/api/workflows/runs/{parent.id}")
+    assert response.status_code == 200
+    assert response.json()["x_draft"] == view["x_draft"]
+
+    from tin_lite.mcp_public import public_result
+
+    public = public_result("get_run", view, {})
+    assert public["status_label"] == view["status_label"]
+    assert [item["url"] for item in public["documents"]] == [item["url"] for item in links]
 
 
 @pytest.mark.parametrize(

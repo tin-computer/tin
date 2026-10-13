@@ -106,7 +106,7 @@ async def stop_x_draft(*, runtime, run, actor):
                 run_id=run.id, project_id=run.project_id, actor=actor, workflow_key=x_draft.KEY
             )
     waiting = None
-    for row in (await x_draft.facts(db, stopped))["steps"]:
+    for row in (await x_draft.facts(db, stopped, settings=None))["steps"]:
         if not row["run_id"]:
             continue
         child = await db.get_run(UUID(row["run_id"]))
