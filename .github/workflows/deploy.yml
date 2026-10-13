@@ -43,13 +43,17 @@ jobs:
           DISPATCHED: ${{ inputs.sha }}
           FROM_CI: ${{ github.event.workflow_run.head_sha }}
           EVENT: ${{ github.event_name }}
-          ACTOR: ${{ github.actor }}
+          # The person who pressed Run or Re-run; github.actor keeps the original actor on a
+          # re-run, so it cannot be what this checks.
+          TRIGGERED_BY: ${{ github.triggering_actor }}
+          ATTEMPT: ${{ github.run_attempt }}
           PROD_DEPLOYERS: ${{ vars.PROD_DEPLOYERS }}
         run: |
-          # Anyone with write access can press "Run workflow"; only maintainers may redeploy or
-          # roll back production by hand. Merges reach production through ci, not this path.
-          if [[ "${EVENT}" == "workflow_dispatch" && ",${PROD_DEPLOYERS}," != *",${ACTOR},"* ]]; then
-            echo "${ACTOR} is not in PROD_DEPLOYERS; ask a maintainer to run this deploy" >&2
+          # Anyone with write access can press Run workflow or Re-run; only maintainers may
+          # start a production deploy by hand. Merges reach production through ci.
+          if [[ "${EVENT}" == "workflow_dispatch" || "${ATTEMPT}" != "1" ]] &&
+            [[ ",${PROD_DEPLOYERS}," != *",${TRIGGERED_BY},"* ]]; then
+            echo "${TRIGGERED_BY} is not in PROD_DEPLOYERS; ask a maintainer to run this deploy" >&2
             exit 1
           fi
           sha="${DISPATCHED:-${FROM_CI}}"
@@ -61,10 +65,17 @@ jobs:
             echo "${sha} is not on main" >&2
             exit 1
           fi
+          # An automatic deploy only ships main's current tip, so replaying an old run can't
+          # roll production back. Rolling back is a maintainer's Run workflow with the SHA.
+          if [[ "${EVENT}" == "workflow_run" && "${sha}" != "$(git rev-parse origin/main)" ]]; then
+            echo "::notice::${sha} is no longer main's tip; the newer merge deploys instead"
+            exit 0
+          fi
           echo "sha=${sha}" >> "${GITHUB_OUTPUT}"
 
   staging:
     needs: release
+    if: needs.release.outputs.sha != ''
     runs-on: ubuntu-latest
     timeout-minutes: 45
     environment:
@@ -102,6 +113,27 @@ jobs:
       contents: read
       id-token: write
     steps:
+      # "Re-run failed jobs" reuses the release job's result, so this job checks again itself.
+      - name: Check who started this and that it is still main's tip
+        env:
+          SHA: ${{ needs.release.outputs.sha }}
+          EVENT: ${{ github.event_name }}
+          TRIGGERED_BY: ${{ github.triggering_actor }}
+          ATTEMPT: ${{ github.run_attempt }}
+          PROD_DEPLOYERS: ${{ vars.PROD_DEPLOYERS }}
+        run: |
+          if [[ "${EVENT}" == "workflow_dispatch" || "${ATTEMPT}" != "1" ]] &&
+            [[ ",${PROD_DEPLOYERS}," != *",${TRIGGERED_BY},"* ]]; then
+            echo "${TRIGGERED_BY} is not in PROD_DEPLOYERS; ask a maintainer to run this deploy" >&2
+            exit 1
+          fi
+          if [[ "${EVENT}" == "workflow_run" ]]; then
+            tip="$(git ls-remote "https://github.com/${GITHUB_REPOSITORY}.git" refs/heads/main | cut -f1)"
+            if [[ "${SHA}" != "${tip}" ]]; then
+              echo "${SHA} is no longer main's tip (${tip}); not deploying it to production" >&2
+              exit 1
+            fi
+          fi
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           ref: ${{ needs.release.outputs.sha }}
