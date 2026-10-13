@@ -66,6 +66,16 @@ temporary_dir="$(mktemp -d)"
 trap 'rm -rf "${temporary_dir}"' EXIT
 git archive --format=tar.gz --output="${temporary_dir}/tin-lite-release.tar.gz" HEAD
 
+# Each deploy uploads into its own private directory, so deploys by different people (or
+# by CI) never collide on files another account left in /tmp.
+upload_dir="$(gcloud compute ssh "${instance}" \
+  --project "${TIN_LITE_GCP_PROJECT}" --zone "${zone}" --quiet \
+  --command='mktemp -d /tmp/tin-deploy.XXXXXXXXXX' | tr -d '\r')"
+if [[ ! "${upload_dir}" =~ ^/tmp/tin-deploy\.[A-Za-z0-9]{10}$ ]]; then
+  echo "could not create a private upload directory on ${instance}" >&2
+  exit 70
+fi
+
 release_files=("${temporary_dir}/tin-lite-release.tar.gz")
 if [[ "${upload_env}" == "1" ]]; then
   release_files+=(.env)
@@ -77,18 +87,18 @@ gcloud compute scp \
   infra/proxy_policy.py \
   src/tin_lite/proxy_grants.py \
   infra/activate_release.sh \
-  "${instance}:/tmp/" \
+  "${instance}:${upload_dir}/" \
   --project "${TIN_LITE_GCP_PROJECT}" --zone "${zone}" --quiet
 
 if [[ -n "${github_private_key_path}" ]]; then
   gcloud compute scp \
     "${github_private_key_path}" \
-    "${instance}:/tmp/tin-lite-github-app.pem" \
+    "${instance}:${upload_dir}/tin-lite-github-app.pem" \
     --project "${TIN_LITE_GCP_PROJECT}" --zone "${zone}" --quiet
   gcloud compute ssh "${instance}" \
     --project "${TIN_LITE_GCP_PROJECT}" --zone "${zone}" --quiet \
-    --command="sudo chown root:root /tmp/tin-lite-github-app.pem && \
-sudo chmod 600 /tmp/tin-lite-github-app.pem"
+    --command="sudo chown root:root ${upload_dir}/tin-lite-github-app.pem && \
+sudo chmod 600 ${upload_dir}/tin-lite-github-app.pem"
 fi
 
 static_ip="${TIN_LITE_STATIC_IP:-}"
@@ -107,12 +117,13 @@ if [[ ! "${product_host}" =~ ^[a-zA-Z0-9.-]+$ ]]; then
 fi
 move_env=""
 if [[ "${upload_env}" == "1" ]]; then
-  move_env="sudo mv /tmp/.env /tmp/tin-lite.env && "
+  move_env="mv ${upload_dir}/.env ${upload_dir}/tin-lite.env && "
 fi
 gcloud compute ssh "${instance}" \
   --project "${TIN_LITE_GCP_PROJECT}" --zone "${zone}" --quiet \
-  --command="sudo env TIN_LITE_STATIC_IP=${static_ip} TIN_LITE_PRODUCT_HOST=${product_host} bash /tmp/install_switchboard.sh && \
-${move_env}sudo env TIN_LITE_RUN_MIGRATIONS=${run_migrations} bash /tmp/activate_release.sh ${release_sha}"
+  --command="sudo env TIN_LITE_STATIC_IP=${static_ip} TIN_LITE_PRODUCT_HOST=${product_host} bash ${upload_dir}/install_switchboard.sh && \
+${move_env}sudo env TIN_LITE_UPLOAD_DIR=${upload_dir} TIN_LITE_RUN_MIGRATIONS=${run_migrations} bash ${upload_dir}/activate_release.sh ${release_sha}; \
+status=\$?; sudo rm -rf ${upload_dir}; exit \$status"
 
 public_host="tin-lite-switchboard.${static_ip//./-}.sslip.io"
 curl --http1.1 --fail --silent --show-error --retry "${health_retries}" --retry-all-errors --retry-delay 3 \
