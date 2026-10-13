@@ -35,12 +35,16 @@ async function settle(turns = 6) {
   }
 }
 
-async function eventually(predicate, message = "condition was not met") {
-  for (let attempt = 0; attempt < 100; attempt += 1) {
+// Waits by time, not by event-loop turns: real async work (hashing, timers) can take more
+// than a fixed number of turns on a loaded CI runner.
+async function eventually(predicate, message = "condition was not met", timeoutMs = 5000) {
+  const deadline = Date.now() + timeoutMs;
+  for (;;) {
     if (await predicate()) return;
+    if (Date.now() > deadline) throw new Error(message);
     await settle(1);
+    await new Promise((resolve) => setTimeout(resolve, 1));
   }
-  throw new Error(message);
 }
 
 function defaultCookies() {

@@ -30,7 +30,7 @@ jobs:
           set -euo pipefail
           [[ "${NUMBER}" =~ ^[0-9]+$ && "${SHA}" =~ ^[0-9a-f]{40}$ ]]
           # Paths that never reach the running service.
-          exempt='^(docs/|tests/|workflow_evals/|\.github/(pull_request_template\.md|review-replies\.md|CODEOWNERS)$|[^/]+\.md$|LICENSE$)'
+          exempt='^(docs/|tests/|workflow_evals/|\.github/(pull_request_template\.md|review-replies\.md|CODEOWNERS)$|[^/]+\.md$|LICENSE$)|(^|/)tests/|\.test\.(js|cjs|mjs)$'
           service="$(gh api --paginate "repos/${REPO}/pulls/${NUMBER}/files" --jq '.[].filename' |
             grep -vE "${exempt}" || true)"
           if [[ -z "${service}" ]]; then
