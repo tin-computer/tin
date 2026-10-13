@@ -67,10 +67,12 @@ trap 'rm -rf "${temporary_dir}"' EXIT
 git archive --format=tar.gz --output="${temporary_dir}/tin-lite-release.tar.gz" HEAD
 
 # Each deploy uploads into its own private directory, so deploys by different people (or
-# by CI) never collide on files another account left in /tmp.
+# by CI) never collide on files another account left in /tmp. A first connection may print
+# key-generation output, so only the directory line is kept.
 upload_dir="$(gcloud compute ssh "${instance}" \
   --project "${TIN_LITE_GCP_PROJECT}" --zone "${zone}" --quiet \
-  --command='mktemp -d /tmp/tin-deploy.XXXXXXXXXX' | tr -d '\r')"
+  --command='mktemp -d /tmp/tin-deploy.XXXXXXXXXX' |
+  tr -d '\r' | grep -E '^/tmp/tin-deploy\.[A-Za-z0-9]{10}$' | tail -n 1 || true)"
 if [[ ! "${upload_dir}" =~ ^/tmp/tin-deploy\.[A-Za-z0-9]{10}$ ]]; then
   echo "could not create a private upload directory on ${instance}" >&2
   exit 70
