@@ -90,7 +90,8 @@ After approval, Tin goes through the emails one by one, about 15 seconds apart:
 
 1. If this invoice already has a send receipt for the project, it is skipped.
 2. Stripe is asked again for the customer's open invoices; if this invoice is no longer open
-   (paid, voided or closed), it is skipped.
+   (paid, voided or closed), has no balance left, or no longer qualifies as a failed
+   automatic payment, it is skipped.
 3. The email goes out from the connected Gmail address, plain text, with a Message-ID derived
    from the receipt so a retried attempt is looked up in Gmail before it is ever re-sent.
 

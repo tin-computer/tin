@@ -318,6 +318,17 @@ test("connecting another project reuses the user-global browser credential", asy
   assert.equal(harness.storageValue(SESSION_KEY).project_id, "project_second");
 });
 
+test("eventually waits for asynchronous work beyond 100 event-loop turns", async () => {
+  let ready = false;
+  const pending = settle(200).then(() => { ready = true; });
+  try {
+    await eventually(() => ready);
+    assert.equal(ready, true);
+  } finally {
+    await pending;
+  }
+});
+
 test("concurrent project connects serialize onto one browser credential", async () => {
   let releaseFirst;
   const firstResponse = new Promise((resolve) => {

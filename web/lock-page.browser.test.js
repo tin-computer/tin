@@ -175,6 +175,8 @@ test("lock page: the steps tick as the agent connects, sets up, and the plan ope
       writes.length = 0;
       const {page, context, errors} = await open(browser, base, {theme});
       await page.locator(".lock-step").first().waitFor();
+      // Wait for the first poll before changing the mocked server state.
+      await page.waitForFunction(() => state.lockSetup !== null);
       if (shots) await page.screenshot({path: path.join(shots, `lock-a-${theme}.png`)});
 
       // B: the agent's first signed-in project call. The install line folds away.

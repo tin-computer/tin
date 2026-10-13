@@ -770,8 +770,14 @@ class PaymentRecoveryActivities:
                     execution_key=f"{key}:recheck:{run.id}",
                     max_response_bytes=None,
                 )
-                if email["invoice_id"] not in {i["id"] for i in still_open["records"]}:
-                    return {**row, "status": "skipped", "reason": "paid or closed since approval"}
+                if email["invoice_id"] not in {
+                    i["id"] for i in payment_recovery.failed_invoices(still_open["records"])
+                }:
+                    return {
+                        **row,
+                        "status": "skipped",
+                        "reason": "paid or closed since approval, or no longer eligible",
+                    }
                 await self.db.start_effect(conn, execution_key=key, operation=KEY)
                 await self.db.save_effect_progress(
                     conn,

@@ -4,6 +4,7 @@ const fs = require("node:fs");
 const path = require("node:path");
 const vm = require("node:vm");
 const { webcrypto } = require("node:crypto");
+const { setTimeout: delay } = require("node:timers/promises");
 
 const EXTENSION_ROOT = path.resolve(__dirname, "../..");
 const BROWSER_CONTEXT_KEY = "tin.linkedin.browser-context.v1";
@@ -36,9 +37,10 @@ async function settle(turns = 6) {
 }
 
 async function eventually(predicate, message = "condition was not met") {
-  for (let attempt = 0; attempt < 100; attempt += 1) {
+  const deadline = performance.now() + 5_000;
+  while (performance.now() < deadline) {
     if (await predicate()) return;
-    await settle(1);
+    await delay(5);
   }
   throw new Error(message);
 }
