@@ -17,7 +17,10 @@ first. Workflow pull requests that don't meet it are closed automatically.
   frontend framework, provider fallback or plugin marketplace as incidental work.
 - Preserve unrelated edits and use an isolated worktree when another agent is working.
   Do not deploy, change provider configuration, rewrite history or publish repositories
-  without explicit authority. A merged PR is not a production deployment.
+  without explicit authority. Merging to main deploys to production: once ci passes, the
+  deploy workflow ships that commit to staging and then production, so a merge needs the
+  same authority as a deploy. Run a service change on staging before merging it; see
+  [staging](docs/staging.md).
 - Do not copy runtime dependencies from unrelated repositories. Keep the import-linter
   boundaries and the explicit registry; no wildcard workflow registration.
 

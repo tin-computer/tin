@@ -1,20 +1,22 @@
 name: deploy-staging
 
-# Staging runs every merge to main, and any branch on request. Production deploys stay manual.
+# Try a branch on staging before merging it: push it to the staging branch
+# (git push -f origin my-branch:staging) or run this workflow with its ref.
+# Merges to main reach staging (and then production) through the deploy workflow.
 on:
   push:
-    branches: [main]
+    branches: [staging]
   workflow_dispatch:
     inputs:
       ref:
-        description: Branch, tag or SHA to deploy to staging
+        description: Branch, tag, SHA or refs/pull/<n>/head to deploy to staging
         required: true
-        default: main
 
 permissions:
   contents: read
 
-# One release at a time; a newer request waits instead of interrupting a deploy midway.
+# One branch deploy at a time; a newer request waits instead of interrupting a deploy.
+# Deploys from every workflow also wait for each other on the host itself.
 concurrency:
   group: deploy-staging
   cancel-in-progress: false
@@ -22,7 +24,7 @@ concurrency:
 jobs:
   deploy:
     runs-on: ubuntu-latest
-    timeout-minutes: 30
+    timeout-minutes: 45
     # The staging environment is the only identity Google Cloud trusts for this deployer.
     environment:
       name: staging
@@ -30,6 +32,7 @@ jobs:
     permissions:
       contents: read
       id-token: write
+      statuses: write
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -46,3 +49,16 @@ jobs:
           TIN_LITE_GCP_PROJECT: ${{ vars.GCP_PROJECT }}
           TIN_LITE_STATIC_IP: ${{ vars.STAGING_STATIC_IP }}
         run: bash infra/deploy.sh
+      # The required "staging" check on main: this exact commit ran on staging. Testing it
+      # there, and saying what was tested in the pull request, is up to its author.
+      - name: Mark the commit as deployed to staging
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPO: ${{ github.repository }}
+          ACTOR: ${{ github.actor }}
+        run: |
+          sha="$(git rev-parse HEAD)"
+          gh api --method POST "repos/${REPO}/statuses/${sha}" \
+            -f state=success -f context=staging \
+            -f description="Deployed to staging by ${ACTOR}; test it there before merging" \
+            -f target_url=https://app.staging.tin.computer

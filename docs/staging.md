@@ -5,29 +5,50 @@ change end to end, as production would, before it reaches `app.tin.computer`. Lo
 development does not reproduce production's providers, callbacks or release process;
 staging does, with its own state.
 
-A deploy to staging is not a production deployment. Production stays a separate,
-explicitly authorized step.
+Merging to `main` deploys to production, so staging is where a change is tested first.
 
-## Deploying
+## Testing a change before merging
 
-- Every push to `main` deploys to staging (`.github/workflows/deploy-staging.yml`).
-- Any branch, tag or SHA deploys on request: **Actions → deploy-staging → Run workflow**,
-  or `gh workflow run deploy-staging -f ref=<branch>`. One deploy runs at a time; a newer
-  request waits. A branch deploy stays until the next one, so say in the team channel
-  when you take staging for a branch.
-- From a workstation: `TIN_LITE_DEPLOY_TARGET=staging TIN_LITE_GCP_PROJECT=<project>
-  bash infra/deploy.sh`.
+1. Deploy the branch: `git push -f origin my-branch:staging`, or **Actions →
+   deploy-staging → Run workflow** with its ref (`refs/pull/<n>/head` for a fork; read the
+   diff first, since staging holds real provider credentials).
+2. Use the changed behavior on `app.staging.tin.computer` with a staging test project.
+3. Write what you did and saw under **Tested on staging** in the pull request.
 
-A staging deploy installs the host scripts, unpacks the release, runs `tin-lite migrate`
-from the new release and only then switches `current` and restarts. Its database is
-long-lived and never reset, so it applies every migration and catalog change in the same
-order production will. A release that would crash production's boot (a changed executor,
-a reused built-in ID) crashes staging's first.
+Deploying marks that exact commit with the `staging` status that `main` requires. A new
+push resets it. Changes that cannot reach the running service (docs, tests, evals,
+Markdown) pass without a deploy. Staging has one slot: whoever deployed last owns it until
+the next deploy, and a merge to `main` also takes it, so say in the team channel when you
+are testing there.
 
-The workflow authenticates to Google Cloud with workload identity. Google trusts only
-jobs from this repository in the `staging` GitHub environment, and the deployer can log
-in to the staging host only. The environment's variables name the provider, service
-account, project and static IP.
+## From merge to production
+
+When `ci` passes on `main`, the `deploy` workflow deploys that commit to staging and, if it
+starts cleanly, the same commit to production. Every deploy, from CI or a workstation
+(`TIN_LITE_DEPLOY_TARGET=staging|prod TIN_LITE_GCP_PROJECT=<project> bash infra/deploy.sh`),
+goes through `infra/activate_release.sh` on the host:
+
+- It takes a host lock, so deploys by people and CI wait for each other.
+- It stops if inode use is above 90%.
+- It reinstalls host setup (Caddy, forward proxy, units) only when those scripts changed,
+  because that restarts the proxy in-flight sandboxes use.
+- It unpacks the release with the host's `/etc/tin-lite/release.env`, runs
+  `tin-lite migrate`, switches `current` and restarts, which drains the Temporal worker first.
+- It waits for the new process to log "Application startup complete" and fails if it
+  restarts instead. `/healthz` alone is not proof: the old process answers during the drain.
+- It keeps the newest 20 releases.
+
+A failed deploy stops and reports; nothing rolls back on its own. Staging's database is
+long-lived and never reset, so it applies every migration and catalog change in the order
+production will, and a release that would crash production's boot (a changed executor, a
+reused built-in ID) crashes staging's first and never reaches production.
+
+Set the repository variable `PROD_AUTO_DEPLOY=false` to stop at staging. Run **deploy** by
+hand with a commit on `main` to redeploy it or roll back.
+
+Both deployers authenticate with workload identity. Google trusts only this repository's
+`staging` environment for the staging deployer and its `production` environment (restricted
+to `main`) for the production deployer; each can log in to its own host only.
 
 ## What is separate and what is shared
 

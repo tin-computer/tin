@@ -36,8 +36,9 @@ Do not use it to skip review of external contributions. See the
 
 PR tests run on GitHub-hosted runners with a read-only repository token and no production
 credentials. A maintainer may need to approve a first-time contributor's CI run; that only
-allows the tests to run, not the PR to merge or deploy. Live provider tests and deployment
-remain separate maintainer operations.
+allows the tests to run, not the PR to merge or deploy. A merge to main deploys to
+production, so maintainers run a service change on [staging](docs/staging.md) before
+merging it. Live provider tests remain a separate maintainer operation.
 
 ## Contributing an integration
 

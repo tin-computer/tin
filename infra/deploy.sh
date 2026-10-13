@@ -3,26 +3,20 @@ set -euo pipefail
 
 : "${TIN_LITE_GCP_PROJECT:?Set TIN_LITE_GCP_PROJECT to your deployment project}"
 
-# prod: the release env is uploaded from a local .env. staging: it stays on the host in
-# /etc/tin-lite/release.env, and migrations run before the release goes live.
+# Both targets keep their release env on the host (/etc/tin-lite/release.env) and run
+# migrations before the release goes live. TIN_LITE_UPLOAD_ENV=1 uploads a local .env
+# instead, for a host that has not been given one yet.
 target="${TIN_LITE_DEPLOY_TARGET:-prod}"
 case "${target}" in
   prod)
     instance=tin-lite-switchboard
     address=tin-lite-switchboard-ip
     default_host=app.tin.computer
-    upload_env=1
-    run_migrations="${TIN_LITE_RUN_MIGRATIONS:-0}"
-    health_retries=20
     ;;
   staging)
     instance=tin-lite-staging
     address=tin-lite-staging-ip
     default_host=app.staging.tin.computer
-    upload_env=0
-    run_migrations=1
-    # A first boot publishes the whole catalog and a restart drains running workflows.
-    health_retries=100
     ;;
   *)
     echo "TIN_LITE_DEPLOY_TARGET must be prod or staging" >&2
@@ -31,6 +25,14 @@ case "${target}" in
 esac
 zone=us-central1-a
 region=us-central1
+upload_env="${TIN_LITE_UPLOAD_ENV:-0}"
+run_migrations="${TIN_LITE_RUN_MIGRATIONS:-1}"
+for flag in "${upload_env}" "${run_migrations}" "${TIN_LITE_FORCE_HOST_INSTALL:-0}"; do
+  if [[ "${flag}" != 0 && "${flag}" != 1 ]]; then
+    echo "TIN_LITE_UPLOAD_ENV, TIN_LITE_RUN_MIGRATIONS and TIN_LITE_FORCE_HOST_INSTALL are 0 or 1" >&2
+    exit 64
+  fi
+done
 
 root="$(git rev-parse --show-toplevel)"
 cd "${root}"
@@ -121,15 +123,20 @@ move_env=""
 if [[ "${upload_env}" == "1" ]]; then
   move_env="mv ${upload_dir}/.env ${upload_dir}/tin-lite.env && "
 fi
+force_install="${TIN_LITE_FORCE_HOST_INSTALL:-0}"
+# activate_release.sh takes the host lock, installs host setup only when it changed,
+# migrates, switches, and waits for the new process to report startup.
 gcloud compute ssh "${instance}" \
   --project "${TIN_LITE_GCP_PROJECT}" --zone "${zone}" --quiet \
-  --command="sudo env TIN_LITE_STATIC_IP=${static_ip} TIN_LITE_PRODUCT_HOST=${product_host} bash ${upload_dir}/install_switchboard.sh && \
-${move_env}sudo env TIN_LITE_UPLOAD_DIR=${upload_dir} TIN_LITE_RUN_MIGRATIONS=${run_migrations} bash ${upload_dir}/activate_release.sh ${release_sha}; \
+  --command="${move_env}sudo env TIN_LITE_STATIC_IP=${static_ip} TIN_LITE_PRODUCT_HOST=${product_host} \
+TIN_LITE_UPLOAD_DIR=${upload_dir} TIN_LITE_RUN_MIGRATIONS=${run_migrations} \
+TIN_LITE_FORCE_HOST_INSTALL=${force_install} bash ${upload_dir}/activate_release.sh ${release_sha}; \
 status=\$?; sudo rm -rf ${upload_dir}; exit \$status"
 
+# The new process has reported startup; these confirm it serves through Caddy.
 public_host="tin-lite-switchboard.${static_ip//./-}.sslip.io"
-curl --http1.1 --fail --silent --show-error --retry "${health_retries}" --retry-all-errors --retry-delay 3 \
+curl --http1.1 --fail --silent --show-error --retry 20 --retry-all-errors --retry-delay 3 \
   "https://${public_host}/healthz"
 
-curl --http1.1 --fail --silent --show-error --retry "${health_retries}" --retry-all-errors --retry-delay 3 \
+curl --http1.1 --fail --silent --show-error --retry 20 --retry-all-errors --retry-delay 3 \
   "https://${product_host}/healthz"

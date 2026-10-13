@@ -1,0 +1,114 @@
+name: deploy
+
+# A merge to main reaches production with no manual step: once ci passes on main, the same
+# commit deploys to staging, and only if staging starts cleanly does it deploy to production.
+# Running this workflow by hand redeploys any commit on main (for example, to roll back).
+on:
+  workflow_run:
+    workflows: [ci]
+    types: [completed]
+    branches: [main]
+  workflow_dispatch:
+    inputs:
+      sha:
+        description: Full SHA of a commit on main to deploy to staging and production
+        required: true
+
+permissions:
+  contents: read
+
+# Newer merges include older ones: a waiting run is replaced by the newest, never interrupted.
+concurrency:
+  group: deploy-main
+  cancel-in-progress: false
+
+jobs:
+  release:
+    if: >-
+      github.event_name == 'workflow_dispatch' ||
+      (github.event.workflow_run.conclusion == 'success' &&
+       github.event.workflow_run.event == 'push')
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    outputs:
+      sha: ${{ steps.pick.outputs.sha }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: main
+          fetch-depth: 0
+          persist-credentials: false
+      - id: pick
+        env:
+          DISPATCHED: ${{ inputs.sha }}
+          FROM_CI: ${{ github.event.workflow_run.head_sha }}
+        run: |
+          sha="${DISPATCHED:-${FROM_CI}}"
+          if [[ ! "${sha}" =~ ^[0-9a-f]{40}$ ]]; then
+            echo "a full commit SHA is required" >&2
+            exit 1
+          fi
+          if ! git merge-base --is-ancestor "${sha}" origin/main; then
+            echo "${sha} is not on main" >&2
+            exit 1
+          fi
+          echo "sha=${sha}" >> "${GITHUB_OUTPUT}"
+
+  staging:
+    needs: release
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    environment:
+      name: staging
+      url: https://app.staging.tin.computer
+    permissions:
+      contents: read
+      id-token: write
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ needs.release.outputs.sha }}
+          persist-credentials: false
+      - uses: google-github-actions/auth@7c6bc770dae815cd3e89ee6cdf493a5fab2cc093 # v3.0.0
+        with:
+          workload_identity_provider: ${{ vars.GCP_WORKLOAD_IDENTITY_PROVIDER }}
+          service_account: ${{ vars.GCP_DEPLOY_SERVICE_ACCOUNT }}
+      - uses: google-github-actions/setup-gcloud@aa5489c8933f4cc7a4f7d45035b3b1440c9c10db # v3.0.1
+      - name: Deploy to staging
+        env:
+          TIN_LITE_DEPLOY_TARGET: staging
+          TIN_LITE_GCP_PROJECT: ${{ vars.GCP_PROJECT }}
+          TIN_LITE_STATIC_IP: ${{ vars.STAGING_STATIC_IP }}
+        run: bash infra/deploy.sh
+
+  production:
+    needs: [release, staging]
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    # Only main may use this environment; Google trusts only it for the production deployer.
+    environment:
+      name: production
+      url: https://app.tin.computer
+    permissions:
+      contents: read
+      id-token: write
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ needs.release.outputs.sha }}
+          persist-credentials: false
+      - uses: google-github-actions/auth@7c6bc770dae815cd3e89ee6cdf493a5fab2cc093 # v3.0.0
+        with:
+          workload_identity_provider: ${{ vars.GCP_WORKLOAD_IDENTITY_PROVIDER }}
+          service_account: ${{ vars.GCP_DEPLOY_SERVICE_ACCOUNT }}
+      - uses: google-github-actions/setup-gcloud@aa5489c8933f4cc7a4f7d45035b3b1440c9c10db # v3.0.1
+      - name: Deploy to production
+        if: vars.PROD_AUTO_DEPLOY != 'false' || github.event_name == 'workflow_dispatch'
+        env:
+          TIN_LITE_DEPLOY_TARGET: prod
+          TIN_LITE_GCP_PROJECT: ${{ vars.GCP_PROJECT }}
+          TIN_LITE_STATIC_IP: ${{ vars.PRODUCTION_STATIC_IP }}
+        run: bash infra/deploy.sh
+      - name: Report a paused production deploy
+        if: vars.PROD_AUTO_DEPLOY == 'false' && github.event_name != 'workflow_dispatch'
+        run: echo "::warning::PROD_AUTO_DEPLOY is false; production was not deployed"
