@@ -672,3 +672,128 @@ async def test_the_changed_campaign_queries_run_against_the_migrated_schema(publ
     await database.skip_outreach_delivery(execution_key="missing", reason="campaign_stopped")
     with pytest.raises(RuntimeError, match="cannot complete"):
         await database.complete_email_campaign(run_id=UUID(int=12))
+
+
+@pytest.mark.parametrize("recorded", [None, "e" * 40])
+async def test_campaign_reads_the_shortlist_admission_pinned_however_many_commits_ago(
+    recorded,
+) -> None:
+    """Regression: the shortlist was looked up only in the last four commits."""
+    from tin_lite.activities import TinActivities
+    from tin_lite.domain import EMAIL_SHORTLIST_PATH, RunStatus
+
+    pinned = "b" * 40
+    expected = recorded or pinned
+    project = SimpleNamespace(
+        id=UUID("00000000-0000-4000-8000-0000000000dd"),
+        state_repo_id="projects/test",
+        canonical_branch="main",
+    )
+    run = SimpleNamespace(
+        id=RUN_ID,
+        executor=EMAIL_CAMPAIGN_WORKFLOW_NAME,
+        status=RunStatus.RUNNING,
+        project_id=project.id,
+        input={"subject": "Hello {{name}}", "body": "Hi {{name}},\n\nWould Tuesday work?"},
+        prerequisite_evidence={
+            "head_commit_sha": pinned,
+            "items": [
+                {
+                    "kind": "artifact",
+                    "path": EMAIL_SHORTLIST_PATH,
+                    "satisfied": True,
+                    "evidence": {"path": EMAIL_SHORTLIST_PATH, "revision": pinned},
+                }
+            ],
+        },
+    )
+    shortlist = shortlist_csv(
+        (
+            "person-1",
+            "ada@example.com",
+            "Ada Lovelace",
+            "Analytical Engines",
+            "former collaborator",
+            "2026-08-01",
+            "Relevant launch",
+            "selected",
+            "",
+        )
+    )
+
+    class FakeDatabase:
+        created = None
+
+        @asynccontextmanager
+        async def effect_lock(self, execution_key, operation):
+            yield object(), None
+
+        @asynccontextmanager
+        async def project_state_lock(self, conn, value):
+            yield
+
+        async def start_effect(self, conn, **values):
+            return None
+
+        async def complete_effect(self, conn, **values):
+            return None
+
+        async def fail_effect(self, conn, **values):
+            return None
+
+        async def get_run(self, value):
+            return run
+
+        async def get_project(self, value):
+            return project
+
+        async def mark_run_running(self, value):
+            return None
+
+        async def get_integration_connection(self, **values):
+            return SimpleNamespace(
+                id=UUID("00000000-0000-4000-8000-0000000000ee"),
+                status="connected",
+                external_account_id="google-account",
+                external_account_label="founder@example.com",
+                configuration={
+                    "granted_capabilities": [
+                        "gmail.messages.send",
+                        "gmail.messages.read",
+                        "gmail.history.read",
+                    ]
+                },
+            )
+
+        async def get_email_campaign(self, value):
+            return None if recorded is None else {"source_commit_sha": recorded}
+
+        async def create_email_campaign(self, **values):
+            self.created = values
+
+        async def add_activity(self, **values):
+            return None
+
+    class FakeStorage:
+        async def canonical_file_history(self, **values):
+            raise AssertionError("an admitted campaign never scans recent commits")
+
+        async def read_canonical_artifact(self, *, repo_id, commit_sha, path):
+            assert (commit_sha, path) == (expected, EMAIL_SHORTLIST_PATH)
+            return shortlist
+
+        async def publish_state_documents(self, **values):
+            return "c" * 40, True
+
+    database = FakeDatabase()
+    activities = TinActivities(
+        database=database,  # type: ignore[arg-type]
+        storage=FakeStorage(),  # type: ignore[arg-type]
+        sandboxes=SimpleNamespace(),  # type: ignore[arg-type]
+        settings=SimpleNamespace(),  # type: ignore[arg-type]
+    )
+
+    await activities.prepare_email_campaign(str(RUN_ID))
+
+    assert database.created["shortlist_commit_sha"] == expected
+    assert len(database.created["recipients"]) == 1
