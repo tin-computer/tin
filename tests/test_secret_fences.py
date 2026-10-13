@@ -52,7 +52,7 @@ def test_github_private_key_is_installed_as_host_state_not_release_state() -> No
     activate = (ROOT / "infra" / "activate_release.sh").read_text()
 
     assert 'openssl pkey -in "${github_private_key_path}" -check -noout' in deploy
-    assert "tin-lite-switchboard:/tmp/tin-lite-github-app.pem" in deploy
+    assert '"${instance}:/tmp/tin-lite-github-app.pem"' in deploy
     assert "sudo chmod 600 /tmp/tin-lite-github-app.pem" in deploy
     assert "install -m 640 -o root -g tinlite" in activate
     assert "/etc/tin-lite/github-app.pem" in activate

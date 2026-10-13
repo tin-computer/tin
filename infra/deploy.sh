@@ -3,22 +3,50 @@ set -euo pipefail
 
 : "${TIN_LITE_GCP_PROJECT:?Set TIN_LITE_GCP_PROJECT to your deployment project}"
 
+# prod: the release env is uploaded from a local .env. staging: it stays on the host in
+# /etc/tin-lite/release.env, and migrations run before the release goes live.
+target="${TIN_LITE_DEPLOY_TARGET:-prod}"
+case "${target}" in
+  prod)
+    instance=tin-lite-switchboard
+    address=tin-lite-switchboard-ip
+    default_host=app.tin.computer
+    upload_env=1
+    run_migrations="${TIN_LITE_RUN_MIGRATIONS:-0}"
+    ;;
+  staging)
+    instance=tin-lite-staging
+    address=tin-lite-staging-ip
+    default_host=app.staging.tin.computer
+    upload_env=0
+    run_migrations=1
+    ;;
+  *)
+    echo "TIN_LITE_DEPLOY_TARGET must be prod or staging" >&2
+    exit 64
+    ;;
+esac
+zone=us-central1-a
+region=us-central1
+
 root="$(git rev-parse --show-toplevel)"
 cd "${root}"
 if [[ -n "$(git status --porcelain --untracked-files=no)" ]]; then
   echo "tracked worktree changes must be committed before deployment" >&2
   exit 65
 fi
-if [[ ! -f .env ]]; then
-  echo "local .env is required" >&2
-  exit 66
+github_private_key_path=""
+if [[ "${upload_env}" == "1" ]]; then
+  if [[ ! -f .env ]]; then
+    echo "local .env is required" >&2
+    exit 66
+  fi
+  if grep -q '^OPENAI_API_KEY=' .env; then
+    echo "OPENAI_API_KEY is forbidden" >&2
+    exit 67
+  fi
+  github_private_key_path="$(sed -n 's/^TIN_LITE_GITHUB_APP_PRIVATE_KEY_PATH=//p' .env | tail -n 1)"
 fi
-if rg -q '^OPENAI_API_KEY=' .env; then
-  echo "OPENAI_API_KEY is forbidden" >&2
-  exit 67
-fi
-
-github_private_key_path="$(sed -n 's/^TIN_LITE_GITHUB_APP_PRIVATE_KEY_PATH=//p' .env | tail -n 1)"
 if [[ -n "${github_private_key_path}" ]]; then
   if [[ ! -f "${github_private_key_path}" ]]; then
     echo "TIN_LITE_GITHUB_APP_PRIVATE_KEY_PATH must name a readable local file" >&2
@@ -35,45 +63,57 @@ temporary_dir="$(mktemp -d)"
 trap 'rm -rf "${temporary_dir}"' EXIT
 git archive --format=tar.gz --output="${temporary_dir}/tin-lite-release.tar.gz" HEAD
 
+release_files=("${temporary_dir}/tin-lite-release.tar.gz")
+if [[ "${upload_env}" == "1" ]]; then
+  release_files+=(.env)
+fi
 gcloud compute scp \
-  "${temporary_dir}/tin-lite-release.tar.gz" \
-  .env \
+  "${release_files[@]}" \
   infra/install_switchboard.sh \
   infra/install_forward_proxy.sh \
   infra/proxy_policy.py \
   src/tin_lite/proxy_grants.py \
   infra/activate_release.sh \
-  tin-lite-switchboard:/tmp/ \
-  --project "${TIN_LITE_GCP_PROJECT}" --zone us-central1-a --quiet
+  "${instance}:/tmp/" \
+  --project "${TIN_LITE_GCP_PROJECT}" --zone "${zone}" --quiet
 
 if [[ -n "${github_private_key_path}" ]]; then
   gcloud compute scp \
     "${github_private_key_path}" \
-    tin-lite-switchboard:/tmp/tin-lite-github-app.pem \
-    --project "${TIN_LITE_GCP_PROJECT}" --zone us-central1-a --quiet
-  gcloud compute ssh tin-lite-switchboard \
-    --project "${TIN_LITE_GCP_PROJECT}" --zone us-central1-a --quiet \
+    "${instance}:/tmp/tin-lite-github-app.pem" \
+    --project "${TIN_LITE_GCP_PROJECT}" --zone "${zone}" --quiet
+  gcloud compute ssh "${instance}" \
+    --project "${TIN_LITE_GCP_PROJECT}" --zone "${zone}" --quiet \
     --command="sudo chown root:root /tmp/tin-lite-github-app.pem && \
 sudo chmod 600 /tmp/tin-lite-github-app.pem"
 fi
 
-static_ip="$(gcloud compute addresses describe tin-lite-switchboard-ip \
-  --project "${TIN_LITE_GCP_PROJECT}" --region us-central1 --format='value(address)')"
-product_host="${TIN_LITE_PRODUCT_HOST:-app.tin.computer}"
+static_ip="${TIN_LITE_STATIC_IP:-}"
+if [[ -z "${static_ip}" ]]; then
+  static_ip="$(gcloud compute addresses describe "${address}" \
+    --project "${TIN_LITE_GCP_PROJECT}" --region "${region}" --format='value(address)')"
+fi
+if [[ ! "${static_ip}" =~ ^[0-9]+\.[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+  echo "the ${target} static IP is not an IPv4 address" >&2
+  exit 64
+fi
+product_host="${TIN_LITE_PRODUCT_HOST:-${default_host}}"
 if [[ ! "${product_host}" =~ ^[a-zA-Z0-9.-]+$ ]]; then
   echo "TIN_LITE_PRODUCT_HOST must be a DNS hostname" >&2
   exit 64
 fi
-gcloud compute ssh tin-lite-switchboard \
-  --project "${TIN_LITE_GCP_PROJECT}" --zone us-central1-a --quiet \
+move_env=""
+if [[ "${upload_env}" == "1" ]]; then
+  move_env="sudo mv /tmp/.env /tmp/tin-lite.env && "
+fi
+gcloud compute ssh "${instance}" \
+  --project "${TIN_LITE_GCP_PROJECT}" --zone "${zone}" --quiet \
   --command="sudo env TIN_LITE_STATIC_IP=${static_ip} TIN_LITE_PRODUCT_HOST=${product_host} bash /tmp/install_switchboard.sh && \
-sudo mv /tmp/.env /tmp/tin-lite.env && \
-sudo bash /tmp/activate_release.sh ${release_sha}"
+${move_env}sudo env TIN_LITE_RUN_MIGRATIONS=${run_migrations} bash /tmp/activate_release.sh ${release_sha}"
 
 public_host="tin-lite-switchboard.${static_ip//./-}.sslip.io"
 curl --http1.1 --fail --silent --show-error --retry 20 --retry-all-errors --retry-delay 3 \
   "https://${public_host}/healthz"
 
-product_host="${TIN_LITE_PRODUCT_HOST:-app.tin.computer}"
 curl --http1.1 --fail --silent --show-error --retry 20 --retry-all-errors --retry-delay 3 \
   "https://${product_host}/healthz"

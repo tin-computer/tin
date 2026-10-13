@@ -110,6 +110,7 @@ async def build_runtime(settings: Settings) -> RuntimeServices:
     storage = CodeStorage(
         organization=settings.code_storage_org,
         private_key=settings.code_storage_api_key.get_secret_value(),
+        repo_prefix=settings.code_storage_repo_prefix,
     )
     system_wiki = await sync_system_wiki(
         storage=storage,

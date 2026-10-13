@@ -1,0 +1,48 @@
+name: deploy-staging
+
+# Staging runs every merge to main, and any branch on request. Production deploys stay manual.
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+    inputs:
+      ref:
+        description: Branch, tag or SHA to deploy to staging
+        required: true
+        default: main
+
+permissions:
+  contents: read
+
+# One release at a time; a newer request waits instead of interrupting a deploy midway.
+concurrency:
+  group: deploy-staging
+  cancel-in-progress: false
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    # The staging environment is the only identity Google Cloud trusts for this deployer.
+    environment:
+      name: staging
+      url: https://app.staging.tin.computer
+    permissions:
+      contents: read
+      id-token: write
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ inputs.ref || github.sha }}
+          persist-credentials: false
+      - uses: google-github-actions/auth@7c6bc770dae815cd3e89ee6cdf493a5fab2cc093 # v3.0.0
+        with:
+          workload_identity_provider: ${{ vars.GCP_WORKLOAD_IDENTITY_PROVIDER }}
+          service_account: ${{ vars.GCP_DEPLOY_SERVICE_ACCOUNT }}
+      - uses: google-github-actions/setup-gcloud@aa5489c8933f4cc7a4f7d45035b3b1440c9c10db # v3.0.1
+      - name: Deploy
+        env:
+          TIN_LITE_DEPLOY_TARGET: staging
+          TIN_LITE_GCP_PROJECT: ${{ vars.GCP_PROJECT }}
+          TIN_LITE_STATIC_IP: ${{ vars.STAGING_STATIC_IP }}
+        run: bash infra/deploy.sh
