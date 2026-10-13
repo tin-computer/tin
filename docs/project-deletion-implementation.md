@@ -50,6 +50,10 @@ Under `effect_lock("project-delete:{project_id}:{request_id}", "project_delete")
    reconciliation loop retries), `CodeStorage.delete_repo`. A failure marks the receipt failed
    and raises `ProjectDeletionPending`; the same `request_id` retries every later phase.
 3. One transaction: `purge_project_data`, clear `temporal_schedule_id`, `complete_effect`.
+   The purge removes everything the project owns except its runs, saved workflows and billing,
+   including the people LinkedIn collection gathered, author bindings and task transcripts.
+   `tests/test_project_purge.py` fails when a table holding project data is neither purged
+   nor listed there as kept on purpose.
 
 A completed receipt replays its result. A fresh `request_id` on a deleted project runs every
 phase as a no-op and returns the original `deleted_at` with zero counts. One `project_deleted`

@@ -6857,6 +6857,16 @@ class Database:
             "DELETE FROM run_rollouts WHERE run_id IN "
             "(SELECT id FROM workflow_runs WHERE project_id = $1)",
             "DELETE FROM project_test_identities WHERE project_id = $1",
+            "DELETE FROM project_task_entries WHERE run_id IN "
+            "(SELECT id FROM workflow_runs WHERE project_id = $1)",
+            "DELETE FROM project_authors WHERE project_id = $1",
+            # LinkedIn collection holds other people's names, headlines and page text. Jobs (and
+            # their pages) go before the connections: a job interrupted mid-lease still points at
+            # its extension device, which would block the devices' cascade.
+            "DELETE FROM connection_collection_jobs WHERE project_id = $1",
+            "DELETE FROM connection_collection_account_leases WHERE run_id IN "
+            "(SELECT id FROM workflow_runs WHERE project_id = $1)",
+            "DELETE FROM connection_extension_devices WHERE project_id = $1",
             "DELETE FROM integration_auth_attempts WHERE project_id = $1",
             "DELETE FROM integration_call_receipts WHERE project_id = $1",
             # Failed-payment recovery keeps Stripe and mailbox evidence in its run receipts and
