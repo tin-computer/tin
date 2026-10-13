@@ -34,12 +34,18 @@ for flag in "${upload_env}" "${run_migrations}" "${TIN_LITE_FORCE_HOST_INSTALL:-
   fi
 done
 
-root="$(git rev-parse --show-toplevel)"
+# The host scripts always come from this checkout. TIN_LITE_RELEASE_SOURCE can name a
+# second checkout to release instead, so a branch under test never supplies the scripts that
+# run as root on the host (deploy-staging releases a branch with main's scripts).
+root="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/.." && pwd)"
 cd "${root}"
-if [[ -n "$(git status --porcelain --untracked-files=no)" ]]; then
-  echo "tracked worktree changes must be committed before deployment" >&2
-  exit 65
-fi
+release_source="$(cd -- "${TIN_LITE_RELEASE_SOURCE:-${root}}" && pwd)"
+for checkout in "${root}" "${release_source}"; do
+  if [[ -n "$(git -C "${checkout}" status --porcelain --untracked-files=no)" ]]; then
+    echo "tracked worktree changes must be committed before deployment (${checkout})" >&2
+    exit 65
+  fi
+done
 github_private_key_path=""
 if [[ "${upload_env}" == "1" ]]; then
   if [[ ! -f .env ]]; then
@@ -63,10 +69,11 @@ if [[ -n "${github_private_key_path}" ]]; then
   fi
 fi
 
-release_sha="$(git rev-parse HEAD)"
+release_sha="$(git -C "${release_source}" rev-parse HEAD)"
 temporary_dir="$(mktemp -d)"
 trap 'rm -rf "${temporary_dir}"' EXIT
-git archive --format=tar.gz --output="${temporary_dir}/tin-lite-release.tar.gz" HEAD
+git -C "${release_source}" archive --format=tar.gz \
+  --output="${temporary_dir}/tin-lite-release.tar.gz" HEAD
 
 # Each deploy uploads into its own private directory, so deploys by different people (or
 # by CI) never collide on files another account left in /tmp. A first connection may print

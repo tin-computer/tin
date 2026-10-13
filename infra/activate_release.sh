@@ -25,7 +25,7 @@ cleanup() {
 }
 trap cleanup EXIT
 
-exec 9>/run/lock/tin-lite-deploy.lock
+exec 9>/run/tin-lite-deploy.lock
 if ! flock -w 1800 9; then
   echo "another deploy holds the host lock" >&2
   exit 75
