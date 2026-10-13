@@ -13,6 +13,7 @@ case "${target}" in
     default_host=app.tin.computer
     upload_env=1
     run_migrations="${TIN_LITE_RUN_MIGRATIONS:-0}"
+    health_retries=20
     ;;
   staging)
     instance=tin-lite-staging
@@ -20,6 +21,8 @@ case "${target}" in
     default_host=app.staging.tin.computer
     upload_env=0
     run_migrations=1
+    # A first boot publishes the whole catalog and a restart drains running workflows.
+    health_retries=100
     ;;
   *)
     echo "TIN_LITE_DEPLOY_TARGET must be prod or staging" >&2
@@ -112,8 +115,8 @@ gcloud compute ssh "${instance}" \
 ${move_env}sudo env TIN_LITE_RUN_MIGRATIONS=${run_migrations} bash /tmp/activate_release.sh ${release_sha}"
 
 public_host="tin-lite-switchboard.${static_ip//./-}.sslip.io"
-curl --http1.1 --fail --silent --show-error --retry 20 --retry-all-errors --retry-delay 3 \
+curl --http1.1 --fail --silent --show-error --retry "${health_retries}" --retry-all-errors --retry-delay 3 \
   "https://${public_host}/healthz"
 
-curl --http1.1 --fail --silent --show-error --retry 20 --retry-all-errors --retry-delay 3 \
+curl --http1.1 --fail --silent --show-error --retry "${health_retries}" --retry-all-errors --retry-delay 3 \
   "https://${product_host}/healthz"

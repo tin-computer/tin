@@ -380,11 +380,14 @@ class Settings(BaseSettings):
                 "Staging requires TIN_LITE_PRODUCTION_DATABASE_HOST and "
                 "TIN_LITE_PRODUCTION_TEMPORAL_NAMESPACE to compare against"
             )
-        if self.database_host == self.production_database_host or (
-            self.migration_host == self.production_database_host
-        ):
+
+        def same(left: str, right: str) -> bool:
+            return left.strip().rstrip(".").lower() == right.strip().rstrip(".").lower()
+
+        production_host = self.production_database_host
+        if same(self.database_host, production_host) or same(self.migration_host, production_host):
             raise ValueError("Staging is configured with production's database")
-        if self.temporal_namespace == self.production_temporal_namespace:
+        if same(self.temporal_namespace, self.production_temporal_namespace):
             raise ValueError("Staging is configured with production's Temporal namespace")
 
     @model_validator(mode="after")

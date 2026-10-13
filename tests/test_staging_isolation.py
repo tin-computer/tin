@@ -126,6 +126,7 @@ def test_production_is_the_default_and_needs_no_prefix(monkeypatch):
         ({"TIN_LITE_PRODUCTION_DATABASE_HOST": None}, "compare against"),
         ({"DATABASE_HOST": "prod.db.example"}, "production's database"),
         ({"MIGRATION_HOST": "prod.db.example"}, "production's database"),
+        ({"DATABASE_HOST": "PROD.db.example."}, "production's database"),
         ({"TEMPORAL_NAMESPACE": "prod.ns"}, "Temporal namespace"),
     ],
 )
