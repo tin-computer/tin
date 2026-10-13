@@ -52,6 +52,7 @@ async def test_build_runtime_wires_services_without_unknown_activity_arguments(
         billing_enabled=billing_enabled,
         runtime_dsn="postgresql://runtime",
         code_storage_org="tin",
+        code_storage_repo_prefix="",
         code_storage_api_key=secret,
         e2b_api_key=secret,
         e2b_template="tin-lite-codex",

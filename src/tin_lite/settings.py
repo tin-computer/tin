@@ -201,6 +201,22 @@ class Settings(BaseSettings):
     twilio_webhook_url_raw: str | None = Field(default=None, alias="TIN_LITE_TWILIO_WEBHOOK_URL")
 
     code_storage_org: str = Field(default="tin", alias="TIN_LITE_CODE_STORAGE_ORG")
+    # Staging shares the organization with production; every repository it touches carries
+    # this prefix (for example "staging-"), so it never writes production's repositories.
+    code_storage_repo_prefix: str = Field(
+        default="", alias="TIN_LITE_CODE_STORAGE_REPO_PREFIX", pattern=r"^([a-z0-9][a-z0-9-]*-)?$"
+    )
+    # "staging" refuses to boot against production's state; see docs/staging.md.
+    deployment_environment: Literal["production", "staging", "development"] = Field(
+        default="production", alias="TIN_LITE_ENVIRONMENT"
+    )
+    # Production's identifiers, set only on staging so the guard can compare against them.
+    production_database_host: str | None = Field(
+        default=None, alias="TIN_LITE_PRODUCTION_DATABASE_HOST"
+    )
+    production_temporal_namespace: str | None = Field(
+        default=None, alias="TIN_LITE_PRODUCTION_TEMPORAL_NAMESPACE"
+    )
     e2b_template: str = Field(default="tin-lite-codex", alias="TIN_LITE_E2B_TEMPLATE")
     e2b_isolated_template: str | None = Field(default=None, alias="TIN_LITE_E2B_ISOLATED_TEMPLATE")
     e2b_browser_api_template: str = Field(
@@ -353,6 +369,27 @@ class Settings(BaseSettings):
             f"{self.switchboard_public_url.rstrip('/')}/webhooks/twilio/sms"
         )
 
+    def _reject_production_state(self) -> None:
+        """Staging must never run against production's database, workflows, files or money."""
+        if not self.code_storage_repo_prefix:
+            raise ValueError("Staging requires TIN_LITE_CODE_STORAGE_REPO_PREFIX")
+        if self.stripe_mode != "test":
+            raise ValueError("Staging requires TIN_LITE_STRIPE_MODE=test")
+        if not self.production_database_host or not self.production_temporal_namespace:
+            raise ValueError(
+                "Staging requires TIN_LITE_PRODUCTION_DATABASE_HOST and "
+                "TIN_LITE_PRODUCTION_TEMPORAL_NAMESPACE to compare against"
+            )
+
+        def same(left: str, right: str) -> bool:
+            return left.strip().rstrip(".").lower() == right.strip().rstrip(".").lower()
+
+        production_host = self.production_database_host
+        if same(self.database_host, production_host) or same(self.migration_host, production_host):
+            raise ValueError("Staging is configured with production's database")
+        if same(self.temporal_namespace, self.production_temporal_namespace):
+            raise ValueError("Staging is configured with production's Temporal namespace")
+
     @model_validator(mode="after")
     def reject_api_key_auth(self) -> Settings:
         if (self.codex_api_projects or self.billing_hosted_defaults_enabled) and (
@@ -372,6 +409,8 @@ class Settings(BaseSettings):
                     f"STRIPE_SECRET_KEY is not a {self.stripe_mode}-mode key; "
                     "TIN_LITE_STRIPE_MODE and the key must match"
                 )
+        if self.deployment_environment == "staging":
+            self._reject_production_state()
         if "OPENAI_API_KEY" in os.environ or "CODEX_API_KEY" in os.environ:
             raise ValueError(
                 "OPENAI_API_KEY and CODEX_API_KEY are forbidden; Luna uses its explicit "

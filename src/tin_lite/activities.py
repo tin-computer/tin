@@ -158,6 +158,7 @@ from tin_lite.workflow_prerequisites import (
     PrerequisiteError,
     can_wait_for_prerequisites,
     evaluate_prerequisites,
+    pinned_artifact_revision,
     prerequisite_wait_run_ids,
     waited_evidence,
 )
@@ -2560,15 +2561,25 @@ class TinActivities:
                     raise RuntimeError(
                         "Google Workspace does not grant the email campaign capabilities"
                     )
-                shortlist_history = await self._storage.canonical_file_history(
-                    repo_id=project.state_repo_id,
-                    branch=project.canonical_branch,
-                    path=EMAIL_SHORTLIST_PATH,
-                    limit=1,
+                # Read the shortlist exactly as admission found it, however many commits have
+                # landed since. A retry keeps the revision an earlier attempt already recorded.
+                campaign = await self._db.get_email_campaign(run_id)
+                shortlist_commit_sha = (
+                    campaign["source_commit_sha"]
+                    if campaign is not None
+                    else pinned_artifact_revision(run.prerequisite_evidence, EMAIL_SHORTLIST_PATH)
                 )
-                if not shortlist_history:
-                    raise RuntimeError("project state has no email shortlist revision")
-                shortlist_commit_sha = shortlist_history[0]["revision"]
+                if shortlist_commit_sha is None:
+                    # Runs admitted before admission pinned the shortlist look it up as before.
+                    shortlist_history = await self._storage.canonical_file_history(
+                        repo_id=project.state_repo_id,
+                        branch=project.canonical_branch,
+                        path=EMAIL_SHORTLIST_PATH,
+                        limit=1,
+                    )
+                    if not shortlist_history:
+                        raise RuntimeError("project state has no email shortlist revision")
+                    shortlist_commit_sha = shortlist_history[0]["revision"]
                 shortlist = await self._storage.read_canonical_artifact(
                     repo_id=project.state_repo_id,
                     commit_sha=shortlist_commit_sha,

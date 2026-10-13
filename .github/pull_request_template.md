@@ -6,6 +6,13 @@
 
 <!-- List checks run, results and any skips. For UI changes, add a synthetic-data screenshot. -->
 
+## Tested on staging
+
+<!-- Changes to the running service: deploy this branch to staging (push it to the staging
+     branch, or run deploy-staging with its ref), use the changed behavior there, and say
+     what you did and what happened. Name the staging run ID when a workflow ran. Merging
+     deploys to production. Docs, tests or evals only: delete this section. -->
+
 ## Notes
 
 <!-- Mention limitations or setup changes. For integrations, link official API/auth docs,

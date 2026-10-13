@@ -28,6 +28,7 @@ from tin_lite.workflow_prerequisites import (
     PrerequisiteError,
     WorkflowPrerequisite,
     parse_workflow_prerequisites,
+    pinned_artifact_revision,
     project_readiness,
     validate_prerequisite_graph,
 )
@@ -886,3 +887,18 @@ async def test_short_listing_names_only_what_an_agent_needs_to_choose(publicatio
     descriptions = [row["description"] for row in short_rows]
     assert all("\n" not in text and len(text) <= 160 for text in descriptions)
     assert len(json.dumps(short_rows)) * 5 < len(json.dumps(full_rows))
+
+
+def test_pinned_artifact_revision_reads_only_a_satisfied_pin_for_that_path():
+    found = {"path": "outreach/email/SHORTLIST.csv", "revision": HEAD}
+    evidence = {
+        "items": [{"kind": "run", "satisfied": True}, {"satisfied": True, "evidence": found}]
+    }
+    assert pinned_artifact_revision(evidence, "outreach/email/SHORTLIST.csv") == HEAD
+    assert pinned_artifact_revision(evidence, "outreach/email/OTHER.csv") is None
+    unmet = {"items": [{"satisfied": False, "evidence": found}]}
+    assert pinned_artifact_revision(unmet, "outreach/email/SHORTLIST.csv") is None
+    malformed = {"items": [{"satisfied": True, "evidence": {**found, "revision": "HEAD"}}]}
+    assert pinned_artifact_revision(malformed, "outreach/email/SHORTLIST.csv") is None
+    for legacy in (None, {}, {"items": "none"}, {"items": ["not a mapping"]}):
+        assert pinned_artifact_revision(legacy, "outreach/email/SHORTLIST.csv") is None
