@@ -22,7 +22,43 @@ concurrency:
   cancel-in-progress: false
 
 jobs:
+  # Which commit this deploy releases, so its status can show "Deploying" from the start.
+  # Reads the branch; runs none of its code and holds no write token.
+  resolve:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      contents: read
+    outputs:
+      sha: ${{ steps.release.outputs.sha }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ inputs.ref || github.sha }}
+          persist-credentials: false
+      - id: release
+        run: echo "sha=$(git rev-parse HEAD)" >> "${GITHUB_OUTPUT}"
+
+  # The pull request's checks show the deploy as it runs, like a hosting preview.
+  announce:
+    needs: resolve
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      statuses: write
+    steps:
+      - env:
+          GH_TOKEN: ${{ github.token }}
+          REPO: ${{ github.repository }}
+          SHA: ${{ needs.resolve.outputs.sha }}
+          RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+        run: |
+          [[ "${SHA}" =~ ^[0-9a-f]{40}$ ]]
+          gh api --method POST "repos/${REPO}/statuses/${SHA}" -f state=pending -f context=staging \
+            -f description="Deploying to staging…" -f target_url="${RUN_URL}" --silent
+
   deploy:
+    needs: resolve
     runs-on: ubuntu-latest
     timeout-minutes: 45
     # The staging environment is the only identity Google Cloud trusts for this deployer.
@@ -33,8 +69,6 @@ jobs:
     permissions:
       contents: read
       id-token: write
-    outputs:
-      sha: ${{ steps.release.outputs.sha }}
     steps:
       # The scripts that run as root on the host come from main, never from the branch.
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -44,29 +78,38 @@ jobs:
           persist-credentials: false
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
-          ref: ${{ inputs.ref || github.sha }}
+          ref: ${{ needs.resolve.outputs.sha }}
           path: release
           persist-credentials: false
-      - id: release
-        run: echo "sha=$(git -C release rev-parse HEAD)" >> "${GITHUB_OUTPUT}"
       - uses: google-github-actions/auth@7c6bc770dae815cd3e89ee6cdf493a5fab2cc093 # v3.0.0
         with:
           workload_identity_provider: ${{ vars.GCP_WORKLOAD_IDENTITY_PROVIDER }}
           service_account: ${{ vars.GCP_DEPLOY_SERVICE_ACCOUNT }}
       - uses: google-github-actions/setup-gcloud@aa5489c8933f4cc7a4f7d45035b3b1440c9c10db # v3.0.1
       - name: Deploy
+        id: deploy
+        shell: bash
         env:
           TIN_LITE_DEPLOY_TARGET: staging
           TIN_LITE_GCP_PROJECT: ${{ vars.GCP_PROJECT }}
           TIN_LITE_STATIC_IP: ${{ vars.STAGING_STATIC_IP }}
           TIN_LITE_RELEASE_SOURCE: ${{ github.workspace }}/release
-        run: bash trusted/infra/deploy.sh
+        run: bash trusted/infra/deploy.sh 2>&1 | tee "${RUNNER_TEMP}/deploy.log"
+      # A summary never fails a deploy.
+      - name: Summary
+        continue-on-error: true
+        if: always()
+        env:
+          SHA: ${{ needs.resolve.outputs.sha }}
+          OUTCOME: ${{ steps.deploy.outcome == 'success' && 'deployed' || 'failed' }}
+        run: test -f trusted/.github/scripts/deploy-summary.sh && bash trusted/.github/scripts/deploy-summary.sh staging "${SHA}" "${RUNNER_TEMP}/deploy.log" "${OUTCOME}"
 
   # The required "staging" check on main: this exact commit ran on staging. Testing it there,
   # and saying what was tested in the pull request, is up to its author. This job runs no
   # branch code, so the status token never reaches it.
   mark:
-    needs: deploy
+    needs: [resolve, deploy]
+    if: always() && needs.resolve.result == 'success'
     runs-on: ubuntu-latest
     timeout-minutes: 5
     permissions:
@@ -76,10 +119,17 @@ jobs:
           GH_TOKEN: ${{ github.token }}
           REPO: ${{ github.repository }}
           ACTOR: ${{ github.actor }}
-          SHA: ${{ needs.deploy.outputs.sha }}
+          SHA: ${{ needs.resolve.outputs.sha }}
+          RESULT: ${{ needs.deploy.result }}
+          RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
         run: |
           [[ "${SHA}" =~ ^[0-9a-f]{40}$ ]]
-          gh api --method POST "repos/${REPO}/statuses/${SHA}" \
-            -f state=success -f context=staging \
-            -f description="Deployed to staging by ${ACTOR}; test it there before merging" \
-            -f target_url=https://app.staging.tin.computer
+          if [[ "${RESULT}" == "success" ]]; then
+            gh api --method POST "repos/${REPO}/statuses/${SHA}" -f state=success -f context=staging \
+              -f description="Deployed to staging by ${ACTOR}; test it there before merging" \
+              -f target_url=https://app.staging.tin.computer --silent
+          else
+            gh api --method POST "repos/${REPO}/statuses/${SHA}" -f state=failure -f context=staging \
+              -f description="Staging deploy ${RESULT}; see the run log" \
+              -f target_url="${RUN_URL}" --silent
+          fi

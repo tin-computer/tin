@@ -4,7 +4,6 @@ const fs = require("node:fs");
 const path = require("node:path");
 const vm = require("node:vm");
 const { webcrypto } = require("node:crypto");
-const { setTimeout: delay } = require("node:timers/promises");
 
 const EXTENSION_ROOT = path.resolve(__dirname, "../..");
 const BROWSER_CONTEXT_KEY = "tin.linkedin.browser-context.v1";
@@ -36,13 +35,16 @@ async function settle(turns = 6) {
   }
 }
 
-async function eventually(predicate, message = "condition was not met") {
-  const deadline = performance.now() + 5_000;
-  while (performance.now() < deadline) {
+// Waits by time, not by event-loop turns: real async work (hashing, timers) can take more
+// than a fixed number of turns on a loaded CI runner.
+async function eventually(predicate, message = "condition was not met", timeoutMs = 5000) {
+  const deadline = Date.now() + timeoutMs;
+  for (;;) {
     if (await predicate()) return;
-    await delay(5);
+    if (Date.now() > deadline) throw new Error(message);
+    await settle(1);
+    await new Promise((resolve) => setTimeout(resolve, 1));
   }
-  throw new Error(message);
 }
 
 function defaultCookies() {

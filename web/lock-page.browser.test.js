@@ -15,7 +15,7 @@ const WAITING = {agent: {connected_at: null, client: null}, setup: {run_id: null
 async function serve({ lockEnabled, projectWorkflows, runs = [], connections = false, agentSetup = null }) {
   const project = {id: "project-1", name: "QA’s project", workspace_id: "ws", workspace_name: "QA", member_count: 1, hidden: false};
   // The agent's progress the lock page polls; a test moves it along by replacing `.value`.
-  const setup = {value: agentSetup};
+  const setup = {value: agentSetup, polls: 0};
   const business = {...project, id: "project-acme", name: "Acme"};
   const businessRun = {id: "run-acme", workflow_id: "wf-onboarding", workflow: "growth.onboarding", status: "needs_input", created_at: "2026-10-11T21:42:00Z"};
   const integrations = connections ? [
@@ -60,7 +60,7 @@ async function serve({ lockEnabled, projectWorkflows, runs = [], connections = f
     }
     const planReady = Boolean(setup.value?.setup?.plan_ready);
     if (url.pathname === "/api/projects") return send(connections ? [project, {...project, id: "project-2", name: "Second project"}] : planReady ? [project, business] : [project]);
-    if (url.pathname.endsWith("/agent-setup")) return send(setup.value || WAITING);
+    if (url.pathname.endsWith("/agent-setup")) { setup.polls += 1; return send(setup.value || WAITING); }
     if (/\/api\/projects\/[^/]+\/workflows$/.test(url.pathname)) return send(projectWorkflows);
     if (url.pathname === `/api/projects/${business.id}/runs`) return send([businessRun]);
     if (/\/api\/projects\/[^/]+\/runs$/.test(url.pathname)) return send(runs);
@@ -156,6 +156,16 @@ async function stepTitles(page) {
   return page.locator(".lock-step-title > span").evaluateAll(items => items.map(item => item.lastChild.textContent));
 }
 
+// The page counts a step only when it watched it happen, so a test moves the agent along
+// only after the page's first poll has seen the waiting state.
+async function firstPollAnswered(setup) {
+  const deadline = Date.now() + 10000;
+  while (setup.polls === 0) {
+    if (Date.now() > deadline) throw new Error("the lock page never polled its agent setup");
+    await new Promise(resolve => setTimeout(resolve, 20));
+  }
+}
+
 // Polls run every 5 s; coming back to the tab polls at once, as after the terminal.
 async function pollNow(page) {
   await page.evaluate(() => document.dispatchEvent(new Event("visibilitychange")));
@@ -172,11 +182,11 @@ test("lock page: the steps tick as the agent connects, sets up, and the plan ope
   try {
     for (const theme of shots ? ["light", "dark"] : ["light"]) {
       setup.value = null;
+      setup.polls = 0;
       writes.length = 0;
       const {page, context, errors} = await open(browser, base, {theme});
       await page.locator(".lock-step").first().waitFor();
-      // Wait for the first poll before changing the mocked server state.
-      await page.waitForFunction(() => state.lockSetup !== null);
+      await firstPollAnswered(setup);
       if (shots) await page.screenshot({path: path.join(shots, `lock-a-${theme}.png`)});
 
       // B: the agent's first signed-in project call. The install line folds away.

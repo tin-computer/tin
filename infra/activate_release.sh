@@ -91,6 +91,7 @@ ln -sfn "${release_dir}" /opt/tin-lite/current
 systemctl enable tin-lite-switchboard
 restarts_before="$(systemctl show -p NRestarts --value tin-lite-switchboard)"
 restarted_at="$(date '+%Y-%m-%d %H:%M:%S')"
+restart_began=${SECONDS}
 # A restart drains the Temporal worker first (up to the unit's stop timeout).
 systemctl restart tin-lite-switchboard
 
@@ -121,7 +122,7 @@ until started; do
   fi
   sleep 5
 done
-echo "release ${release_sha} started"
+echo "release ${release_sha} started after $((SECONDS - restart_began))s"
 
 # Keep the newest 20 releases, plus whatever current and the previous release point at.
 keep_current="$(readlink -f /opt/tin-lite/current)"
