@@ -100,8 +100,15 @@ rm -f "${upload_dir}/tin-lite-release.tar.gz" "${upload_dir}/tin-lite.env"
 # startup line and the restart counter. A failure stops here and is reported; nothing is
 # rolled back automatically, because a release may have changed the catalog for good.
 deadline=$((SECONDS + ${TIN_LITE_STARTUP_TIMEOUT:-420}))
-until journalctl -u tin-lite-switchboard --since "${restarted_at}" --no-pager -q |
-  grep -q "Application startup complete"; do
+# grep -c reads the whole journal: grep -q would stop early, journalctl would get SIGPIPE,
+# and pipefail would turn a found line into a failure.
+started() {
+  local count
+  count="$(journalctl -u tin-lite-switchboard --since "${restarted_at}" --no-pager -q |
+    grep -c "Application startup complete" || true)"
+  (( count > 0 ))
+}
+until started; do
   if [[ "$(systemctl show -p NRestarts --value tin-lite-switchboard)" != "${restarts_before}" ]]; then
     echo "the new release is restarting; it did not start cleanly (previous: ${previous})" >&2
     journalctl -u tin-lite-switchboard --since "${restarted_at}" --no-pager -q | tail -n 40 >&2

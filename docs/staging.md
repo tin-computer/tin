@@ -15,6 +15,11 @@ Merging to `main` deploys to production, so staging is where a change is tested 
 2. Use the changed behavior on `app.staging.tin.computer` with a staging test project.
 3. Write what you did and saw under **Tested on staging** in the pull request.
 
+A change to the deploy scripts themselves (`infra/`) cannot be tried this way, because
+deploy-staging always runs `main`'s scripts. Run the branch's `infra/deploy.sh` with
+`TIN_LITE_DEPLOY_TARGET=staging` from a workstation, and a maintainer sets the `staging`
+status by hand.
+
 Deploying marks that exact commit with the `staging` status that `main` requires. A new
 push resets it. Changes that cannot reach the running service (docs, tests, evals,
 Markdown) pass without a deploy. Staging has one slot: whoever deployed last owns it until
