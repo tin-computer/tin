@@ -5,7 +5,7 @@ importScripts("collection/core.js");
   const C = globalThis.TinCollectorCore;
   const KEY = "tin.linkedin.collection.v3", ALARM = "tin.linkedin.collection.v3";
   const NS = "tin.linkedin.collection.v3";
-  const origins = new Set(["https://tin.computer", "https://www.tin.computer", "https://app.tin.computer", "https://staging.tin.computer", "http://localhost:8000", "http://127.0.0.1:8000", "http://localhost:18080", "http://127.0.0.1:18080", "http://localhost:3000"]);
+  const origins = new Set(["https://tin.computer", "https://www.tin.computer", "https://app.tin.computer", "https://app.staging.tin.computer", "https://staging.tin.computer", "http://localhost:8000", "http://127.0.0.1:8000", "http://localhost:18080", "http://127.0.0.1:18080", "http://localhost:3000"]);
   let running = false, timer, operations = Promise.resolve();
   const serialize = fn => { const result = operations.then(fn); operations = result.catch(() => {}); return result; };
   const ready = chrome.storage.local.setAccessLevel({ accessLevel: "TRUSTED_CONTEXTS" });

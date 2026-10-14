@@ -270,6 +270,17 @@ def main() -> None:
     rollouts.add_argument("--out", type=Path, help="directory to write the .jsonl files into")
     rollouts.add_argument("--trace", action="store_true", help="print a readable transcript")
     rollouts.add_argument("--max-output-chars", type=int, default=2000)
+    spike = commands.add_parser(
+        "linkedin-spike",
+        help="probe what a project's saved LinkedIn session can read, or send one request",
+    )
+    spike.add_argument("project_id", type=UUID)
+    spike.add_argument("--where", choices=("host", "e2b"), default="host")
+    spike.add_argument("--post", help="activity ID to read reactions and comments from")
+    spike.add_argument("--profile", action="append", help="profile URL to read (repeatable)")
+    spike.add_argument("--gap", type=float, default=4.0, help="seconds between reads")
+    spike.add_argument("--invite", help="profile URL to send one connection request to")
+    spike.add_argument("--confirm-invite", help="the same URL again, to confirm the send")
     args = parser.parse_args()
     if args.command == "migrate":
         asyncio.run(_migrate())
@@ -287,6 +298,10 @@ def main() -> None:
         asyncio.run(_grant_project_access(args.project_id, args.clerk_user_id))
     elif args.command == "grant-workspace-access":
         asyncio.run(_grant_workspace_access(args.workspace_id, args.clerk_user_id))
+    elif args.command == "linkedin-spike":
+        from tin_lite.linkedin_spike import command
+
+        command(args)
     elif args.command == "rollouts":
         asyncio.run(
             _rollouts(
