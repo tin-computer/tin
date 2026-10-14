@@ -598,6 +598,8 @@ def report(prepared: dict, *, reason: str | None = None, pull_request=None) -> b
             "ready for review.",
             "",
         ]
+        if missing := missing_lines(prepared):
+            lines += [*missing, "A fix can't change these files, so they stay as they are.", ""]
     if pull_request is not None:
         lines += [f"Pull request: {pull_request.url}", ""]
         if batch.get("unproven", True):

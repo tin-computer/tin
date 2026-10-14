@@ -2,6 +2,7 @@
 
 import hashlib
 import json
+import tarfile
 from urllib.parse import urlsplit
 from uuid import UUID
 
@@ -12,7 +13,7 @@ from tin_lite import technical_site_rules as site_rules
 from tin_lite.integrations import GitHubRepositoryBinding
 from tin_lite.organic_audit import digest
 from tin_lite.organic_audit_site import parse_robots, parse_sitemap, url_key
-from tin_lite.repository_limits import describe_omissions
+from tin_lite.repository_limits import describe_omission, left_out_write
 from tin_lite.run_reports import publish_run_report
 from tin_lite.technical_build_profile import archive_files, match_profile
 from tin_lite.technical_fix_sources import TechnicalFixSources
@@ -439,15 +440,15 @@ class TechnicalFixExecution:
                 expected_binding=binding,
             )
             files = None
-            if getattr(bundle, "complete", True):
-                try:
-                    # Only served text files can be proven from the diff; read just those.
-                    files = archive_files(bundle.archive, select=strict_candidate)
-                except ValueError:
-                    pass
-            if not getattr(bundle, "complete", True):
-                reason, missing = "repository_incomplete", contract.missing_record(bundle)
-            elif files is None:
+            try:
+                # Only served text files can be proven from the diff; read just those. A
+                # file the snapshot left out is never one of them, so it doesn't stop the
+                # run: the report names it, and delivery refuses a patch that writes to it.
+                files = archive_files(bundle.archive, select=strict_candidate)
+            except (ValueError, tarfile.TarError):
+                pass
+            missing = contract.missing_record(bundle)
+            if files is None:
                 reason = "unsupported_source"
             else:
                 strict = self._strict_files(files, still, robots, sitemaps or [], page_reads)
@@ -491,7 +492,9 @@ class TechnicalFixExecution:
                 },
                 "forbidden": sorted(batch_rules.BLOCKED_NAMES)
                 + [prefix + "*" for prefix in batch_rules.BLOCKED_PREFIXES]
-                + [".env*"],
+                + [".env*"]
+                # Files the snapshot left out aren't in the workspace; never write them.
+                + [item["path"] for item in missing.get("repository_missing", [])],
             },
             "originals": {},
             "site_fix": None,
@@ -582,18 +585,17 @@ class TechnicalFixExecution:
             execution_key=f"{run.id}:procedure_repository_workspace",
             expected_binding=binding,
         )
-        if not getattr(bundle, "complete", True):
-            named = describe_omissions(getattr(bundle, "missing", ()), limit=3)
-            raise ValueError(
-                "Tin couldn't read every file in the repository"
-                + (f" ({named})" if named else "")
-                + ", so it can't check this patch."
-            )
         changed = {item["path"] for item in manifest["files"]}
-        skipped = sorted(changed & {item["path"] for item in getattr(bundle, "skipped", ())})
-        if skipped:
+        # The pull request lands on GitHub's own tree, so a file the snapshot left out stays
+        # as it is unless the patch writes over it, which it never may.
+        if left := left_out_write(changed, getattr(bundle, "missing", ())):
             raise ValueError(
-                f"{skipped[0]} is a large media or built file Tin didn't read, so a fix "
+                f"The patch writes to {describe_omission(left)}, which Tin didn't read, so a "
+                "fix can't change it."
+            )
+        if skipped := left_out_write(changed, getattr(bundle, "skipped", ())):
+            raise ValueError(
+                f"{skipped['path']} is a large media or built file Tin didn't read, so a fix "
                 "can't change it."
             )
         files = archive_files(bundle.archive, select=lambda path, _size: path in changed)

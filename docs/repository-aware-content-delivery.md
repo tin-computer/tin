@@ -71,8 +71,14 @@ and Open a pull request, which use the exact Markdown publisher below.
   folder (`public/`, `static/`, `dist/`, `build/`, `out/` and the like) can't hold what a fix
   edits, so the snapshot still counts as complete without them. Any other file left out (a
   source or data file over 10 MB, a symbolic link, a submodule) makes it incomplete. The
-  read's receipt lists both, with each file's size and reason, and workflows that refuse an
-  incomplete snapshot name the files.
+  read's receipt lists both, with each file's size and reason.
+- An incomplete snapshot doesn't stop audit fixes or page refreshes: what they read and
+  check is always small served text or source, never a file that was left out. The pull
+  request lands on GitHub's own tree, so left-out files stay as they are. A patch that writes
+  to a left-out path, or under one (a submodule, a linked folder), is refused and the file
+  named; the fix report lists what was left out, and a refresh that can't find the page's
+  text names it too. The retired single-finding `organic.technical_fix` still refuses an
+  incomplete snapshot for its pinned runs.
 - A canonical receipt at `content/deliveries/{run_id}.md` links the PR. The original
   Markdown and the roadmap are unchanged. Status, article choices, titles and PR links
   are Postgres projections, shared by HTTP/MCP and the existing content card.

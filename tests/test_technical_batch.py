@@ -526,9 +526,23 @@ async def test_a_snapshot_without_its_large_media_prepares_and_delivers(monkeypa
     video = {"path": "public/opensource/hero.mp4", "content": "not a video\n"}
     with pytest.raises(ValueError, match="hero.mp4 is a large media or built file"):
         await execution._validate_batch_delivery(run, patch(prepared, [video], body=NOTE), prepared)
+    above = {"path": "public/opensource", "content": "not a folder\n"}
+    with pytest.raises(ValueError, match="hero.mp4 is a large media or built file"):
+        await execution._validate_batch_delivery(run, patch(prepared, [above], body=NOTE), prepared)
 
 
-async def test_a_large_source_file_ends_the_run_failed_and_names_the_file():
+def test_a_write_reaches_a_left_out_entry_at_under_or_above_its_path():
+    from tin_lite.repository_limits import left_out_write
+
+    entries = ({"path": "src/data/posts.json"}, {"path": "vendor/theme"})
+    for path in ("src/data/posts.json", "vendor/theme/a.css", "src/data", "src", "vendor"):
+        assert left_out_write({path}, entries) is not None, path
+    for path in ("src/data/posts.json.bak", "src/database.ts", "vendor/themes/a.css", "srcx"):
+        assert left_out_write({path}, entries) is None, path
+
+
+async def test_files_left_out_of_the_snapshot_are_named_and_never_written():
+    """ReadnType and unbaked (10/12-13): large data files stopped every audit fix."""
     login = f"{BASE}/login"
     repairs = [
         repair("indexation.utility_pages_indexable", urls=[login], finding_id="oa_" + "3" * 20)
@@ -536,23 +550,22 @@ async def test_a_large_source_file_ends_the_run_failed_and_names_the_file():
     execution, selection, run = batch_execution(
         repairs=repairs, repo={"login.html": PAGE}, pages={login: PAGE}
     )
+    submodule = {"path": "vendor/theme", "size": None, "reason": "submodule"}
     execution.integrations.github_repository_bundle.return_value = SimpleNamespace(
         archive=archive({"login.html": PAGE}),
         complete=False,
         skipped=SKIPPED_MEDIA,
-        missing=(LARGE_SOURCE,),
+        missing=(LARGE_SOURCE, submodule),
     )
     prepared = await execution._resolve_batch(run, selection)
-    assert prepared["reason"] == "repository_incomplete"
-    assert prepared["repository_missing"] == [LARGE_SOURCE]
-    execution.integrations.github_open_pull_requests.assert_not_awaited()
-    assert technical_fix.preparation_failed(prepared) is True
-    assert technical_fix.preparation_summary(prepared) == (
-        "Tin couldn't read every file in the repository: src/data/posts.json (12.4 MB, over "
-        "the 10 MB limit for files Tin reads). No change proposed."
-    )
-    text = rules.report(prepared, reason="repository_incomplete").decode()
+    assert prepared["reason"] is None and technical_fix.preparation_failed(prepared) is False
+    assert prepared["batch"]["strict_files"]["login.html"]["kinds"] == ["html_noindex"]
+    assert prepared["repository_missing"] == [LARGE_SOURCE, submodule]
+    # The procedure is told which paths it can't touch, and the report names them.
+    assert {"src/data/posts.json", "vendor/theme"} <= set(prepared["batch"]["forbidden"])
+    text = rules.report(prepared).decode()
     assert "Files Tin couldn't read:" in text and "- src/data/posts.json (12.4 MB" in text
+    assert "A fix can't change these files" in text
     # Many unread files: the first few are named, with the true count of the rest.
     many = [{**LARGE_SOURCE, "path": f"src/data/part-{index}.json"} for index in range(25)]
     crowded = {
@@ -561,13 +574,23 @@ async def test_a_large_source_file_ends_the_run_failed_and_names_the_file():
     }
     assert crowded["repository_missing_count"] == 25
     assert len(crowded["repository_missing"]) == technical_fix.MAX_NAMED_MISSING
-    assert technical_fix.preparation_summary(crowded).endswith("; and 22 more. No change proposed.")
-    assert "- and 5 more" in rules.report(crowded, reason="repository_incomplete").decode()
-    # Delivery refuses the same snapshot and says which file.
-    with pytest.raises(ValueError, match=r"src/data/posts\.json \(12\.4 MB"):
-        await execution._validate_batch_delivery(
-            run, patch(prepared, [{"path": "login.html", "content": PAGE}], body=NOTE), prepared
-        )
+    assert "- and 5 more" in rules.report(crowded).decode()
+    # Delivery accepts a patch that leaves them alone...
+    noindex = PAGE.replace("</head>", '<meta name="robots" content="noindex">\n</head>')
+    await execution._validate_batch_delivery(
+        run, patch(prepared, [{"path": "login.html", "content": noindex}], body=NOTE), prepared
+    )
+    # ...and refuses one that writes over a left-out file or into a submodule.
+    for path, named in (
+        ("src/data/posts.json", r"src/data/posts\.json \(12\.4 MB"),
+        ("vendor/theme/head.html", r"vendor/theme \(a Git submodule\)"),
+        # A file written where a folder is replaces the folder, left-out file and all.
+        ("src/data", r"src/data/posts\.json \(12\.4 MB"),
+    ):
+        with pytest.raises(ValueError, match=named + r".*, which Tin didn't read"):
+            await execution._validate_batch_delivery(
+                run, patch(prepared, [{"path": path, "content": PAGE}], body=NOTE), prepared
+            )
 
 
 async def test_nothing_left_to_fix_ends_without_a_pr():
@@ -738,7 +761,7 @@ async def test_the_preview_sorts_a_real_audit_and_takes_decisions():
     assert answered["decisions_needed"] == []
 
 
-async def test_a_v5_batch_that_cannot_read_the_repository_fails_with_the_file(
+async def test_a_v5_batch_with_a_large_data_file_still_prepares_its_fixes(
     publication_db, monkeypatch
 ):
     source = batch_source()
@@ -776,22 +799,22 @@ async def test_a_v5_batch_that_cannot_read_the_repository_fails_with_the_file(
     f.integrations.github_repository_bundle.return_value = SimpleNamespace(
         archive=archive(repo), complete=False, skipped=SKIPPED_MEDIA, missing=(LARGE_SOURCE,)
     )
+    f.integrations.github_open_pull_requests.return_value = SimpleNamespace(
+        truncated=False, changed_paths=(), document=b"{}"
+    )
     site = {f"{BASE}/robots.txt": ROBOTS, f"{BASE}/sitemap.xml": SITEMAP}
     f.execution.fetch_file = AsyncMock(side_effect=lambda url, **_: served(url, site[url]))
     f.execution.fetch = AsyncMock(side_effect=lambda url, **_: served_page(url, PAGE))
 
-    assert await f.execution.prepare(f.run, policy=technical_fix.BATCH_POLICY) is True
+    # The run goes on to compute instead of ending failed on the file it couldn't read.
+    assert await f.execution.prepare(f.run, policy=technical_fix.BATCH_POLICY) is False
+    prepared = (await f.db.get_effect(f"technical:{f.run.id}:prepare")).result
+    assert prepared["reason"] is None
+    assert prepared["batch"]["strict_files"]["public/robots.txt"]["target"] == "robots"
+    assert prepared["repository_missing"] == [LARGE_SOURCE]
+    f.integrations.github_open_pull_requests.assert_awaited()
     run = await f.db.get_run(f.run.id)
-    assert run.status.value == "failed"
-    assert "src/data/posts.json (12.4 MB, over the 10 MB limit" in run.error_message
-    f.integrations.github_open_pull_requests.assert_not_awaited()
-    report = await f.storage.read_canonical_artifact(
-        repo_id=(await f.db.get_project(run.project_id)).state_repo_id,
-        commit_sha=run.canonical_commit_sha,
-        path=run.artifact_path,
-    )
-    assert "Tin couldn't read every file in the repository" in report.decode()
-    assert "- src/data/posts.json (12.4 MB" in report.decode()
+    assert run.status.value != "failed" and run.error_message is None
 
 
 async def test_a_v5_batch_prepares_once_and_delivers_one_checked_pr(publication_db, monkeypatch):

@@ -928,18 +928,19 @@ class ContentDelivery:
                     execution_key=read_key,
                     expected_binding=binding,
                 )
-                if not getattr(bundle, "complete", True):
-                    named = describe_omissions(getattr(bundle, "missing", ()), limit=3)
-                    raise ValueError(
-                        "Tin couldn't read every file in the repository"
-                        + (f" ({named})" if named else "")
-                        + ", so it will not guess where the page's text lives. Change it by hand."
+                # Read only the source files plan_patch searches. Files the snapshot left
+                # out are never among them (each is over plan_patch's size bound, or a link
+                # or submodule Tin doesn't edit), so they don't stop the refresh; a refusal
+                # to find the text names them.
+                try:
+                    changed = content_refresh.plan_patch(
+                        archive_files(bundle.archive, select=content_refresh.searched), items
                     )
-                # Read only the source files plan_patch searches; large media and built
-                # files were never part of the snapshot.
-                changed = content_refresh.plan_patch(
-                    archive_files(bundle.archive, select=content_refresh.searched), items
-                )
+                except ValueError as exc:
+                    named = describe_omissions(getattr(bundle, "missing", ()), limit=3)
+                    if not named or not str(exc).startswith("Tin could not find"):
+                        raise
+                    raise ValueError(f"{exc} Tin didn't read {named}.") from exc
                 files = tuple(
                     GitHubFileChange(path=path, content=text) for path, text in changed.items()
                 )

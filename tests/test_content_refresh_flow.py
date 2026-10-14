@@ -378,10 +378,14 @@ async def test_text_the_source_does_not_hold_stops_delivery_with_the_reason(
 
 
 @pytest.mark.parametrize("readable", [True, False])
-async def test_large_files_stop_a_refresh_only_when_they_could_hold_its_text(
+async def test_files_left_out_of_the_snapshot_do_not_stop_a_refresh(
     publication_db, monkeypatch, readable
 ):
-    """Refresh aaffdb5a failed after approval on tin-web's hero video and built bundle."""
+    """Refresh aaffdb5a failed after approval on tin-web's hero video and built bundle.
+
+    A data file over 10 MB is left out too, but the search never reads a file that large,
+    so it can't be where the page's text is found: the refresh goes on, and a refusal to
+    find the text names it."""
     monkeypatch.setattr("tin_lite.technical_build_profile.ARCHIVE_MAX_BYTES", 20_000)
     f = await fixture(publication_db)
     monkeypatch.setattr(
@@ -427,12 +431,49 @@ async def test_large_files_stop_a_refresh_only_when_they_could_hold_its_text(
         path,
         revision,
     )
-    if readable:
-        await delivery.deliver(run.id)
-        receipt = (await f.db.get_effect(delivery_key(run.id))).result
-        assert receipt["changed_paths"] == ["app/guides/setup/page.tsx"]
-        return
-    with pytest.raises(ValueError, match=r"src/data/pages\.json \(12\.4 MB, over the 10 MB limit"):
+    await delivery.deliver(run.id)
+    receipt = (await f.db.get_effect(delivery_key(run.id))).result
+    assert receipt["changed_paths"] == ["app/guides/setup/page.tsx"]
+
+
+async def test_text_not_found_names_the_files_tin_left_out(publication_db, monkeypatch):
+    f = await fixture(publication_db)
+    monkeypatch.setattr(
+        f.db,
+        "get_integration_connection",
+        AsyncMock(
+            return_value=SimpleNamespace(
+                status="connected", configuration={"selected_repository": "acme/site"}
+            )
+        ),
+    )
+    run = await refresh_run(f)
+    context = await f.sources.prepare(run)
+    f.integrations.github_repository_binding = AsyncMock(return_value=binding())
+    source = PAGE_TSX.replace("Setup & configuration | Example", "Setup & configuration")
+    missing = ({"path": "src/data/pages.json", "size": 12_400_000, "reason": "too_large"},)
+    f.integrations.github_repository_bundle = AsyncMock(
+        return_value=SimpleNamespace(
+            archive=archive({"app/page.tsx": source}), complete=False, missing=missing
+        )
+    )
+    f.integrations.github_commit_files = AsyncMock()
+    delivery = ContentDelivery(database=f.db, storage=f.storage, integrations=f.integrations)
+    await delivery.choose(run=run, mode="github_commit", remember=False, actor=ACTOR)
+    path = refresh.PATH_TEMPLATE.format(run_folder="2026-10-14-missing")
+    revision = f.storage.repo.edit({path: document(GOOD, context)})
+    await f.db.pool.execute(
+        "UPDATE workflow_runs SET status='succeeded', review_decision='approved', "
+        "reviewed_at=now(), artifact_path=$2, canonical_commit_sha=$3, lease_active=false "
+        "WHERE id=$1",
+        run.id,
+        path,
+        revision,
+    )
+    with pytest.raises(
+        ValueError,
+        match=r"current title.*Tin didn't read src/data/pages\.json \(12\.4 MB, over the 10 MB",
+    ):
         await delivery.deliver(run.id)
     receipt = await f.db.get_effect(delivery_key(run.id))
     assert receipt.status == "failed" and "src/data/pages.json" in receipt.error_message
