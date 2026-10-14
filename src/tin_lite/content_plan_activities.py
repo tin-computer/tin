@@ -19,6 +19,7 @@ from temporalio.exceptions import ApplicationError
 from tin_lite import content_plan as legacy
 from tin_lite import content_plan_agent as agent
 from tin_lite import content_plan_editorial as editorial
+from tin_lite import content_plan_targets as targets
 from tin_lite.billing_contracts import BillingError
 from tin_lite.content_plan import (
     KEY,
@@ -148,9 +149,16 @@ class ContentPlanActivities:
         if saved:
             return saved
         urls, omitted = editorial.page_candidates(context)
-        semaphore = asyncio.Semaphore(editorial.POLICY["page_concurrency"])
+        # v10: also the opening and outline of every other page the site lists.
+        coverage = context.get("page_coverage")
+        known, known_omitted = (
+            editorial.known_pages(context, urls, limit=coverage["reads"]) if coverage else ([], 0)
+        )
+        semaphore = asyncio.Semaphore(
+            coverage["concurrency"] if coverage else editorial.POLICY["page_concurrency"]
+        )
 
-        async def inspect(index, url):
+        async def inspect(index, url, text_limit):
             stage = f"page:{digest(url)}"
             async with semaphore:
                 saved_page = await self.saved(run.id, stage)
@@ -163,7 +171,7 @@ class ContentPlanActivities:
                     if not editorial.clean_url(observation["url"], context["plan"]["host"]):
                         raise ValueError("Page redirect did not yield a clean destination.")
                     page = editorial.page_evidence(
-                        observation, url, text_limit=context.get("page_text_limit", 2200)
+                        observation, url, text_limit=text_limit, outline=bool(coverage)
                     )
                     if bind_sources and page["status"] == "inspected":
                         page["source_id"] = "page:" + digest(
@@ -185,8 +193,17 @@ class ContentPlanActivities:
                 await self.active(run.id)
                 return await self.save(run.id, stage, {**page, "page_id": f"p{index:03d}"})
 
-        pages = await asyncio.gather(*(inspect(i, url) for i, url in enumerate(urls, 1)))
-        return await self.save(run.id, "pages", {"pages": pages, "omitted_candidates": omitted})
+        limit = context.get("page_text_limit", 2200)
+        reads = [(url, limit) for url in urls]
+        if coverage:
+            reads += [(url, coverage["text_bytes"]) for url in known]
+        pages = await asyncio.gather(
+            *(inspect(i, url, text_limit) for i, (url, text_limit) in enumerate(reads, 1))
+        )
+        result = {"pages": pages, "omitted_candidates": omitted}
+        if coverage:
+            result["omitted_known_pages"] = known_omitted
+        return await self.save(run.id, "pages", result)
 
     async def model(self, run, data, *, contract=legacy, schema=None):
         policy = contract.POLICY
@@ -305,6 +322,22 @@ class ContentPlanActivities:
                 },
             )
             return revision
+
+    async def panel_questions(self, project, context):
+        """The buyer questions the plan's audit asked AI assistants, when it had a panel."""
+        source = (context["research"].get("sources") or {}).get("audit") or {}
+        path = (source.get("paths") or {}).get("evidence.json")
+        if not path or not source.get("revision"):
+            return []
+        raw = await self.storage.read_canonical_artifact_if_exists(
+            repo_id=project.state_repo_id, commit_sha=source["revision"], path=path
+        )
+        try:
+            panel = ((json.loads(raw) if raw else {}).get("ai_visibility") or {}).get("panel")
+        except ValueError:
+            return []
+        questions = (panel or {}).get("questions") if isinstance(panel, dict) else None
+        return [q for q in questions or [] if isinstance(q, dict)][:16]
 
     async def research_inputs(self, project, context):
         """The merged competitor list and the project files the planning agent should read."""
@@ -587,6 +620,14 @@ class ContentPlanActivities:
         plan["strategy"] = agent.strategy(value, quality)
         plan = validate_change(context["plan"], plan, editable=set(context["editable"]))
         quality["portfolio"] = {k: portfolio[k] for k in ("run_id", "path", "revision", "sha256")}
+        if context.get("page_coverage"):
+            # v10: the plan opens with which page serves each target.
+            quality["targets"] = targets.targets(
+                context,
+                plan,
+                questions=await self.panel_questions(project, context),
+                competitors=[c for c in value.get("competitors") or [] if isinstance(c, dict)],
+            )
         site = (context["research"] or {}).get("site_pages")
         if site is not None:
             quality["site_inventory"] = {
@@ -606,7 +647,13 @@ class ContentPlanActivities:
 
     @activity.defn
     async def content_plan_execute(self, run_id: str):
-        await self.guarded(run_id)
+        # {"review": True} when a first plan now waits for approval (v10).
+        result = await self.guarded(run_id)
+        # A revision the founder asked for from the waiting plan: apply it and show it there.
+        from tin_lite.content_plan_feedback import finish
+
+        await finish(self.db, self.storage, run_id)
+        return result
 
     async def guarded(self, run_id, *, research_only=False):
         try:
@@ -643,6 +690,15 @@ class ContentPlanActivities:
         ) from None
 
     async def execute(self, run_id, *, research_only=False):
+        waiting = await self.db.get_run(UUID(str(run_id)))
+        if (
+            waiting is not None
+            and waiting.executor == KEY
+            and waiting.status.value == "needs_input"
+            and waiting.review_required
+        ):
+            # A retried attempt after the plan was published for review: it still waits.
+            return {"review": True}
         run = await self.active(run_id)
         if run.status.value == "succeeded":
             return None
@@ -864,6 +920,18 @@ class ContentPlanActivities:
                         else "Create the initial roadmap.",
                         "capacity": run.input.get("pieces_per_batch", 2),
                         "page_text_limit": contract.POLICY.get("expanded_page_text_bytes", 2200),
+                        **(
+                            {
+                                "page_coverage": {
+                                    "reads": contract.POLICY["known_page_reads"],
+                                    "text_bytes": contract.POLICY["known_page_text_bytes"],
+                                    "concurrency": contract.POLICY["known_page_concurrency"],
+                                    "nearby": contract.POLICY["nearby_pages"],
+                                }
+                            }
+                            if contract.POLICY.get("known_page_reads")
+                            else {}
+                        ),
                     },
                 )
             plan = context["plan"]
@@ -1140,23 +1208,79 @@ class ContentPlanActivities:
                     revision,
                     run.id,
                 )
+            path = paths(run_id)["PLAN.md"]
+            artifact_ref = f"code.storage://{project.state_repo_id}@{revision}/{path}"
+            if run.review_required and mode != "initial":
+                # Only a first plan waits; a recovered run that turned out to be a later batch
+                # has nothing new to approve.
+                await conn.execute(
+                    "UPDATE workflow_runs SET review_required = false WHERE id = $1 "
+                    "AND review_decision IS NULL",
+                    run.id,
+                )
+            elif run.review_required:
+                # v10: the founder approves the first plan in Decisions before anything drafts
+                # from it. The workflow waits for the approval, then records the success.
+                planned = sum(len(batch["items"]) for batch in plan["batches"])
+                mapping = (quality or {}).get("targets")
+                await self.db.request_human_review(
+                    run_id=run.id,
+                    canonical_commit_sha=revision,
+                    artifact_ref=artifact_ref,
+                    artifact_path=path,
+                    summary="Your content plan is ready for review. Nothing is drafted until "
+                    "you approve it.",
+                    artifact_title=f"Content plan for {plan['host']}",
+                    explanation=targets.review_line(mapping, planned)
+                    if mapping
+                    else f"{planned} planned pages. Approve to start drafting; nothing is "
+                    "drafted until you do.",
+                )
+                return {"review": True}
             projection_key = f"content:{run_id}:projection"
             async with self.db.effect_lock(projection_key, KEY) as (projection_conn, receipt):
                 if not receipt or receipt.status != "completed":
                     await self.db.start_effect(
                         projection_conn, execution_key=projection_key, operation=KEY
                     )
-                    path = paths(run_id)["PLAN.md"]
                     await self.db._complete_readonly_report_projection(
                         projection_conn,
                         execution_key=projection_key,
                         run_id=run.id,
                         canonical_commit_sha=revision,
                         artifact_path=path,
-                        artifact_ref=f"code.storage://{project.state_repo_id}@{revision}/{path}",
+                        artifact_ref=artifact_ref,
                         summary=f"{label}. Nothing generated or published.",
                         workflow_key=KEY,
                     )
+        return {"review": False}
+
+    @activity.defn
+    async def content_plan_approved(self, run_id: str):
+        """After the founder approves a first plan: record the approval and finish the run."""
+        run = await self.db.get_run(UUID(run_id))
+        if run is None or run.executor != KEY:
+            raise ValueError("Content planning is no longer active.")
+        if run.status.value == "succeeded":
+            return
+        await self.db.record_human_review(
+            run_id=run.id, decision="approved", summary="You approved the content plan."
+        )
+        projection_key = f"content:{run_id}:projection"
+        async with self.db.effect_lock(projection_key, KEY) as (conn, receipt):
+            if receipt and receipt.status == "completed":
+                return
+            await self.db.start_effect(conn, execution_key=projection_key, operation=KEY)
+            await self.db._complete_readonly_report_projection(
+                conn,
+                execution_key=projection_key,
+                run_id=run.id,
+                canonical_commit_sha=run.canonical_commit_sha,
+                artifact_path=run.artifact_path,
+                artifact_ref=run.artifact_ref,
+                summary="Content roadmap approved. Nothing generated or published.",
+                workflow_key=KEY,
+            )
 
     @activity.defn
     async def content_plan_failure(self, value: str | dict):

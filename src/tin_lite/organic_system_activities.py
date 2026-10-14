@@ -457,10 +457,18 @@ class OrganicSystemActivities:
             await self.db.complete_effect(conn, execution_key=key, result={"program": program})
             return program
 
+    async def plan_declined(self, content):
+        """Whether the founder declined this run's content plan in Decisions."""
+        plan = await self.db.get_run(UUID(content["run_id"])) if content.get("run_id") else None
+        return bool(plan and plan.review_decision == "declined")
+
     async def content_program(self, run, content):
         """This run's content program, or the saved fallback when its plan did not finish."""
         if content["status"] == "succeeded" and content["project_workflow_id"]:
             return content["project_workflow_id"]
+        if await self.plan_declined(content):
+            # A plan the founder turned down: nothing drafts from it, nor from an older one.
+            return None
         fallback = await self.saved_plan(run)
         return fallback["program_id"] if fallback else None
 
@@ -552,7 +560,11 @@ class OrganicSystemActivities:
         if step == "draft":
             program_id = await self.content_program(run, children["content"])
             if program_id is None:
-                return None, "content_plan_unavailable"
+                return None, (
+                    "content_plan_declined"
+                    if await self.plan_declined(children["content"])
+                    else "content_plan_unavailable"
+                )
             from tin_lite.content_draft_sources import ContentDraftSources
 
             # The system drafts its next article; saved schedules draft the other kinds.
@@ -693,6 +705,8 @@ class OrganicSystemActivities:
                         # failure. Its reason stays on the step and in the draft run.
                         "already_covered",
                         "editorial_attention_required",
+                        # The founder declined the content plan in Decisions.
+                        "content_plan_declined",
                     }
                     else "blocked",
                     "reason": reason,
@@ -1154,7 +1168,12 @@ class OrganicSystemActivities:
         content = next(row for row in facts["steps"] if row["step"] == "content")
         program_id = await self.content_program(run, content)
         if program_id is None:
-            return {"status": "skipped", "reason": "content_plan_unavailable"}
+            return {
+                "status": "skipped",
+                "reason": "content_plan_declined"
+                if await self.plan_declined(content)
+                else "content_plan_unavailable",
+            }
         # Different system runs can fall back to the same program. Reuse its schedule,
         # including a founder's pause or edited cadence, and serialize only this short save.
         async with self.db.effect_lock(f"traffic:weekly-program:{program_id}", KEY, conn=conn) as (

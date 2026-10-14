@@ -97,11 +97,23 @@ def document(value):
 
 def test_the_catalog_pins_the_agent_contract_and_its_hidden_planner():
     plan = next(w for w in BUILTIN_WORKFLOWS if w.key == legacy.KEY)
-    assert plan.version_label == "1.0.0"
+    assert plan.version_label == "1.1.0"
     pinned = editorial.contract(plan.definition)
     assert pinned.AGENT and pinned.TYPED
-    assert pinned.POLICY["version"] == "content-editorial-v9"
+    assert pinned.POLICY["version"] == "content-editorial-v10"
     assert pinned.POLICY["planner"] == agent.RESEARCH_KEY
+    # A definition saved at 1.0.0 keeps v9: no outline reads, no nearby pages.
+    v9 = {
+        **deepcopy(plan.definition),
+        "content_policy": editorial.V9_POLICY,
+        "content_instructions": editorial.V9_INSTRUCTIONS,
+        "content_schema": editorial.V9_SCHEMA,
+    }
+    assert editorial.contract(v9).AGENT and editorial.contract(v9).POLICY is editorial.V9_POLICY
+    assert "known_page_reads" not in editorial.V9_POLICY
+    assert {
+        k: v for k, v in editorial.POLICY.items() if k in editorial.V9_POLICY and k != "version"
+    } == {k: v for k, v in editorial.V9_POLICY.items() if k != "version"}
     research = next(w for w in BUILTIN_WORKFLOWS if w.key == agent.RESEARCH_KEY)
     assert research.id not in RETIRED_BUILTIN_WORKFLOW_IDS
     definition, files = research.definition_and_resource_files()
@@ -493,7 +505,13 @@ async def test_a_plan_starts_its_agent_then_fills_the_weeks_from_its_portfolio(
         )
     )
     assert evidence["editorial"]["portfolio"]["run_id"] == child["run_id"]
-    assert evidence["policy_version"] == "content-editorial-v9"
+    assert evidence["policy_version"] == "content-editorial-v10"
+    # v10 keeps each page's outline with its text.
+    home = evidence["page_inventory"]["pages"][0]
+    assert (
+        home["outline"] == ["h1: API product"]
+        and "omitted_known_pages" in (evidence["page_inventory"])
+    )
 
 
 async def test_a_plan_whose_agent_failed_names_why(publication_db, monkeypatch):

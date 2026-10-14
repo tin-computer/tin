@@ -155,10 +155,13 @@ class ContentDraftSources:
                 )
         upcoming = next_item(items)
         active = next((p for p in progress.values() if p["stage"] == "drafting"), None)
-        ready = bool(upcoming and upcoming["available"] and not active)
+        hold = await self.programs.approval_hold(program_id)
+        ready = bool(upcoming and upcoming["available"] and not active and not hold)
         reason = (
             "Resume this content program before drafting."
             if configured.status != "active"
+            else hold
+            if hold
             else f"An article is already drafting. Open run {active['run_id']}."
             if active
             else "All non-deferred articles have drafts or are already covered."
@@ -336,6 +339,9 @@ class ContentDraftSources:
         )
         if not state or not state["plan_revision"]:
             raise ValueError("Run this content program to create its roadmap first.")
+        hold = await self.programs.approval_hold(program_id)
+        if hold:
+            raise ValueError(hold)
         initial = await self.db.get_run(state["initial_run_id"])
         if not initial or initial.project_id != project_id or initial.status.value != "succeeded":
             raise ValueError("The program's initial publication is not available.")

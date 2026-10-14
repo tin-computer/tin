@@ -286,6 +286,19 @@ STYLE_CAPTURE_REVIEW_POLICY = HumanReviewPolicy(
     queue_clause="Writing style guide ready to review",
 )
 
+# content.plan 1.1.0: a program's first plan waits for approval before anything drafts from
+# it. Later batches and revision previews don't (db.create_run); a revision has its own apply.
+CONTENT_PLAN_REVIEW_POLICY = HumanReviewPolicy(
+    reason="Tin drafts from this plan every week.",
+    review_label="Review plan",
+    defer_label="Not now",
+    summary=(
+        "Your content plan is ready. Check which page serves each target, then approve it to "
+        "start drafting; nothing is drafted until you do."
+    ),
+    queue_clause="Content plan ready to review",
+)
+
 PUBLIC_ARTICLE_REVIEW_POLICY = HumanReviewPolicy(
     reason="Produces a public-facing article draft.",
     review_label="Review article",
@@ -1766,11 +1779,13 @@ BUILTIN_WORKFLOWS = (
             "your real competitors, answer pages for the questions buyers ask search and AI "
             "assistants, pages for each workflow, integration or use case your product has, "
             "guides, and refreshes of existing pages. A planning agent researches and proposes; "
-            "Tin checks each piece against your site and fills every week. Save to My system to "
-            "prepare weekly batches. Does not write or publish anything."
+            "Tin checks each piece against your site and fills every week. The plan opens with "
+            "which page serves each keyword group, page and competitor, and you approve it in "
+            "Decisions before anything is drafted. Does not write or publish anything."
         ),
         executor=content_plan.KEY,
-        version_label="1.0.0",
+        version_label="1.1.0",
+        review_policy=CONTENT_PLAN_REVIEW_POLICY,
         presentation=WorkflowDiagram(
             direction="TD",
             nodes=(
@@ -1790,7 +1805,10 @@ BUILTIN_WORKFLOWS = (
                     "batch", "step", "Prepare the next batch", "next due batch, no model call"
                 ),
                 DiagramNode(
-                    "pages", "step", "Read existing pages", "up to 60, four at a time, 20 s each"
+                    "pages",
+                    "step",
+                    "Read existing pages",
+                    "60 in full, the outline of every other",
                 ),
                 DiagramNode(
                     "model",
@@ -1802,19 +1820,19 @@ BUILTIN_WORKFLOWS = (
                     "allocate",
                     "step",
                     "Fill every week",
-                    "Tin checks each piece, then fills weeks in order",
+                    "checks each piece, names its nearest pages",
                 ),
                 DiagramNode(
                     "files",
                     "store",
                     "Plan in project Files",
-                    "PLAN.md, plan.json and evidence.json",
+                    "one commit: PLAN.md, plan.json, evidence",
                 ),
                 DiagramNode(
-                    "receipt",
-                    "receipt",
-                    "Publish receipt",
-                    "one commit, nothing drafted or published",
+                    "approve",
+                    "gate",
+                    "Approve the plan",
+                    "targets and pages first, no timer",
                 ),
             ),
             edges=(
@@ -1825,7 +1843,7 @@ BUILTIN_WORKFLOWS = (
                 DiagramEdge("model", "allocate"),
                 DiagramEdge("allocate", "files"),
                 DiagramEdge("batch", "files"),
-                DiagramEdge("files", "receipt"),
+                DiagramEdge("files", "approve", "call", "first plan only"),
             ),
         ),
         prerequisites=(
@@ -1863,7 +1881,7 @@ BUILTIN_WORKFLOWS = (
         "searches where a choice depends on what ranks, and proposes a prioritized portfolio "
         "of pages for every week. Started by Plan upcoming content, never on its own.",
         executor=CODEX_PROCEDURE_EXECUTOR,
-        version_label="1.0.0",
+        version_label="1.1.0",
         presentation=WorkflowDiagram(
             direction="TD",
             nodes=(

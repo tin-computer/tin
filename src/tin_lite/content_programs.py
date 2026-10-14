@@ -78,6 +78,26 @@ class ContentPrograms:
             else None,
         }
 
+    async def approval_hold(self, program_id, *, conn=None):
+        """Why nothing may draft from this program yet, or None.
+
+        content.plan 1.1.0 waits for the founder to approve a program's first plan; a plan made
+        before that, or one already approved, holds nothing.
+        """
+        row = await (conn or self.db.pool).fetchrow(
+            "SELECT run.status, run.review_required, run.review_decision "
+            "FROM content_programs program JOIN workflow_runs run ON run.id=program.initial_run_id "
+            "WHERE program.project_workflow_id=$1",
+            program_id,
+        )
+        if row is None or not row["review_required"] or row["review_decision"] == "approved":
+            return None
+        if row["review_decision"] == "declined":
+            return "This content plan was declined, so nothing drafts from it. Start a new plan."
+        if row["status"] == "needs_input":
+            return "Approve the content plan in Decisions before drafting from it."
+        return None
+
     async def read(self, *, project_id, program_id, revision=None):
         await self.configured(project_id, program_id)
         project = await self.db.get_project(project_id)

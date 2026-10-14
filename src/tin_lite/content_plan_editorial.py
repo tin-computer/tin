@@ -277,6 +277,31 @@ Every item stays needs_verification; its format and evidence strength travel wit
 """
 MODEL_SCHEMA = agent.PORTFOLIO_JSON_SCHEMA
 
+# v10 (content.plan 1.1.0): the planner reads every page the site lists, not only the up to 60
+# with search signal. A production plan on 10/8 held 65 addresses but the text of 15, and
+# planned new pages that /docs and four agency guides already answered; the agent never fetched
+# the pages it only had addresses for. Tin now reads each listed page's opening and outline
+# (title, meta description, H1 to H3) itself, and attaches the closest existing pages to each
+# new item as evidence, so content.generate compares against them first.
+V9_POLICY, V9_INSTRUCTIONS, V9_SCHEMA = POLICY, INSTRUCTIONS, MODEL_SCHEMA
+KNOWN_PAGE_READS = 150
+POLICY = {
+    **V9_POLICY,
+    "version": "content-editorial-v10",
+    "known_page_reads": KNOWN_PAGE_READS,
+    "known_page_text_bytes": 1500,
+    "page_outline": "headings-v1",
+    "known_page_concurrency": 8,
+    "nearby_pages": agent.NEARBY_PAGES,
+}
+INSTRUCTIONS = (
+    V9_INSTRUCTIONS
+    + """For each new page it keeps, Tin names the existing pages closest to it (by its title,
+target search and intent against each page's title, outline and opening) as the item's evidence
+and a check, so drafting reads them before deciding.
+"""
+)
+
 
 # A brief that tells the writer how to position the product ("Position Tin narrowly as ...",
 # "frame it as ...", "Positioning: ..."). Search positions ("average position 8") do not match.
@@ -316,6 +341,7 @@ def contract(definition):
         )
 
     current = pinned(POLICY, INSTRUCTIONS, MODEL_SCHEMA, typed=True, agent_planner=True)
+    v9 = pinned(V9_POLICY, V9_INSTRUCTIONS, V9_SCHEMA, typed=True, agent_planner=True)
     v8 = pinned(V8_POLICY, V8_INSTRUCTIONS, V8_SCHEMA, typed=True)
     v7 = pinned(V7_POLICY, V7_INSTRUCTIONS, V8_SCHEMA, typed=True)
     v2 = pinned(V2_POLICY, V2_INSTRUCTIONS, PORTFOLIO_SCHEMA)
@@ -323,7 +349,7 @@ def contract(definition):
     v4 = pinned(V4_POLICY, V4_INSTRUCTIONS, PORTFOLIO_SCHEMA)
     v5 = pinned(V5_POLICY, V5_INSTRUCTIONS, PORTFOLIO_SCHEMA)
     v6 = pinned(V6_POLICY, V6_INSTRUCTIONS, PORTFOLIO_SCHEMA)
-    for module in (legacy, v2, v3, v4, v5, v6, v7, v8, current):
+    for module in (legacy, v2, v3, v4, v5, v6, v7, v8, v9, current):
         if (
             definition.get("key") == legacy.KEY
             and definition.get("executor") == legacy.KEY
@@ -387,27 +413,78 @@ def page_candidates(context):
     return urls[: POLICY["max_pages"]], max(0, len(urls) - POLICY["max_pages"])
 
 
+def known_pages(context, read, *, limit):
+    """v10: the site's other listed pages to read for their opening and outline, after `read`.
+
+    In site_rows order (most impressions and sources first), up to `limit`, a runaway guard
+    well above an ordinary site's page count. Returns the URLs and how many were left out.
+    """
+    host = context["research"]["scope"]["host"]
+    site = (context["research"] or {}).get("site_pages") or {}
+    seen = {page_path(url) for url in read}
+    urls = []
+    for page in site_rows(site):
+        url = f"https://{host}{page['path'] or '/'}"
+        if page_path(url) in seen or not clean_url(url, host):
+            continue
+        seen.add(page_path(url))
+        urls.append(url)
+    return urls[:limit], max(0, len(urls) - limit)
+
+
 class PageText(HTMLParser):
-    """Extract bounded article/body text, without running scripts or following links."""
+    """Extract bounded article/body text, without running scripts or following links.
+
+    It also keeps the page's outline: its `<title>`, meta description and H1 to H3 headings, in
+    order, which say what a page covers when its opening alone doesn't (content-editorial-v10).
+    """
 
     ignored = {"head", "script", "style", "nav", "footer", "header", "template", "noscript", "svg"}
+    headings = {"h1", "h2", "h3"}
 
     def __init__(self):
         super().__init__(convert_charrefs=True)
         self.skip = []
         self.parts = []
         self.size = 0
+        self.title, self.description = [], ""
+        self.in_title = False
+        self.heading = None
+        self.outline = []
 
     def handle_starttag(self, tag, attrs):
+        if tag == "title":
+            self.in_title = True
+        elif tag == "meta" and not self.description:
+            values = dict(attrs)
+            if (values.get("name") or "").casefold() == "description":
+                self.description = " ".join((values.get("content") or "").split())[:300]
+        elif tag in self.headings and not self.outside_content():
+            self.heading = (tag, [])
         if tag in self.ignored:
             self.skip.append(tag)
 
     def handle_endtag(self, tag):
+        if tag == "title":
+            self.in_title = False
+        if self.heading and tag == self.heading[0]:
+            text = " ".join(" ".join(self.heading[1]).split())[:OUTLINE_HEADING_CHARS]
+            if text and len(self.outline) < OUTLINE_HEADINGS:
+                self.outline.append(f"{tag}: {text}")
+            self.heading = None
         if tag in self.skip:
             # Malformed markup must not expose script text as product facts.
             self.skip = self.skip[: self.skip.index(tag)]
 
+    def outside_content(self):
+        # A page's own header often holds its H1; navigation, footers and scripts never count.
+        return any(tag != "header" for tag in self.skip)
+
     def handle_data(self, data):
+        if self.in_title and len(self.title) < 20:
+            self.title.append(data)
+        if self.heading and not self.outside_content():
+            self.heading[1].append(data)
         if not self.skip and self.size < 20_000:
             value = " ".join(data.split())
             if value:
@@ -415,14 +492,22 @@ class PageText(HTMLParser):
                 self.size += len(self.parts[-1])
 
 
-def page_evidence(observation, requested_url, *, text_limit=2200):
-    if text_limit not in {2200, 6000}:
+# A page's outline (content-editorial-v10): at most this many headings, each this long.
+OUTLINE_HEADINGS = 30
+OUTLINE_HEADING_CHARS = 100
+# Excerpt sizes a page may be read at: v2's, v5's expanded one, and v10's opening of every
+# other page the site lists.
+PAGE_TEXT_LIMITS = frozenset({2200, 6000, 1500})
+
+
+def page_evidence(observation, requested_url, *, text_limit=2200, outline=False):
+    if text_limit not in PAGE_TEXT_LIMITS:
         raise ValueError("Unsupported page evidence bound")
     parser = PageText()
     parser.feed(observation["html"])
     full = " ".join(parser.parts)
     text = full.encode()[:text_limit].decode("utf-8", errors="ignore")
-    return {
+    evidence = {
         "requested_url": requested_url,
         "url": observation["url"],
         "status": "inspected"
@@ -434,6 +519,12 @@ def page_evidence(observation, requested_url, *, text_limit=2200):
         "text": text,
         "excerpt_truncated": len(full.encode()) > len(text.encode()) or parser.size >= 20_000,
     }
+    if outline:
+        # Only v10 reads outlines, so earlier contracts keep their exact page evidence.
+        evidence["title"] = " ".join(" ".join(parser.title).split())[:200]
+        evidence["description"] = parser.description
+        evidence["outline"] = parser.outline
+    return evidence
 
 
 def compact(value):

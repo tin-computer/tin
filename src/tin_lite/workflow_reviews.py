@@ -74,11 +74,16 @@ class WorkflowReviews:
         }
 
     async def view(self, run_id, actor, post_id=""):
+        from tin_lite.content_plan import KEY as PLAN_KEY
         from tin_lite.x_feedback_service import XFeedback, supports
 
         candidate = await self.db.get_run(run_id)
         if await supports(self.db, candidate):
             return await XFeedback(self.runtime, self.settings).view(run_id, actor, post_id)
+        if candidate and candidate.executor == PLAN_KEY and candidate.review_required:
+            from tin_lite.content_plan_feedback import PlanFeedback
+
+            return await PlanFeedback(self.runtime, self.settings).view(run_id, actor)
         from tin_lite.capture_revisions import STYLE_KEY, StyleProposalReview
         from tin_lite.reviewed_documents import ReviewedDocuments, document_spec
 
@@ -166,6 +171,19 @@ class WorkflowReviews:
         from tin_lite.x_feedback_service import XFeedback, supports
 
         candidate = await self.db.get_run(run_id)
+        if candidate and candidate.executor == "content.plan" and candidate.review_required:
+            # A waiting plan is revised in place through its own revision flow.
+            from tin_lite.content_plan_feedback import PlanFeedback
+
+            if reference_files:
+                raise ValueError("A plan revision reads the project's files itself.")
+            return await PlanFeedback(self.runtime, self.settings).request_changes(
+                run_id=run_id,
+                actor=actor,
+                feedback=feedback,
+                request_id=request_id,
+                token=token,
+            )
         if await supports(self.db, candidate):
             # A writing guide may learn from reference files; a post keeps to its own facts.
             return await XFeedback(self.runtime, self.settings).request_changes(

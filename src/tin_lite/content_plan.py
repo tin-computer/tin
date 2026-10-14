@@ -379,6 +379,13 @@ def render_plan(
         "",
         f"{markdown_text(plan['host'])} · {plan['start_date']} → {plan['end_date']}",
         "",
+    ]
+    if editorial is not None and editorial.get("targets"):
+        # v10: the plan opens with which page serves each target, for the founder's approval.
+        from tin_lite.content_plan_targets import markdown_lines
+
+        lines += markdown_lines(editorial["targets"])
+    lines += [
         markdown_text(plan["strategy"]),
         "",
         "This is planning, not generation or publication. "
