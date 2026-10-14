@@ -142,6 +142,7 @@ async def start_workflow_run(
     _approval_delivery: bool = False,
     _x_publication: bool = False,
     _linkedin_publication: bool = False,
+    _linkedin_listen: bool = False,
     _x_feedback: bool = False,
 ) -> WorkflowRun:
     implementation = registered_workflow_implementations().get(workflow.executor)
@@ -305,6 +306,13 @@ async def start_workflow_run(
             project_id=project_id, clerk_user_id=started_by_clerk_user_id
         ):
             raise LookupError("project not found")
+    if workflow.executor == "social.linkedin_listen" and (
+        not _linkedin_listen
+        or start_idempotency_key != f"linkedin-listen:{normalized_inputs['publish_run_id']}"
+        or project_workflow_id
+    ):
+        # Tin starts it when a post is published; the daily results run covers the rest.
+        raise WorkflowInputError("Tin reads a LinkedIn post's results when it publishes the post.")
     if workflow.executor == "social.x_draft" and existing is None:
         from tin_lite import x_draft
 

@@ -18,6 +18,7 @@ from tin_lite import (
     content_repository_delivery,
     growth_onboarding,
     growth_plan,
+    linkedin_listening,
     linkedin_posts,
     organic_system,
     paid_ads,
@@ -70,6 +71,7 @@ from tin_lite.integrations import (
     GITHUB_USER_PROVIDER,
     GOOGLE_WORKSPACE_PROVIDER,
     GSC_PROVIDER,
+    LINKEDIN_POSTING_PROVIDER,
     STRIPE_PROVIDER,
     IntegrationRequirement,
     parse_integration_requirements,
@@ -512,6 +514,9 @@ class BuiltinWorkflow:
             definition["proposal_revision"] = AGENT_REVISION
         if self.key == x_draft.KEY:
             definition["x_draft_policy"] = dict(x_draft.POLICY)
+        if self.key == linkedin_listening.LISTEN_KEY:
+            # Tin starts it when it publishes a post; nobody else can.
+            definition["public_discovery"] = False
         if self.key == x_feedback.KEY:
             definition["public_discovery"] = False
             definition["x_feedback_contract"] = {
@@ -1533,6 +1538,128 @@ BUILTIN_WORKFLOWS = (
         system=LINKEDIN_SYSTEM,
         agent_only=True,
         input_schema=linkedin_posts.INPUT_SCHEMA,
+    ),
+    BuiltinWorkflow(
+        id=linkedin_listening.LISTEN_WORKFLOW_ID,
+        key=linkedin_listening.LISTEN_KEY,
+        title="Read a new LinkedIn post's results",
+        description=(
+            "Read a post Tin just published 1, 4, 24 and 72 hours after posting, and keep the "
+            "numbers in social/linkedin/RESULTS.md. Tin starts it when it publishes the post."
+        ),
+        executor=linkedin_listening.LISTEN_KEY,
+        version_label="1.0.0",
+        presentation=WorkflowDiagram(
+            direction="TD",
+            nodes=(
+                DiagramNode(
+                    "post",
+                    "store",
+                    "The post Tin just published",
+                    "its publish receipt, draft and account",
+                ),
+                DiagramNode(
+                    "wait", "wait", "Wait for the next reading", "1, 4, 24 and 72 hours after"
+                ),
+                DiagramNode(
+                    "linkedin",
+                    "surface",
+                    "The post on LinkedIn",
+                    "impressions, reach, reactions, comments, shares",
+                ),
+                DiagramNode(
+                    "files",
+                    "store",
+                    "Results in project Files",
+                    "results.json and RESULTS.md, after each reading",
+                ),
+                DiagramNode(
+                    "receipt",
+                    "receipt",
+                    "Listening receipt",
+                    "stops early if the post is removed",
+                ),
+            ),
+            edges=(
+                DiagramEdge("post", "wait"),
+                DiagramEdge("wait", "linkedin", "signal", "each reading"),
+                DiagramEdge("linkedin", "files"),
+                DiagramEdge("files", "receipt"),
+            ),
+        ),
+        schedule_modes=("on_demand",),
+        system=LINKEDIN_SYSTEM,
+        agent_only=True,
+        input_schema=linkedin_listening.LISTEN_INPUT_SCHEMA,
+        # Listening reads through the posting connection, whose consent covers analytics.
+        integration_requirements=(
+            IntegrationRequirement(
+                LINKEDIN_POSTING_PROVIDER, ("linkedin.posts.publish",), required=True
+            ),
+        ),
+    ),
+    BuiltinWorkflow(
+        id=linkedin_listening.RESULTS_WORKFLOW_ID,
+        key=linkedin_listening.RESULTS_KEY,
+        title="Read LinkedIn results",
+        description=(
+            "Read every post from the last 30 days on your connected LinkedIn page, and the "
+            "posts Tin published as you, with each account's followers, into "
+            "social/linkedin/RESULTS.md. Page posts made on LinkedIn are picked up too."
+        ),
+        executor=linkedin_listening.RESULTS_KEY,
+        version_label="1.0.0",
+        presentation=WorkflowDiagram(
+            direction="TD",
+            nodes=(
+                DiagramNode(
+                    "connection",
+                    "store",
+                    "Your LinkedIn connection",
+                    "the page and profiles Tin posts as",
+                ),
+                DiagramNode(
+                    "find",
+                    "step",
+                    "Find the posts to read",
+                    "Tin's from the last 30 days, new page posts",
+                ),
+                DiagramNode(
+                    "linkedin",
+                    "surface",
+                    "LinkedIn, through Zernio",
+                    "each post's numbers and follower counts",
+                ),
+                DiagramNode(
+                    "files",
+                    "store",
+                    "Results in project Files",
+                    "results.json and RESULTS.md",
+                ),
+                DiagramNode(
+                    "receipt",
+                    "receipt",
+                    "Results receipt",
+                    "posts read, new and removed",
+                ),
+            ),
+            edges=(
+                DiagramEdge("connection", "find"),
+                DiagramEdge("find", "linkedin"),
+                DiagramEdge("linkedin", "files"),
+                DiagramEdge("files", "receipt"),
+            ),
+        ),
+        schedule_modes=("on_demand", "daily"),
+        default_schedule={"cadence": "daily", "local_time": "08:00"},
+        system=LINKEDIN_SYSTEM,
+        input_schema=linkedin_listening.RESULTS_INPUT_SCHEMA,
+        # Listening reads through the posting connection, whose consent covers analytics.
+        integration_requirements=(
+            IntegrationRequirement(
+                LINKEDIN_POSTING_PROVIDER, ("linkedin.posts.publish",), required=True
+            ),
+        ),
     ),
     BuiltinWorkflow(
         id=UUID("00000000-0000-4000-8000-000000000028"),

@@ -986,9 +986,16 @@ def test_definition_pins_the_contract_and_the_assets_stay_consistent():
     # configurations, but the plan never names them.
     hidden = {item.key for item in PUBLIC_WORKFLOWS if not item.public_discovery}
     hidden.add("visibility.audit")
-    # The project-gated collector and LinkedIn publishing are separate from the general
-    # starter plan.
-    hidden.update({"connections.collect", "social.linkedin_publish"})
+    # The project-gated collector and LinkedIn publishing and results are separate from the
+    # general starter plan.
+    hidden.update(
+        {
+            "connections.collect",
+            "social.linkedin_publish",
+            "social.linkedin_listen",
+            "social.linkedin_results",
+        }
+    )
     # content.plan's planning agent runs only inside content.plan.
     hidden.add("content.plan_research")
     assert titles == {

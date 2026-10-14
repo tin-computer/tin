@@ -115,6 +115,55 @@ MCP: `read_linkedin_drafts`, `save_linkedin_draft`, `preview_linkedin_post` and
 `publish_linkedin_post`. Each returns the browser editor's link for uploading images; MCP
 never takes image bytes.
 
+## Listening
+
+Tin reads how each post did and keeps the numbers itself, because Zernio returns a post's
+numbers live but keeps no hourly history. Each reading has impressions, reach, reactions,
+comments, shares, clicks (pages), saves and sends (profiles) and LinkedIn's engagement rate.
+
+- **`social.linkedin_listen`, one run per post Tin publishes.** Once a post is out,
+  `social.linkedin_publish` prepares this run and starts it as an abandoned child (patch
+  `linkedin-listen-v1`, so publish runs from before replay unchanged). Temporal timers wait
+  until 1, 4, 24 and 72 hours after posting, and each wake reads the post once. A reading
+  LinkedIn doesn't answer is retried five times over about 15 minutes, then skipped with its
+  reason. A post deleted on LinkedIn ends the run. Activity shows one row per post. Nobody
+  else starts it: a start without the publication refuses.
+- **`social.linkedin_results`, daily.** It runs on demand or on a daily schedule, at 08:00 by
+  default. It reads every tracked post published in the last 30 days, as `d<N>` for N days
+  after posting, and each connected account's follower count. It also picks up page posts made
+  directly on LinkedIn, and posts Tin published whose listening run never started. Their
+  early readings have passed, so they start with a daily one.
+
+A personal profile's numbers exist only for posts published through Zernio, so listening
+covers page posts, Tin's and those made on LinkedIn, and personal posts Tin sent. An account
+whose analytics LinkedIn refuses asks the founder to reconnect LinkedIn posting; the daily run
+still reads the other accounts and names the refused one.
+
+**The record.** Postgres keeps it (`065_linkedin_listening.sql`):
+- `linkedin_posts`: the post, its account, publish time, publish run, and the draft path and
+  post ID it came from;
+- `linkedin_post_readings`: one row per post and checkpoint, `1h`, `4h`, `24h`, `72h` or
+  `d<N>`. A checkpoint keeps its first reading; a daily one keeps that day's latest;
+- `linkedin_follower_counts`: one row per account and day.
+
+Deleting the project purges all three.
+
+**The files.** After each reading Tin rewrites two files from that record:
+- `social/linkedin/results.json` (`tin.social.linkedin_results.v1`), for agents and Learnings:
+  each account's followers and change over 30 days, and for each post its URN, link, account,
+  source (`tin` or `linkedin`), draft, excerpt, the 1h, 4h, 24h, 72h, d7 and d30 readings,
+  and the latest one.
+- `social/linkedin/RESULTS.md`, the same for reading.
+
+Both are Tin's own: each write replaces the last, and edits to them are replaced. They list the
+60 most recent posts from the last 90 days; every daily reading stays in Postgres. Writes are
+serialized per project. The rendered bytes wait in the write's receipt until the commit lands,
+so a retry after a lost answer reconciles the same bytes.
+
+Both workflows read only accounts in the project's own profile, make no model calls and are
+included in billing like posting, since Tin pays Zernio. The catalog lists them only for
+projects in `TIN_LITE_LINKEDIN_POSTING_PROJECTS`.
+
 ## Boundaries
 
 - `TIN_LITE_ZERNIO_API_KEY` stays on the switchboard. It never reaches a sandbox, package,
@@ -149,7 +198,7 @@ profile in Zernio. Without a mapping, staging refuses to connect.
 | `TIN_LITE_ZERNIO_PROFILE_MAP` | Optional; required on staging |
 
 Apply `064_linkedin_posting.sql`, which adds `social.linkedin` to the integration tables'
-provider checks. It adds no tables.
+provider checks, and `065_linkedin_listening.sql`, which adds listening's three tables.
 
 ## Checked against Zernio
 
@@ -162,6 +211,16 @@ Before building, a connection on Tin's own company page confirmed:
 - reading page comments.
 
 A member's own posts are not readable through Zernio, so reading the founder's own posts
-stays with the extension. Fixture tests use a synthetic Zernio
-(`tests/test_linkedin_posting.py`, `tests/test_linkedin_publish.py`), and
-`web/linkedin-posts.browser.test.js` covers the reader.
+stays with the extension.
+
+For listening, read-only calls on the same page and a founder's profile confirmed:
+- per-post analytics for a page post made on LinkedIn;
+- lifetime totals for a profile;
+- `post_not_found` for a deleted post;
+- the page's recent posts;
+- current follower counts, with no history before the connection.
+
+Fixture tests use a synthetic Zernio (`tests/test_linkedin_posting.py`,
+`tests/test_linkedin_publish.py`, `tests/test_linkedin_listening.py`, which also runs the
+timetable on a time-skipping Temporal), and `web/linkedin-posts.browser.test.js` covers the
+reader.

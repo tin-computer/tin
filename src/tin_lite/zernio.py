@@ -11,6 +11,7 @@ from __future__ import annotations
 
 import logging
 import re
+from datetime import UTC, datetime
 from typing import Any
 from urllib.parse import urlsplit
 from uuid import UUID
@@ -39,6 +40,8 @@ USER_AGENT = "Tin (+https://tin.computer)"
 SCOPES = "posting,analytics,comments"
 ID = re.compile(r"^[0-9a-f]{24}$")
 ORGANIZATION_URN = re.compile(r"^urn:li:organization:[0-9]{1,20}$")
+POST_URN = re.compile(r"^urn:li:(share|ugcPost|activity):[0-9]{1,30}$")
+URL_POST_URN = re.compile(r"/(urn:li:(?:share|ugcPost|activity):[0-9]{1,30})(?:/|$)")
 PERSON_ID = re.compile(r"^[A-Za-z0-9_-]{1,64}$")
 CONNECT_HOSTS = {"www.linkedin.com", "linkedin.com", "zernio.com"}
 POST_HOSTS = {"www.linkedin.com", "linkedin.com"}
@@ -67,6 +70,18 @@ REFUSED = (
 DUPLICATE = (
     "LinkedIn already has this exact post from the last 24 hours, so Tin did not send it again."
 )
+RESULTS_UNAVAILABLE = "LinkedIn results are temporarily unavailable"
+ANALYTICS_REFUSED = (
+    "LinkedIn didn't let Tin read this account's results. "
+    "Reconnect LinkedIn posting under Integrations."
+)
+ACCOUNT_GONE = (
+    "The LinkedIn account isn't connected anymore. Reconnect LinkedIn posting under Integrations."
+)
+# What Tin keeps of one post's numbers; LinkedIn reports saves and sends for profiles only, and
+# clicks for pages only.
+METRICS = ("impressions", "reach", "reactions", "comments", "shares", "clicks", "saves", "sends")
+MAX_METRIC = 10**12
 
 
 def ready(settings: Any) -> bool:
@@ -126,6 +141,49 @@ def linkedin_account(value: Any) -> dict[str, Any] | None:
     }
 
 
+def _timestamp(value: Any) -> str | None:
+    """An ISO time Zernio sent, normalised to UTC, or None."""
+
+    if not isinstance(value, str) or len(value) > 40:
+        return None
+    try:
+        parsed = datetime.fromisoformat(value.replace("Z", "+00:00"))
+    except ValueError:
+        return None
+    if parsed.tzinfo is None:
+        return None
+    return parsed.astimezone(UTC).isoformat()
+
+
+def post_urn(value: Any, url: Any = None) -> str | None:
+    """A LinkedIn post's URN, from Zernio's platform post ID or else from its link."""
+
+    if isinstance(value, str) and POST_URN.fullmatch(value):
+        return value
+    if _https(url, POST_HOSTS):
+        found = URL_POST_URN.search(urlsplit(url).path)
+        if found:
+            return found.group(1)
+    return None
+
+
+def metrics(value: Any) -> dict[str, Any]:
+    """One reading's numbers: whole counts, and LinkedIn's engagement rate as a percentage."""
+
+    values = value if isinstance(value, dict) else {}
+    result: dict[str, Any] = {}
+    for name in METRICS:
+        raw = values.get("likes" if name == "reactions" else name)
+        result[name] = raw if type(raw) is int and 0 <= raw < MAX_METRIC else 0
+    rate = values.get("engagementRate")
+    result["engagement_rate"] = (
+        round(float(rate), 2)
+        if type(rate) in {int, float} and 0 <= rate <= 10_000 and rate == rate
+        else None
+    )
+    return result
+
+
 def _https(url: Any, hosts: set[str] | None = None, *, suffix: str | None = None) -> bool:
     if not isinstance(url, str) or len(url) > 4096:
         return False
@@ -157,11 +215,15 @@ def post_state(value: Any) -> dict[str, Any]:
     status = value.get("status")
     url = entry.get("platformPostUrl")
     category = entry.get("errorCategory")
+    url = url if _https(url, POST_HOSTS) else None
     return {
         "post_id": post_id,
         "status": status if status in POST_STATUSES else "unknown",
-        "url": url if _https(url, POST_HOSTS) else None,
+        "url": url,
         "error_category": category if category in ERROR_CATEGORIES else None,
+        # What listening reads the post by, and the time its readings count from.
+        "urn": post_urn(entry.get("platformPostId"), url),
+        "published_at": _timestamp(entry.get("publishedAt")),
     }
 
 
@@ -417,3 +479,78 @@ class Zernio:
             return post_state(payload.get("post"))
         except IntegrationDeliveryUnknownError:
             raise IntegrationUpstreamError(UNAVAILABLE) from None
+
+    async def post_analytics(self, account_id: str, urn: str) -> dict[str, Any] | None:
+        """One post's numbers now, read live from LinkedIn; None once the post is gone."""
+
+        if not POST_URN.fullmatch(urn):
+            raise ValueError("LinkedIn post URN is invalid")
+        status, payload = await self._call(
+            "GET",
+            f"/accounts/{zernio_id(account_id)}/linkedin-post-analytics",
+            params={"urn": urn},
+        )
+        code = payload.get("code") if isinstance(payload, dict) else None
+        if status == 200 and isinstance(payload, dict) and payload.get("postUrn", urn) == urn:
+            return metrics(payload.get("analytics"))
+        if status == 404 and code == "post_not_found":
+            return None
+        if status == 404:
+            raise IntegrationAuthorizationError(ACCOUNT_GONE)
+        if status == 403:
+            raise IntegrationAuthorizationError(ANALYTICS_REFUSED)
+        # 402 is Tin's own Zernio plan, and anything else is no answer Tin can use.
+        logger.warning("Zernio did not return LinkedIn post analytics (status %s)", status)
+        raise IntegrationUpstreamError(RESULTS_UNAVAILABLE)
+
+    async def page_posts(self, account_id: str) -> list[dict[str, Any]]:
+        """A page's most recent posts on LinkedIn, including those made outside Tin."""
+
+        status, payload = await self._call("GET", f"/accounts/{zernio_id(account_id)}/posts")
+        if status == 404:
+            raise IntegrationAuthorizationError(ACCOUNT_GONE)
+        if status in {401, 403}:
+            raise IntegrationAuthorizationError(ANALYTICS_REFUSED)
+        values = payload.get("posts") if status == 200 and isinstance(payload, dict) else None
+        if not isinstance(values, list):
+            raise IntegrationUpstreamError(RESULTS_UNAVAILABLE)
+        posts = []
+        for value in values[:50]:
+            if not isinstance(value, dict):
+                continue
+            url = value.get("permalink")
+            urn = post_urn(value.get("id"), url)
+            published = _timestamp(value.get("createdTime"))
+            if urn is None or published is None:
+                continue
+            text = value.get("message")
+            posts.append(
+                {
+                    "urn": urn,
+                    "url": url if _https(url, POST_HOSTS) else None,
+                    "published_at": published,
+                    "text": text[:2000] if isinstance(text, str) else "",
+                }
+            )
+        return posts
+
+    async def follower_counts(self, account_ids: list[str]) -> dict[str, int]:
+        """Each account's follower count as Zernio last read it; missing when it has none."""
+
+        ids = [zernio_id(value) for value in account_ids]
+        if not ids:
+            return {}
+        status, payload = await self._call(
+            "GET", "/accounts/follower-stats", params={"accountIds": ",".join(ids)}
+        )
+        values = payload.get("accounts") if status == 200 and isinstance(payload, dict) else None
+        if not isinstance(values, list):
+            raise IntegrationUpstreamError(RESULTS_UNAVAILABLE)
+        counts = {}
+        for value in values:
+            if not isinstance(value, dict) or value.get("_id") not in ids:
+                continue
+            followers = value.get("currentFollowers")
+            if type(followers) is int and 0 <= followers < 2**31:
+                counts[value["_id"]] = followers
+        return counts

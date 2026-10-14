@@ -32,6 +32,12 @@ AWESOME_SUBMIT_WORKFLOW_NAME = "outreach.awesome_submit"
 PAYMENT_RECOVERY_WORKFLOW_NAME = "revenue.payment_recovery"
 # Shorter than a week, so an unanswered weekly run closes before the next one is due.
 PAYMENT_RECOVERY_DECISION_DAYS = 6
+LINKEDIN_LISTEN_WORKFLOW_NAME = "social.linkedin_listen"
+LINKEDIN_RESULTS_WORKFLOW_NAME = "social.linkedin_results"
+# When Tin reads a post it published, in hours after posting; see linkedin_listening.py.
+LINKEDIN_LISTEN_CHECKPOINTS = (("1h", 1), ("4h", 4), ("24h", 24), ("72h", 72))
+# A reading LinkedIn doesn't answer after this many attempts is skipped, not failed.
+LINKEDIN_LISTEN_READ_ATTEMPTS = 5
 CREATIVE_CHARACTER_WORKFLOW_NAME = "creative.character"
 CREATIVE_PRODUCT_DEMO_WORKFLOW_NAME = "creative.product_demo"
 CODEX_PROCEDURE_EXECUTOR = "codex.procedure"

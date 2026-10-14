@@ -44,6 +44,7 @@ from tin_lite.integrations import IntegrationService
 from tin_lite.keyword_plan import POLICY as KEYWORD_POLICY
 from tin_lite.keyword_plan import ROUTE_KEY as KEYWORD_ROUTE_KEY
 from tin_lite.keyword_plan_activities import KeywordPlanActivities
+from tin_lite.linkedin_listening_activities import LinkedInListeningActivities
 from tin_lite.linkedin_publish_activities import LinkedInPublishActivities
 from tin_lite.luna import LunaService, OpenAIResponsesClient, TinWorkflowApiClient
 from tin_lite.memory import MemoryGardener
@@ -290,6 +291,9 @@ async def build_runtime(settings: Settings) -> RuntimeServices:
     linkedin_publish_activities = LinkedInPublishActivities(
         database=database, storage=storage, integrations=integrations
     )
+    linkedin_listening_activities = LinkedInListeningActivities(
+        database=database, storage=storage, integrations=integrations, settings=settings
+    )
     plan_activities = GrowthPlanActivities(
         database=database,
         storage=storage,
@@ -387,6 +391,15 @@ async def build_runtime(settings: Settings) -> RuntimeServices:
         x_publish_activities.failure,
         linkedin_publish_activities.execute,
         linkedin_publish_activities.failure,
+        linkedin_listening_activities.start,
+        linkedin_listening_activities.prepare,
+        linkedin_listening_activities.read,
+        linkedin_listening_activities.finish,
+        linkedin_listening_activities.listen_failure,
+        linkedin_listening_activities.results_prepare,
+        linkedin_listening_activities.results_read,
+        linkedin_listening_activities.results_publish,
+        linkedin_listening_activities.results_failure,
         plan_activities.prepare,
         plan_activities.write,
         plan_activities.publish,

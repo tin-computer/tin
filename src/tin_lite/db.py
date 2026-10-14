@@ -6914,6 +6914,14 @@ class Database:
             "DELETE FROM project_task_entries WHERE run_id IN "
             "(SELECT id FROM workflow_runs WHERE project_id = $1)",
             "DELETE FROM project_authors WHERE project_id = $1",
+            # LinkedIn listening's readings and follower counts, and its run receipts.
+            "DELETE FROM linkedin_post_readings WHERE project_id = $1",
+            "DELETE FROM linkedin_posts WHERE project_id = $1",
+            "DELETE FROM linkedin_follower_counts WHERE project_id = $1",
+            "DELETE FROM effect_receipts WHERE operation IN "
+            "('social.linkedin_listen', 'social.linkedin_results') AND "
+            "split_part(execution_key, ':', 1) IN (SELECT id::text FROM workflow_runs "
+            "WHERE project_id = $1)",
             # LinkedIn collection holds other people's names, headlines and page text. Jobs (and
             # their pages) go before the connections: a job interrupted mid-lease still points at
             # its extension device, which would block the devices' cascade.
@@ -7268,6 +7276,14 @@ class Database:
             "social.linkedin_publish": (
                 "linkedin_post_published",
                 "Your LinkedIn post is published.",
+            ),
+            "social.linkedin_listen": (
+                "linkedin_post_results_ready",
+                "Tin read your LinkedIn post's first three days.",
+            ),
+            "social.linkedin_results": (
+                "linkedin_results_ready",
+                "Today's LinkedIn results are in.",
             ),
             "growth.onboarding_plan": ("onboarding_plan_ready", "The growth plan is ready."),
             "content.plan": ("content_plan_ready", "Content plan is ready."),

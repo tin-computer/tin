@@ -51,6 +51,16 @@ def enabled(settings: Any, project_id: UUID | None) -> bool:
     return str(project_id) in {str(value) for value in values}
 
 
+# Workflows that read LinkedIn through this connection, listed only where it can exist.
+CONNECTED_EXECUTORS = frozenset({"social.linkedin_listen", "social.linkedin_results"})
+
+
+def visible(settings: Any, workflow: Any, project_id: UUID | None) -> bool:
+    """Whether the catalog lists the workflow for this project."""
+
+    return workflow.executor not in CONNECTED_EXECUTORS or enabled(settings, project_id)
+
+
 def mapped_profile(settings: Any, project_id: UUID) -> str | None:
     return dict(getattr(settings, "zernio_profile_map", {}) or {}).get(str(project_id))
 

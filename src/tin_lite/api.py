@@ -82,6 +82,7 @@ from tin_lite.integrations import (
     registered_integrations,
 )
 from tin_lite.keyword_plan_control import stop_keyword_plan as stop_keyword_plan_service
+from tin_lite.linkedin_posting import visible as linkedin_visible
 from tin_lite.linkedin_posts import LinkedInPosts
 from tin_lite.luna import LunaProtocolError, LunaSafetyError, LunaUpstreamError
 from tin_lite.organic_audit_control import stop_organic_audit as stop_organic_audit_service
@@ -2429,6 +2430,7 @@ async def list_workflows(
         for item in workflows
         # Agent-only workflows (start here) run through the MCP; the catalog does not list them.
         if collection_visible(request.app.state.settings, item, project_id)
+        and linkedin_visible(request.app.state.settings, item, project_id)
         and not (item.definition or {}).get("agent_only")
         and (item.definition or {}).get("public_discovery", True)
         and (

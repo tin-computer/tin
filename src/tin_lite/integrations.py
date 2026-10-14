@@ -502,7 +502,7 @@ def registered_integrations() -> tuple[IntegrationDefinition, ...]:
             ),
             access_label="Approved posts · as the accounts you pick",
             capabilities=LINKEDIN_POSTING_CAPABILITIES,
-            unlocks=("Approved LinkedIn posts",),
+            unlocks=("Approved LinkedIn posts", "LinkedIn results"),
         ),
         IntegrationDefinition(
             key=GITHUB_USER_PROVIDER,
@@ -883,6 +883,12 @@ class IntegrationService:
 
                 if not enabled(self._settings, project_id):
                     raise IntegrationNotConfiguredError("Connection collection is unavailable.")
+                continue
+            if requirement.provider_key == LINKEDIN_POSTING_PROVIDER:
+                from tin_lite import linkedin_posting
+
+                if not linkedin_posting.enabled(self._settings, project_id):
+                    raise IntegrationNotConfiguredError("LinkedIn posting is unavailable.")
                 continue
             if requirement.provider_key == X_PROVIDER:
                 if connection.credential_ciphertext is None or set(

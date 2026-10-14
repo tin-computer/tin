@@ -812,7 +812,20 @@ async def test_create_post_sends_one_keyed_post_and_reads_every_answer():
             "status": "published",
             "url": URL,
             "error_category": None,
+            # Listening reads the post by its URN, from the link when Zernio names no ID.
+            "urn": "urn:li:share:7300000000000000000",
+            "published_at": None,
         }
+        entry = {
+            "platform": "linkedin",
+            "platformPostUrl": URL,
+            "platformPostId": "urn:li:ugcPost:7300000000000000001",
+            "publishedAt": "2026-10-14T09:00:00.000Z",
+        }
+        answers.append((201, post("published", entry)))
+        published = await zernio.create_post(**send)
+        assert published["urn"] == "urn:li:ugcPost:7300000000000000001"
+        assert published["published_at"] == "2026-10-14T09:00:00+00:00"
         answers.append(
             (207, post("failed", {"platform": "linkedin", "errorCategory": "user_content"}))
         )

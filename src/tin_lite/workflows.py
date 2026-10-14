@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import asyncio
 import contextlib
-from datetime import timedelta
+from datetime import datetime, timedelta
 
 from temporalio import workflow
 from temporalio.common import RetryPolicy
@@ -10,6 +10,7 @@ from temporalio.exceptions import (
     ActivityError,
     ApplicationError,
     ChildWorkflowError,
+    WorkflowAlreadyStartedError,
     is_cancelled_exception,
 )
 
@@ -24,6 +25,10 @@ from tin_lite.domain import (
     CODEX_PROCEDURE_EXECUTOR,
     CREATIVE_CHARACTER_WORKFLOW_NAME,
     EMAIL_CAMPAIGN_WORKFLOW_NAME,
+    LINKEDIN_LISTEN_CHECKPOINTS,
+    LINKEDIN_LISTEN_READ_ATTEMPTS,
+    LINKEDIN_LISTEN_WORKFLOW_NAME,
+    LINKEDIN_RESULTS_WORKFLOW_NAME,
     PAID_ADS_ASSESSMENT_WORKFLOW_NAME,
     PAID_ADS_LAUNCH_WORKFLOW_NAME,
     PAID_ADS_MONITOR_WORKFLOW_NAME,
@@ -1695,6 +1700,9 @@ class XPublishWorkflow:
             raise
 
 
+LINKEDIN_LISTEN_PATCH = "linkedin-listen-v1"
+
+
 @workflow.defn(name="social.linkedin_publish")
 class LinkedInPublishWorkflow:
     @workflow.run
@@ -1714,6 +1722,98 @@ class LinkedInPublishWorkflow:
                 start_to_close_timeout=timedelta(minutes=1),
                 retry_policy=RetryPolicy(maximum_attempts=3),
             )
+            raise
+        if not workflow.patched(LINKEDIN_LISTEN_PATCH):
+            return
+        # The post is out. Listening to it never changes how publishing ended; a post whose
+        # listening doesn't start is read by the daily results run instead.
+        try:
+            child = await workflow.execute_activity(
+                "linkedin_listen_start",
+                run_id,
+                start_to_close_timeout=timedelta(minutes=2),
+                retry_policy=RetryPolicy(maximum_attempts=3),
+            )
+            if child:
+                await workflow.start_child_workflow(
+                    child["executor"],
+                    child["run_id"],
+                    id=child["temporal_workflow_id"],
+                    task_queue=workflow.info().task_queue,
+                    parent_close_policy=workflow.ParentClosePolicy.ABANDON,
+                    cancellation_type=workflow.ChildWorkflowCancellationType.ABANDON,
+                )
+        except (ActivityError, WorkflowAlreadyStartedError):
+            workflow.logger.warning("LinkedIn listening did not start for run %s", run_id)
+
+
+@workflow.defn(name=LINKEDIN_LISTEN_WORKFLOW_NAME)
+class LinkedInListenWorkflow:
+    """Read one post Tin published at fixed times after posting. Timers hold no worker; only
+    the run ID, a checkpoint name, the post's publish time and each outcome enter history."""
+
+    @workflow.run
+    async def run(self, run_id: str) -> None:
+        async def call(name, argument=run_id):
+            return await workflow.execute_activity(
+                name,
+                argument,
+                start_to_close_timeout=timedelta(minutes=5),
+                retry_policy=RetryPolicy(maximum_attempts=3),
+            )
+
+        try:
+            prepared = await call("linkedin_listen_prepare")
+            published = datetime.fromisoformat(prepared["published_at"])
+            for checkpoint, hours in LINKEDIN_LISTEN_CHECKPOINTS:
+                wait = published + timedelta(hours=hours) - workflow.now()
+                if wait > timedelta(0):
+                    await workflow.sleep(wait)
+                # An unanswered reading is retried for a while, then skipped by the activity.
+                outcome = await workflow.execute_activity(
+                    "linkedin_listen_read",
+                    {"run_id": run_id, "checkpoint": checkpoint},
+                    start_to_close_timeout=timedelta(minutes=5),
+                    retry_policy=RetryPolicy(
+                        initial_interval=timedelta(minutes=1),
+                        maximum_interval=timedelta(minutes=10),
+                        maximum_attempts=LINKEDIN_LISTEN_READ_ATTEMPTS,
+                        non_retryable_error_types=["IntegrationAuthorizationError"],
+                    ),
+                )
+                if outcome == "removed":
+                    break
+            await call("linkedin_listen_finish")
+        except BaseException as exc:
+            await call("linkedin_listen_failure", failure_input(run_id, exc))
+            raise
+
+
+@workflow.defn(name=LINKEDIN_RESULTS_WORKFLOW_NAME)
+class LinkedInResultsWorkflow:
+    """Read the window's posts and follower counts, then rewrite the results files."""
+
+    @workflow.run
+    async def run(self, run_id: str) -> None:
+        async def call(name, argument=run_id, *, minutes=5, heartbeat=None):
+            return await workflow.execute_activity(
+                name,
+                argument,
+                start_to_close_timeout=timedelta(minutes=minutes),
+                heartbeat_timeout=timedelta(minutes=heartbeat) if heartbeat else None,
+                retry_policy=RetryPolicy(
+                    initial_interval=timedelta(minutes=1),
+                    maximum_attempts=3,
+                    non_retryable_error_types=["IntegrationAuthorizationError"],
+                ),
+            )
+
+        try:
+            await call("linkedin_results_prepare")
+            await call("linkedin_results_read", minutes=20, heartbeat=3)
+            await call("linkedin_results_publish")
+        except BaseException as exc:
+            await call("linkedin_results_failure", failure_input(run_id, exc))
             raise
 
 
@@ -1851,6 +1951,8 @@ def registered_workflows() -> list[type]:
         XFeedbackWorkflow,
         XPublishWorkflow,
         LinkedInPublishWorkflow,
+        LinkedInListenWorkflow,
+        LinkedInResultsWorkflow,
         OrganicTrafficSystemWorkflow,
         GrowthOnboardingWorkflow,
         GrowthOnboardingPlanWorkflow,
@@ -1890,6 +1992,8 @@ def registered_workflow_implementations() -> dict[str, type]:
         "social.x_revise": XFeedbackWorkflow,
         "social.x_publish": XPublishWorkflow,
         "social.linkedin_publish": LinkedInPublishWorkflow,
+        LINKEDIN_LISTEN_WORKFLOW_NAME: LinkedInListenWorkflow,
+        LINKEDIN_RESULTS_WORKFLOW_NAME: LinkedInResultsWorkflow,
         "organic.traffic_system": OrganicTrafficSystemWorkflow,
         "growth.onboarding": GrowthOnboardingWorkflow,
         "growth.onboarding_plan": GrowthOnboardingPlanWorkflow,

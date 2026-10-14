@@ -68,6 +68,7 @@ from tin_lite.growth_onboarding_control import (
 )
 from tin_lite.integrations import IntegrationError
 from tin_lite.keyword_plan_control import stop_keyword_plan as stop_keyword_plan_service
+from tin_lite.linkedin_posting import visible as linkedin_visible
 from tin_lite.linkedin_posts import LinkedInPosts
 from tin_lite.mcp_errors import GuardedMCPServer
 from tin_lite.onboarding_experience import (
@@ -2035,6 +2036,7 @@ def create_mcp_app(
             workflow
             for workflow in await services.database.list_workflows(project_id=parsed_project_id)
             if collection_visible(settings, workflow, parsed_project_id)
+            and linkedin_visible(settings, workflow, parsed_project_id)
             and workflow.status.value == "active"
             and (workflow.definition or {}).get("public_discovery", True)
             and (
