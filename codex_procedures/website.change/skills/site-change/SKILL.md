@@ -13,7 +13,11 @@ instead: the change is the audit's technical fixes or planned URL changes, not a
 2. Locate the actual site root and inspect at least two existing pages and their shared
    layout, index and page registry (for example a typed content file such as
    `src/lib/content.ts`, a `content/blog` folder, or MDX pages). Do not assume a
-   framework or a folder.
+   framework or a folder. Read the approved `brand/BRAND.md` and `DESIGN.md` in the
+   project-state checkout first when they exist, and choose pages that follow them: when
+   the repository holds an older style beside the current one, the pages to match are the
+   current ones, and a repository design document that disagrees with the approved files
+   describes the older style. Without brand files, match the pages the home page links to.
 3. Resolve the public address. A planned article (`source_kind: article`) names its route
    in `item`; for an update, match the specified existing public route uniquely, and treat
    ambiguity as a prerequisite failure. For an answer page or public article, `route` is

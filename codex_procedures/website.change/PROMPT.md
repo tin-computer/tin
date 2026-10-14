@@ -38,6 +38,14 @@ back into the site (for example to the product), byline and dates, and structure
 JSON-LD) that they carry. Use only the fonts and files the site already loads; do not add web
 fonts or other outside resources.
 
+When the project has approved brand files, `/home/user/state/brand/BRAND.md` and
+`/home/user/state/DESIGN.md`, read them before you choose which pages to match: they say which
+look is current. A repository can hold pages in more than one style, such as an earlier
+product's pages beside the current ones. Model the page on the pages that follow `DESIGN.md`,
+with their layout, components, fonts and colors, never on the older set, and treat a
+repository design document that disagrees with the approved files as describing the older
+style. Without brand files, match the pages the site links from its home page.
+
 The approved page may carry figures and interactive pieces, listed in `assets` with each
 file's project path, and diagram, video and callout blocks in `article`. Your project-state
 checkout is at the approved revision: copy each asset from `/home/user/state/<path>` into the

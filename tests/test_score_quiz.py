@@ -333,3 +333,49 @@ async def test_passes_product_context_and_voice_as_data_not_instructions():
         assert call["data"]["voice_notes"] == "Plain words, no exclamation marks."
         assert "Loopwire" not in call["instructions"]
     assert calls[1]["data"]["product_summary"] == inputs["product_summary"]
+
+
+BRAND_GUIDE = (
+    "# Loopwire brand\n\n## Brand direction\n\nPlain, exact, a little dry. Say the number.\n\n"
+    "## Visual style\n\nInk on paper.\n"
+)
+
+
+class _Files:
+    def __init__(self, text=None, error=None):
+        self.text, self.error, self.reads = text, error, []
+
+    def read_text(self, path):
+        self.reads.append(path)
+        if self.error:
+            raise self.error
+        if self.text is None:
+            raise FileNotFoundError(path)
+        return self.text
+
+
+async def test_the_approved_brand_direction_sets_the_quiz_voice():
+    module, definition = _load()
+    spec = validate_code_definition(definition)
+    context, calls = _context()
+    context.files = _Files(BRAND_GUIDE)
+    result = await module.run(context, GOOD_INPUTS)
+    validate_code_result(json.dumps(result).encode(), spec)
+    assert context.files.reads == ["brand/BRAND.md"]
+    for call in calls:
+        assert call["data"]["brand_direction"] == "Plain, exact, a little dry. Say the number."
+        assert "brand_direction" in call["instructions"]
+        request_contract(spec, call)
+    # The voice guides the model; it never reaches the founder's artifact as text.
+    assert "a little dry" not in result["content"]
+
+
+@pytest.mark.parametrize(
+    "files", [_Files(), _Files("# No direction section\n"), _Files(error=ValueError("binary"))]
+)
+async def test_a_missing_or_unreadable_brand_guide_leaves_the_voice_to_voice_notes(files):
+    module, _ = _load()
+    context, calls = _context()
+    context.files = files
+    await module.run(context, GOOD_INPUTS)
+    assert all(call["data"]["brand_direction"] == "" for call in calls)

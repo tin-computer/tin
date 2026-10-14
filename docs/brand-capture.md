@@ -101,7 +101,22 @@ guidance are distinct. Invalid optional assessment does not discard valid brand 
 invalid core tokens do not fall back to a prior proposal or guide.
 
 Consumers can use that same revision to read DESIGN.md. The diagram workflow now uses this resolver at its pinned checkout revision; see
-[diagram branding](diagram-renderer.md#project-brand-guidance). Character generation, ads and video
+[diagram branding](diagram-renderer.md#project-brand-guidance).
+
+Once approved, the pair reaches the rest of Tin in three ways:
+
+- **Every Codex procedure** whose project has either file gets a PROJECT BRAND note in its
+  brief. The note names the files' sandbox paths in the project-state checkout (at the run's
+  pinned project revision) and says they win over a repository's own design documents or
+  older pages. Capture and branded diagrams keep their own brand context instead. The note
+  is optional context, so a storage error leaves it out and never fails the run.
+- **`website.change` 1.10.0** reads both files before it chooses which pages to match. When a
+  repository holds an older style beside the current one, it models the page on the pages
+  that follow DESIGN.md. Drafted figures already follow both files (`page-figures`).
+- **Code workflows** read BRAND.md's "Brand direction" section as voice: the content
+  writers and organic packages as positioning, and `growth.score_quiz` 1.2.0 and
+  `content.release_announce` 1.3.0 as the default voice, with explicit voice notes winning
+  and no facts taken from it. Character generation, ads and video
 do not yet consume the resolver. Palette swatches
 are a review aid, not proof that those outputs preserve an identity. Human review of real generated outputs remains necessary to assess identity fidelity.
 

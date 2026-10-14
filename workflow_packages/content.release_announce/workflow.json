@@ -4,7 +4,7 @@
     "key": "content.release_announce",
     "title": "Announce a new release",
     "description": "Turn a changelog or release notes into posts written for X, LinkedIn, Reddit and Hacker News, plus a newsletter email for people who already follow the product, mentioning only what actually shipped. Drafts only: Tin never posts, sends or publishes them.",
-    "version": "1.2.0",
+    "version": "1.3.0",
     "executor": "workflow.code",
     "schedule_modes": ["on_demand"],
     "human_review": {

@@ -146,7 +146,7 @@ def test_package_contract_and_estimate():
     assert spec.media_type == "text/markdown"
     assert spec.max_bytes == 32000
     assert {r.name for r in spec.model_routes} == {"extract", "announce", "social"}
-    assert definition["version"] == "1.2.0"
+    assert definition["version"] == "1.3.0"
     assert {r.model for r in spec.model_routes} == {"gpt-6-luna"}
     assert model_terms(definition)["maximum_nanos"] > 0
     properties = definition["input_schema"]["properties"]
@@ -456,3 +456,41 @@ async def test_a_long_headline_is_cut_so_the_heading_stays_short():
         "content/releases/2026-09-28-tin-computer-csv-export-for-customer-analytics-a-safari-17-"
         "session-fix.md"
     )
+
+
+class BrandFiles:
+    def __init__(self, text):
+        self.text = text
+
+    def read_text(self, path):
+        assert path == "brand/BRAND.md"
+        if self.text is None:
+            raise FileNotFoundError(path)
+        return self.text
+
+
+async def test_the_approved_brand_direction_sets_voice_but_not_facts():
+    module, definition = load_package()
+    spec = validate_code_definition(definition)
+    calls = []
+    ctx = fake_models(spec, calls=calls)
+    ctx.files = BrandFiles(
+        "# Tin\n\n## Brand direction\n\nShort sentences. Say the file and the date.\n\n"
+        "## Visual style\n\nPaper and coal.\n"
+    )
+    result = await module.run(ctx, inputs())
+    for call in calls[1:]:
+        assert call["data"]["brand_direction"] == "Short sentences. Say the file and the date."
+        assert "take no facts, features or numbers from it" in call["instructions"]
+    assert "brand_direction" not in calls[0]["data"]
+    validate_code_result(json.dumps(result).encode(), spec, created_at=created())
+
+
+async def test_without_a_brand_guide_the_brief_carries_an_empty_direction():
+    module, definition = load_package()
+    spec = validate_code_definition(definition)
+    calls = []
+    ctx = fake_models(spec, calls=calls)
+    ctx.files = BrandFiles(None)
+    await module.run(ctx, inputs())
+    assert all(call["data"]["brand_direction"] == "" for call in calls[1:])

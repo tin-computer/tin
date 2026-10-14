@@ -4,7 +4,7 @@
     "key": "growth.score_quiz",
     "title": "Draft an embeddable score quiz",
     "description": "Draft a self-contained scored quiz widget to paste onto your own site: a few questions about the visitor's situation, an instant verdict and a call to action. A free interactive tool is a lead magnet, not another article or email. Draft only; Tin never deploys it, and the widget makes no network calls.",
-    "version": "1.1.0",
+    "version": "1.2.0",
     "executor": "workflow.code",
     "system": "creative-studio",
     "schedule_modes": [

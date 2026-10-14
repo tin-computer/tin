@@ -58,6 +58,26 @@ def preparation(project_id, *, include_guide=False):
     return result
 
 
+async def active_brand_files(storage, project, revision=None):
+    """The brand guide and design document present at ``revision`` (default: the canonical
+    head), for a procedure to read. Optional context: a storage error yields none."""
+    try:
+        if revision is None:
+            repo = await storage.get_repo(project.state_repo_id)
+            revision = await storage.head_sha(repo, project.canonical_branch)
+        found = []
+        for path in (contract.BRAND_PATH, contract.DESIGN_PATH):
+            entry = await storage.read_output_destination(
+                repo_id=project.state_repo_id, revision=revision, path=path
+            )
+            if entry is not None:
+                found.append(path)
+        return tuple(found)
+    except Exception:  # noqa: BLE001 — a brand note never blocks the run it informs
+        logger.warning("brand files unavailable for project %s", project.id, exc_info=True)
+        return ()
+
+
 async def resolve_brand(storage, project, revision):
     """Read only the active guide at the caller's selected immutable project revision."""
     entry = await storage.read_output_destination(

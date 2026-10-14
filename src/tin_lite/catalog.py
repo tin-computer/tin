@@ -861,7 +861,7 @@ BUILTIN_WORKFLOWS = (
         "to the project's protected pages, opens a pull request for you to merge. Deleting a "
         "page stays with you.",
         executor=CODEX_PROCEDURE_EXECUTOR,
-        version_label="1.9.0",
+        version_label="1.10.0",
         system=ORGANIC_TRAFFIC_SYSTEM,
         schedule_modes=("on_demand",),
         # Agents start it for an approved change; the catalog has no picker for change rows.

@@ -25,7 +25,7 @@ from e2b import (
     TimeoutException,
 )
 
-from tin_lite.procedures import RUN_ID_ENV, SandboxProfile
+from tin_lite.procedures import RUN_ID_ENV, SandboxProfile, procedure_state_dir
 from tin_lite.proxy_grants import proxy_grant
 from tin_lite.rollouts import (
     RolloutCapture,
@@ -607,8 +607,8 @@ class E2BRuntime:
             envs["TIN_PROCEDURE_ISOLATED"] = "1"
         # With a repository snapshot the project-state checkout moves aside; the artifact
         # branch of the runner and the bridge must both address it explicitly.
-        envs["TIN_PROCEDURE_STATE_DIR"] = (
-            "/home/user/state" if run_input.workspace_archive is not None else "/home/user/project"
+        envs["TIN_PROCEDURE_STATE_DIR"] = procedure_state_dir(
+            run_input.workspace_archive is not None
         )
         if run_input.browser:
             envs["TIN_PROCEDURE_BROWSER"] = "1"

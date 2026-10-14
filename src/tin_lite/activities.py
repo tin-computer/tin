@@ -3820,6 +3820,18 @@ class TinActivities:
                         }
                 procedure_inputs: dict[str, object] = dict(run.input or {})
                 from tin_lite import content_draft
+                from tin_lite.brand_capture import active_brand_files
+                from tin_lite.procedures import procedure_state_dir
+
+                state_dir = procedure_state_dir(workspace_archive is not None)
+                brand_files = tuple(
+                    f"{state_dir}/{path}"
+                    for path in await active_brand_files(
+                        self._storage,
+                        project,
+                        procedure_project_revision(run, procedure, content_source),
+                    )
+                )
 
                 if procedure.output_validator in content_draft.VALIDATORS:
                     await self._db.project_run_progress(
@@ -3851,6 +3863,7 @@ class TinActivities:
                                 identity=identity_context,
                                 payment_card=payment_card,
                                 run_id=run.id,
+                                brand_files=brand_files,
                             ),
                             output_path=checkpoint_path,
                             output_max_bytes=procedure.output_max_bytes,
