@@ -493,6 +493,57 @@ def test_variant_assessment_method_is_normalized_with_a_note(method):
     assert canonical == []
 
 
+def two_source_doc(report):
+    text = brand_doc(assessment=report).decode()
+    return text.replace(
+        '[site-home]: https://example.com/ "Homepage, 2026-09-24"',
+        '[site-home]: https://example.com/ "Homepage, 2026-09-24"\n'
+        '[repo-design]: https://github.com/example/site/blob/main/DESIGN.md "Older guide"',
+    )
+
+
+def test_finding_citing_a_declared_source_missing_from_the_list_is_kept():
+    # Seen in production: the third finding cited a declared source the list left out.
+    report = deepcopy(ASSESSMENT)
+    report["findings"].append(
+        {
+            "observation": "The repository also keeps an older guide with another palette.",
+            "source_ids": ["site-home", "repo-design"],
+            "generation_implication": "Keep the new brand apart from the older guide.",
+        }
+    )
+    text = two_source_doc(report)
+    notes = []
+    assert brand.validate_new_brand(text, notes=notes) == TOKENS
+    assert notes == [
+        "Brand assessment findings cited declared sources missing from its list: "
+        "repo-design; added them."
+    ]
+    value = brand.assessment(text)
+    assert value["source_ids"] == ["site-home", "repo-design"]
+    assert len(value["findings"]) == 2 and value["evidence_status"] == "partial"
+
+
+@pytest.mark.parametrize("refs", [[], ["nowhere"], "site-home", [1]])
+def test_finding_without_declared_evidence_is_dropped_not_fatal(refs):
+    report = deepcopy(ASSESSMENT)
+    report["findings"].append({**report["findings"][0], "source_ids": refs})
+    notes = []
+    assert brand.validate_new_brand(two_source_doc(report), notes=notes) == TOKENS
+    assert notes == ["Dropped 1 brand finding(s) without a declared source."]
+    value = brand.assessment(two_source_doc(report))
+    assert value["findings"] == ASSESSMENT["findings"]
+    assert value["evidence_status"] == "partial"
+
+
+def test_assessment_with_no_grounded_finding_reports_insufficient_evidence():
+    report = deepcopy(ASSESSMENT)
+    report["findings"][0]["source_ids"] = ["nowhere"]
+    assert brand.validate_new_brand(brand_doc(assessment=report).decode()) == TOKENS
+    value = brand.assessment(brand_doc(assessment=report).decode())
+    assert value["findings"] == [] and value["evidence_status"] == "insufficient"
+
+
 @pytest.mark.parametrize("method", ["visual_capture", ["visual_capture"], 1])
 def test_assessment_method_that_is_not_an_object_is_rejected(method):
     report = {**ASSESSMENT, "method": method}

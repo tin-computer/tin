@@ -198,6 +198,10 @@ def assessment(text, *, required=False, notes=None):
     findings = value["findings"]
     if not isinstance(findings, list) or not 1 <= len(findings) <= 5:
         raise ValueError("Brand assessment requires one to five grounded findings")
+    # A finding may cite a source the document declares but the assessment's list left out;
+    # that source joins the list. A citation of nothing declared is dropped, and a finding
+    # left without evidence goes with it. The capture is paid for, so this never fails it.
+    declared, grounded, extra = sources(text), [], []
     for finding in findings:
         if not isinstance(finding, dict) or set(finding) != {
             "observation",
@@ -207,9 +211,25 @@ def assessment(text, *, required=False, notes=None):
             raise ValueError("Invalid brand finding")
         text_value(finding["observation"], 1000, "observation")
         text_value(finding["generation_implication"], 1000, "generation implication")
-        refs = finding["source_ids"]
-        if not isinstance(refs, list) or not refs or any(i not in ids for i in refs):
-            raise ValueError("Every finding must cite its evidence")
+        refs = finding["source_ids"] if isinstance(finding["source_ids"], list) else []
+        refs = [i for i in refs if isinstance(i, str) and i in declared]
+        extra += [i for i in refs if i not in ids and i not in extra]
+        if refs:
+            grounded.append({**finding, "source_ids": list(dict.fromkeys(refs))})
+    if extra and notes is not None:
+        notes.append(
+            "Brand assessment findings cited declared sources missing from its list: "
+            + ", ".join(extra)
+            + "; added them."
+        )
+    if len(grounded) < len(findings) and notes is not None:
+        notes.append(
+            f"Dropped {len(findings) - len(grounded)} brand finding(s) without a declared source."
+        )
+    value["source_ids"] = ids + extra
+    value["findings"] = grounded
+    if not grounded:
+        value["evidence_status"] = "insufficient"
     return value
 
 

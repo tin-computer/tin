@@ -38,8 +38,9 @@ example, not a diagnosis or a default identity:
 
 Allowed identity classes: distinctive_strong, distinctive_inconsistent, competent_generic,
 weak, unknown. Evidence status: adequate, partial, insufficient, conflicting. One to five
-findings, each with observation, source_ids and generation_implication. The block is at most
-8,000 bytes. Do not add probabilities or other fields. `method` is a fixed literal: always
+findings, each with observation, source_ids and generation_implication. The top-level
+`source_ids` lists every source any finding cites; a finding cites only IDs from that list.
+The block is at most 8,000 bytes. Do not add probabilities or other fields. `method` is a fixed literal: always
 exactly `{"kind": "visual_capture", "rubric_version": "marketing-brand.v1"}`, whatever you
 observed. It names the rubric, not your coverage. Express a packet-only or otherwise limited
 capture through `evidence_status` (usually `partial` or `insufficient`) and in the findings
