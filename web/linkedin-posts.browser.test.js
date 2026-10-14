@@ -28,7 +28,7 @@ async function openReader(page, draft, {view = {}, files = [], width} = {}) {
     window.mockApi = async (path, options = {}) => {
       const body = options.body && JSON.parse(options.body);
       requests.push({path, method: options.method || "GET", body});
-      if (path.includes("/linkedin/drafts") && !options.method) return {path: "social/linkedin/drafts/2026-10-13-d.json", revision, draft: structuredClone(saved), sha256: "s", connected: view.connected ?? true, accounts: view.accounts || accounts, unavailable: view.unavailable || [], publications};
+      if (path.includes("/linkedin/drafts") && !options.method) return {path: "social/linkedin/drafts/2026-10-13-d.json", revision, draft: structuredClone(saved), sha256: "s", connected: view.connected ?? true, accounts: view.accounts || accounts, unavailable: view.unavailable || [], publications, revisable: !!view.revisable, revising: null};
       if (path.endsWith("/linkedin/drafts") && options.method === "PUT") {
         saved = structuredClone(body.draft); revision = "b".repeat(40);
         return {path: body.path, revision, draft: structuredClone(saved), sha256: "t"};
@@ -39,6 +39,8 @@ async function openReader(page, draft, {view = {}, files = [], width} = {}) {
       }
       if (path.endsWith("/linkedin/publish")) return {id: "delivery-id", run_id: "delivery-id", status: "pending", url: null};
       if (path.includes("/linkedin/publications")) return {publications};
+      if (path.endsWith("/linkedin/request-changes")) return {run_id: "revision-run", status: "pending"};
+      if (path.startsWith("/api/workflows/runs/")) return window.revisionRun || {id: "revision-run", status: "running"};
       if (path.includes("/files?include_modified=true")) return {revision, files};
       throw new Error(`Unexpected ${path}`);
     };
@@ -52,7 +54,7 @@ async function openReader(page, draft, {view = {}, files = [], width} = {}) {
       if (window.failNextUpload) {window.failNextUpload = false; throw new Error("The upload didn't reach Tin.");}
       return {path: new URL(path, location.href).searchParams.get("path"), revision: "c".repeat(40)};
     };
-    TinLinkedInPosts.open({projectId: "project-one", runId: "run-one", path: "social/linkedin/drafts/2026-10-13-d.json", returnLabel: "my system", api: mockApi, rawFetch: mockRawFetch, upload: mockUpload, connect: () => {window.connected = true;}});
+    TinLinkedInPosts.open({projectId: "project-one", runId: "run-one", path: "social/linkedin/drafts/2026-10-13-d.json", returnLabel: "my system", api: mockApi, rawFetch: mockRawFetch, upload: mockUpload, connect: () => {window.connected = true;}, openDraft: (path, run) => {window.opened = {path, run};}});
   }, {draft, accounts, view, files, pixel: PIXEL.toString("base64")});
   await page.locator(".li-reader .li-column").waitFor({state: "attached"});
   await page.locator(".li-reader .li-copy, .li-reader .li-gaps, .li-reader .li-card").first().waitFor();
@@ -237,6 +239,31 @@ test("A publication's outcome stays with its post: refused until it changes, unc
     await page.getByText("Tin didn't hear back from LinkedIn, so it won't send this post again.", {exact: false}).waitFor();
     // Changed, the refused post reads as a draft again.
     assert.equal(await page.locator('.li-rail-item[data-post="0"] small').textContent(), "Ready");
+  } finally {await browser.close();}
+});
+
+test("Request changes redrafts one post from a note and opens the revised batch", async () => {
+  const browser = await chromium.launch({headless: true});
+  try {
+    const page = await browser.newPage({viewport: {width: 1440, height: 900}});
+    await openReader(page, {...initial, posts: [post("p1"), post("p2", {text: "Second."})]});
+    // Only a batch a drafting workflow wrote, and can revise, offers it.
+    assert.equal(await bar(page).getByRole("button", {name: "Request changes"}).count(), 0);
+    await openReader(page, {...initial, posts: [post("p1"), post("p2", {text: "Second."})]}, {view: {revisable: true}});
+    await page.locator('.li-rail-item[data-post="1"]').click();
+    await bar(page).getByRole("button", {name: "Request changes"}).click();
+    await page.getByLabel("What should change?").fill("Open with the customer's words.");
+    await page.getByRole("button", {name: "Revise draft"}).click();
+    await page.getByText("Tin is redrafting this post from your note.", {exact: false}).waitFor();
+    assert.equal(await page.locator('.li-rail-item[data-post="1"] small').textContent(), "Revising");
+    assert.equal(await bar(page).getByRole("button", {name: "Request changes"}).isDisabled(), true);
+    const sent = await page.evaluate(() => requests.find(item => item.path.endsWith("/request-changes")).body);
+    assert.equal(sent.post_id, "p2");
+    assert.equal(sent.feedback, "Open with the customer's words.");
+    assert.equal(sent.path, "social/linkedin/drafts/2026-10-13-d.json");
+    await page.evaluate(() => {revisionRun = {id: "revision-run", status: "succeeded", artifact_path: "social/linkedin/drafts/2026-10-14-revision-run.json"};});
+    await page.waitForFunction(() => window.opened, null, {timeout: 10000});
+    assert.deepEqual(await page.evaluate(() => window.opened), {path: "social/linkedin/drafts/2026-10-14-revision-run.json", run: "revision-run"});
   } finally {await browser.close();}
 });
 

@@ -39,6 +39,8 @@
   };
   const pageLabel = account => account?.kind === "organization" ? `Open the ${account.name} page ↗` : "Open your profile ↗";
   const sessions = new Map();
+  // A line to show when a batch opens, such as the one a revision just wrote.
+  const notices = new Map();
   let active = null;
 
   function open(context) {
@@ -57,18 +59,21 @@
       connected: false, accounts: [], unavailable: [], publications: {},
       selected: 0, mode: "read", outcome: false, notes: false, menu: false, switcher: false,
       preview: null, publishRequest: null, saveRequest: null, message: null,
-      uploads: [], media: new Map(), picker: null, ...kept,
+      uploads: [], media: new Map(), picker: null, revisable: false, revising: null,
+      feedback: {open: false, text: "", request: null}, fresh: !kept, ...kept,
     };
     state.close = () => {
       sessions.set(key, {
         saved: state.saved && copy(state.saved), draft: state.draft && copy(state.draft),
         revision: state.revision, savedSha: state.savedSha, selected: state.selected,
         mode: state.mode === "edit" ? "edit" : "read", saveRequest: state.saveRequest,
+        feedback: {...state.feedback},
       });
       // Unsaved edits survive navigation; a preview, an upload or a picker never does.
       state.closed = true;
       for (const item of state.uploads) item.request?.abort();
       clearTimeout(state.followTimer);
+      clearTimeout(state.reviseTimer);
       clearInterval(state.clock);
       for (const item of state.media.values()) if (item.url) URL.revokeObjectURL(item.url);
       window.removeEventListener("beforeunload", state.beforeUnload);
@@ -94,6 +99,11 @@
       }
     });
     root.addEventListener("keydown", event => keyed(state, event));
+    root.addEventListener("submit", event => {
+      if (!event.target.matches("[data-li-feedback-form]")) return;
+      event.preventDefault();
+      requestChanges(state);
+    });
     bindDragging(state);
     active = state;
     if (state.draft) {
@@ -121,9 +131,15 @@
       state.saveRequest = null; state.preview = null; state.message = null;
       if (typeof state.selected === "number" && state.selected >= state.draft.posts.length) state.selected = state.draft.posts.length ? 0 : "gaps";
       if (!state.draft.posts.length) state.selected = "gaps";
+      // A revised batch opens on the post that changed.
+      const revised = state.fresh && state.draft.posts.findIndex(item => item.id === state.draft.parent?.post_id);
+      if (revised >= 0) state.selected = revised;
+      state.fresh = false;
       state.mode = "read";
       state.outcome = showsOutcome(state);
-      render(state); follow(state);
+      const notice = notices.get(state.context.path);
+      if (notice) {notices.delete(state.context.path); state.message = {text: notice};}
+      render(state); follow(state); watchRevision(state);
     } catch (error) {if (!state.closed) {state.message = {text: error.message, error: true}; render(state);}}
   }
 
@@ -134,7 +150,7 @@
       if (state.closed || result?.draft?.schema_version !== SCHEMA) return;
       accept(state, result);
       if (state.mode !== "edit") render(state); else paintChrome(state);
-      follow(state);
+      follow(state); watchRevision(state);
     } catch (_error) {/* The kept copy stays readable; saving reports any problem. */}
   }
 
@@ -144,6 +160,8 @@
     state.accounts = [...(result.accounts || [])].sort((a, b) => (a.kind === "organization") - (b.kind === "organization"));
     state.unavailable = result.unavailable || [];
     state.publications = result.publications || {};
+    state.revisable = !!result.revisable;
+    state.revising = result.revising || null;
   }
 
   // A post opens on its outcome while it publishes, once it's live or uncertain, and after a
@@ -171,6 +189,7 @@
   function statusLabel(state, post, index) {
     if (index === state.selected && state.mode === "edit") return "Editing";
     if (index === state.selected && state.mode === "preview") return "Previewing";
+    if (state.revising?.post_id === post.id) return "Revising";
     const published = shownPublication(state, post);
     if (published) return OUTCOME_LABELS[published.state];
     if (post.readiness === "needs_evidence") return "Needs evidence";
@@ -254,9 +273,12 @@
       if (item.state === "uncertain") return {note: "Check the page", secondary: back, primary: {label: pageLabel(item.account), href: pageUrl(item.account)}};
       return {note: "Not published", secondary: back, primary: {label: "Edit post", action: "edit"}};
     }
+    const revise = state.revisable && post
+      ? [{label: state.feedback.open ? "Close feedback" : "Request changes", action: "feedback", expanded: state.feedback.open, wide: true, disabled: busy || !!state.revising}]
+      : [];
     return {
       note: dirty(state) ? "Unsaved changes" : "",
-      links: post ? [{label: state.notes ? "Close notes" : "Draft notes", action: "notes", expanded: state.notes, wide: true}] : [],
+      links: post ? [{label: state.notes ? "Close notes" : "Draft notes", action: "notes", expanded: state.notes, wide: true}, ...revise] : [],
       secondary: post ? {label: "Edit post", action: "edit", disabled: busy} : null,
       primary: post ? {label: "Preview post", action: "preview", disabled: busy} : null,
     };
@@ -287,7 +309,7 @@
       <span class="li-bar-title">${esc(title)}</span>
       ${switchLabel && (list.length > 1 || state.draft?.gaps?.length) ? `<button type="button" class="li-switch" data-li="switcher" data-focus="switcher" aria-expanded="${state.switcher}"><strong>${esc(switchLabel)}</strong>${switchStatus ? `<span>${esc(switchStatus)}</span>` : ""}${state.switcher ? ICON.up : ICON.down}</button>` : `<span class="li-switch is-static"><strong>${esc(switchLabel)}</strong>${switchStatus ? `<span>${esc(switchStatus)}</span>` : ""}</span>`}
       <span class="li-bar-note" role="status">${esc(note)}</span>
-      ${links.map(item => `<button type="button" class="li-link li-bar-link${item.wide ? " li-wide" : ""}" data-li="${item.action}" data-focus="${item.action}" ${item.expanded === undefined ? "" : `aria-expanded="${item.expanded}"`}>${esc(item.label)}</button>`).join("")}
+      ${links.map(item => `<button type="button" class="li-link li-bar-link${item.wide ? " li-wide" : ""}" data-li="${item.action}" data-focus="${item.action}" ${item.expanded === undefined ? "" : `aria-expanded="${item.expanded}"`} ${item.disabled ? "disabled" : ""}>${esc(item.label)}</button>`).join("")}
       <span class="li-wide-actions">${button(secondary, "secondary")}${button(primary, "primary")}</span>
       ${short ? (short.href ? "" : `<button type="button" class="li-link li-narrow-action" data-li="${short.action}" ${short.disabled ? "disabled" : ""}>${esc(short.label)}</button>`) : ""}
       ${switcher(state)}
@@ -335,10 +357,22 @@
 
   function readView(state, post) {
     const who = whoPosts(state, post);
-    return `${line(state)}${state.notes ? notesCard(state, post) : ""}
+    const revising = state.revising?.post_id === post.id;
+    const ask = state.revisable && !state.revising
+      ? `<button type="button" class="li-link li-narrow li-ask" data-li="feedback" aria-expanded="${state.feedback.open}">${state.feedback.open ? "Close feedback" : "Request changes"}</button>` : "";
+    return `${line(state)}${revising ? '<p class="li-line" role="status">Tin is redrafting this post from your note. The new version opens here when it\'s ready; the rest of the batch stays as it is.</p>' : ""}
+      ${state.feedback.open && !state.revising ? feedbackForm(state) : ""}${state.notes ? notesCard(state, post) : ""}
       <div class="li-as is-read">${readPoster(state, who)}<button type="button" class="li-link li-narrow" data-li="notes" aria-expanded="${state.notes}">${state.notes ? "Close notes" : "Draft notes"}</button></div>
       <div class="li-copy">${esc(post.text)}</div>
-      ${readImages(state, post.attachments || [])}`;
+      ${readImages(state, post.attachments || [])}${ask}`;
+  }
+
+  // Board LI-05: the note Tin redrafts the post from.
+  function feedbackForm(state) {
+    return `<form class="li-feedback" data-li-feedback-form>
+      <label class="li-feedback-title" for="li-feedback">What should change?</label>
+      <textarea id="li-feedback" class="li-feedback-text" data-li-feedback data-focus="feedback" maxlength="4000" required>${esc(state.feedback.text)}</textarea>
+      <div class="li-feedback-foot"><button type="submit" class="li-button is-primary" data-focus="revise" ${state.busy ? "disabled" : ""}>Revise draft</button></div></form>`;
   }
 
   function readPoster(state, who) {
@@ -569,6 +603,10 @@
     }
     if (state.busy && !["notes", "cancel-upload", "pick-done", "menu"].includes(action)) return;
     if (action === "notes") {state.notes = !state.notes; render(state); return;}
+    if (action === "feedback") {
+      state.feedback.open = !state.feedback.open; render(state);
+      state.root.querySelector(state.feedback.open ? ".li-feedback-text" : '[data-focus="feedback"]')?.focus(); return;
+    }
     if (action === "edit") {state.mode = "edit"; state.outcome = false; state.preview = null; state.message = null; render(state); state.root.querySelector(".li-text")?.focus(); return;}
     if (action === "back") {state.outcome = false; state.message = null; render(state); return;}
     if (action === "cancel") {
@@ -626,6 +664,8 @@
     } else if (field.matches("[data-li-upload-alt]")) {
       const item = state.uploads.find(entry => entry.id === field.dataset.liUploadAlt);
       if (item) item.alt_text = field.value;
+    } else if (field.matches("[data-li-feedback]")) {
+      state.feedback.text = field.value; state.feedback.request = null;
     } else if (field.matches("[data-li-filter]")) {
       state.picker.filter = field.value;
       const list = state.root.querySelector(".li-files");
@@ -773,6 +813,53 @@
         render(state);
       }
     } finally {state.busy = false; if (!state.closed) paintChrome(state);}
+  }
+
+  async function requestChanges(state) {
+    const post = current(state);
+    const note = state.feedback.text.trim();
+    if (!post || !note || state.busy || state.revising) return;
+    if (dirty(state) && !(await save(state))) return;
+    state.busy = true; paintChrome(state);
+    state.feedback.request ||= crypto.randomUUID();
+    try {
+      const result = await state.context.api(apiUrl(state, "request-changes"), {
+        method: "POST", body: JSON.stringify({path: state.context.path, post_id: post.id, feedback: note, request_id: state.feedback.request}),
+      });
+      if (state.closed) return;
+      state.revising = {run_id: result.run_id, post_id: post.id};
+      state.feedback = {open: false, text: "", request: null};
+      state.message = null;
+      watchRevision(state);
+    } catch (error) {
+      if (!state.closed) state.message = {text: error.message, error: true};
+    } finally {state.busy = false; if (!state.closed) render(state);}
+  }
+
+  // A revision writes a new batch; when it lands, the reader opens it on the changed post.
+  function watchRevision(state, delay = 3000) {
+    clearTimeout(state.reviseTimer);
+    if (state.closed || !state.revising) return;
+    state.reviseTimer = setTimeout(async () => {
+      try {
+        const run = await state.context.api(`/api/workflows/runs/${encodeURIComponent(state.revising.run_id)}`);
+        if (state.closed) return;
+        if (run.status === "succeeded" && run.artifact_path && run.artifact_path !== state.context.path) {
+          const index = posts(state).findIndex(item => item.id === state.revising.post_id);
+          notices.set(run.artifact_path, `Post ${index + 1} was redrafted from your note. The earlier batch stays in Files.`);
+          state.revising = null;
+          state.context.openDraft?.(run.artifact_path, run.id);
+          return;
+        }
+        if (["succeeded", "failed", "stopped"].includes(run.status)) {
+          state.revising = null;
+          state.message = {text: run.error_message || "The revision ended without a new version of the post.", error: true};
+          if (state.mode === "edit") paintChrome(state); else render(state);
+          return;
+        }
+      } catch (_error) {/* Keep watching; Activity shows the run meanwhile. */}
+      watchRevision(state, Math.min(delay * 1.5, 15000));
+    }, delay);
   }
 
   // While a post publishes, read its outcome from this file's publications.

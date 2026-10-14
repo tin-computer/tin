@@ -86,6 +86,12 @@ drawn from Paper boards LI-07A to LI-15); X's drafts keep their own.
   the list, the title opens it.
 - **Draft notes** shows each labelled line of `editor_notes` (`Angle: …`, `Format: …`) as a
   row, the rest as notes, and each supporting excerpt under its source's label.
+- **Request changes** redrafts one post from the founder's note. It appears when the batch
+  was written by a drafting workflow whose inputs declare a revision (`action` offering
+  `revise`, with `draft_path`, `draft_sha256`, `post_id` and `feedback`). Tin starts that
+  workflow again with the run's own inputs, pointed at the batch as saved
+  (`POST …/linkedin/request-changes`). The run writes a new batch with only that post
+  changed, and the reader opens it; the earlier batch stays in Files.
 - **Edit post** edits in place. **Posting as** is a picker only when there's a choice: the
   member's own profile and the project's pages. It says when the post's account left the
   connection or is another member's profile (`unavailable` in the read).

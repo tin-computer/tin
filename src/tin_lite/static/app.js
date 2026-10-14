@@ -1761,6 +1761,11 @@ function renderXComposer() {
       return uploadWithProgress(apiPath, file, options);
     },
     openFile: (filePath, revision) => openProjectFile(filePath, revision),
+    // A revision writes a new batch; the reader moves to it, keeping where "back" leads.
+    openDraft: (draftPath, draftRunId) => {
+      if (!isCurrentProjectContext(context)) return;
+      goToRoute(`files?${new URLSearchParams({ x_draft: draftPath, x_run: draftRunId, x_back: back })}`);
+    },
     connect: () => {
       rememberConnectRequest(context.projectId, ["social.linkedin"]);
       goToRoute("integrations");

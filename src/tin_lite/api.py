@@ -1348,6 +1348,15 @@ class XPostPublish(BaseModel):
     request_id: UUID
 
 
+class LinkedInRevisionRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    path: str = Field(min_length=1, max_length=512)
+    post_id: str = Field(pattern=r"^p[1-6]$")
+    feedback: str = Field(min_length=1, max_length=4000)
+    request_id: UUID
+
+
 class ProjectFilesRevert(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
@@ -2709,6 +2718,44 @@ async def read_linkedin_publications(
     except LookupError as exc:
         raise HTTPException(status_code=404, detail=public_error_text(exc)) from exc
     return {"path": path, "publications": publications}
+
+
+@router.post("/api/projects/{project_id}/linkedin/request-changes", status_code=202)
+async def request_linkedin_changes(
+    project_id: UUID,
+    payload: LinkedInRevisionRequest,
+    request: Request,
+    user: AuthContext = AUTHENTICATED_USER,
+) -> dict:
+    """Redraft one post from a note with the drafting workflow that wrote the batch."""
+
+    await _require_project_access(project_id, request, user)
+    if not payload.feedback.strip():
+        raise HTTPException(status_code=422, detail="Say what should change.")
+    try:
+        return await _linkedin_posts_service(request).request_changes(
+            project_id,
+            user.clerk_user_id,
+            path=payload.path,
+            post_id=payload.post_id,
+            feedback=payload.feedback,
+            request_id=payload.request_id,
+            client_id="browser",
+        )
+    except LookupError as exc:
+        raise HTTPException(status_code=404, detail=public_error_text(exc)) from exc
+    except BillingError as exc:
+        raise HTTPException(status_code=exc.status, detail=exc.diagnostic()) from exc
+    except PrerequisiteError as exc:
+        raise HTTPException(status_code=exc.status, detail=exc.diagnostic()) from exc
+    except IntegrationError as exc:
+        raise _integration_http_error(exc) from exc
+    except (TemporalStartError, WorkflowExecutorUnavailableError) as exc:
+        raise HTTPException(
+            status_code=503, detail="The revision could not start; retry the same request ID."
+        ) from exc
+    except (ValidationError, ValueError, RuntimeError) as exc:
+        raise HTTPException(status_code=409, detail=public_error_text(exc)) from exc
 
 
 @router.put("/api/projects/{project_id}/linkedin/drafts")

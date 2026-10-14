@@ -202,6 +202,28 @@ ORDER BY r.created_at DESC, r.id DESC
 LIMIT 60
 """
 STILL_SENDING = {"pending", "running", "paused"}
+# A drafting workflow that can redraft one post of a saved batch from a note declares these
+# inputs next to an `action` that offers "revise". The reader's Request changes uses them.
+REVISION_INPUTS = frozenset({"draft_path", "draft_sha256", "post_id", "feedback"})
+WRITER = """
+SELECT id FROM workflow_runs
+WHERE project_id = $1 AND artifact_path = $2 AND status = 'succeeded'
+ORDER BY created_at DESC, id DESC
+LIMIT 1
+"""
+REVISING = """
+SELECT id, input->>'post_id' AS post_id FROM workflow_runs
+WHERE project_id = $1 AND input->>'action' = 'revise' AND input->>'draft_path' = $2
+  AND status IN ('pending', 'running', 'paused')
+ORDER BY created_at DESC, id DESC
+LIMIT 1
+"""
+
+
+def revises_posts(schema) -> bool:
+    properties = (schema or {}).get("properties") or {}
+    action = properties.get("action") or {}
+    return REVISION_INPUTS <= properties.keys() and "revise" in (action.get("enum") or [])
 
 
 def _json(value) -> dict:
@@ -281,11 +303,79 @@ class LinkedInPosts:
 
     async def read(self, project_id, actor, path):
         view = await self._read(project_id, actor, path)
+        revising = await self.db.pool.fetchrow(REVISING, project_id, path)
         return {
             **view,
             **await self.posting_as(project_id, actor),
             "publications": await self.publications(project_id, actor, path),
+            "revisable": await self._writer(project_id, path) is not None,
+            "revising": {"run_id": str(revising["id"]), "post_id": revising["post_id"]}
+            if revising
+            else None,
         }
+
+    async def _writer(self, project_id, path):
+        """The drafting run that wrote this batch, when its workflow can revise one post."""
+
+        row = await self.db.pool.fetchrow(WRITER, project_id, path)
+        run = await self.db.get_run(row["id"]) if row else None
+        workflow = await self.db.get_workflow(run.workflow_id) if run else None
+        if workflow is None:
+            return None
+        configured = (
+            await self.db.get_project_workflow(run.project_workflow_id)
+            if run.project_workflow_id
+            else None
+        )
+        if configured is not None and configured.project_id != project_id:
+            configured = None
+        schema = configured.input_schema if configured else workflow.definition.get("input_schema")
+        return (run, workflow, configured, schema) if revises_posts(schema) else None
+
+    async def request_changes(
+        self, project_id, actor, *, path, post_id, feedback, request_id, client_id=None
+    ):
+        """Redraft one post from the founder's note, with the workflow that wrote the batch.
+
+        The run reads the batch as saved (its SHA-256 pins it) and writes a new batch beside
+        it with only that post changed; the earlier batch stays in Files.
+        """
+
+        from tin_lite.run_service import start_workflow_run
+
+        view = await self._read(project_id, actor, path)
+        if not any(post["id"] == post_id for post in view["draft"]["posts"]):
+            raise LookupError("post not found")
+        writer = await self._writer(project_id, path)
+        if writer is None:
+            raise ValueError(
+                "Only a batch a drafting workflow wrote can be revised from a note. "
+                "Edit the post instead."
+            )
+        run, workflow, configured, schema = writer
+        started = await start_workflow_run(
+            runtime=self.runtime,
+            settings=self.settings,
+            workflow=workflow,
+            project_id=project_id,
+            started_by_clerk_user_id=actor,
+            start_idempotency_key=f"linkedin-revise:{UUID(str(request_id))}",
+            input_payload={
+                **(run.input or {}),
+                "action": "revise",
+                "draft_path": path,
+                "draft_sha256": view["sha256"],
+                "post_id": post_id,
+                "feedback": feedback.strip(),
+            },
+            project_workflow_id=configured.id if configured else None,
+            definition_commit_sha=(
+                configured.definition_commit_sha if configured else run.definition_commit_sha
+            ),
+            input_schema=schema,
+            trigger_source="mcp" if client_id and client_id != "browser" else "manual",
+        )
+        return {"run_id": str(started.id), "status": started.status.value}
 
     async def _read(self, project_id, actor, path):
         project = await self.project(project_id, actor)

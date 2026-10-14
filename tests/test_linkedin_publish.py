@@ -726,6 +726,125 @@ async def test_a_refusal_after_publishing_keeps_linkedins_reason(publication_db)
     assert "refused this post's content" in message and "still publishing" not in message
 
 
+REVISABLE = {
+    "type": "object",
+    "properties": {
+        "direction": {"type": "string"},
+        "action": {"type": "string", "enum": ["draft", "revise"]},
+        "draft_path": {"type": "string"},
+        "draft_sha256": {"type": "string"},
+        "post_id": {"type": "string"},
+        "feedback": {"type": "string"},
+    },
+}
+
+
+async def drafting_run(db, project_id, *, schema, status="succeeded", inputs=None, path=DRAFT_PATH):
+    """A drafting workflow's run that wrote (or is revising) the batch at path."""
+
+    workflow_id = await db.pool.fetchval(
+        "SELECT id FROM workflows WHERE key='example.linkedin_drafts'"
+    )
+    if workflow_id is None:
+        workflow_id = uuid4()
+        await db.pool.execute(
+            """INSERT INTO workflows (id,key,title,executor,definition_repo_id,
+                    definition_path,current_commit_sha,version_label,definition)
+               VALUES ($1,'example.linkedin_drafts','Draft LinkedIn posts','workflow.code',
+                       'registry/workflows','d.json',$2,'1',$3::jsonb)""",
+            workflow_id,
+            "e" * 40,
+            json.dumps({"input_schema": schema}),
+        )
+    run_id = uuid4()
+    await db.pool.execute(
+        """INSERT INTO workflow_runs
+           (id,project_id,workflow_id,executor,definition_commit_sha,temporal_workflow_id,
+            thread_id,generation,fencing_token,status,lease_active,started_by_clerk_user_id,
+            input,artifact_path)
+           VALUES ($1,$2,$3,'workflow.code',$4,$5,$6,1,1,$7,false,$8,$9::jsonb,$10)""",
+        run_id,
+        project_id,
+        workflow_id,
+        "e" * 40,
+        f"drafts:{run_id}",
+        str(run_id),
+        status,
+        ACTOR,
+        json.dumps(inputs or {"direction": "What we learned shipping"}),
+        path if status == "succeeded" else None,
+    )
+    return run_id
+
+
+@pytest.mark.asyncio
+async def test_a_drafted_batch_revises_one_post_with_the_workflow_that_wrote_it(
+    publication_db, monkeypatch
+):
+    from tin_lite import run_service
+
+    f, client, _ = await surface(publication_db, monkeypatch)
+    put(f, draft())
+    base = f"/api/projects/{f.project.id}/linkedin"
+    ask = {"path": DRAFT_PATH, "post_id": "p1", "feedback": "Shorter, with one example."}
+    started = []
+
+    async def start(**kwargs):
+        started.append(kwargs)
+        return SimpleNamespace(id=uuid4(), status=SimpleNamespace(value="pending"))
+
+    monkeypatch.setattr(run_service, "start_workflow_run", start)
+    async with client:
+        # A hand-written batch has no workflow to redraft it.
+        read = await client.get(base + "/drafts", params={"path": DRAFT_PATH})
+        assert (read.json()["revisable"], read.json()["revising"]) == (False, None)
+        refused = await client.post(
+            base + "/request-changes", json={**ask, "request_id": str(uuid4())}
+        )
+        assert refused.status_code == 409 and "Edit the post instead" in refused.json()["detail"]
+        # Nor does one whose workflow can't revise a single post.
+        await drafting_run(f.db, f.project.id, schema={"type": "object", "properties": {}})
+        read = await client.get(base + "/drafts", params={"path": DRAFT_PATH})
+        assert read.json()["revisable"] is False
+        await f.db.pool.execute("DELETE FROM workflow_runs WHERE executor='workflow.code'")
+        await f.db.pool.execute("DELETE FROM workflows WHERE key='example.linkedin_drafts'")
+        await drafting_run(f.db, f.project.id, schema=REVISABLE)
+        read = await client.get(base + "/drafts", params={"path": DRAFT_PATH})
+        assert read.json()["revisable"] is True
+        request_id = str(uuid4())
+        accepted = await client.post(
+            base + "/request-changes", json={**ask, "request_id": request_id}
+        )
+        assert accepted.status_code == 202, accepted.text
+        missing = await client.post(
+            base + "/request-changes", json={**ask, "post_id": "p6", "request_id": str(uuid4())}
+        )
+        assert missing.status_code == 404
+    [call] = started
+    # The run's own inputs, pointed at this batch as saved and the one post to redraft.
+    assert call["input_payload"] == {
+        "direction": "What we learned shipping",
+        "action": "revise",
+        "draft_path": DRAFT_PATH,
+        "draft_sha256": read.json()["sha256"],
+        "post_id": "p1",
+        "feedback": "Shorter, with one example.",
+    }
+    assert call["start_idempotency_key"] == f"linkedin-revise:{request_id}"
+    assert call["input_schema"] == REVISABLE and call["definition_commit_sha"] == "e" * 40
+    # A revision under way is named, so the reader can follow it after a reload.
+    revising = await drafting_run(
+        f.db,
+        f.project.id,
+        schema=REVISABLE,
+        status="running",
+        inputs={"action": "revise", "draft_path": DRAFT_PATH, "post_id": "p1"},
+    )
+    service = LinkedInPosts(f.runtime, f.settings)
+    view = await service.read(f.project.id, ACTOR, DRAFT_PATH)
+    assert view["revising"] == {"run_id": str(revising), "post_id": "p1"}
+
+
 async def latest_publication(db, storage, run_id):
     run = await db.get_run(run_id)
     service = LinkedInPosts(SimpleNamespace(database=db, storage=storage), None)

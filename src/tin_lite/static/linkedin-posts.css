@@ -152,6 +152,14 @@
 .li-read-images figcaption { color: var(--ink-muted); font: 400 12px/16px var(--mono); }
 .li-media.is-placeholder { display: flex; min-height: 59px; align-items: center; justify-content: center; color: var(--ink-muted); }
 
+/* The note Tin redrafts a post from (LI-05). */
+.li-feedback { display: flex; flex-direction: column; gap: 16px; padding: 24px; border: 1px solid var(--paper-border); border-radius: var(--radius-card); background: var(--paper-card); }
+.li-feedback-title { font: 700 17px/24px var(--sans); }
+.li-feedback-text { min-height: 92px; padding: 12px; resize: vertical; border: 1px solid var(--paper-border); border-radius: var(--radius-chip); background: var(--paper-well); color: var(--ink); font: 400 15px/23px var(--sans); }
+.li-reader .li-feedback-text:focus-visible { border-color: var(--accent-deep); outline: none; }
+.li-feedback-foot { display: flex; justify-content: flex-end; }
+.li-reader .li-feedback .li-button.is-primary { padding: 8px 13px; line-height: 20px; }
+
 /* Exactly what LinkedIn receives (LI-09), and what became of it (LI-10). */
 .li-card { display: flex; flex-direction: column; gap: 12px; overflow: hidden; border: 1px solid var(--paper-border); border-radius: var(--radius-card); background: var(--paper-card); }
 .li-card-body { display: flex; flex-direction: column; gap: 16px; padding: 20px 20px 4px; }
@@ -211,6 +219,8 @@
   .li-as.is-read { gap: 8px; color: var(--ink-secondary); font-size: 13px; line-height: 18px; }
   .li-as.is-read .li-mark, .li-as.is-read .li-mark.is-empty { flex-basis: 20px; width: 20px; height: 20px; font-size: 10px; line-height: 12px; }
   .li-as.is-read .li-narrow { display: inline; margin-left: auto; }
+  .li-column .li-ask { display: inline; align-self: flex-start; font: 400 14px/20px var(--sans); }
+  .li-feedback { padding: 16px; }
   .li-copy { font-size: 16px; line-height: 26px; }
   .li-read-grid { gap: 6px; }
   .li-read-images figcaption { display: none; }
