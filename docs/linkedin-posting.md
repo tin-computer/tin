@@ -73,16 +73,26 @@ account the member may use, and is refused when there are several.
 
 A drafting run also keeps four optional fields with its posts; a hand-written draft needs
 none of them:
-- `gaps`: what it couldn't support, each an `angle` and a `reason`. The reader shows them
-  under **Draft notes**, and on their own when a run wrote no posts.
+- `gaps`: what it couldn't support, each an `angle` and a `reason`. The reader lists them
+  as **More context needed** beside the posts, and on their own when a run wrote no posts.
 - `author_id`: whose voice the posts use.
 - `parent`: the batch and post a revision started from (`path`, `sha256`, `post_id`).
 - `sources`: the material the batch drew on, so a revision checks against it rather than
   whatever the source file holds by then.
 
-Drafts open in the same reader as X's, which picks the platform by path: a file under
-`social/linkedin/` opens LinkedIn's. Its editor adds **Post as** with the connected pages
-and the member's own profile. Images uploaded there go to `social/linkedin/media/`.
+A file under `social/linkedin/` opens in LinkedIn's reader (`static/linkedin-posts.js`,
+drawn from Paper boards LI-07A to LI-15); X's drafts keep their own.
+- The batch's posts are listed beside the one open, each with its status; without room for
+  the list, the title opens it.
+- **Draft notes** shows each labelled line of `editor_notes` (`Angle: …`, `Format: …`) as a
+  row, the rest as notes, and each supporting excerpt under its source's label.
+- **Edit post** edits in place. **Posting as** is a picker only when there's a choice: the
+  member's own profile and the project's pages. It says when the post's account left the
+  connection or is another member's profile (`unavailable` in the read).
+- Images are rows with their alt text. They reorder by dragging or with the arrow keys on
+  the grip. Files that aren't PNG or JPEG, or are over 5 MB, are refused before anything is
+  sent and stay listed with the reason until removed. Uploads show their progress and go to
+  `social/linkedin/media/`; images already in Files can be added from a filtered list.
 
 ## Publish
 
@@ -97,8 +107,14 @@ and the member's own profile. Images uploaded there go to `social/linkedin/media
    the profile's accounts again, checks that a personal profile still belongs to the member
    who confirmed, and sends the post with `publishNow` under the receipt
    `linkedin:post:<approval>`, written before dispatch.
-4. It waits for LinkedIn's answer, then writes `reports/linkedin/<run>.md` with the post's
+4. It waits for LinkedIn's answer and keeps it, published or refused, in the run's
+   `<run>:linkedin_post` receipt. A published post gets `reports/linkedin/<run>.md` with its
    link.
+5. The reader follows the run through `GET …/linkedin/publications?path=`, which
+   `read_linkedin_drafts` also returns as `publications`. Each post's latest publication is
+   `publishing`, `published` with its URL, `not_published` when nothing reached LinkedIn or
+   LinkedIn refused it, or `uncertain` when a send's answer never came. An uncertain post is
+   never called unpublished: the reader asks the founder to check the page.
 
 The approval ID derives from the post's fingerprint, so confirming the same post twice
 starts one run. A run that ended without sending anything doesn't use the post up:
@@ -222,5 +238,5 @@ For listening, read-only calls on the same page and a founder's profile confirme
 
 Fixture tests use a synthetic Zernio (`tests/test_linkedin_posting.py`,
 `tests/test_linkedin_publish.py`, `tests/test_linkedin_listening.py`, which also runs the
-timetable on a time-skipping Temporal), and `web/linkedin-posts.browser.test.js` covers the
-reader.
+timetable on a time-skipping Temporal). `web/linkedin-posts.browser.test.js` and
+`web/linkedin-reader-page.browser.test.js` cover the reader.

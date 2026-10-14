@@ -1,5 +1,5 @@
-/* X and LinkedIn drafts are ordinary project files. Publication is a separate exact-preview
-   effect. One reader serves both; the table below holds what differs per platform. */
+/* X drafts are ordinary project files. Publication is a separate exact-preview effect. The
+   table below holds what is X's own; LinkedIn's drafts have their reader in linkedin-posts.js. */
 (() => {
   const PLATFORMS = {
     x: {name: "X", api: "x", schema: "tin.social.x_draft.v1", mediaDir: "social/x/media",
@@ -7,11 +7,6 @@
       count: "Links and emoji count toward X’s limit; checked when saved.",
       mediaLimit: "Up to four images (PNG or JPEG, 5 MB each) or one MP4 video (64 MB, 5 minutes).",
       tooMany: "Use up to four images or one video per post.", fileTypes: "Choose a PNG, JPEG or MP4 file."},
-    linkedin: {name: "LinkedIn", api: "linkedin", schema: "tin.social.linkedin_draft.v1", mediaDir: "social/linkedin/media",
-      images: 20, video: false, maxText: 3000, accept: "image/png,image/jpeg", targets: true,
-      count: "Up to 3,000 characters.",
-      mediaLimit: "Up to 20 images, PNG or JPEG, 5 MB each.",
-      tooMany: "Use up to 20 images per post.", fileTypes: "Choose a PNG or JPEG image."},
   };
   const EXTENSIONS = {"image/png": ".png", "image/jpeg": ".jpg", "video/mp4": ".mp4"};
   const esc = value => String(value ?? "").replace(/[&<>"']/g, char => ({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[char]));
@@ -40,10 +35,10 @@
       const kept = sessions.get(key);
       const state = {root, context, key, revision: null, draft: null, dirty: false, busy: false,
         preview: null, previewPost: null, publishRequest: null, saveRequest: null, message: "",
-        mediaUrls: new Map(), closed: false, selected: 0, editing: false, notes: false, accounts: [],
+        mediaUrls: new Map(), closed: false, selected: 0, editing: false, notes: false,
         picking: false, files: [], feedback: "", feedbackOpen: false, feedbackRequest: null, feedbackRun: null, feedbackSource: null, review: null, ...kept};
       state.close = () => {
-        sessions.set(key, {draft: state.draft && copy(state.draft), revision: state.revision, accounts: state.accounts,
+        sessions.set(key, {draft: state.draft && copy(state.draft), revision: state.revision,
           savedSha: state.savedSha, feedbackSource: state.feedbackSource,
           dirty: state.dirty, selected: state.selected, saveRequest: state.saveRequest,
           feedback: state.feedback, feedbackRequest: state.feedbackRequest, feedbackRun: state.feedbackRun});
@@ -75,7 +70,6 @@
         if (state.closed) return;
         if (result?.draft?.schema_version !== platform.schema || !Array.isArray(result.draft.posts)) throw new Error(`This file is not ${platform.name === "X" ? "an X" : `a ${platform.name}`} draft. Open it in Files.`);
         state.revision = result.revision;
-        state.accounts = Array.isArray(result.accounts) ? result.accounts : [];
         state.draft = copy(result.draft);
         state.savedSha = result.sha256;
         state.feedbackSource = result.feedback_run_id || null;
@@ -250,7 +244,7 @@
       const status = state.root.querySelector("[data-x-status]");
       if (status) {status.textContent = state.message; status.hidden = !state.message;}
       state.root.querySelectorAll("button[data-x-action]").forEach(button => {button.disabled = state.busy || button.dataset.xEdgeDisabled === "true";});
-      state.root.querySelectorAll("[data-x-text], [data-x-alt], [data-x-path], [data-x-upload], [data-x-target]").forEach(field => {field.disabled = state.busy;});
+      state.root.querySelectorAll("[data-x-text], [data-x-alt], [data-x-path], [data-x-upload]").forEach(field => {field.disabled = state.busy;});
     }
 
     function mediaLine(item, index, postIndex, count, supportsAltText) {
@@ -277,7 +271,7 @@
       const heading = `<h1>Post ${i + 1}${state.draft?.posts.length > 1 ? ` of ${state.draft.posts.length}` : ""}</h1>`;
       state.cleanupReader?.();
       const text = exact?.text ?? post?.text ?? "";
-      const poster = exact ? exact.account : platform.targets && post ? targetAccount(state, post) : null;
+      const poster = exact ? exact.account : null;
       const html = post ? `${heading}${poster ? `<p class="x-posts-account">Posting as <strong>${esc(accountName(poster))}</strong></p>` : ""}<div class="x-posts-copy" ${exact ? "" : "data-x-copy"}>${esc(text)}</div>${readMedia(exact?.attachments || post.attachments, !!exact)}` : "";
       // Use the same document viewer as Markdown files. X's structured file supplies
       // escaped literal text; Markdown punctuation must never change the exact post.
@@ -336,12 +330,10 @@
         card.innerHTML = `${state.notes ? `<aside class="x-posts-notes" aria-label="Draft notes"><h2>Draft notes</h2>${post.editor_notes ? `<p class="x-posts-note-text">${esc(post.editor_notes)}</p>` : ""}
               ${post.missing_assets?.length ? `<p>Resolve these before publishing:</p><ul>${post.missing_assets.map((item, j) => `<li>${esc(item)} <button class="x-posts-link" type="button" data-x-action="resolve-asset" data-post="${i}" data-asset="${j}">Mark resolved</button></li>`).join("")}</ul>` : ""}
               ${post.support?.length ? `<details class="x-posts-support"><summary>Supporting facts · ${post.support.length}</summary>${post.support.map(item => `<p><code>${esc(item.source_path)}</code><br>${esc(item.excerpt)}</p>`).join("")}</details>` : ""}
-              ${gapList(state)}
               ${post.readiness !== "ready" ? `<p>Check the evidence and media before marking this post ready.</p><button class="x-posts-button" type="button" data-x-action="ready" data-post="${i}" data-x-edge-disabled="${!!post.missing_assets?.length}" ${post.missing_assets?.length ? "disabled" : ""}>Mark ready</button>` : ""}
-              ${!post.editor_notes && !post.support?.length && !post.missing_assets?.length && !state.draft.gaps?.length && post.readiness === "ready" ? "<p>No additional notes for this post.</p>" : ""}
+              ${!post.editor_notes && !post.support?.length && !post.missing_assets?.length && post.readiness === "ready" ? "<p>No additional notes for this post.</p>" : ""}
             </aside>` : ""}
             ${editing ? `<section class="x-posts-editor" aria-label="Edit post">
-              ${platform.targets ? targetField(state, post, i) : ""}
               <label for="x-post-text">Post text</label><textarea id="x-post-text" data-x-text="${i}" rows="4" maxlength="${platform.maxText}">${esc(post.text)}</textarea>
               <small data-x-count="${i}">${esc(platform.count)}</small>
               <div class="x-posts-attachments"><h2>Media</h2>${(post.attachments || []).map((item, j) => mediaLine(item, j, i, post.attachments.length, state.context.supportsAltText)).join("")}
@@ -368,11 +360,7 @@
         if (!state.notes && (post.readiness !== "ready" || post.missing_assets?.length)) card.insertAdjacentHTML("beforeend", `<p class="x-posts-needs">${esc(statusLabel(post))}. <button type="button" class="x-posts-link" data-x-action="notes">Review draft notes</button></p>`);
         column.append(card);
         column.insertAdjacentHTML("beforeend", `<footer class="x-posts-footer"><button type="button" class="x-posts-link" data-x-action="reload">Reload saved draft</button><a href="/activity?project=${encodeURIComponent(state.context.projectId)}">View Activity →</a></footer>`);
-      } else {
-        article.remove();
-        // A drafting run with too little evidence keeps no posts, only what it needs.
-        if (state.draft) column.insertAdjacentHTML("beforeend", `<section class="x-posts-card"><aside class="x-posts-notes" aria-label="More context needed">${gapList(state)}<p>This run wrote no posts. Add what's missing, then draft again.</p></aside></section>`);
-      }
+      } else article.remove();
       bind(state);
       loadMedia(state);
       renderStatus(state);
@@ -398,9 +386,6 @@
         state.draft.posts[post].attachments[media].alt_text = field.value; changed(state);
       });
       body.querySelectorAll("[data-x-upload]").forEach(field => field.onchange = () => {if (field.files[0]) upload(state, state.draft.posts[Number(field.dataset.xUpload)], field.files[0]);});
-      body.querySelectorAll("[data-x-target]").forEach(field => field.onchange = () => {
-        state.draft.posts[Number(field.dataset.xTarget)].target = field.value; changed(state); render(state);
-      });
       body.querySelectorAll("[data-x-action]").forEach(button => button.onclick = async () => {
         if (state.busy) return;
         const action = button.dataset.xAction;
@@ -481,27 +466,8 @@
       }
     }
 
-    // What a drafting run couldn't support, for the whole batch; LinkedIn drafts carry it.
-    function gapList(state) {
-      const gaps = state.draft?.gaps || [];
-      return gaps.length ? `<h2>More context needed</h2><ul>${gaps.map(gap => `<li>${esc(gap.reason)}</li>`).join("")}</ul>` : "";
-    }
-
-    // LinkedIn posts name the connected account they post as; one account is chosen for you.
-    function targetAccount(state, post) {
-      return state.accounts.find(item => item.urn === post.target) || (!post.target && state.accounts.length === 1 ? state.accounts[0] : null);
-    }
-
-    function targetField(state, post, index) {
-      if (!state.accounts.length) return `<p class="x-posts-limit">Connect LinkedIn posting under Integrations to choose who posts.</p>`;
-      const chosen = targetAccount(state, post);
-      const options = state.accounts.map(item => `<option value="${esc(item.urn)}" ${chosen?.urn === item.urn ? "selected" : ""}>${esc(item.name)} · ${item.kind === "organization" ? "page" : "profile"}</option>`).join("");
-      return `<label for="x-post-target">Post as</label><select id="x-post-target" class="workflow-inline-input" data-x-target="${index}">${chosen ? "" : '<option value="">Choose an account</option>'}${options}</select>`;
-    }
-
     return {open, close: () => active?.close()};
   }
 
   window.TinXPosts = reader(PLATFORMS.x);
-  window.TinLinkedInPosts = reader(PLATFORMS.linkedin);
 })();

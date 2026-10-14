@@ -38,7 +38,6 @@
 .x-posts-editor > label, .x-posts-reader h2 { display: block; margin: 0 0 16px; font: 700 17px/22px var(--sans); }
 .x-posts-editor textarea { width: 100%; min-height: 116px; padding: 14px 16px; resize: vertical; border: 1px solid var(--paper-border-strong); border-radius: var(--radius-chip); background: var(--input-bg); color: var(--ink); font: 400 15px/24px var(--sans); }
 .x-posts-editor > small { display: block; margin-top: 8px; color: var(--ink-secondary); font: 400 12px/18px var(--sans); }
-.x-posts-editor > select { display: block; width: 100%; margin-bottom: 24px; }
 .x-posts-attachments { margin-top: 24px; }
 .x-posts-add { display: flex; flex-wrap: wrap; gap: 12px; }
 .x-posts-upload { position: relative; }

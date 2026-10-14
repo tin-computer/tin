@@ -4578,7 +4578,10 @@ def create_mcp_app(
         The JSON keeps publishable text apart from facts, notes and images; each post's
         `target` is the LinkedIn URN it posts as, one of `accounts`: the pages connected for
         this project and your own LinkedIn profile if you connected it. No member posts as
-        another member's profile. Reading or editing a draft never publishes.
+        another member's profile; `unavailable` names the connection's accounts you can't post
+        as, and why. `publications` holds each post's latest publication from this file:
+        publishing, published (with its URL), not_published, or uncertain (check the page
+        before posting it again). Reading or editing a draft never publishes.
         """
         token = await caller()
         project = _mcp_uuid(project_id, field="project_id")

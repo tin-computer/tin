@@ -26,7 +26,7 @@ from tin_lite.integrations import (
     IntegrationDeliveryUnknownError,
     IntegrationUpstreamError,
 )
-from tin_lite.linkedin_posts import KEY, save_effect, validate_draft
+from tin_lite.linkedin_posts import KEY, LinkedInPosts, save_effect, validate_draft
 from tin_lite.linkedin_publish_activities import LinkedInPublishActivities
 from tin_lite.project_files import ProjectFileService
 from tin_lite.project_media import validate_media
@@ -279,6 +279,15 @@ async def test_http_preview_mcp_publish_and_http_replay_start_one_run(publicatio
             base + "/publish", json={"preview_token": token, "request_id": request_id}
         )
         assert replay.status_code == 200, replay.text
+        # The reader follows the publish from this file's publications.
+        followed = await client.get(base + "/publications", params={"path": DRAFT_PATH})
+        assert followed.status_code == 200, followed.text
+        latest = followed.json()["publications"]["p1"]
+        assert latest["state"] == "publishing" and latest["run_id"] == replay.json()["run_id"]
+        assert latest["account"]["name"] == "Tin Computer"
+        assert latest["text"] == "Exact approved text"
+        reread = await client.get(base + "/drafts", params={"path": DRAFT_PATH})
+        assert reread.json()["publications"]["p1"]["run_id"] == latest["run_id"]
     assert await runs(f) == 1
     approved = await f.db.pool.fetch(
         "SELECT result FROM effect_receipts WHERE execution_key LIKE 'linkedin:approved:%'"
@@ -309,6 +318,7 @@ async def test_preview_posts_only_as_a_connected_account(publication_db, monkeyp
         assert gone.status_code in {401, 403, 409, 424}
         read = await client.get(base + "/drafts", params={"path": DRAFT_PATH})
         assert read.status_code == 200 and read.json()["accounts"] == []
+        assert read.json()["connected"] is False and read.json()["unavailable"] == []
     assert await runs(f) == 0
 
 
@@ -328,6 +338,16 @@ async def test_a_member_posts_as_a_page_or_their_own_profile_only(publication_db
         assert [item["urn"] for item in mine.json()["accounts"]] == [PAGE["urn"], MEMBER["urn"]]
         theirs = await teammate.get(base + "/drafts", params={"path": DRAFT_PATH})
         assert [item["urn"] for item in theirs.json()["accounts"]] == [PAGE["urn"]]
+        # The founder's profile is named for the teammate, with why they can't post as it.
+        assert theirs.json()["unavailable"] == [
+            {
+                "urn": MEMBER["urn"],
+                "kind": "personal",
+                "name": "The founder",
+                "reason": "another_member",
+            }
+        ]
+        assert mine.json()["connected"] is True and mine.json()["unavailable"] == []
         refused = await teammate.post(base + "/preview", json={"path": DRAFT_PATH, "post_id": "p1"})
         assert refused.status_code == 409
         assert "Only the member who connected" in refused.json()["detail"]
@@ -480,6 +500,8 @@ async def setup(db, storage, posting, *, attachments=None, account=PAGE):
     payload = {
         "project_id": str(project.id),
         "actor": ACTOR,
+        "path": DRAFT_PATH,
+        "post_id": "p1",
         "revision": storage.repo.head,
         "text": "Exact approved text",
         "attachments": attachments or [],
@@ -702,6 +724,69 @@ async def test_a_refusal_after_publishing_keeps_linkedins_reason(publication_db)
     )
     message = await failed_message(publication_db, run_id)
     assert "refused this post's content" in message and "still publishing" not in message
+
+
+async def latest_publication(db, storage, run_id):
+    run = await db.get_run(run_id)
+    service = LinkedInPosts(SimpleNamespace(database=db, storage=storage), None)
+    return (await service.publications(run.project_id, ACTOR, DRAFT_PATH))["p1"]
+
+
+@pytest.mark.asyncio
+async def test_a_publication_reads_where_the_post_stands_from_its_receipts(publication_db):
+    from tin_lite.failures import classify, detail, failure_payload
+
+    def separate():
+        # Each case is its own project, so each needs its own repository.
+        storage = HistoryStorage()
+        storage.repo.id = f"projects/{uuid4()}"
+        return storage
+
+    async def ran(*answers, settles_as="published", lost_for=None):
+        storage, posting = separate(), SyntheticPosting()
+        posting.zernio.answers = list(answers)
+        posting.zernio.settles_as = settles_as
+        run_id, approval_id = await setup(publication_db, storage, posting)
+        work = activities(publication_db, storage, posting)
+        try:
+            await work.execute(str(run_id))
+        except Exception as first:
+            error = first
+            if lost_for:
+                await publication_db.pool.execute(
+                    "UPDATE effect_receipts SET result=jsonb_set(result,'{attempted_at}',"
+                    "to_jsonb($2::text)) WHERE execution_key=$1",
+                    f"linkedin:post:{approval_id}",
+                    (datetime.now(UTC) - lost_for).isoformat(),
+                )
+                with pytest.raises(ApplicationError) as raised:
+                    await work.execute(str(run_id))
+                error = raised.value
+            await work.failure(
+                {"run_id": str(run_id), **failure_payload(classify(error), detail(error))}
+            )
+        return await latest_publication(publication_db, storage, run_id)
+
+    storage, posting = separate(), SyntheticPosting()
+    pending, _ = await setup(publication_db, storage, posting)
+    assert (await latest_publication(publication_db, storage, pending))["state"] == "publishing"
+
+    published = await ran("published")
+    assert (published["state"], published["url"]) == ("published", URL)
+    assert published["account"]["urn"] == PAGE["urn"] and published["message"] is None
+
+    # Zernio said no before making a post: nothing reached LinkedIn.
+    refused = await ran("refused")
+    assert (refused["state"], refused["message"]) == ("not_published", "LinkedIn refused the post.")
+
+    # LinkedIn's settled answer is a refusal, kept so the reader offers an edit, not a check.
+    content = await ran("publishing", settles_as="failed")
+    assert content["state"] == "not_published"
+    assert "refused this post's content" in content["message"]
+
+    # A send whose answer never came may be live: never called unpublished.
+    lost = await ran("lost", lost_for=timedelta(hours=30))
+    assert lost["state"] == "uncertain" and "may have published" in lost["message"]
 
 
 async def test_project_purge_removes_only_its_linkedin_approval_chain(publication_db):

@@ -264,18 +264,19 @@ class LinkedInPublishActivities:
                 )
             post = await self._send(run, actor, payload, media)
         post = await self._settle(post)
-        if post["status"] != "published":
-            raise ApplicationError(
-                FAILED.get(post.get("error_category") or "", NOT_PUBLISHED), non_retryable=True
-            )
-        # The approval-keyed receipt is authoritative. This run-keyed mirror feeds the
-        # browser/MCP status projection without allowing a second provider call.
+        # The approval-keyed receipt is authoritative. This run-keyed mirror keeps LinkedIn's
+        # settled answer, published or refused, for the browser/MCP status projection without
+        # allowing a second provider call.
         mirror_key = f"{run.id}:linkedin_post"
         async with self.db.effect_lock(mirror_key, KEY) as (conn, saved):
             if not saved:
                 await self.db.start_effect(conn, execution_key=mirror_key, operation=KEY)
             if not saved or saved.status != "completed":
                 await self.db.complete_effect(conn, execution_key=mirror_key, result=post)
+        if post["status"] != "published":
+            raise ApplicationError(
+                FAILED.get(post.get("error_category") or "", NOT_PUBLISHED), non_retryable=True
+            )
         await self._progress(run.id, "save", 3, "Saving the LinkedIn publication result")
         report = await self._publish_report(run, project, post, payload)
         key = f"{run.id}:linkedin_publish_projection"

@@ -2692,6 +2692,25 @@ async def read_linkedin_drafts(
         ) from exc
 
 
+@router.get("/api/projects/{project_id}/linkedin/publications")
+async def read_linkedin_publications(
+    project_id: UUID,
+    request: Request,
+    path: str = Query(min_length=1, max_length=512),
+    user: AuthContext = AUTHENTICATED_USER,
+) -> dict:
+    """Where each post of one draft file stands on LinkedIn; the reader follows a publish."""
+
+    await _require_project_access(project_id, request, user)
+    try:
+        publications = await _linkedin_posts_service(request).publications(
+            project_id, user.clerk_user_id, path
+        )
+    except LookupError as exc:
+        raise HTTPException(status_code=404, detail=public_error_text(exc)) from exc
+    return {"path": path, "publications": publications}
+
+
 @router.put("/api/projects/{project_id}/linkedin/drafts")
 async def save_linkedin_draft(
     project_id: UUID,

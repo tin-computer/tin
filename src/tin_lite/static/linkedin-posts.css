@@ -1,0 +1,235 @@
+/* The LinkedIn post reader, from Paper boards LI-07A to LI-15. Rows are the spine; moss is
+   the only fill; bermellón marks the current post and what needs you, never a box. The
+   dashboard's theme aliases give both paper and coal. No eyebrows, no coloured edges. */
+.li-reader { container: li-reader / inline-size; position: relative; display: flex; min-height: 100svh; flex-direction: column; background: var(--paper-bg); color: var(--ink); font-family: var(--sans); }
+/* A low-specificity reset, so each component's own class sets its look. */
+.li-reader :where(button) { padding: 0; border: 0; background: none; color: inherit; font: inherit; text-align: inherit; cursor: pointer; }
+.li-reader button:disabled, .li-reader .li-button[aria-disabled="true"] { opacity: .45; cursor: default; }
+.li-reader :focus-visible { outline: 2px solid var(--accent-deep); outline-offset: 3px; }
+.li-reader .is-muted { color: var(--ink-secondary); }
+.li-reader .is-error { color: var(--bermellon-text); }
+.li-hidden { position: absolute; width: 1px; height: 1px; overflow: hidden; clip-path: inset(50%); white-space: nowrap; }
+.li-link { color: var(--accent-text); white-space: nowrap; text-decoration: none; }
+.li-reader .li-link:not(:disabled):hover { text-decoration: underline; text-underline-offset: 3px; }
+
+/* The bar: back, where you are, then what you can do here. */
+.li-bar { position: sticky; z-index: 8; top: 0; display: flex; min-height: 69px; align-items: center; gap: 20px; padding: 16px 32px; border-bottom: 1px solid var(--paper-border); background: var(--paper-bg); font: 400 13px/18px var(--sans); }
+.li-return { color: var(--accent-text); white-space: nowrap; }
+.li-bar-rule { flex: 0 0 1px; width: 1px; height: 18px; background: var(--paper-border); }
+.li-bar-title { flex: 1; min-width: 0; overflow: hidden; color: var(--ink-secondary); font-family: var(--mono); text-overflow: ellipsis; white-space: nowrap; }
+.li-switch { display: none; }
+.li-bar-note { color: var(--ink-secondary); white-space: nowrap; }
+.li-bar-note:empty { display: none; }
+.li-wide-actions { display: contents; }
+.li-button { display: inline-flex; flex-shrink: 0; align-items: center; justify-content: center; padding: 8px 13px; border: 1px solid var(--paper-border); border-radius: var(--radius-chip); color: var(--ink); font: 400 13px/18px var(--sans); text-decoration: none; white-space: nowrap; transition: background-color 120ms ease; }
+.li-reader .li-button.is-primary { padding: 9px 13px; border: 0; background: var(--accent-deep); color: var(--on-accent); font-weight: 700; }
+@media (hover: hover) {
+  .li-reader .li-button.is-secondary:not(:disabled):hover { background: var(--paper-well); }
+  .li-reader .li-button.is-primary:not(:disabled):hover { background: var(--accent-hover); }
+}
+.li-narrow-action, .li-dock, .li-narrow { display: none; }
+
+/* The rail lists the batch beside the column, as the reader's section map does. */
+.li-body { position: relative; display: flex; flex: 1; align-items: flex-start; justify-content: center; padding: 40px 32px 64px; }
+.li-rail { position: absolute; top: 41px; left: max(24px, calc(50% - 544px)); display: flex; width: 150px; flex-direction: column; gap: 14px; }
+.li-rail-item { display: flex; flex-direction: column; gap: 2px; color: var(--ink-secondary); font: 400 13px/18px var(--sans); }
+.li-rail-item small { color: var(--ink-muted); font: 400 12px/16px var(--sans); }
+.li-rail-item:hover > span { color: var(--ink); }
+.li-rail-item[aria-current] > span { color: var(--bermellon-text); font-weight: 700; }
+.li-rail-item.is-gaps { padding-top: 14px; border-top: 1px solid var(--paper-border); }
+.li-column { display: flex; width: 728px; max-width: 100%; min-width: 0; flex-direction: column; gap: 36px; }
+.li-column-read, .li-column-gaps, .li-column-loading { width: 680px; }
+.li-column-preview, .li-column-outcome { width: 600px; gap: 20px; }
+.li-line, .li-sentence { margin: 0; color: var(--ink-secondary); font: 400 14px/22px var(--sans); overflow-wrap: anywhere; }
+.li-reader .li-line.is-error, .li-reader .li-sentence.is-error { color: var(--bermellon-text); }
+.li-sentence.is-strong { color: var(--ink); }
+
+/* Who it posts as (LI-13). */
+.li-as { display: flex; flex-wrap: wrap; align-items: center; gap: 12px; font: 400 14px/22px var(--sans); }
+.li-as-wrap { display: flex; flex-direction: column; gap: 6px; }
+.li-as-note { margin: 0; padding-left: 40px; color: var(--ink-secondary); font: 400 14px/20px var(--sans); }
+.li-as-note .li-link { margin-left: 8px; }
+.li-mark { display: inline-flex; flex: 0 0 28px; width: 28px; height: 28px; align-items: center; justify-content: center; border: 1px solid var(--paper-border); border-radius: var(--radius-pill); background: var(--paper-deep); color: var(--ink); font: 700 12px/16px var(--sans); }
+.li-mark.is-muted { color: var(--ink-muted); }
+.li-mark.is-empty { border: 1px dashed var(--ink-muted); background: transparent; }
+.li-mark.is-square { flex-basis: 24px; width: 24px; height: 24px; border: 0; border-radius: var(--radius-chip); background: var(--ink); color: var(--paper-bg); font-size: 11px; line-height: 14px; }
+.li-as.is-read { gap: 10px; }
+.li-as.is-read .li-mark.is-empty { flex-basis: 24px; width: 24px; height: 24px; }
+.li-kind { color: var(--ink-muted); font: 400 12px/16px var(--mono); }
+.li-picker-wrap { position: relative; }
+.li-reader .li-picker { display: inline-flex; align-items: center; gap: 8px; padding: 5px 10px 5px 12px; border: 1px solid var(--paper-border); border-radius: var(--radius-chip); background: var(--paper-card); color: var(--ink); }
+.li-reader .li-picker[aria-expanded="true"] { border-color: var(--accent-deep); }
+.li-picker svg { color: var(--ink-secondary); }
+.li-picker.is-lost > span:first-child { color: var(--ink-muted); }
+.li-menu { position: absolute; z-index: 9; top: calc(100% + 8px); left: 0; width: 260px; margin: 0; padding: 6px; border: 1px solid var(--paper-border); border-radius: var(--radius-card); background: var(--paper-deep); box-shadow: var(--shadow-menu); list-style: none; }
+.li-reader .li-menu button { display: flex; width: 100%; align-items: center; gap: 10px; padding: 8px 10px; border-radius: var(--radius-chip); font: 400 14px/20px var(--sans); }
+.li-menu button > span:nth-child(2) { flex: 1; }
+.li-menu [aria-selected="true"] button, .li-reader .li-menu button:hover { background: var(--paper-well); }
+.li-check { display: inline-flex; width: 16px; justify-content: center; color: var(--accent-text); }
+
+/* Editing in place (LI-07A). */
+.li-edit-post { display: flex; flex-direction: column; gap: 14px; }
+.li-text-box { display: flex; }
+.li-text { width: 100%; min-height: 176px; padding: 24px; overflow: hidden; resize: none; border: 1px solid var(--paper-border); border-radius: var(--radius-chip); background: var(--paper-well); color: var(--ink); font: 400 18px/29px var(--sans); }
+.li-reader .li-text:focus-visible { outline: none; }
+.li-text:focus { border-color: var(--accent-deep); }
+.li-count { margin: 0; color: var(--ink-muted); font: 400 12px/16px var(--mono); text-align: right; }
+.li-meta { min-width: 0; color: var(--ink-muted); font: 400 12px/16px var(--mono); overflow-wrap: anywhere; }
+
+/* Images as rows (LI-07A, LI-08). */
+.li-images { display: flex; flex-direction: column; gap: 10px; }
+.li-images > header { display: flex; align-items: baseline; justify-content: space-between; }
+.li-images h2 { margin: 0; font: 700 15px/22px var(--sans); }
+.li-rows { margin: 0; padding: 0; border-top: 1px solid var(--paper-border); list-style: none; }
+.li-row { display: flex; align-items: center; gap: 14px; padding: 12px 0; border-bottom: 1px solid var(--paper-border); }
+.li-row.is-add { border-bottom: 0; }
+.li-reader .li-grip { display: inline-flex; flex: 0 0 16px; width: 16px; justify-content: center; color: var(--ink-muted); cursor: grab; }
+.li-grip.is-empty { cursor: default; }
+.li-thumb { position: relative; display: flex; flex: 0 0 112px; width: 112px; height: 59px; align-items: center; justify-content: center; overflow: hidden; border-radius: var(--radius-chip); background: var(--paper-deep); color: var(--ink-muted); }
+.li-thumb img { display: block; width: 100%; height: 100%; object-fit: cover; }
+.li-thumb.is-placeholder { border: 1px solid var(--paper-border); background: transparent; }
+.li-thumb.is-add { border: 1px dashed var(--ink-muted); background: transparent; color: var(--ink-secondary); cursor: pointer; }
+.li-thumb.is-add input, .li-upload input { position: absolute; width: 1px; height: 1px; opacity: 0; }
+.li-row.is-full .li-thumb.is-add { border-color: var(--paper-border); color: var(--ink-muted); cursor: default; }
+.li-row.is-full .li-thumb.is-add svg { opacity: .5; }
+.li-row.is-full .li-row-body > span:first-child { color: var(--ink-secondary); }
+.li-row-body { display: flex; flex: 1; min-width: 0; flex-direction: column; gap: 4px; font: 400 14px/20px var(--sans); }
+.li-alt { width: 100%; min-width: 0; padding: 7px 10px; border: 1px solid var(--paper-border); border-radius: var(--radius-chip); background: var(--paper-well); color: var(--ink); font: 400 14px/20px var(--sans); }
+.li-alt::placeholder, .li-filter::placeholder { color: var(--ink-muted); }
+.li-reader :is(.li-alt, .li-filter):focus-visible { border-color: var(--accent-deep); outline: none; }
+.li-reader .li-remove { display: inline-flex; flex: 0 0 32px; width: 32px; height: 32px; align-items: center; justify-content: center; border-radius: var(--radius-chip); color: var(--ink-secondary); }
+.li-reader .li-remove:hover { background: var(--paper-well); color: var(--ink); }
+.li-remove.is-empty { height: 1px; }
+.li-row.is-uploading .li-thumb { opacity: .55; }
+.li-thumb-wrap { display: flex; flex: 0 0 112px; flex-direction: column; gap: 6px; }
+.li-progress { display: block; height: 2px; overflow: hidden; border-radius: 2px; background: var(--paper-deep); }
+.li-progress span { display: block; height: 100%; background: var(--accent-deep); transition: width 160ms linear; }
+.li-refusal { margin: 0; color: var(--bermellon-text); }
+.li-refusal .li-link { margin-left: 8px; }
+.li-add-actions { display: flex; flex-wrap: wrap; align-items: baseline; gap: 8px; }
+.li-upload { position: relative; cursor: pointer; }
+.li-upload:focus-within { outline: 2px solid var(--accent-deep); outline-offset: 3px; }
+.li-row.is-dragging { opacity: .5; }
+.li-row.is-target { box-shadow: inset 0 2px 0 var(--accent-deep); }
+
+/* Choosing images already in Files (LI-14), in place of the add row. */
+.li-picker-block { display: flex; flex-direction: column; gap: 10px; padding: 14px 0 6px 30px; }
+.li-picker-head { display: flex; align-items: center; gap: 12px; font: 700 14px/20px var(--sans); }
+.li-picker-head .li-link { font-weight: 400; }
+.li-filter { flex: 1; min-width: 0; padding: 6px 10px; border: 1px solid var(--paper-border); border-radius: var(--radius-chip); background: var(--paper-well); color: var(--ink); font: 400 14px/20px var(--sans); }
+.li-files { margin: 0; padding: 0; list-style: none; }
+.li-file { display: flex; align-items: center; gap: 14px; padding: 8px 0; border-bottom: 1px solid var(--paper-border); }
+.li-file:last-child { border-bottom: 0; }
+.li-file-thumb { display: flex; flex: 0 0 64px; width: 64px; height: 34px; align-items: center; justify-content: center; overflow: hidden; border-radius: 3px; background: var(--paper-deep); color: var(--ink-muted); }
+.li-file-thumb img { display: block; width: 100%; height: 100%; object-fit: cover; }
+.li-file-body { display: flex; flex: 1; min-width: 0; flex-direction: column; gap: 2px; font: 400 14px/20px var(--sans); }
+.li-file-body > span:first-child { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.li-file-action { display: flex; flex: 0 0 64px; justify-content: flex-end; font: 400 14px/20px var(--sans); }
+.li-picker-empty { margin: 0; padding: 8px 0; color: var(--ink-secondary); font: 400 14px/20px var(--sans); }
+
+/* Reading one post with its notes (LI-12). */
+.li-notes { display: flex; flex-direction: column; gap: 14px; padding: 24px; border: 1px solid var(--paper-border); border-radius: var(--radius-card); background: var(--paper-card); }
+.li-notes h2 { margin: 0; font: 700 17px/24px var(--sans); }
+.li-notes dl { margin: 0; border-top: 1px solid var(--paper-border); }
+.li-notes dl > div { display: flex; gap: 16px; padding: 10px 0; border-bottom: 1px solid var(--paper-border); font: 400 14px/22px var(--sans); }
+.li-notes dl > div:last-child { border-bottom: 0; }
+.li-notes dt { flex: 0 0 120px; color: var(--ink-secondary); }
+.li-notes dd { flex: 1; min-width: 0; margin: 0; overflow-wrap: anywhere; }
+.li-support { display: flex; flex-direction: column; gap: 4px; }
+.li-support + .li-support { margin-top: 12px; }
+.li-support > span { color: var(--ink-muted); font: 400 12px/16px var(--mono); }
+.li-support q { color: var(--ink-secondary); }
+.li-missing { display: block; }
+.li-notes-empty { margin: 0; color: var(--ink-secondary); font: 400 14px/22px var(--sans); }
+.li-copy { white-space: pre-wrap; overflow-wrap: anywhere; font: 400 20px/31px var(--sans); }
+.li-read-images { display: flex; flex-direction: column; gap: 8px; margin: 0; }
+.li-read-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 8px; }
+.li-read-grid .li-media { aspect-ratio: 336 / 176; overflow: hidden; border-radius: var(--radius-chip); background: var(--paper-deep); }
+.li-read-images.is-single .li-read-grid { grid-template-columns: minmax(0, 1fr); }
+.li-read-images.is-single .li-media { aspect-ratio: auto; }
+.li-media img { display: block; width: 100%; height: 100%; object-fit: cover; }
+.li-read-images.is-single .li-media img { height: auto; max-height: 520px; object-fit: contain; }
+.li-read-images figcaption { color: var(--ink-muted); font: 400 12px/16px var(--mono); }
+.li-media.is-placeholder { display: flex; min-height: 59px; align-items: center; justify-content: center; color: var(--ink-muted); }
+
+/* Exactly what LinkedIn receives (LI-09), and what became of it (LI-10). */
+.li-card { display: flex; flex-direction: column; gap: 12px; overflow: hidden; border: 1px solid var(--paper-border); border-radius: var(--radius-card); background: var(--paper-card); }
+.li-card-body { display: flex; flex-direction: column; gap: 16px; padding: 20px 20px 4px; }
+.li-card:not(:has(.li-card-images)) .li-card-body { padding-bottom: 20px; }
+.li-card-head { display: flex; align-items: center; gap: 12px; }
+.li-card-head > span:last-child { display: flex; flex-direction: column; gap: 2px; }
+.li-card-mark { display: inline-flex; flex: 0 0 44px; width: 44px; height: 44px; align-items: center; justify-content: center; border-radius: var(--radius-chip); background: var(--ink); color: var(--paper-bg); font: 700 18px/22px var(--sans); }
+.li-card-head strong { font: 700 15px/20px var(--sans); }
+.li-card-head small { color: var(--ink-muted); font: 400 13px/18px var(--sans); }
+.li-card-text { white-space: pre-wrap; overflow-wrap: anywhere; font: 400 15px/24px var(--sans); }
+.li-card-images { display: grid; gap: 2px; }
+.li-card-images .li-media { position: relative; overflow: hidden; background: var(--paper-deep); }
+.li-card-images.is-one .li-media img { height: auto; max-height: 640px; object-fit: contain; }
+.li-card-images.is-two { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+.li-card-images.is-two .li-media { height: 240px; }
+.li-card-images.is-three { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+.li-card-images.is-many { grid-template-columns: repeat(3, minmax(0, 1fr)); }
+.li-card-images.is-three .li-media:first-child, .li-card-images.is-many .li-media:first-child { grid-column: 1 / -1; height: 300px; }
+.li-card-images.is-three .li-media:not(:first-child), .li-card-images.is-many .li-media:not(:first-child) { height: 160px; }
+.li-more { position: absolute; z-index: 1; inset: 0; display: flex; align-items: center; justify-content: center; background: rgb(0 0 0 / 45%); color: #fff; font: 700 22px/28px var(--sans); }
+
+/* What the run couldn't support (LI-11). */
+.li-gaps { display: flex; flex-direction: column; gap: 24px; }
+.li-gaps h1 { margin: 0; font: 400 32px/40px var(--sans); letter-spacing: -0.02em; }
+.li-gaps p { margin: 0; color: color-mix(in srgb, var(--ink) 82%, var(--ink-secondary)); font: 400 17px/27px var(--sans); }
+.li-gaps ul { margin: 4px 0 0; padding: 0; border-top: 1px solid var(--paper-border); list-style: none; }
+.li-gaps li { padding: 12px 0; border-bottom: 1px solid var(--paper-border); font: 400 15px/24px var(--sans); }
+
+/* Without room for the rail, the title becomes the post list (LI-15). */
+.li-switcher { position: absolute; z-index: 7; top: 100%; right: 0; left: 0; }
+.li-switcher[hidden] { display: none; }
+.li-switcher-list { display: flex; flex-direction: column; padding: 4px 16px 12px; border-bottom: 1px solid var(--paper-border); background: var(--paper-card); }
+.li-reader .li-switcher-item { display: flex; align-items: baseline; justify-content: space-between; gap: 16px; padding: 12px 0; border-bottom: 1px solid var(--paper-border); font: 400 15px/20px var(--sans); }
+.li-switcher-item:last-child { padding-bottom: 4px; border-bottom: 0; }
+.li-switcher-item small { color: var(--ink-muted); font: 400 13px/18px var(--sans); }
+.li-switcher-item[aria-current] > span { color: var(--bermellon-text); font-weight: 700; }
+.li-reader .li-scrim { display: block; width: 100%; height: 100vh; background: color-mix(in srgb, var(--paper-bg) 60%, transparent); cursor: default; }
+
+@container li-reader (max-width: 1119px) {
+  .li-rail, .li-bar-title, .li-bar-rule { display: none; }
+  .li-reader .li-switch { display: inline-flex; flex: 1; min-width: 0; align-items: center; gap: 6px; color: var(--ink); }
+  .li-switch strong { font: 700 14px/20px var(--sans); white-space: nowrap; }
+  .li-switch span { overflow: hidden; color: var(--ink-muted); text-overflow: ellipsis; white-space: nowrap; }
+  .li-switch svg { flex-shrink: 0; color: var(--ink-secondary); }
+  .li-switch.is-static svg { display: none; }
+}
+
+@container li-reader (max-width: 599px) {
+  .li-bar { min-height: 49px; gap: 12px; padding: 14px 16px; }
+  .li-return { font-size: 16px; line-height: 20px; }
+  .li-return .li-wide, .li-bar-note, .li-wide-actions, .li-bar-link.li-wide { display: none; }
+  .li-reader .li-switch { justify-content: center; }
+  .li-narrow-action { display: inline; font: 400 14px/20px var(--sans); }
+  .li-body { padding: 20px 16px 32px; }
+  .li-column { gap: 16px; }
+  .li-column-preview, .li-column-outcome { gap: 16px; }
+  .li-as.is-read { gap: 8px; color: var(--ink-secondary); font-size: 13px; line-height: 18px; }
+  .li-as.is-read .li-mark, .li-as.is-read .li-mark.is-empty { flex-basis: 20px; width: 20px; height: 20px; font-size: 10px; line-height: 12px; }
+  .li-as.is-read .li-narrow { display: inline; margin-left: auto; }
+  .li-copy { font-size: 16px; line-height: 26px; }
+  .li-read-grid { gap: 6px; }
+  .li-read-images figcaption { display: none; }
+  .li-dock:not([hidden]) { position: sticky; z-index: 8; bottom: 0; display: block; padding: 12px 16px 20px; border-top: 1px solid var(--paper-border); background: var(--paper-bg); }
+  .li-dock .li-button { display: flex; width: 100%; padding: 12px; font-size: 15px; line-height: 20px; }
+  .li-text { min-height: 160px; padding: 16px; font-size: 16px; line-height: 26px; }
+  .li-row { gap: 10px; }
+  .li-thumb, .li-thumb-wrap { flex-basis: 80px; width: 80px; }
+  .li-thumb { height: 42px; }
+  .li-picker-block { padding-left: 0; }
+  .li-notes { padding: 16px; }
+  .li-notes dl > div { flex-direction: column; gap: 2px; }
+  .li-notes dt { flex-basis: auto; }
+  .li-as-note { padding-left: 0; }
+  .li-card-images.is-two .li-media { height: 160px; }
+  .li-gaps h1 { font-size: 26px; line-height: 32px; }
+}
+
+@media (max-width: 820px) {
+  .app-shell .li-bar { top: var(--top-menu-height); }
+  .app-shell .li-reader { min-height: calc(100svh - var(--top-menu-height)); }
+}

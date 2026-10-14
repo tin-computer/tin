@@ -168,6 +168,80 @@ def _active_accounts(connection, actor) -> list[dict]:
     ]
 
 
+def _unavailable_accounts(connection, actor) -> list[dict]:
+    """The connection's other accounts, named so a draft aimed at one can say why it can't
+    post: another member's own profile, or an account LinkedIn no longer connects."""
+
+    return [
+        {
+            "urn": item["urn"],
+            "kind": item["kind"],
+            "name": item["name"],
+            "reason": "another_member" if item.get("active") else "disconnected",
+        }
+        for item in connection.configuration.get("accounts") or []
+        if not (item.get("active") and may_post_as(connection, item, actor))
+    ]
+
+
+# Publications of one draft file, newest first; the reader shows each post's latest.
+PUBLICATIONS = """
+SELECT r.id, r.status, r.error_message, r.created_at, r.finished_at,
+       a.result AS approval, p.status AS sent, m.result AS answer
+FROM workflow_runs r
+JOIN effect_receipts a
+  ON a.execution_key = 'linkedin:approved:' || (r.input->>'approval_id')
+ AND a.status = 'completed'
+LEFT JOIN effect_receipts p
+  ON p.execution_key = 'linkedin:post:' || (r.input->>'approval_id')
+LEFT JOIN effect_receipts m
+  ON m.execution_key = r.id::text || ':linkedin_post' AND m.status = 'completed'
+WHERE r.project_id = $1 AND r.executor = $2 AND a.result->>'project_id' = $1::text
+  AND a.result->>'path' = $3
+ORDER BY r.created_at DESC, r.id DESC
+LIMIT 60
+"""
+STILL_SENDING = {"pending", "running", "paused"}
+
+
+def _json(value) -> dict:
+    if isinstance(value, str):
+        value = json.loads(value)
+    return value if isinstance(value, dict) else {}
+
+
+def _publication(row) -> dict:
+    """Where one approved post stands on LinkedIn, from the run and its receipts.
+
+    Without a send receipt nothing reached LinkedIn. LinkedIn's settled answer is recorded
+    once it comes; a send with no answer may have posted, so it is never called unpublished.
+    """
+
+    approval, answer = _json(row["approval"]), _json(row["answer"])
+    status = row["status"]
+    published = answer.get("status") == "published" and bool(answer.get("url"))
+    if status in STILL_SENDING:
+        state = "publishing"
+    elif status == "succeeded" or published:
+        state = "published"
+    elif row["sent"] is None or answer.get("status") in {"failed", "cancelled"}:
+        state = "not_published"
+    else:
+        state = "uncertain"
+    account = approval.get("account") or {}
+    when = answer.get("published_at") if published else None
+    return {
+        "post_id": approval.get("post_id"),
+        "run_id": str(row["id"]),
+        "state": state,
+        "url": answer.get("url") if published else None,
+        "at": when or (row["finished_at"] or row["created_at"]).isoformat(),
+        "account": {key: account.get(key) for key in ("urn", "kind", "name")},
+        "text": approval.get("text", ""),
+        "message": row["error_message"] if state in {"not_published", "uncertain"} else None,
+    }
+
+
 class LinkedInPosts:
     def __init__(self, runtime, settings):
         self.runtime, self.settings = runtime, settings
@@ -181,16 +255,39 @@ class LinkedInPosts:
             raise LookupError("project not found")
         return project
 
-    async def accounts(self, project_id, actor) -> list[dict]:
-        """The accounts the actor may post as; empty while LinkedIn posting isn't connected."""
+    async def posting_as(self, project_id, actor) -> dict:
+        """The accounts the actor may post as, and the connection's others. Neither is listed
+        while LinkedIn posting isn't connected."""
 
         try:
             connection = await self.runtime.integrations.linkedin_posting.connection(project_id)
         except IntegrationError:
-            return []
-        return _active_accounts(connection, actor)
+            return {"connected": False, "accounts": [], "unavailable": []}
+        return {
+            "connected": True,
+            "accounts": _active_accounts(connection, actor),
+            "unavailable": _unavailable_accounts(connection, actor),
+        }
+
+    async def publications(self, project_id, actor, path) -> dict:
+        """Each post's latest publication from this draft file, keyed by post ID."""
+
+        await self.project(project_id, actor)
+        latest: dict[str, dict] = {}
+        for row in await self.db.pool.fetch(PUBLICATIONS, project_id, KEY, path):
+            item = _publication(row)
+            latest.setdefault(item["post_id"], item)
+        return latest
 
     async def read(self, project_id, actor, path):
+        view = await self._read(project_id, actor, path)
+        return {
+            **view,
+            **await self.posting_as(project_id, actor),
+            "publications": await self.publications(project_id, actor, path),
+        }
+
+    async def _read(self, project_id, actor, path):
         project = await self.project(project_id, actor)
         if not safe_project_file_path(path) or not path.endswith(".json"):
             raise ValueError("Choose a LinkedIn draft JSON file in this project.")
@@ -209,7 +306,6 @@ class LinkedInPosts:
             "revision": revision,
             "draft": validate_draft(raw),
             "sha256": digest(raw),
-            "accounts": await self.accounts(project_id, actor),
         }
 
     async def save(
@@ -239,7 +335,7 @@ class LinkedInPosts:
         }
 
     async def snapshot(self, project_id, actor, path, post_id):
-        view = await self.read(project_id, actor, path)
+        view = await self._read(project_id, actor, path)
         post = next((p for p in view["draft"]["posts"] if p["id"] == post_id), None)
         if not post:
             raise LookupError("post not found")
