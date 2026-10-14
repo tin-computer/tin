@@ -14,6 +14,9 @@ from uuid import UUID
 
 OUTPUT_PATH = "social/posts/{date}-{slug}.md"
 STYLE_PATH = ".agents/skills/writing-style/SKILL.md"
+# The project's ICP and go-to-market strategy: who the posts are for. Guidance, never facts.
+ICP_PATH = "strategy/ICP.md"
+ICP_BYTES = 8_192
 ARTICLE_GLOBS = ("content/drafts/*.md", "content/articles/*.md")
 LEGACY_ARTICLE = "reports/PUBLIC_ARTICLE.md"
 MODEL_INPUT_BYTES = 32_000
@@ -85,6 +88,12 @@ WEEKLY_INSTRUCTIONS = (
     "Use the platform of its corresponding slot. X bodies under 220 UTF-8 bytes; LinkedIn "
     "bodies under 900 characters. No links, hashtags, headings or threads. Return only JSON."
 )
+# Added only when strategy/ICP.md is read, so a project without it sends the same request.
+ICP_INSTRUCTIONS = (
+    " The icp field is the project's ICP and go-to-market strategy: the buyers these posts are "
+    "for, their problems, triggers and objections. Aim each post at those buyers. Like the "
+    "product context, it guides targeting and is never factual evidence or a source excerpt."
+)
 WEEKLY_POST = {
     "type": "object",
     "additionalProperties": False,
@@ -127,6 +136,22 @@ def _optional_file(files, path):
     if not isinstance(value, str):
         raise ValueError(f"{path} is not valid text")
     return value
+
+
+def _read_icp(files):
+    """The ICP strategy and a review note: ("", None) when absent, ("", note) when it cannot be
+    used. A missing or oversized file never fails the run."""
+    try:
+        value = files.read_text(ICP_PATH)
+    except FileNotFoundError:
+        return "", None
+    except (ValueError, OSError):
+        return "", "could not be read, so it was skipped"
+    if not isinstance(value, str) or not value.strip():
+        return "", None
+    if len(value.encode("utf-8")) > ICP_BYTES:
+        return "", "over 8 KB, so it was skipped"
+    return value.strip(), None
 
 
 def _calendar(plan):
@@ -359,14 +384,18 @@ def _read_article(ctx, inputs):
     }
 
 
-def _request_fits(data, instructions=INSTRUCTIONS, schema=SCHEMA):
+def _fits(data, instructions=INSTRUCTIONS, schema=SCHEMA):
     # The gateway ASCII-escapes the inner data JSON, then UTF-8 encodes the
     # outer request. Leave room for its message wrapper; never cut source text.
     rough = json.dumps(
         {"system": instructions, "user": json.dumps(data, allow_nan=False), "schema": schema},
         ensure_ascii=False,
     )
-    if len(rough.encode("utf-8")) + 2048 > MODEL_INPUT_BYTES:
+    return len(rough.encode("utf-8")) + 2048 <= MODEL_INPUT_BYTES
+
+
+def _request_fits(data, instructions=INSTRUCTIONS, schema=SCHEMA):
+    if not _fits(data, instructions, schema):
         raise ValueError("The source material and guidance exceed one model request")
 
 
@@ -478,6 +507,11 @@ def _render_weekly(source, posts):
             f"- Context: `{source['context_path']}`"
             if source["context_path"]
             else "- Context: none",
+            *(
+                [f"- ICP and go-to-market strategy: {source['icp_line']}"]
+                if source.get("icp_line")
+                else []
+            ),
             f"- Prior batches checked: {len(history['files'])} of {history['total']} "
             "discovered; date descending, same-day order unspecified.",
             f"- Prior draft bodies shown to the model: {len(source['prior_prompt_bodies'])} "
@@ -603,10 +637,23 @@ async def run(ctx, inputs):
             "prior_draft_bodies": source["prior_prompt_bodies"],
         }
         _request_fits(data, WEEKLY_INSTRUCTIONS, WEEKLY_SCHEMA)
+        instructions = WEEKLY_INSTRUCTIONS
+        icp, note = _read_icp(ctx.files)
+        source["icp_line"] = f"`{ICP_PATH}` {note}" if note else None
+        if icp:
+            # The ICP fills room the sources leave; it never pushes source notes out.
+            with_icp = WEEKLY_INSTRUCTIONS + ICP_INSTRUCTIONS
+            if _fits({**data, "icp": icp}, with_icp, WEEKLY_SCHEMA):
+                data, instructions = {**data, "icp": icp}, with_icp
+                source["icp_line"] = f"`{ICP_PATH}`"
+            else:
+                source["icp_line"] = (
+                    f"`{ICP_PATH}` did not fit beside the sources, so it was skipped"
+                )
         response = await ctx.models.generate(
             route="draft",
             step="draft_weekly_social_posts",
-            instructions=WEEKLY_INSTRUCTIONS,
+            instructions=instructions,
             data=data,
             output_schema=WEEKLY_SCHEMA,
         )

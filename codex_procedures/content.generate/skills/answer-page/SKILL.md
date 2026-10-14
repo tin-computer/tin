@@ -7,7 +7,8 @@ description: Draft one answer page for a buyer question AI answers missed the si
    the date the page prints as its last update. Read the cited audit finding in
    `content_draft.evidence`; it says which sampled AI answers left the site out.
 2. Read the positioning files in `content_draft.positioning` and the writing guide. They decide
-   how the product is described; the question decides what the page answers.
+   how the product is described; the question decides what the page answers. When they include
+   `strategy/ICP.md`, write for the buyer it names; never cite it or take facts from it.
 3. Search the site's own pages for the question first. When one already answers it directly
    and plainly, record `already_covered` instead of writing a competing page.
 4. Research the question on the public web. Open the official page of every product, tool or

@@ -115,6 +115,30 @@ has no such file, that read returns the `### Code map` section, so they find wha
 `product.code_map` wrote. A real file at that path still wins. New packages should call
 `read_section`.
 
+## The ICP and go-to-market strategy
+
+A project keeps its ICPs and go-to-market strategy in one file: `strategy/ICP.md`. It is a
+Markdown marketing strategy under 8 KB, with one `## ` section per ICP (company, buyer,
+disqualifiers, problem statement, job to be done, pains, triggers, fit signals, outcomes,
+objections, next step) and messaging themes per ICP. Per-ICP positioning stays in
+`brand/BRAND.md`.
+
+It lives in `strategy/`, not inside `brand/BRAND.md` or under `context/`. Readers take only the
+first 8,000 bytes of the brand guide (and some only its `## Brand direction` section), so an ICP
+inside it gets cut off; the brand guide also comes from brand capture and describes identity,
+not who to sell to. `context/` holds material the founder supplies, which may be refreshed from
+their own files, and readers take only its first few notes in name order, so an ICP there can
+be overwritten or skipped.
+
+Workflows read it as guidance about who the work is for, the way they read the brand guide,
+and never as evidence. It states hypotheses about buyers, so a planner or writer must not cite
+it or take product facts from it. Each reader has its own 8 KB cap outside its other budgets: a
+project without the file reads exactly what it read before, and a larger file is skipped with a
+note rather than cut. The readers are `content.plan`, `content.generate`, `content.refresh`,
+`social.content_plan`, `social.post_batch` (weekly mode), `social.x_compose` and
+`organic.prompt_panel`. `organic.keyword_plan` (and the organic traffic system) takes its buyer
+context from the file when no `buyer_context` is supplied; see `src/tin_lite/project_strategy.py`.
+
 ## Latest files for new runs, stable files for retries
 
 At admission, Tin reads the project's canonical HEAD once, checks artifact prerequisites

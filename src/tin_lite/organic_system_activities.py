@@ -474,7 +474,12 @@ class OrganicSystemActivities:
             return {
                 "site_url": inputs["site_url"],
                 "market": inputs["market"],
-                "buyer_context": inputs["buyer_context"],
+                # Left out when empty: the keyword plan then reads strategy/ICP.md.
+                **(
+                    {"buyer_context": inputs["buyer_context"]}
+                    if (inputs.get("buyer_context") or "").strip()
+                    else {}
+                ),
                 "max_cost_usd": inputs["keyword_max_cost_usd"],
             }, None
         if step == "technical":

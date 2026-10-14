@@ -13,7 +13,10 @@ context: `context/product-marketing.md`, `reports/GROWTH_ONBOARDING_PLAN.md`,
 `brand/BRAND.md`, legacy `BRAND.md`, then `wiki/INDEX.md`. `context_text` is a fallback
 when no usable file exists. It also reads the optional writing guide at
 `.agents/skills/writing-style/SKILL.md`. A dedicated product brief takes precedence,
-so an old wiki cannot override current context.
+so an old wiki cannot override current context. When `strategy/ICP.md` (the ICP and
+go-to-market strategy) is present and under 8 KB, the plan and weekly batches also send it to
+the model as guidance about who the posts are for, never as a source; it is added only when it
+fits beside the product context, and the output names it or says why it was skipped.
 
 The result, `social/PLAN.md`, contains the audience, objective, platform reasoning,
 three to five pillars totaling 100%, a weekly calendar and a time budget. The first

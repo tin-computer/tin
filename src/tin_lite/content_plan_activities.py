@@ -59,6 +59,7 @@ from tin_lite.model_providers import MessageRole, ModelMessage, ModelRequest
 from tin_lite.model_usage import model_usage_scope
 from tin_lite.organic_audit import canonical_json, digest
 from tin_lite.organic_audit_publication import publish_artifacts
+from tin_lite.project_strategy import STRATEGY_LABEL, STRATEGY_PATH
 from tin_lite.technical_fix import fetch_page
 from tin_lite.workflow_evidence import integration_inventory
 
@@ -306,6 +307,19 @@ class ContentPlanActivities:
             )
             return revision
 
+    async def positioning_context(self, project, revision):
+        """The project's positioning files and its ICP and go-to-market strategy, with a note
+        when the strategy is too large to read."""
+        notes = []
+        files = await positioning_files(
+            storage=self.storage,
+            project=project,
+            revision=revision,
+            include_strategy=True,
+            notes=notes,
+        )
+        return {"positioning": files, **({"positioning_notes": notes} if notes else {})}
+
     async def research_inputs(self, project, context):
         """The merged competitor list and the project files the planning agent should read."""
         sources = context["research"].get("sources") or {}
@@ -367,6 +381,10 @@ class ContentPlanActivities:
             "Traffic snapshot": SNAPSHOT_PATH,
             "Project memory and Code map": "wiki/INDEX.md",
             "Brand guide": POSITIONING_PATHS[0],
+            # Listed only when the positioning read kept it (present and within 8 KB).
+            STRATEGY_LABEL: STRATEGY_PATH
+            if any(f["path"] == STRATEGY_PATH for f in context.get("positioning") or [])
+            else None,
             "Start here plan": "reports/GROWTH_ONBOARDING_PLAN.md",
             "Writing style": legacy_style_path(),
         }
@@ -847,11 +865,7 @@ class ContentPlanActivities:
                             else {}
                         ),
                         **(
-                            {
-                                "positioning": await positioning_files(
-                                    storage=self.storage, project=project, revision=head
-                                )
-                            }
+                            await self.positioning_context(project, head)
                             if contract.POLICY.get("positioning_files") == "project-v1"
                             else {}
                         ),

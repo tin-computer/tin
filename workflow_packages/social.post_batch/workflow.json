@@ -63,7 +63,7 @@
       "flow": {
         "direction": "TD",
         "nodes": [
-          {"id": "weekly", "kind": "store", "label": "Weekly plan and new notes", "fact": "1 to 6 slots, notes unused in 12 batches"},
+          {"id": "weekly", "kind": "store", "label": "Weekly plan and new notes", "fact": "1 to 6 slots, unused notes, ICP if present"},
           {"id": "article", "kind": "store", "label": "Article to repurpose", "fact": "the one article found, or text you paste"},
           {"id": "draft", "kind": "step", "label": "Draft the posts", "fact": "one model call, 4 posts or one per slot"},
           {"id": "check", "kind": "step", "label": "Check each draft", "fact": "cited excerpt, no links, no new numbers"},

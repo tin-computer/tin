@@ -7,7 +7,9 @@ description: Propose exact title, snippet, H1 and opening-answer replacements fo
    position, `upside`, searches), `current` (the page's title, meta description, H1, opening answer and
    paragraphs, as a reader sees them), `limits` and `results_markdown`.
 2. Read the files in `positioning_sources` and the `style_guide`, if named. They decide how the
-   product is described. The searches decide which words the page leads with.
+   product is described. The searches decide which words the page leads with. When
+   `icp_source` names `strategy/ICP.md`, read it for the buyer the page is for; it never
+   supports a claim.
 3. Diagnose from the evidence:
    - Low click-through near the top: the snippet (title and meta description) doesn't match
      what searchers typed or gives no reason to pick this result.

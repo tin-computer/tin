@@ -141,6 +141,8 @@ INPUT_SCHEMA = {
             "title": "Product and buyers",
             "minLength": 20,
             "maxLength": 2000,
+            "description": "Leave empty to take it from strategy/ICP.md, or from the brand "
+            "guide's direction.",
         },
         "start_date": {
             "type": "string",
@@ -207,7 +209,7 @@ INPUT_SCHEMA = {
             "default": "10:00",
         },
     },
-    "required": ["project_id", "site_url", "market", "buyer_context", "start_date"],
+    "required": ["project_id", "site_url", "market", "start_date"],
 }
 
 

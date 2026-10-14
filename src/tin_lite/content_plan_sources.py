@@ -13,6 +13,12 @@ from tin_lite.keyword_plan import LIMITS as KEYWORD_LIMITS
 from tin_lite.keyword_plan import paths as keyword_paths
 from tin_lite.organic_audit import ARTIFACT_LIMITS, audit_hosts, audit_paths, canonical_json, digest
 from tin_lite.project_files import safe_project_file_path
+from tin_lite.project_strategy import (
+    STRATEGY_FILE_BYTES,
+    STRATEGY_LABEL,
+    STRATEGY_PATH,
+    strategy_skipped_note,
+)
 
 
 async def research_sources(
@@ -794,6 +800,9 @@ POSITIONING_CONTEXT_PREFIX = "context/"
 POSITIONING_NOTES = 5
 POSITIONING_FILE_BYTES = 8_000
 POSITIONING_TOTAL_BYTES = 30_000
+# The project's ICP and go-to-market strategy (`project_strategy`) is read only by callers that
+# ask for it, on its own 8 KB cap outside the total above, so a project without it reads exactly
+# what it read before.
 
 
 async def _read_if_exists(storage, project, revision, path):
@@ -808,9 +817,14 @@ async def _read_if_exists(storage, project, revision, path):
         return None
 
 
-async def positioning_files(*, storage, project, revision, include_memory=True):
+async def positioning_files(
+    *, storage, project, revision, include_memory=True, include_strategy=False, notes=None
+):
     """The project's own positioning, bounded. Missing files are simply absent; the plan then
-    says so in its gaps instead of inventing a positioning."""
+    says so in its gaps instead of inventing a positioning.
+
+    With `include_strategy`, `strategy/ICP.md` comes last when it is present and within its
+    8 KB cap; a larger one is left out and `notes` (when given) says why."""
     paths = [path for path in POSITIONING_PATHS if include_memory or path != "wiki/INDEX.md"]
     list_files = getattr(storage, "list_canonical_files_at", None)
     if list_files is not None:
@@ -841,4 +855,20 @@ async def positioning_files(*, storage, project, revision, include_memory=True):
                 "content": excerpt,
             }
         )
+    if include_strategy:
+        raw = await _read_if_exists(storage, project, revision, STRATEGY_PATH)
+        if raw and len(raw) > STRATEGY_FILE_BYTES:
+            if notes is not None:
+                notes.append(strategy_skipped_note(len(raw)))
+        elif raw:
+            result.append(
+                {
+                    "path": STRATEGY_PATH,
+                    "label": STRATEGY_LABEL,
+                    "revision": revision,
+                    "sha256": hashlib.sha256(raw).hexdigest(),
+                    "truncated": False,
+                    "content": raw.decode("utf-8", errors="ignore"),
+                }
+            )
     return result

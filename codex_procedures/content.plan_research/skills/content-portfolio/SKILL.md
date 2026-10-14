@@ -17,6 +17,10 @@ Read before you plan:
 - `wiki/INDEX.md` (project memory and the Code map), the brand guide, the Start here plan and the
   founder notes in `context/`: what the product does, for whom, what it costs, how it is used,
   what it integrates with, what it is not.
+- The ICP and go-to-market strategy (`strategy/ICP.md`), when the brief lists it: the buyers this
+  work is for, one section per ICP (company, buyer, problem, job to be done, pains, triggers,
+  objections) with their messaging themes. Use it to choose whose questions each page answers.
+  It is guidance, not evidence: never cite it or take product facts from it.
 - `context.json` → `program`: host, market, horizon, weeks, `pieces_per_week`, `slots`, the
   instruction, and `existing_items` (work already planned; in a revision only `editable` weeks
   are yours to plan).
@@ -160,7 +164,8 @@ product tests, sign-ups or sends.
 - research rows and pages by their `source_id` (`keyword:…`, `group:…`, `audit:…`, `refresh:…`,
   `efficacy:…`, `competitor:…`, `page:…`);
 - project files as `file:<path>`; the writer loads only files of 20 KB or less, so cite the
-  small, specific files (the brand guide, a founder note) rather than large JSON;
+  small, specific files (the brand guide, a founder note) rather than large JSON; never cite
+  `strategy/ICP.md`, which says who the page is for, not what is true;
 - web pages you inspected as their `https://` URL.
 
 `evidence_strength`: `measured` (keyword volume, Search Console, a refresh or Page decisions

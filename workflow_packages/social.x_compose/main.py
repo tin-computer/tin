@@ -16,6 +16,9 @@ CONTEXT_PATHS = (
     "brand/BRAND.md",
     "BRAND.md",
 )
+# The project's ICP and go-to-market strategy: who the posts are for. Guidance, never facts.
+ICP_PATH = "strategy/ICP.md"
+ICP_BYTES = 8_192
 MAX_REQUEST_BYTES = 32000
 MAX_OUTPUT_BYTES = 24000
 MAX_READ_BYTES = 64_000
@@ -135,6 +138,14 @@ INSTRUCTIONS = (
     "posts, explain the evidence gap in an editor_notes field. The coverage summary tells "
     "you which complete source and style statements fit the request; omitted statements are "
     "unseen and cannot support a claim. Return only declared JSON."
+)
+
+
+# Added only when strategy/ICP.md is read, so a project without it sends the same request.
+ICP_INSTRUCTIONS = (
+    " The icp field is the project's ICP and go-to-market strategy: the buyers these posts are "
+    "for, their problems, triggers and objections. Aim the posts at those buyers. Like the plan, "
+    "it is not factual evidence: never cite it or take a claim from it."
 )
 
 
@@ -292,9 +303,9 @@ def _guide_segments(guide):
     return segments, skipped
 
 
-def _request_size(data):
+def _request_size(data, instructions=INSTRUCTIONS):
     rough = json.dumps(
-        {"system": INSTRUCTIONS, "user": json.dumps(data, allow_nan=False), "schema": SCHEMA},
+        {"system": instructions, "user": json.dumps(data, allow_nan=False), "schema": SCHEMA},
         ensure_ascii=False,
     )
     return len(rough.encode("utf-8")) + 2048
@@ -381,6 +392,31 @@ def _select_request(
     if _request_size(data) > MAX_REQUEST_BYTES:
         raise ValueError("The selected X draft request exceeds its declared model allowance")
     return data, coverage
+
+
+def _read_icp(files):
+    """The ICP strategy and a note for the editor: ("", None) when absent, ("", note) when it
+    cannot be used. A missing or oversized file never fails the run."""
+    try:
+        value = files.read_text(ICP_PATH)
+    except FileNotFoundError:
+        return "", None
+    except (ValueError, OSError):
+        return "", f"{ICP_PATH} could not be read, so it was skipped."
+    if not isinstance(value, str) or not value.strip():
+        return "", None
+    if len(value.encode("utf-8")) > ICP_BYTES:
+        return "", f"{ICP_PATH} is over 8 KB, so it was skipped. Shorten it to use it."
+    return value.strip(), None
+
+
+def _with_icp(data, icp):
+    """Add the ICP when it fits beside the selected sources; it never pushes a source out."""
+    with_icp = INSTRUCTIONS + ICP_INSTRUCTIONS
+    candidate = {**data, "icp": icp}
+    if _request_size(candidate, with_icp) <= MAX_REQUEST_BYTES:
+        return candidate, with_icp, None
+    return data, INSTRUCTIONS, f"{ICP_PATH} did not fit beside the sources, so it was skipped."
 
 
 def _coverage_note(coverage):
@@ -549,10 +585,14 @@ async def run(ctx, inputs):
     data, coverage = _select_request(
         inputs["direction"], count, units, skipped_long, evidence_paths, style, plan, assets
     )
+    instructions = INSTRUCTIONS
+    icp, icp_note = _read_icp(ctx.files)
+    if icp:
+        data, instructions, icp_note = _with_icp(data, icp)
     response = await ctx.models.generate(
         route="compose",
         step="compose_x_posts",
-        instructions=INSTRUCTIONS,
+        instructions=instructions,
         data=data,
         output_schema=SCHEMA,
     )
@@ -570,7 +610,7 @@ async def run(ctx, inputs):
                 ),
             )
         )
-    note = _coverage_note(coverage)
+    note = " ".join(filter(None, (_coverage_note(coverage), icp_note)))
     if note:
         posts[0]["editor_notes"] = "\n\n".join(filter(None, (posts[0]["editor_notes"], note)))
     artifact = {"schema_version": "tin.social.x_draft.v1", "account_id": account_id, "posts": posts}
