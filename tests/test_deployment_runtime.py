@@ -117,3 +117,61 @@ def test_repeat_install_preserves_separate_app_origin_and_other_authorized_parti
         assert {"app.example", "lite.example"} <= set(
             values["TIN_LITE_EGRESS_ALLOW_HOSTS"].split(",")
         )
+
+
+def _run_gcloud_connect(tmp_path, exit_codes):
+    """Run deploy.sh's retry helper against a fake gcloud that exits with each code in turn."""
+    script = Path("infra/deploy.sh").read_text()
+    helper = "gcloud_connect() {" + script.split("gcloud_connect() {", 1)[1].split("\n}\n", 1)[0]
+    codes = tmp_path / "codes"
+    codes.write_text("".join(f"{code}\n" for code in exit_codes))
+    calls = tmp_path / "calls"
+    fake = tmp_path / "gcloud"
+    fake.write_text(
+        "#!/bin/bash\n"
+        f'echo "$*" >> {calls}\n'
+        f"code=$(head -n 1 {codes}); sed -i 1d {codes}\n"
+        'exit "${code}"\n'
+    )
+    fake.chmod(0o755)
+    result = subprocess.run(  # noqa: S603 — the helper runs only the fake gcloud above
+        [
+            "/bin/bash",
+            "-euo",
+            "pipefail",
+            "-c",
+            f"sleep() {{ :; }}\ninstance=test-host\n{helper}\n}}\n"
+            "gcloud_connect compute scp a b:/c",
+        ],
+        env={"PATH": f"{tmp_path}:/usr/bin:/bin"},
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    return result, calls.read_text().splitlines() if calls.exists() else []
+
+
+def test_deploy_retries_a_refused_connection(tmp_path):
+    result, calls = _run_gcloud_connect(tmp_path, [255, 0])
+    assert result.returncode == 0
+    assert calls == ["compute scp a b:/c", "compute scp a b:/c"]
+    assert "could not connect to test-host (attempt 1 of 3)" in result.stderr
+
+
+def test_deploy_stops_after_three_refused_connections(tmp_path):
+    result, calls = _run_gcloud_connect(tmp_path, [255, 255, 255, 0])
+    assert result.returncode == 255
+    assert len(calls) == 3
+
+
+def test_deploy_does_not_retry_other_failures(tmp_path):
+    result, calls = _run_gcloud_connect(tmp_path, [1, 0])
+    assert result.returncode == 1
+    assert len(calls) == 1
+
+
+def test_deploy_never_retries_activation():
+    script = Path("infra/deploy.sh").read_text()
+    activation = script.split("activate_release.sh takes the host lock", 1)[1]
+    assert "\ngcloud compute ssh" in activation
+    assert "gcloud_connect" not in activation

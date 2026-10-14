@@ -69,6 +69,25 @@ if [[ -n "${github_private_key_path}" ]]; then
   fi
 fi
 
+# OS Login authorizes every connection and now and then refuses one it accepts a moment
+# later. Retry a connection that never got through (ssh and scp exit 255) for steps that
+# are safe to repeat. Activation is not one of them: 255 can also be its own exit status.
+gcloud_connect() {
+  local attempt status
+  for attempt in 1 2 3; do
+    status=0
+    gcloud "$@" || status=$?
+    if [[ "${status}" != 255 ]]; then
+      return "${status}"
+    fi
+    if [[ "${attempt}" != 3 ]]; then
+      echo "gcloud $1 $2 could not connect to ${instance} (attempt ${attempt} of 3); retrying" >&2
+      sleep "$((attempt * 5))"
+    fi
+  done
+  return 255
+}
+
 release_sha="$(git -C "${release_source}" rev-parse HEAD)"
 temporary_dir="$(mktemp -d)"
 trap 'rm -rf "${temporary_dir}"' EXIT
@@ -78,7 +97,7 @@ git -C "${release_source}" archive --format=tar.gz \
 # Each deploy uploads into its own private directory, so deploys by different people (or
 # by CI) never collide on files another account left in /tmp. A first connection may print
 # key-generation output, so only the directory line is kept.
-upload_dir="$(gcloud compute ssh "${instance}" \
+upload_dir="$(gcloud_connect compute ssh "${instance}" \
   --project "${TIN_LITE_GCP_PROJECT}" --zone "${zone}" --quiet \
   --command='mktemp -d /tmp/tin-deploy.XXXXXXXXXX' |
   tr -d '\r' | grep -E '^/tmp/tin-deploy\.[A-Za-z0-9]{10}$' | tail -n 1 || true)"
@@ -91,7 +110,7 @@ release_files=("${temporary_dir}/tin-lite-release.tar.gz")
 if [[ "${upload_env}" == "1" ]]; then
   release_files+=(.env)
 fi
-gcloud compute scp \
+gcloud_connect compute scp \
   "${release_files[@]}" \
   infra/install_switchboard.sh \
   infra/install_forward_proxy.sh \
@@ -102,11 +121,11 @@ gcloud compute scp \
   --project "${TIN_LITE_GCP_PROJECT}" --zone "${zone}" --quiet
 
 if [[ -n "${github_private_key_path}" ]]; then
-  gcloud compute scp \
+  gcloud_connect compute scp \
     "${github_private_key_path}" \
     "${instance}:${upload_dir}/tin-lite-github-app.pem" \
     --project "${TIN_LITE_GCP_PROJECT}" --zone "${zone}" --quiet
-  gcloud compute ssh "${instance}" \
+  gcloud_connect compute ssh "${instance}" \
     --project "${TIN_LITE_GCP_PROJECT}" --zone "${zone}" --quiet \
     --command="sudo chown root:root ${upload_dir}/tin-lite-github-app.pem && \
 sudo chmod 600 ${upload_dir}/tin-lite-github-app.pem"
