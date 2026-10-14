@@ -1,0 +1,97 @@
+{
+  "package_format": "tin-workflow-package-v1",
+  "definition": {
+    "key": "growth.buyer_moments",
+    "title": "Get ready before the moments your buyers suddenly need you",
+    "description": "Finds the dated moments in your buyers' year when they suddenly need what you sell (festivals, exam results, tax and admission deadlines, seasons), verifies this year's dates, schedules backwards from each one so every post, email and page ships in time, drafts them in your voice, and checks your checkout takes the local currency and payment methods of that market. Never publishes or sends.",
+    "executor": "codex.procedure",
+    "version": "1.0.0",
+    "schedule_modes": ["on_demand", "weekly"],
+    "input_schema": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["project_id"],
+      "properties": {
+        "project_id": { "type": "string", "format": "uuid" },
+        "market": {
+          "type": "string",
+          "title": "Market (optional)",
+          "description": "The country or region whose calendar to use, such as India or Brazil. Leave empty to use the markets in your growth plan.",
+          "maxLength": 200,
+          "default": "",
+          "x-tin-ui": { "control": "text", "order": 10 }
+        },
+        "horizon_days": {
+          "type": "integer",
+          "title": "How far ahead to look (days)",
+          "minimum": 30,
+          "maximum": 180,
+          "default": 90,
+          "x-tin-ui": { "control": "counter", "order": 20 }
+        },
+        "max_moments": {
+          "type": "integer",
+          "title": "Maximum moments to prepare",
+          "minimum": 1,
+          "maximum": 8,
+          "default": 4,
+          "x-tin-ui": { "control": "counter", "order": 30 }
+        },
+        "context": {
+          "type": "string",
+          "title": "Anything to include or avoid (optional)",
+          "description": "Moments you already know matter, ones to skip, or channels you don't use. Never credentials.",
+          "maxLength": 2000,
+          "default": "",
+          "x-tin-ui": { "control": "textarea", "order": 40 }
+        }
+      }
+    },
+    "prerequisites": [
+      {
+        "kind": "artifact",
+        "level": "recommended",
+        "path": "reports/GROWTH_ONBOARDING_PLAN.md",
+        "producer": "growth.onboarding_plan",
+        "reason": "The growth plan names the buyers and markets whose calendar matters, and records hard no's such as no discounting or no cold email."
+      },
+      {
+        "kind": "artifact",
+        "level": "recommended",
+        "path": "wiki/INDEX.md",
+        "section": "### Feature map",
+        "producer": "product.deep_dive",
+        "reason": "The Feature map says what the product actually does, so each moment is tied to a real feature rather than a generic greeting."
+      },
+      {
+        "kind": "artifact",
+        "level": "recommended",
+        "path": "wiki/INDEX.md",
+        "section": "### Code map",
+        "producer": "product.code_map",
+        "reason": "The Code map shows the payment provider and pricing code, used to check whether checkout accepts each market's currency and payment methods."
+      },
+      {
+        "kind": "artifact",
+        "level": "recommended",
+        "path": ".agents/skills/writing-style/SKILL.md",
+        "producer": "style.capture",
+        "reason": "A captured writing style guide shapes every drafted post, email and message."
+      }
+    ],
+    "procedure": {
+      "prompt_path": "PROMPT.md",
+      "skills_path": "skills",
+      "skill_files": ["skills/buyer-moments/SKILL.md", "skills/buyer-moments/SCHEDULE.md"],
+      "entry_skill": "buyer-moments",
+      "workspace": { "kind": "project.state" },
+      "sandbox": { "profile": "isolated", "egress": "fenced", "timeout_seconds": 900 },
+      "output": {
+        "kind": "project.artifact",
+        "path_template": "reports/growth/moments/{run_id}.md",
+        "media_type": "text/markdown",
+        "max_bytes": 150000
+      }
+    }
+  }
+}
