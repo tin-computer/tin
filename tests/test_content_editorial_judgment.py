@@ -150,6 +150,28 @@ def test_covered_without_reading_the_destination_finishes_as_insufficient_eviden
     assert proof["outcome"] == "insufficient_evidence"
 
 
+def test_a_new_page_is_drafted_even_when_no_current_page_could_be_read():
+    # 1.17.0 always drafts the planned item: unreadable neighbours shape the notes, not whether
+    # the page gets written, so the paid draft publishes for review.
+    context = {**sample_context(), "output_validator": content_draft.EDITORIAL_VALIDATOR}
+    value = judgment(context, "draft")
+    value["compared_pages"][0]["status"] = "unavailable"
+    value["compared_pages"][0]["coverage"] = "The docs page returned no readable text."
+    proof = validate_pair(ARTICLE, judgment_notes(context, value), context)
+    assert proof["outcome"] == "draft"
+    value["compared_pages"] = []
+    proof = validate_pair(ARTICLE, judgment_notes(context, value), context)
+    assert proof["outcome"] == "draft"
+
+
+def test_an_update_draft_still_needs_its_destination_read():
+    context = update_context()
+    value = judgment(context, "draft")
+    value["compared_pages"][0]["status"] = "unavailable"
+    with pytest.raises(ValueError, match="exact update destination"):
+        validate_pair(ARTICLE, judgment_notes(context, value), context)
+
+
 async def prepared(f, outcome, *, publish=True):
     run = await start(f, key=str(uuid4()))
     activities = TinActivities(

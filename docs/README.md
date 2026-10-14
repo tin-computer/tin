@@ -22,6 +22,7 @@ remain authoritative; older contract versions are retained for compatibility.
 - [Optional billing](self-hosted-billing.md), [billing coverage](workflow-billing-coverage.md)
   and [model accounting](model-service-accounting.md).
 - [Authentication and integrations](auth-and-integrations.md),
+  [GitHub repositories](github-repositories.md),
   [MCP authentication](clerk-agent-connection.md) and [domain configuration](app-domain-rollout.md).
 - [Public ChatGPT plugin](public-plugin.md): existing-project tools, isolated OAuth resource,
   package source and public-review preparation.

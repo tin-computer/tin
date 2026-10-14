@@ -2,9 +2,13 @@
 
 ## In plain language
 
-A calendar entry is not an obligation to publish. Before writing, Tin compares the selected
-brief with current pages. It drafts only when it can explain a worthwhile reader benefit.
-Otherwise it saves a short assessment instead of another article to approve.
+Since content.generate 1.17.0 every planned item gets a draft: when the founder asks for a
+page, Tin writes it. Before writing, Tin still compares the brief with current pages, and uses
+what it finds to give the page its own angle and links. The only time a 1.17.0 run saves an
+assessment instead is an update whose page could not be read, because replacement copy needs
+the page it replaces. Runs pinned to 1.4.0–1.16.0 keep the four outcomes below, and Tin still
+accepts a no-draft judgment from a newer run, so a model that ignores the instruction ends
+with a saved assessment rather than a failed run it already paid for.
 
 ## Contract
 
@@ -48,8 +52,9 @@ The existing two paths and atomic CAS/checkpoint mechanism are unchanged:
 The judgment is one JSON block under `## Editorial judgment`, containing `outcome`,
 `rationale`, `reader_gain`, `change_scope`, and `compared_pages` (URL, inspected/unavailable,
 coverage). Validation rejects unsupported outcomes, duplicate fields/pages, credential URLs,
-unbound notes, missing reader gain/scope for drafts, absent inspected own-site coverage,
-uninspected update destinations, and article/assessment disagreement. Unavailable pages do
+unbound notes, missing reader gain/scope for drafts, uninspected update destinations, and
+article/assessment disagreement. A draft of a new page no longer needs any inspected page
+(1.17.0): unreadable neighbours are recorded, not grounds to fail a paid draft. Unavailable pages do
 not establish already-covered status. Mechanical checks validate the contract and accounting,
 not the truth of an editorial verdict or a promise of ranking/citation gains.
 

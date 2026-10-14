@@ -88,6 +88,24 @@ section of `/home/user/state/wiki/INDEX.md`.
    versus `apps/api`). The product the founder sells is the one the README, the deploy config,
    and `focus` point at; other apps get an area of their own only if budget remains.
 
+### Several repositories
+
+When the run prompt lists CONNECTED REPOSITORIES, the founder keeps code in more than one
+repository, for example the marketing website in one and the app in another. Each one listed
+with a path is a read-only snapshot under the same ground rules as `/home/user/project`.
+
+1. The product the founder sells usually lives in a `product code` repository; the `website`
+   repository then contributes the public site as one area. Spend the file budget where the
+   product is, and orient (§2) in each repository with at most five files apiece.
+2. Write one section for all of them. Prefix each `#### <Area>` heading with the repository's
+   short name when there is more than one, for example `#### app: Settings`.
+3. Evidence in the repository at `/home/user/project` stays `path:line`. Evidence in any other
+   repository is `<owner>/<name>:path:line`, still at most 160 characters.
+4. The heading's commit is the `/home/user/project` repository's. `- Commit:` lists every
+   repository you read: `- Commit: <sha> (<owner>/<name>); <sha> (<owner>/<name>)`, using the
+   commits the run prompt gives (`head_sha` in its trusted run context).
+5. A repository listed as not available goes under `**Not read**` with the reason given.
+
 ## 3. Find entry points
 
 Routes are the skeleton of the map. Locate the route source for the framework detected in §2,

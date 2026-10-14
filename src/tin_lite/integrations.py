@@ -2464,14 +2464,19 @@ class IntegrationService:
         execution_key: str,
         run_id: UUID | None = None,
         expected_binding: GitHubRepositoryBinding | None = None,
+        repository: str | None = None,
     ) -> GitHubRepositoryBundle:
-        """Build a bounded immutable repository archive without exposing GitHub auth to E2B."""
+        """Build a bounded immutable repository archive without exposing GitHub auth to E2B.
+
+        Without `repository` it reads the website repository; a named one must be one of
+        the connection's code repositories, read as context only.
+        """
         if not execution_key or len(execution_key) > 200:
             raise IntegrationError("GitHub execution key is invalid")
         connection = await self._connection(project_id, GITHUB_PROVIDER)
         if expected_binding is not None:
             await self._check_github_binding(project_id, connection, expected_binding)
-        repository = connection.configuration.get("selected_repository")
+        repository = _target_repository(connection, repository, expected_binding)
         permissions = connection.configuration.get("permissions", {})
         if (
             not isinstance(repository, str)
@@ -2702,6 +2707,7 @@ class IntegrationService:
         base_branch: str,
         run_id: UUID | None = None,
         expected_binding: GitHubRepositoryBinding | None = None,
+        repository: str | None = None,
     ) -> GitHubOpenPullRequestEvidence:
         """Read bounded open-PR evidence without exposing GitHub auth to E2B."""
         if not execution_key or len(execution_key) > 200:
@@ -2711,7 +2717,7 @@ class IntegrationService:
         connection = await self._connection(project_id, GITHUB_PROVIDER)
         if expected_binding is not None:
             await self._check_github_binding(project_id, connection, expected_binding)
-        repository = connection.configuration.get("selected_repository")
+        repository = _target_repository(connection, repository, expected_binding)
         permissions = connection.configuration.get("permissions", {})
         if (
             not isinstance(repository, str)
@@ -3401,10 +3407,12 @@ class IntegrationService:
         expected_binding: GitHubRepositoryBinding | None = None,
         allow_unrelated_base_advance: bool = False,
         blocking_paths: frozenset[str] | None = None,
+        repository: str | None = None,
     ) -> GitHubPullRequestResult:
         """Open one PR. `blocking_paths` narrows which of its files another open PR or a later
         commit may not also touch; by default every file counts. Content delivery passes its
         page file alone, so a shared sitemap or index edited elsewhere never blocks an article.
+        A named `repository` is one of the code repositories; Tin never merges there.
         """
         if blocking_paths is not None and (
             not blocking_paths or not blocking_paths <= {item.path for item in files}
@@ -3472,7 +3480,7 @@ class IntegrationService:
         if expected_binding is not None:
             # Ambiguous delivery still needs the same provider identity to reconcile.
             await self._check_github_binding(project_id, connection, expected_binding, head=False)
-        repository = connection.configuration.get("selected_repository")
+        repository = _target_repository(connection, repository, expected_binding)
         permissions = connection.configuration.get("permissions", {})
         if (
             not isinstance(repository, str)
@@ -4344,6 +4352,11 @@ class IntegrationService:
         connection = await self._connection(project_id, provider_key)
         configuration = dict(connection.configuration)
         configuration[config_key] = option.id
+        if provider_key == GITHUB_PROVIDER and option.id in code_repositories(connection):
+            # The website repository is never also one of the code repositories.
+            configuration[CODE_REPOSITORIES_KEY] = [
+                name for name in code_repositories(connection) if name != option.id
+            ]
         updated = await self._database.update_integration_configuration(
             project_id=project_id,
             provider_key=provider_key,
@@ -4355,6 +4368,50 @@ class IntegrationService:
             "integration_configured",
             f"{self._definition(provider_key).name} now uses {option.label}.",
             suffix=_sha256(option.id)[:12],
+        )
+        return updated
+
+    async def select_code_repositories(
+        self, *, project_id: UUID, repositories: list[str]
+    ) -> IntegrationConnection:
+        """Set the repositories beside the website repository: read by every workflow, and
+        open to unmerged pull requests from workflows that change the app."""
+        if not isinstance(repositories, list) or not all(
+            isinstance(name, str) for name in repositories
+        ):
+            raise IntegrationError("Choose repositories by owner/name")
+        connection = await self._connection(project_id, GITHUB_PROVIDER)
+        website = connection.configuration.get("selected_repository")
+        if not isinstance(website, str) or not website:
+            raise IntegrationAuthorizationError("Choose the website repository first")
+        options = {item.id: item for item in await self.github_repositories(project_id=project_id)}
+        chosen: list[str] = []
+        for name in repositories:
+            if name == website or name in chosen:
+                continue
+            if name not in options:
+                raise IntegrationAuthorizationError(
+                    f"{name[:140]} is not available to the connected account"
+                )
+            chosen.append(name)
+        if len(chosen) > CODE_REPOSITORY_LIMIT:
+            raise IntegrationError(
+                f"Choose at most {CODE_REPOSITORY_LIMIT} repositories besides the website"
+            )
+        configuration = dict(connection.configuration)
+        configuration[CODE_REPOSITORIES_KEY] = chosen
+        updated = await self._database.update_integration_configuration(
+            project_id=project_id,
+            provider_key=GITHUB_PROVIDER,
+            configuration=configuration,
+            external_account_label=connection.external_account_label,
+        )
+        summary = ", ".join(chosen) if chosen else "no other repositories"
+        await self._record_activity(
+            updated,
+            "integration_configured",
+            f"GitHub now also uses {summary}.",
+            suffix=_sha256(_canonical_json(chosen))[:12],
         )
         return updated
 
@@ -5543,6 +5600,55 @@ def _provider_list(response: httpx.Response, *, provider: str) -> list[Any]:
     if not isinstance(payload, list):
         raise IntegrationUpstreamError(f"{provider} returned an invalid response")
     return payload
+
+
+# Repositories beside the website repository: the app, docs or an SDK. Every workflow reads
+# them; only a declared product-code output opens an unmerged pull request in one. Commits,
+# merges and site changes go to the website repository alone.
+CODE_REPOSITORIES_KEY = "code_repositories"
+CODE_REPOSITORY_LIMIT = 5
+
+
+def code_repositories(connection: IntegrationConnection | None) -> list[str]:
+    """The connection's code repositories, never including the website repository."""
+    if connection is None:
+        return []
+    website = connection.configuration.get("selected_repository")
+    names = connection.configuration.get(CODE_REPOSITORIES_KEY)
+    if not isinstance(names, list):
+        return []
+    return [
+        name
+        for name in names[:CODE_REPOSITORY_LIMIT]
+        if isinstance(name, str) and name.count("/") == 1 and name != website
+    ]
+
+
+def _target_repository(
+    connection: IntegrationConnection,
+    repository: str | None,
+    expected_binding: GitHubRepositoryBinding | None,
+) -> Any:
+    """The website repository, or a named code repository; a pinned binding is website only."""
+    if repository is None:
+        return connection.configuration.get("selected_repository")
+    if expected_binding is not None or repository not in code_repositories(connection):
+        raise IntegrationAuthorizationError(
+            "Add this repository to GitHub's other repositories first"
+        )
+    return repository
+
+
+def connected_repositories(connection: IntegrationConnection | None) -> list[dict[str, str]]:
+    """Every repository a connected GitHub link lets Tin read, the website repository first."""
+    if connection is None or connection.status != "connected":
+        return []
+    website = connection.configuration.get("selected_repository")
+    if not isinstance(website, str) or website.count("/") != 1:
+        return []
+    return [{"repository": website, "role": "website"}] + [
+        {"repository": name, "role": "code"} for name in code_repositories(connection)
+    ]
 
 
 def _installation_id(connection: IntegrationConnection) -> int:

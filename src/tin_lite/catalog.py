@@ -994,8 +994,8 @@ BUILTIN_WORKFLOWS = (
                 DiagramNode(
                     "write",
                     "step",
-                    "Check coverage, then draft",
-                    "Codex reads up to 12 current pages first",
+                    "Compare coverage, then draft",
+                    "reads up to 12 pages, then always writes",
                 ),
                 DiagramNode(
                     "files",
@@ -1007,7 +1007,7 @@ BUILTIN_WORKFLOWS = (
                 DiagramNode(
                     "no_draft",
                     "ghost",
-                    "No draft needed",
+                    "Update target unreadable",
                     "assessment saved, closes without review",
                 ),
                 DiagramNode(
@@ -1040,15 +1040,15 @@ BUILTIN_WORKFLOWS = (
         ),
         public_mcp=PublicMCPExposure("start_content_draft", destructive=True, open_world=True),
         title="Draft planned content",
-        description="Check current coverage before drafting the next item in your content "
-        "plan, in your style: a new article, an answer page for a buyer question AI assistants "
-        "miss you on, or a refresh of an existing page's title, snippet and opening. Save useful "
-        "copy for review, or explain why no draft is needed. After approval an article follows "
+        description="Draft the next item in your content plan, in your style, after reading "
+        "the pages that already cover it: a new article, an answer page for a buyer question AI "
+        "assistants miss you on, or a refresh of an existing page's title, snippet and opening. "
+        "Every item gets a draft for review. After approval an article follows "
         "your delivery setting, an answer page goes to your site through website.change at the "
         "route you chose, and a refresh changes exactly the approved lines. The roadmap stays "
         "unchanged.",
         executor=CODEX_PROCEDURE_EXECUTOR,
-        version_label="1.16.0",
+        version_label="1.17.0",
         system=ORGANIC_TRAFFIC_SYSTEM,
         # A weekly occurrence drafts the next article in plan order and holds while an
         # earlier draft from the same program still waits for review.

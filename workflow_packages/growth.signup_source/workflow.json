@@ -4,7 +4,7 @@
     "key": "growth.signup_source",
     "title": "Ask new signups how they heard about you",
     "description": "Add one optional \"How did you hear about us?\" question to your signup or first screen, with answers tailored to the channels you actually use and saved where your accounts already live, in an unmerged PR. Never merges or deploys.",
-    "version": "1.0.0",
+    "version": "1.1.0",
     "executor": "codex.procedure",
     "schedule_modes": ["on_demand"],
     "input_schema": {
@@ -64,6 +64,7 @@
       "output": {
         "kind": "github.pull_request",
         "provider_key": "infra.github",
+        "repository": "code",
         "max_files": 3,
         "max_bytes": 180000,
         "receipt_path_template": "reports/signup-source/{run_id}/RESULT.md",
@@ -77,7 +78,7 @@
       "flow": {
         "direction": "TD",
         "nodes": [
-          {"id": "repo", "kind": "surface", "label": "GitHub repository", "fact": "signup code, account storage, channels"},
+          {"id": "repo", "kind": "surface", "label": "Product repository", "fact": "signup code, account storage, channels"},
           {"id": "place", "kind": "step", "label": "Choose where to ask", "fact": "fixed code, signup form or first screen"},
           {"id": "none", "kind": "ghost", "label": "No question added", "fact": "signup elsewhere, already asked, no sink"},
           {"id": "answers", "kind": "step", "label": "Build the answer list", "fact": "at most 8, extra channels need evidence"},

@@ -5052,7 +5052,12 @@ def create_mcp_app(
                 relay=(
                     f"I am opening one page where you connect {listed} for "
                     f"{project.name if project else 'your project'}. Each takes about a minute"
-                    + ("; GitHub also asks which repository" if "infra.github" in chosen else "")
+                    + (
+                        "; GitHub also asks which repository serves the website and which "
+                        "other repositories, such as the app, Tin may read"
+                        if "infra.github" in chosen
+                        else ""
+                    )
                     + ("; PostHog asks which project" if "analytics.posthog" in chosen else "")
                     + (
                         "; for Stripe you paste a read-only restricted key there, never in chat"
@@ -5123,6 +5128,31 @@ def create_mcp_app(
             "billing_approved": health.get("billing_approved"),
             "conversion_actions_with_data": health.get("conversion_actions_with_data"),
             "checked_at": health.get("checked_at"),
+        }
+
+    @server.tool()
+    async def set_code_repositories(project_id: str, repositories: list[str]) -> dict[str, Any]:
+        """Set the GitHub repositories Tin uses beside the website repository.
+
+        Use it when the app, docs or an SDK live in their own repositories. Pass every
+        owner/name to keep, at most five; an empty list clears them. Every workflow reads
+        them for context. Workflows that change the app itself (a signup question, a
+        framework starter) may open a pull request in one for the founder to review; Tin
+        never merges or commits there. Published pages and site fixes still go to the
+        website repository chosen on Tin's Integrations page.
+        """
+        token = await caller()
+        parsed_project_id = _mcp_uuid(project_id, field="project_id")
+        await require_project(parsed_project_id, token, tool_name="set_code_repositories")
+        try:
+            connection = await runtime().integrations.select_code_repositories(
+                project_id=parsed_project_id, repositories=repositories
+            )
+        except IntegrationError as exc:
+            raise ToolError(str(exc)) from exc
+        return {
+            "website_repository": connection.configuration.get("selected_repository"),
+            "code_repositories": connection.configuration.get("code_repositories", []),
         }
 
     @server.tool()

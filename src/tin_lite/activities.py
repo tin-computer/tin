@@ -13,6 +13,7 @@ from typing import TYPE_CHECKING, Any, TypeVar
 from urllib.parse import urlsplit
 from uuid import NAMESPACE_URL, UUID, uuid4, uuid5
 
+import httpx
 from temporalio import activity
 from temporalio.exceptions import ApplicationError
 
@@ -80,6 +81,7 @@ from tin_lite.failures import (
     classify,
     failure_payload,
     payload_failure,
+    public_error_text,
     receipt_failure,
 )
 from tin_lite.failures import detail as failure_detail
@@ -90,6 +92,7 @@ from tin_lite.integrations import (
     IntegrationDeliveryUnknownError,
     IntegrationError,
     IntegrationService,
+    connected_repositories,
     load_pinned_integration_requirements,
 )
 from tin_lite.memory import (
@@ -113,12 +116,14 @@ from tin_lite.procedures import (
     load_pinned_codex_procedure,
     procedure_checkpoint_path,
     procedure_receipt_path,
+    reference_path,
     settle_procedure_artifact,
     validate_procedure_artifact,
     validate_procedure_pull_request,
 )
 from tin_lite.publication import OutputCheckpoint, OutputConflictError, PublicationPendingError
 from tin_lite.redaction import scrub_secrets
+from tin_lite.repository_limits import REPOSITORY_MAX_BYTES, REPOSITORY_MAX_FILES
 from tin_lite.rollouts import RolloutCapture
 from tin_lite.scan import ScanReporter, ScanSource, validate_scan_report
 from tin_lite.schedules import ScheduledWorkflowSkip, WorkflowSchedule, next_run_after
@@ -1095,6 +1100,7 @@ class TinActivities:
         run_id: UUID,
         sandbox_id: str,
         expected_binding=None,
+        repository: str | None = None,
     ):
         if self._integrations is None:
             raise RuntimeError("GitHub procedure workspace is unavailable")
@@ -1104,6 +1110,7 @@ class TinActivities:
                 execution_key=f"{run_id}:procedure_repository_workspace",
                 run_id=run_id,
                 **({"expected_binding": expected_binding} if expected_binding else {}),
+                **({"repository": repository} if repository else {}),
             ),
             details={
                 "sandbox_id": sandbox_id,
@@ -1118,6 +1125,7 @@ class TinActivities:
         run_id: UUID,
         sandbox_id: str,
         expected_binding=None,
+        repository: str | None = None,
     ):
         if self._integrations is None:
             raise RuntimeError("GitHub procedure workspace is unavailable")
@@ -1126,6 +1134,7 @@ class TinActivities:
             run_id=run_id,
             sandbox_id=sandbox_id,
             **({"expected_binding": expected_binding} if expected_binding else {}),
+            **({"repository": repository} if repository else {}),
         )
         evidence = await self._await_with_heartbeats(
             self._integrations.github_open_pull_requests(
@@ -1134,6 +1143,7 @@ class TinActivities:
                 base_branch=bundle.default_branch,
                 run_id=run_id,
                 **({"expected_binding": expected_binding} if expected_binding else {}),
+                **({"repository": repository} if repository else {}),
             ),
             details={
                 "sandbox_id": sandbox_id,
@@ -1141,6 +1151,110 @@ class TinActivities:
             },
         )
         return bundle, evidence
+
+    async def _procedure_target_repository(self, run, procedure) -> str | None:
+        """The code repository this run's pull request goes to, pinned once; None is the
+        website repository, as for every procedure that doesn't declare a code output."""
+        if not procedure.code_repository_output:
+            return None
+        key = f"{run.id}:procedure_target_repository"
+        async with self._db.effect_lock(key, "procedure_target_repository") as (conn, saved):
+            if saved and saved.status == "completed":
+                return saved.result["repository"]
+            connection = await self._db.get_integration_connection(
+                project_id=run.project_id, provider_key="infra.github"
+            )
+            names = [
+                item["repository"]
+                for item in connected_repositories(connection)
+                if item["role"] == "code"
+            ]
+            # A run may name its repository; otherwise the first code repository is the app.
+            wanted = (run.input or {}).get("expected_repository")
+            website = connection.configuration.get("selected_repository") if connection else None
+            target = (
+                None
+                if wanted and wanted == website
+                else wanted
+                if wanted in names
+                else (names[0] if names else None)
+            )
+            await self._db.start_effect(
+                conn, execution_key=key, operation="procedure_target_repository"
+            )
+            await self._db.complete_effect(conn, execution_key=key, result={"repository": target})
+        return target
+
+    async def _procedure_repositories(
+        self, *, run, sandbox_id: str, primary: str | None, editable: bool
+    ) -> tuple[list[dict[str, Any]], list[tuple[str, Any]]]:
+        """Every connected repository, pinned once per run; snapshots of those beside the
+        run's own workspace. A repository that can't be read is listed with why, and the
+        run goes on without it."""
+        if self._integrations is None:
+            return [], []
+        key = f"{run.id}:procedure_repositories"
+        async with self._db.effect_lock(key, "procedure_repositories") as (conn, saved):
+            if saved and saved.status == "completed":
+                pinned = saved.result["repositories"]
+            else:
+                connection = await self._db.get_integration_connection(
+                    project_id=run.project_id, provider_key="infra.github"
+                )
+                pinned = connected_repositories(connection)
+                await self._db.start_effect(
+                    conn, execution_key=key, operation="procedure_repositories"
+                )
+                await self._db.complete_effect(
+                    conn, execution_key=key, result={"repositories": pinned}
+                )
+        listed: list[dict[str, Any]] = []
+        archives: list[tuple[str, Any]] = []
+        files_left, bytes_left = REPOSITORY_MAX_FILES, REPOSITORY_MAX_BYTES
+        for item in pinned:
+            name = item["repository"]
+            if primary is not None and name.casefold() == primary.casefold():
+                listed.append({**item, "path": "/home/user/project", "editable": editable})
+                continue
+            try:
+                bundle = await self._await_with_heartbeats(
+                    self._integrations.github_repository_bundle(
+                        project_id=run.project_id,
+                        execution_key=f"{run.id}:procedure_repository:{name}",
+                        run_id=run.id,
+                        **({"repository": name} if item["role"] == "code" else {}),
+                    ),
+                    details={"sandbox_id": sandbox_id, "stage": "procedure_repositories"},
+                )
+            except (IntegrationError, httpx.HTTPError) as exc:
+                reason = public_error_text(exc, "GitHub could not provide a snapshot")
+                listed.append({**item, "unavailable": reason[:200]})
+                continue
+            size = (
+                len(bundle.archive)
+                if isinstance(bundle.archive, (bytes, bytearray))
+                else bundle.archive.seek(0, 2)
+            )
+            if bundle.repository != name:
+                listed.append({**item, "unavailable": "the website repository changed"})
+            elif bundle.file_count > files_left or size > bytes_left:
+                listed.append(
+                    {**item, "unavailable": "it does not fit beside the other repositories"}
+                )
+            else:
+                files_left -= bundle.file_count
+                bytes_left -= size
+                listed.append(
+                    {
+                        **item,
+                        "path": reference_path(name),
+                        "editable": False,
+                        "head_sha": bundle.head_sha,
+                        "complete": bundle.complete,
+                    }
+                )
+                archives.append((name, bundle.archive))
+        return listed, archives
 
     async def _complete_artifact_persist(
         self,
@@ -3489,7 +3603,11 @@ class TinActivities:
                     raise RuntimeError("TIN_LITE_PROXY_URL is required outside local development")
                 workspace_archive: Any = None
                 workspace_evidence: bytes | None = None
-                workspace_context: dict[str, str | int] | None = None
+                workspace_context: dict[str, Any] | None = None
+                # The repository this run edits or reads as its working directory, if any.
+                primary_repository: str | None = None
+                repositories_allowed = procedure.reference_repositories
+                reference_archives: list[tuple[str, Any]] = []
                 run_tools_url: str | None = None
                 run_tools_grant: str | None = None
                 requirements = await load_pinned_integration_requirements(
@@ -3615,14 +3733,21 @@ class TinActivities:
 
                         technical = await prepared_result(self._db, run_id)
                         expected_binding = binding_from(technical)
+                    target = (
+                        None
+                        if expected_binding
+                        else await self._procedure_target_repository(run, procedure)
+                    )
                     bundle, open_pull_requests = await self._github_procedure_workspace(
                         project_id=run.project_id,
                         run_id=run_id,
                         sandbox_id=sandbox_id,
                         **({"expected_binding": expected_binding} if expected_binding else {}),
+                        **({"repository": target} if target else {}),
                     )
                     workspace_archive = bundle.archive
                     workspace_evidence = open_pull_requests.document
+                    primary_repository = bundle.repository
                     workspace_context = {
                         "provider_key": "infra.github",
                         "repository": bundle.repository,
@@ -3668,6 +3793,7 @@ class TinActivities:
                             if bundle.repository != selected.result["repository"]:
                                 raise ValueError("The selected source repository changed.")
                         workspace_archive = bundle.archive
+                        primary_repository = bundle.repository
                         workspace_context = {
                             "provider_key": "infra.github",
                             "repository": bundle.repository,
@@ -3677,7 +3803,21 @@ class TinActivities:
                         }
                         workspace_context["complete"] = bundle.complete
                     else:
+                        # The founder turned repository evidence off for this run.
+                        repositories_allowed = False
                         workspace_context = {"kind": "project.state", "repository_available": False}
+                if repositories_allowed:
+                    repositories, reference_archives = await self._procedure_repositories(
+                        run=run,
+                        sandbox_id=sandbox_id,
+                        primary=primary_repository,
+                        editable=procedure.result_kind == GITHUB_PULL_REQUEST_RESULT,
+                    )
+                    if repositories:
+                        workspace_context = {
+                            **(workspace_context or {}),
+                            "repositories": repositories,
+                        }
                 procedure_inputs: dict[str, object] = dict(run.input or {})
                 from tin_lite import content_draft
 
@@ -3729,6 +3869,7 @@ class TinActivities:
                             run_tools_grant=run_tools_grant,
                             workspace_archive=workspace_archive,
                             workspace_evidence=workspace_evidence,
+                            workspace_references=tuple(reference_archives),
                             browser=procedure.sandbox.browser,
                             studio=procedure.sandbox.studio,
                             isolated=runtime_profile.isolated,
@@ -4072,6 +4213,11 @@ class TinActivities:
                     no_change = manifest.get("outcome") == "no_change" and (
                         technical is not None or procedure.allow_no_change
                     )
+                    target = (
+                        None
+                        if expected_binding
+                        else await self._procedure_target_repository(run, procedure)
+                    )
                     if not no_change:
                         pull_request = await self._integrations.github_create_pull_request(
                             project_id=run.project_id,
@@ -4086,6 +4232,7 @@ class TinActivities:
                             expected_base_sha=str(manifest["head_sha"]),
                             run_id=run_id,
                             **({"expected_binding": expected_binding} if expected_binding else {}),
+                            **({"repository": target} if target else {}),
                             **(
                                 {
                                     "allow_unrelated_base_advance": True,

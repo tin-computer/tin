@@ -4,7 +4,7 @@
     "key": "growth.framework_starter",
     "title": "Add a starter developers can clone",
     "description": "For a product developers build on: find the SDK, API, webhook or embed a developer calls first in your connected repository, pick the framework its users build with, and open an unmerged PR adding a small runnable starter under examples/ with a five-minute README. Says no when there is nothing a developer integrates, and never repeats a starter. Never merges, deploys, publishes a package or creates a repository.",
-    "version": "1.0.0",
+    "version": "1.1.0",
     "executor": "codex.procedure",
     "schedule_modes": ["on_demand"],
     "input_schema": {
@@ -89,6 +89,7 @@
       "output": {
         "kind": "github.pull_request",
         "provider_key": "infra.github",
+        "repository": "code",
         "max_files": 10,
         "max_bytes": 120000,
         "receipt_path_template": "reports/framework-starter/{run_id}/RESULT.md",
@@ -103,7 +104,7 @@
         "direction": "TD",
         "nodes": [
           {"id": "context", "kind": "store", "label": "Maps, plan and past starters", "fact": "Code map, Feature map, earlier RESULT.md"},
-          {"id": "repo", "kind": "surface", "label": "GitHub repository", "fact": "finds what a developer calls first"},
+          {"id": "repo", "kind": "surface", "label": "Product repository", "fact": "finds what a developer calls first"},
           {"id": "choose", "kind": "step", "label": "Choose the framework", "fact": "fixed code, never a starter twice"},
           {"id": "none", "kind": "ghost", "label": "No starter to add", "fact": "receipt names why, no pull request"},
           {"id": "write", "kind": "step", "label": "Write and check the starter", "fact": "Codex, 10 files max, secrets server side"},

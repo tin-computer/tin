@@ -7557,7 +7557,8 @@ html[data-theme="dark"] .integration-badge.is-monochrome::before {
   line-height: 20px;
 }
 
-.integration-project-options {
+.integration-project-options,
+.integration-project-options [role="group"] {
   display: flex;
   flex-direction: column;
   gap: 6px;
@@ -7617,6 +7618,28 @@ html[data-theme="dark"] .integration-badge.is-monochrome::before {
   background: var(--accent-deep);
   border: 4px solid var(--paper-card);
   box-shadow: 0 0 0 1px var(--accent-deep);
+}
+
+.integration-project-option.is-check i {
+  border-radius: 4px;
+}
+
+.integration-project-subhead {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  margin: 14px 0 2px;
+}
+
+.integration-project-subhead strong {
+  font-size: 13.5px;
+  line-height: 18px;
+}
+
+.integration-project-subhead small {
+  color: var(--ink-muted);
+  font-size: 12px;
+  line-height: 16px;
 }
 
 .integration-project-error {

@@ -236,7 +236,9 @@ async def access_needs(
         "infra.github": (
             "Inspect the website code and deliver approved content or fixes "
             "as unmerged pull requests.",
-            "Confirm the website is on GitHub and select the repository that serves it.",
+            "Confirm the website is on GitHub and select the repository that serves it. "
+            "If the app or docs live in other repositories, tick them under Other "
+            "repositories so every workflow can read them.",
         ),
         "workspace.google": (
             "Run the selected signup test or research mailbox relationships; "

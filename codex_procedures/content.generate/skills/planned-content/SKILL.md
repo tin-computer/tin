@@ -1,6 +1,6 @@
 ---
 name: planned-content
-description: Assess current coverage, then draft only useful, fact-grounded planned content.
+description: Compare current coverage, then draft useful, fact-grounded planned content.
 ---
 
 1. Read the exact brief, buyer intent, action, destination and verification requirements in
@@ -13,13 +13,12 @@ description: Assess current coverage, then draft only useful, fact-grounded plan
 3. Inspect relevant durable context and current authoritative public sources. For existing
    pages, understand their purpose before proposing replacement copy. Preserve supported
    capabilities and useful information; do not turn a documentation update into a sales essay.
-4. Decide whether the brief is still worth executing. Compare actual current coverage, not
-   merely matching keywords. Record the reader gain and bounded change, or a supported
-   already-covered assessment. Missing evidence and a brief needing revision are distinct
-   no-draft outcomes, not successful coverage. Do not invent a contribution to fill the calendar.
+4. Compare actual current coverage, not merely matching keywords, to find what this page adds
+   for its reader. The brief is always drafted: existing coverage shapes the angle and the
+   links, it never cancels the page. Record the reader gain and bounded change.
    Preserve unrelated page content on updates; a small addition never licenses deleting the
    rest of the API reference. Never replace one planned item with another inside this run.
-5. For a justified draft, develop one clear contribution for the buyer. Prefer concrete mechanisms and examples to
+5. Develop one clear contribution for the buyer. Prefer concrete mechanisms and examples to
    promotional claims. Mark hypothetical examples as hypothetical. Avoid repetitive SEO
    introductions, keyword stuffing, invented experience and unsupported promises.
 6. Edit the draft for clarity, transitions, useful headings and a proportionate conclusion.
@@ -31,14 +30,12 @@ description: Assess current coverage, then draft only useful, fact-grounded plan
    writing workflow: no credentials, accounts, registration or real sends. Carry even explicit
    live-test requests in older briefs as optional follow-ups, not draft blockers. Distinguish
    documentation-grounded examples and local checks from examples actually executed live.
-   Review concerns article copy only; no-draft assessments have no approval or delivery.
-   The companion notes are available as internal context.
+   Review concerns article copy only. The companion notes are available as internal context.
 
 
-Before broad research, inspect the exact destination and nearest competing page. If they already
-answer the intent, save an already-covered assessment immediately; do not pay for a replacement
-article. For a genuine gap, save an argument outline in the declared generation-notes file
-before writing: buyer decision, direct answer, the project's positioning (from the files in
+Before broad research, inspect the exact destination and nearest competing page, so the draft
+adds to them rather than repeating them. Save an argument outline in the declared
+generation-notes file before writing: buyer decision, direct answer, the project's positioning (from the files in
 `content_draft.positioning`, never the plan's), proof, objection, next step. When those files
 include `strategy/ICP.md`, take the buyer, their problem and their objection from it; it says
 who the piece is for and is never a source to cite.

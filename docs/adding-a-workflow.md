@@ -91,6 +91,12 @@ Public procedures can also [propose and adopt a reviewed document pair](reviewed
 and optionally inspect a read-only connected repository. These are explicit output/workspace
 contracts; ordinary reviewable artifacts keep their existing behavior.
 
+Every procedure also reads the project's connected GitHub repositories, read-only under
+`/home/user/repos/`, and its brief says where each one is. Declare `"repositories": "none"` on
+the workspace only when the job must not see code. A pull request goes to the website
+repository unless the output declares `"repository": "code"`, which is for changes to the
+founder's app, never the site. See [GitHub repositories](github-repositories.md).
+
 ## Draw how it runs
 
 Every workflow shows how it runs in a panel beside My system and the Add workflows list. The

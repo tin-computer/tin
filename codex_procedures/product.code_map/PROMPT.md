@@ -8,6 +8,10 @@ thing you may change is the `### Code map` section of `/home/user/state/wiki/IND
 as the governing skill describes. Replace that section in full, create `## Product` directly
 before `## Sources` if the file lacks it, and leave every other line untouched.
 
+When the run prompt lists CONNECTED REPOSITORIES, the product's code may live in a repository
+other than the website: read each one listed with a path (they are read-only snapshots too) and
+map them all in the one section, as the skill's "Several repositories" rules describe.
+
 Start from the run's `focus` and `depth`. Orient with the README, the package manifests, the
 lockfiles, and the deploy configuration, then find the route table, the navigation components,
 and the guards that decide who reaches each surface. Every surface you record carries one of

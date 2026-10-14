@@ -78,18 +78,8 @@ def parse(notes, context):
         # site's own coverage read (the destination, for an update); without it the honest
         # result is that coverage couldn't be established, not a failed run.
         judgment = judgment.model_copy(update={"outcome": "insufficient_evidence"})
-    if judgment.outcome in {"draft", "already_covered"} and not inspected:
-        raise ValueError(
-            "Inspect current coverage before declaring a gap or an already-covered topic."
-        )
-    if (
-        host
-        and judgment.outcome in {"draft", "already_covered"}
-        and not any(page_identity(page.url)[0] == host for page in inspected)
-    ):
-        raise ValueError(
-            "Inspect the planned site's own coverage before deciding to draft or skip."
-        )
+    # Since 1.17.0 a planned item is always drafted: the comparison shapes the page, it does not
+    # decide whether to write one. A new page whose neighbours couldn't be read is still a page.
     if judgment.outcome == "draft":
         if min(len(judgment.reader_gain.strip()), len(judgment.change_scope.strip())) < 30:
             raise ValueError("Explain the concrete reader benefit and bounded change scope.")

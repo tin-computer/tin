@@ -58,9 +58,9 @@ article. A founder can also add an `answer` or `refresh` item by editing the pla
 - **One output contract.** The validator stays `content-draft.v3`, the editorial pair of page
   and generation notes, so the sandbox image needs no rebuild. Preparation records `kind` only
   for an answer or a refresh, and that selects the extra checks; an article's prepared context
-  is byte for byte what 1.8.0 prepared. Every kind can end in a no-draft assessment
-  (`already_covered` when the site already answers the question, or the page already meets its
-  searches).
+  is byte for byte what 1.8.0 prepared. From 1.17.0 every kind is drafted even when the site
+  already answers the question or the page already meets its searches; see
+  [editorial judgment](content-editorial-judgment.md).
 - **Answers need a route.** Admission refuses an answer until `content/page-routes.json` has an
   `answer_page` route, with #244's question and the `save_page_route` call to make; a weekly
   schedule pauses with the same question. The selection pins the route. On approval with a

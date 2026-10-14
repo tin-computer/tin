@@ -103,6 +103,12 @@ function integrationSelection(integration) {
   return config.selected_site_url || config.selected_repository || config.selected_project_id || null;
 }
 
+// Repositories Tin reads beside the website repository (the app, docs, an SDK); never written.
+function codeRepositories(integration) {
+  const names = integration?.configuration?.code_repositories;
+  return Array.isArray(names) ? names.filter((name) => typeof name === "string") : [];
+}
+
 function integrationResourceNoun(providerKey) {
   if (providerKey === "infra.github") return "repository";
   if (providerKey === "analytics.posthog") return "PostHog project";
@@ -6824,6 +6830,8 @@ function renderIntegrationCard(integration) {
       ? integration.external_account_label || "PostHog"
     : integration.key === "network.linkedin" && connected
       ? linkedInAccountLabel(integration)
+      : integration.key === "infra.github" && selected && codeRepositories(integration).length
+      ? `${selected} + ${codeRepositories(integration).length} more`
       : selected || integration.external_account_label || "Choose an account";
   const health = integration.key === "network.linkedin" && connected ? linkedInHealth(integration)
     : integration.key.startsWith("custom.api.")
@@ -7004,7 +7012,7 @@ function renderIntegrationExpanded(integration) {
   if (integration.key === "social.linkedin") return renderLinkedInPostingExpanded(integration);
   const selected = integrationSelection(integration) || "";
   const isPostHog = integration.key === "analytics.posthog";
-  const resourceLabel = integration.key === "infra.github" ? "Repository" : isPostHog ? "PostHog project" : "Search property";
+  const resourceLabel = integration.key === "infra.github" ? "Website repository" : isPostHog ? "PostHog project" : "Search property";
   const isWorkspace = integration.key === "workspace.google";
   const isAds = integration.key === "ads.google";
   const isGitHubAccount = integration.key === "infra.github_user";
@@ -7058,6 +7066,10 @@ function renderIntegrationExpanded(integration) {
     selectionControl = selected
       ? `<div class="integration-detail-row"><span class="integration-detail-label">${escapeHtml(resourceLabel)}</span><span class="integration-detail-value">${escapeHtml(isPostHog ? integration.external_account_label || selected : selected)}</span></div>`
       : "";
+    const others = selected && integration.key === "infra.github" ? codeRepositories(integration) : [];
+    if (others.length) {
+      selectionControl += `<div class="integration-detail-row"><span class="integration-detail-label">Also reads</span><span class="integration-detail-value">${escapeHtml(others.join(", "))}</span></div>`;
+    }
   }
   const connectedLabel = integration.connected_at ? timeLabel(integration.connected_at) : "recently";
   const checkedLabel = integration.last_checked_at
@@ -7871,9 +7883,9 @@ const GITHUB_INSTALLATIONS_URL = "https://github.com/settings/installations";
 // Search Console property or PostHog project this project uses. "Later" keeps the connection.
 const RESOURCE_CHOICES = {
   "infra.github": {
-    noun: "repository",
+    noun: "website repository",
     loading: "Loading repositories…",
-    copy: "Tin opens pull requests and delivers approved pages here.",
+    copy: "The repository that serves your website. Tin opens pull requests and delivers approved pages here.",
     confirm: "Link",
   },
   "analytics.gsc": {
@@ -7897,7 +7909,13 @@ async function chooseIntegrationResource(providerKey) {
   const context = currentProjectContext();
   if (!copy || !context.projectId) return;
   const integration = state.integrations.find((item) => item.key === providerKey);
-  state.resourceChoice = { providerKey, projectId: context.projectId, options: null, selected: null };
+  state.resourceChoice = {
+    providerKey,
+    projectId: context.projectId,
+    options: null,
+    selected: null,
+    others: new Set(codeRepositories(integration)),
+  };
   integrationProjectTitle.textContent = `Choose the ${copy.noun} for ${state.project?.name || "this project"}`;
   integrationProjectCopy.textContent = copy.copy;
   integrationProjectForm.querySelector("[data-confirm-integration-project]").textContent = copy.confirm;
@@ -7953,6 +7971,35 @@ function renderIntegrationResourceOptions() {
     });
     integrationProjectOptions.append(option);
   }
+  if (choice.providerKey === "infra.github" && choice.options.length > 1) {
+    // The app, docs or an SDK in their own repositories: every workflow reads them; a
+    // workflow that changes the app may open a pull request there, never a merge.
+    const heading = document.createElement("p");
+    heading.className = "integration-project-subhead";
+    heading.innerHTML = "<strong>Other repositories</strong><small>Optional. Your app, docs or SDK when they live apart from the website. Every workflow reads them; a workflow that changes your app, such as adding a signup question, may open a pull request there for you to review. Tin never merges or commits to them.</small>";
+    const group = document.createElement("div");
+    group.setAttribute("role", "group");
+    group.setAttribute("aria-label", "Other repositories");
+    integrationProjectOptions.append(heading, group);
+    for (const item of choice.options) {
+      if (item.id === choice.selected) continue;
+      const checked = choice.others.has(item.id);
+      const option = document.createElement("button");
+      option.type = "button";
+      option.className = `integration-project-option is-check${checked ? " is-selected" : ""}`;
+      option.setAttribute("role", "checkbox");
+      option.setAttribute("aria-checked", String(checked));
+      option.innerHTML = `<span><strong>${escapeHtml(item.label)}</strong></span><i aria-hidden="true"></i>`;
+      option.addEventListener("click", () => {
+        if (choice.others.has(item.id)) choice.others.delete(item.id);
+        else choice.others.add(item.id);
+        renderIntegrationResourceOptions();
+        integrationProjectOptions.querySelector(`[data-id="${CSS.escape(item.id)}"]`)?.focus();
+      });
+      option.dataset.id = item.id;
+      group.append(option);
+    }
+  }
   if (choice.providerKey === "infra.github") {
     const note = document.createElement("p");
     note.className = "integration-project-empty";
@@ -7976,10 +8023,19 @@ async function confirmIntegrationResource() {
   confirm.disabled = true;
   confirm.textContent = "Linking…";
   try {
-    const updated = await api(`/api/projects/${encodeURIComponent(choice.projectId)}/integrations/${encodeURIComponent(choice.providerKey)}`, {
+    let updated = await api(`/api/projects/${encodeURIComponent(choice.projectId)}/integrations/${encodeURIComponent(choice.providerKey)}`, {
       method: "PUT",
       body: JSON.stringify({ option_id: choice.selected }),
     });
+    if (choice.providerKey === "infra.github") {
+      const others = choice.options.map((item) => item.id).filter((id) => id !== choice.selected && choice.others.has(id));
+      if (others.join("\n") !== codeRepositories(updated).join("\n")) {
+        updated = await api(`/api/projects/${encodeURIComponent(choice.projectId)}/integrations/infra.github/code-repositories`, {
+          method: "PUT",
+          body: JSON.stringify({ repositories: others }),
+        });
+      }
+    }
     if (state.project?.id === choice.projectId) {
       const index = state.integrations.findIndex((item) => item.key === choice.providerKey);
       if (index >= 0) state.integrations[index] = updated;

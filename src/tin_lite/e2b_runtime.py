@@ -158,6 +158,9 @@ class SandboxProcedureInput(SandboxRunInput):
     # The repository snapshot: its temporary file, or bytes.
     workspace_archive: Any = None
     workspace_evidence: bytes | None = None
+    # (owner/name, snapshot) for each connected repository beside the workspace, unpacked
+    # read-only under procedures.REFERENCE_ROOT.
+    workspace_references: tuple[tuple[str, Any], ...] = ()
     browser: bool = False
     studio: bool = False
     timeout_seconds: int | None = None
@@ -708,6 +711,7 @@ class E2BRuntime:
                 envs["TIN_PROCEDURE_WORKSPACE_ARCHIVE"] = (
                     "/home/user/.tin-lite/procedure-workspace.tar.gz"
                 )
+            await self._unpack_references(sandbox, run_input.workspace_references)
             if run_input.workspace_evidence is not None:
                 await sandbox.files.write(
                     "/home/user/.tin-lite/open-pull-requests.json",
@@ -776,6 +780,30 @@ class E2BRuntime:
                 await self._capture_rollouts(sandbox, sandbox_id=sandbox_id, run_input=run_input)
             finally:
                 await self._delete_sandbox(sandbox)
+
+    async def _unpack_references(self, sandbox, references) -> None:
+        """Unpack each connected repository's snapshot read-only beside the workspace.
+
+        The controller owns the files, so an isolated author can read them and change
+        nothing; nothing under REFERENCE_ROOT is read back, so an edit there goes nowhere.
+        """
+        from tin_lite.procedures import REFERENCE_ROOT, reference_path
+
+        for index, (repository, archive) in enumerate(references):
+            if not isinstance(archive, bytes):
+                archive.seek(0)
+            source = f"/home/user/.tin-lite/reference-{index}.tar.gz"
+            await sandbox.files.write(source, archive)
+            target = shlex.quote(reference_path(repository))
+            await sandbox.commands.run(
+                "set -e; "
+                f"rm -rf {target}; mkdir -p {target}; "
+                f"tar --extract --gzip --file {shlex.quote(source)} --directory {target} "
+                "--no-same-owner --no-same-permissions; "
+                f"rm -f {shlex.quote(source)}; "
+                f"chmod -R u=rwX,go=rX {shlex.quote(REFERENCE_ROOT)}",
+                timeout=300,
+            )
 
     async def _capture_interrupted_output(self, sandbox, run_input):
         from tin_lite.project_files import safe_project_file_path

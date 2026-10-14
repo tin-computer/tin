@@ -1465,6 +1465,12 @@ class IntegrationSelection(BaseModel):
     option_id: str = Field(min_length=1, max_length=500)
 
 
+class CodeRepositorySelection(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    repositories: list[str] = Field(default_factory=list, max_length=20)
+
+
 class GoogleAdsLinkRequest(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
@@ -2245,6 +2251,27 @@ async def refresh_linkedin_posting(
     return _integration_view(
         service._definition(LINKEDIN_POSTING_PROVIDER), connection, configured=True
     )
+
+
+@router.put(
+    "/api/projects/{project_id}/integrations/infra.github/code-repositories",
+    response_model=IntegrationView,
+)
+async def configure_code_repositories(
+    project_id: UUID,
+    payload: CodeRepositorySelection,
+    request: Request,
+    user: AuthContext = AUTHENTICATED_USER,
+) -> IntegrationView:
+    await _require_project_access(project_id, request, user)
+    service = request.app.state.runtime.integrations
+    try:
+        connection = await service.select_code_repositories(
+            project_id=project_id, repositories=payload.repositories
+        )
+    except IntegrationError as exc:
+        raise _integration_http_error(exc) from exc
+    return _integration_view(service._definition("infra.github"), connection, configured=True)
 
 
 @router.put(

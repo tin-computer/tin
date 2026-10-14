@@ -15,8 +15,8 @@ const SERVICES = {
   "infra.github": {
     name: "GitHub", callback: "/integrations/callback/github?code=synthetic&state=synthetic&installation_id=7&setup_action=install",
     complete: "/api/integrations/github/complete", selection: "selected_repository",
-    title: "Choose the repository for Example project",
-    copy: "Tin opens pull requests and delivers approved pages here.",
+    title: "Choose the website repository for Example project",
+    copy: "The repository that serves your website. Tin opens pull requests and delivers approved pages here.",
     confirm: "Link", options: [{id: "example/site", label: "example/site"}, {id: "example/docs", label: "example/docs"}],
   },
   "analytics.gsc": {
@@ -66,11 +66,17 @@ async function serve({connected = false} = {}) {
         Object.assign(byKey(completed[0]), {connection_id: `${completed[0]}-1`, status: "connected", configuration: {}});
         return send(byKey(completed[0]));
       }
+      if (url.pathname.endsWith("/integrations/infra.github/code-repositories") && request.method === "PUT") {
+        const github = byKey("infra.github");
+        github.configuration = {...github.configuration, code_repositories: body.repositories};
+        return send(github);
+      }
       const chosen = url.pathname.match(/\/integrations\/([^/]+)$/);
       if (chosen && request.method === "PUT") {
         const service = SERVICES[chosen[1]];
         const option = service.options.find(item => item.id === body.option_id);
-        Object.assign(byKey(chosen[1]), {configuration: {[service.selection]: option.id}, external_account_label: option.label});
+        const current = byKey(chosen[1]).configuration;
+        Object.assign(byKey(chosen[1]), {configuration: {...current, [service.selection]: option.id}, external_account_label: option.label});
         return send(byKey(chosen[1]));
       }
       return send({});
@@ -175,6 +181,41 @@ test("Set up opens the same dialog; Later keeps the connection unfinished", asyn
     }
     // Another dialog that reuses the same element keeps its own Cancel button.
     await page.waitForFunction(() => document.querySelector("[data-cancel-integration-project]").textContent === "Cancel");
+    assert.deepEqual(errors, []);
+    await context.close();
+  } finally { await browser.close(); server.close(); }
+});
+
+test("GitHub: other repositories Tin reads are an optional checklist beside the website", async () => {
+  const {server, writes, base, integrations} = await serve({connected: true});
+  const github = integrations.find(item => item.key === "infra.github");
+  github.configuration = {selected_repository: "example/site"};
+  const browser = await chromium.launch({headless: true});
+  try {
+    const {page, context, errors} = await open(browser, base, "/integrations?project=project-1");
+    await page.locator('[data-integration-choose="infra.github"]').click();
+    await dialogText(page);
+    const dialog = page.locator("#integration-project-dialog");
+    // The website itself is never offered as another repository.
+    assert.deepEqual(await dialog.locator('[role="checkbox"]').allInnerTexts(), ["example/docs"]);
+    await dialog.locator('[role="checkbox"]').click();
+    assert.equal(await dialog.locator('[role="checkbox"]').getAttribute("aria-checked"), "true");
+    await page.getByRole("button", {name: "Link", exact: true}).click();
+    await page.getByText("GitHub now uses example/site.", {exact: true}).waitFor();
+    assert.deepEqual(writes.filter(item => item.method === "PUT").map(item => [item.path, item.body]), [
+      ["/api/projects/project-1/integrations/infra.github", {option_id: "example/site"}],
+      ["/api/projects/project-1/integrations/infra.github/code-repositories", {repositories: ["example/docs"]}],
+    ]);
+    assert.deepEqual(github.configuration.code_repositories, ["example/docs"]);
+
+    // Picking that repository as the website drops it from the checklist and the saved list.
+    await page.locator('[data-integration-choose="infra.github"]').click();
+    await dialogText(page);
+    await dialog.locator('[role="radio"]').nth(1).click();
+    assert.deepEqual(await dialog.locator('[role="checkbox"]').allInnerTexts(), ["example/site"]);
+    await page.getByRole("button", {name: "Link", exact: true}).click();
+    await page.getByText("GitHub now uses example/docs.", {exact: true}).waitFor();
+    assert.deepEqual(writes.filter(item => item.method === "PUT").at(-1).body, {repositories: []});
     assert.deepEqual(errors, []);
     await context.close();
   } finally { await browser.close(); server.close(); }
