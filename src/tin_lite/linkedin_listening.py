@@ -7,9 +7,9 @@ days, picks up page posts made directly on LinkedIn and records each account's f
 
 Postgres holds the record (`linkedin_posts`, `linkedin_post_readings`,
 `linkedin_follower_counts`). After each reading Tin rewrites `social/linkedin/results.json` and
-`social/linkedin/RESULTS.md` from it; both are Tin's own files. A personal profile's numbers
-exist only for posts published through Zernio, so the profile's other posts never appear. See
-docs/linkedin-posting.md.
+`social/linkedin/RESULTS.md` from it; both are Tin's own files. LinkedIn lists no personal
+profile's posts to apps, so a profile's posts made outside Tin aren't found and don't appear.
+See docs/linkedin-posting.md.
 """
 
 from __future__ import annotations
@@ -70,8 +70,9 @@ RESULTS_INPUT_SCHEMA = {
 INTRO = (
     "Tin reads each LinkedIn post it publishes 1, 4, 24 and 72 hours after posting, and the "
     "daily results run reads every post again for 30 days. Page posts made directly on "
-    "LinkedIn join at the next daily run. LinkedIn shares no numbers for posts made on a "
-    "personal profile outside Tin. Tin rewrites this file after each reading."
+    "LinkedIn join at the next daily run. Posts made on a personal profile outside Tin "
+    "aren't included, because LinkedIn doesn't list them. Tin rewrites this file after each "
+    "reading."
 )
 
 

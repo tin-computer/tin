@@ -1,7 +1,7 @@
 -- LinkedIn listening: Tin's own readings of each post's results, and each connected account's
 -- follower count per day. Zernio keeps no hourly history, so these rows are the record;
 -- social/linkedin/results.json and RESULTS.md are rewritten from them.
-CREATE TABLE linkedin_posts (
+CREATE TABLE IF NOT EXISTS linkedin_posts (
     project_id uuid NOT NULL REFERENCES projects(id),
     urn text NOT NULL CHECK (urn ~ '^urn:li:(share|ugcPost|activity):[0-9]{1,30}$'),
     account_id text NOT NULL CHECK (account_id ~ '^[0-9a-f]{24}$'),
@@ -19,9 +19,9 @@ CREATE TABLE linkedin_posts (
     first_seen_at timestamptz NOT NULL DEFAULT now(),
     PRIMARY KEY (project_id, urn)
 );
-CREATE INDEX linkedin_posts_recent ON linkedin_posts (project_id, published_at DESC);
+CREATE INDEX IF NOT EXISTS linkedin_posts_recent ON linkedin_posts (project_id, published_at DESC);
 
-CREATE TABLE linkedin_post_readings (
+CREATE TABLE IF NOT EXISTS linkedin_post_readings (
     project_id uuid NOT NULL,
     urn text NOT NULL,
     -- 1h, 4h, 24h or 72h after publishing, or d<N>: the daily reading N days after.
@@ -32,7 +32,7 @@ CREATE TABLE linkedin_post_readings (
     FOREIGN KEY (project_id, urn) REFERENCES linkedin_posts (project_id, urn) ON DELETE CASCADE
 );
 
-CREATE TABLE linkedin_follower_counts (
+CREATE TABLE IF NOT EXISTS linkedin_follower_counts (
     project_id uuid NOT NULL REFERENCES projects(id),
     account_urn text NOT NULL,
     day date NOT NULL,

@@ -156,12 +156,14 @@ comments, shares, clicks (pages), saves and sends (profiles) and LinkedIn's enga
   directly on LinkedIn, and posts Tin published whose listening run never started. Their
   early readings have passed, so they start with a daily one.
 
-A personal profile's numbers exist only for posts published through Zernio, so listening
-covers page posts, Tin's and those made on LinkedIn, and personal posts Tin sent. An account
+LinkedIn lists a page's posts but not a personal profile's, so listening covers page posts,
+Tin's and those made on LinkedIn, and personal posts Tin sent. A personal post made directly
+on LinkedIn has numbers too (Zernio reads them by the post's `ugcPost` or `share` URN, though
+its documentation says otherwise); Tin just has no way to find it without its link. An account
 whose analytics LinkedIn refuses asks the founder to reconnect LinkedIn posting; the daily run
 still reads the other accounts and names the refused one.
 
-**The record.** Postgres keeps it (`065_linkedin_listening.sql`):
+**The record.** Postgres keeps it (`066_linkedin_listening.sql`):
 - `linkedin_posts`: the post, its account, publish time, publish run, and the draft path and
   post ID it came from;
 - `linkedin_post_readings`: one row per post and checkpoint, `1h`, `4h`, `24h`, `72h` or
@@ -220,7 +222,7 @@ profile in Zernio. Without a mapping, staging refuses to connect.
 | `TIN_LITE_ZERNIO_PROFILE_MAP` | Optional; required on staging |
 
 Apply `064_linkedin_posting.sql`, which adds `social.linkedin` to the integration tables'
-provider checks, and `065_linkedin_listening.sql`, which adds listening's three tables.
+provider checks, and `066_linkedin_listening.sql`, which adds listening's three tables.
 
 ## Checked against Zernio
 
@@ -232,8 +234,8 @@ Before building, a connection on Tin's own company page confirmed:
 - deleting a scheduled post;
 - reading page comments.
 
-A member's own posts are not readable through Zernio, so reading the founder's own posts
-stays with the extension.
+Zernio can't list a member's own posts, so finding the founder's posts made directly on
+LinkedIn stays with the extension. Once a post's URN is known, Zernio reads its numbers.
 
 For listening, read-only calls on the same page and a founder's profile confirmed:
 - per-post analytics for a page post made on LinkedIn;
