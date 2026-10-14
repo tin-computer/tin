@@ -1354,10 +1354,15 @@ class PaidAdsAssessmentWorkflow:
 class ContentPlanWorkflow:
     def __init__(self) -> None:
         self._stopped = False
+        self._approved = False
 
     @workflow.signal(name="stop")
     async def stop(self) -> None:
         self._stopped = True
+
+    @workflow.signal(name="approve")
+    async def approve(self) -> None:
+        self._approved = True
 
     @workflow.run
     async def run(self, run_id: str) -> None:
@@ -1386,7 +1391,7 @@ class ContentPlanWorkflow:
                         )
             # Up to 60 page reads (four at a time, 20 s each) and a model wait of five and a
             # half minutes must fit in one attempt; a cut-off model call cannot be bought again.
-            await workflow.execute_activity(
+            published = await workflow.execute_activity(
                 "content_plan_execute",
                 run_id,
                 start_to_close_timeout=timedelta(minutes=15),
@@ -1394,6 +1399,18 @@ class ContentPlanWorkflow:
                     maximum_attempts=3, maximum_interval=timedelta(seconds=10)
                 ),
             )
+            if workflow.patched("content-plan-approval-v1") and (published or {}).get("review"):
+                # v10: a program's first plan waits in Decisions, with no timer, until the
+                # founder approves it; a decline ends the run through the review dispatcher.
+                await workflow.wait_condition(lambda: self._approved or self._stopped)
+                if self._stopped:
+                    return
+                await workflow.execute_activity(
+                    "content_plan_approved",
+                    run_id,
+                    start_to_close_timeout=timedelta(minutes=1),
+                    retry_policy=RetryPolicy(maximum_attempts=5),
+                )
         except BaseException as exc:
             if self._stopped:
                 return

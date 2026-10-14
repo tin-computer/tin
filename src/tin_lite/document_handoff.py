@@ -160,6 +160,36 @@ def revise(settings: Any, run: Any, proposal: Any = None) -> dict[str, Any]:
                 "Follow the returned run_id with get_run for its review link."
             ),
         }
+    if pending and executor == "content.plan":
+        # content.plan 1.1.0: a waiting first plan is revised in place from feedback.
+        return {
+            "direct_edit": False,
+            "reason": (
+                "The founder approves this exact plan in Decisions. Tin re-plans every week "
+                "from feedback and shows the revised plan in the same review."
+            ),
+            "before": [
+                {
+                    "tool": "get_workflow_review",
+                    "arguments": {"run_id": str(run.id)},
+                    "use": "Read `review_token` and check `can_request_changes`.",
+                }
+            ],
+            "tool": "request_workflow_changes",
+            "arguments": {
+                "run_id": str(run.id),
+                "feedback": "<the founder's requested changes, in one pass>",
+                "review_token": "<review_token from get_workflow_review>",
+                "request_id": NEW_REQUEST,
+            },
+            "keeps_review": True,
+            "metered": True,
+            "after": (
+                "The plan keeps waiting in Decisions while the planning agent revises it; the "
+                "same run_id shows the revised plan when get_workflow_review's pending_run_id "
+                "clears. Approve it there."
+            ),
+        }
     if pending:
         return {
             "direct_edit": False,

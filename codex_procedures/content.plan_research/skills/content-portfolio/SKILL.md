@@ -31,9 +31,11 @@ Read before you plan:
   Console clicks and impressions; the keyword groups; the audit's content findings (buyer
   questions AI answers miss the site on); refresh rows (pages near the top results or seen but
   rarely clicked, in order of upside); competitor rows.
-- `pages.json`: the text Tin read from up to 60 live pages, and every address Tin knows on the
-  site (`site_pages`). An address is not content; read the page text or search before you claim
-  what a page says.
+- `pages.json`: the pages Tin read from the live site, and every address Tin knows on the site
+  (`site_pages`). Pages with search signal carry a longer excerpt; every other listed page Tin
+  could read carries its title, meta description, its H1 to H3 outline and its opening. The
+  outline says what a page covers beyond its opening: read it before you call a topic missing.
+  An address alone is not content.
 - The audit's `evidence.json` (`ai_visibility`: the buyer panel, its questions, the answers AI
   assistants gave and the sites they cited) and the keyword plan's `evidence.json` (search
   competitors and Search Console rows) hold more than the summaries. Read them with a script
@@ -83,6 +85,13 @@ Draft far more candidates than slots, then choose. Formats (`context.json` → `
   Page decisions' refresh and rewrite rows; refresh rows near page one or seen but rarely
   clicked; pages losing traffic; a comparison page whose competitor changed. Improving a page
   that already ranks is usually faster than a new page. One item per page.
+  A `refresh` changes only the title, the meta description, the H1, the opening paragraph and,
+  when Page decisions allows body changes, up to three existing body paragraphs, each replaced
+  in place. It cannot touch a table, a list, a heading below the H1, a link, a section or an
+  FAQ, and it adds nothing. When the page needs any of those (a wrong row in a comparison
+  table, a claim repeated through the body, a missing section), plan an `update` instead: a
+  substantive rewrite of the whole page that keeps what is still right. Write a refresh brief
+  only about the lines a refresh can change.
 - **alternative**: "{competitor} alternatives" for one named competitor.
 - **comparison**: "{product} vs {competitor}", or a three-way page with two leaders.
 - **workaround**: the product against the manual way.

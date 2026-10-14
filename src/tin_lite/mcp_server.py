@@ -3695,7 +3695,11 @@ def create_mcp_app(
         post_id: str = "",
         billing_quote_id: str | None = None,
     ) -> dict[str, Any]:
-        """Revise an article, X post or X guide from the user's verbatim feedback.
+        """Revise an article, X post, X guide or waiting content plan from verbatim feedback.
+
+        A content plan waiting in Decisions is revised in place: Tin re-plans every week from
+        the feedback (one metered planning-agent run) and the same review shows the revised
+        plan; approve it there. Approving waits while the revision runs.
 
         Relay the user's words unchanged. For X, pass post_id from get_workflow_review.
         Clear reusable writing preferences are automatically saved to the X guide; factual

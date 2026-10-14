@@ -99,7 +99,7 @@ def test_v7_contract_is_typed_and_older_contracts_keep_their_schema():
     definition = next(w.definition for w in BUILTIN_WORKFLOWS if w.key == legacy.KEY)
     current = editorial.contract(definition)
     assert current.TYPED and current.AGENT
-    assert current.POLICY["version"] == "content-editorial-v9"
+    assert current.POLICY["version"] == "content-editorial-v10"
     assert definition["content_schema"] == editorial.MODEL_SCHEMA
     v8 = deepcopy(definition)
     v8.update(

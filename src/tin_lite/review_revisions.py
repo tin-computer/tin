@@ -18,6 +18,10 @@ async def approval_conflict(database: Any, run: Any, delivery: str | None) -> st
     """Why approving this run now would use an outdated copy, or None when it would not."""
     if run.status != RunStatus.NEEDS_INPUT or run.review_decision is not None:
         return None
+    if run.executor == "content.plan":
+        from tin_lite.content_plan_feedback import approval_conflict as plan_conflict
+
+        return await plan_conflict(database, run)
     revision = await database.output_revision(run_id=run.id)
     if revision is None:
         return None

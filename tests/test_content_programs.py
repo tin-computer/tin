@@ -65,6 +65,9 @@ async def setup(database, monkeypatch, *, editorial=False):
             content_schema=legacy.MODEL_SCHEMA,
         )
         definition["model_route"]["key"] = legacy.ROUTE_KEY
+    # Definitions saved before content.plan 1.1.0 have no plan approval
+    # (tests/test_content_plan_approval.py covers it).
+    definition.pop("human_review", None)
     storage.definition = definition
     project = await database.create_project(name="Content proof", state_repo_id=storage.repo.id)
     await database.pool.execute(

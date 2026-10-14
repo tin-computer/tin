@@ -15,12 +15,19 @@ update of a page Tin cannot find, a duplicate); nothing the agent paid for fails
 `fill` then puts the kept items on the calendar in priority order, every week up to its
 capacity, so the program ships every week until the portfolio runs out. Weak evidence is a
 label on the item (`evidence_strength`), not a reason to drop it.
+
+content.plan 1.1.0 (content-editorial-v10) gives the agent the outline and opening of every page
+the site lists, not only those with search signal, and `normalize` names the existing pages
+closest to each new item as its evidence and first check (`nearby_pages`). A refresh brief that
+needs a table, section or FAQ changed is planned as an update, which a refresh cannot do.
 """
 
 from __future__ import annotations
 
 import json
+import math
 import re
+from collections import Counter
 from copy import deepcopy
 from urllib.parse import urlsplit
 
@@ -41,7 +48,8 @@ BRIEF_FILES = {
     "BRIEF.md": 120_000,
     "context.json": 200_000,
     "research.json": 600_000,
-    "pages.json": 600_000,
+    # v10 adds the opening and outline of up to 150 more pages.
+    "pages.json": 2_000_000,
 }
 
 # What a planned page is. The format says how content.generate should build it; the item's kind
@@ -56,7 +64,9 @@ FORMATS = {
     "family_page": "one member of a page family (one workflow, integration, use case, audience)",
     "use_case": "a problem or job-to-be-done page",
     "guide": "a how-to or explainer article",
-    "refresh": "a refresh of an existing page's title, snippet, heading and opening",
+    "refresh": "a refresh of an existing page's title, meta description, H1 and opening, and "
+    "up to three body paragraphs when Page decisions allows; never a table, list, link, section "
+    "or FAQ (that is an update)",
     "update": "a substantive rewrite of an existing page",
 }
 NEW_FORMATS = frozenset(FORMATS) - {"refresh", "update"}
@@ -72,6 +82,22 @@ RESEARCH_PREFIXES = (
     "page:",
 )
 MAX_SOURCES = 12
+# v10: the existing pages closest to each new item, kept as its evidence and a check.
+NEARBY_PAGES = 3
+# The share of an item's distinctive words a page must carry, weighted by rarity on the site.
+NEARBY_MIN_SCORE = 0.35
+NEARBY_EVIDENCE_BYTES = 24_000
+# v10: what a refresh brief cannot ask for. content.generate's refresh replaces the title, meta
+# description, H1, lead and up to three body paragraphs in place (content_refresh).
+REFRESH_REACH = re.compile(r"(?i)\b(?:tables?|rows?|columns?|sections?|faqs?)\b")
+LANGUAGE_SEGMENT = re.compile(r"/(?:[a-z]{2}|[a-z]{2}-[a-z]{2})/", re.I)
+NEARBY_SKIPPED_PAGES = frozenset(
+    "about privacy terms legal cookies sign-in sign-up signin signup login status".split()
+)
+NEARBY_STOPWORDS = frozenset(
+    "a an and are as at be best by can do does for from get how i in into is it its of on or "
+    "the their them this to vs versus what when where which who why with without you your".split()
+)
 # content.generate reads cited project files into its context: 20 KB each, 60 KB together.
 DRAFT_FILE_BYTES = 20_000
 DRAFT_FILES_BYTES = 60_000
@@ -388,13 +414,23 @@ def brief_documents(
     }
     pages_view = {
         "note": "pages: text Tin read from the live site (cite an inspected page by its "
-        "source_id). site_pages: every address Tin knows on the site, by path, with where "
-        "it was seen; an address is not page content.",
+        "source_id), with its title, meta description and H1-H3 outline when Tin kept them. "
+        "site_pages: every address Tin knows on the site, by path, with where it was seen; "
+        "an address is not page content.",
         "pages": [
-            {k: p.get(k) for k in ("page_id", "source_id", "url", "status", "text")}
+            {
+                k: p.get(k)
+                for k in PAGE_VIEW_FIELDS
+                if k in ("page_id", "source_id", "url", "status", "text") or k in p
+            }
             for p in pages["pages"]
         ],
         "omitted_candidates": pages.get("omitted_candidates", 0),
+        **(
+            {"omitted_known_pages": pages["omitted_known_pages"]}
+            if "omitted_known_pages" in pages
+            else {}
+        ),
         "site_pages": site.get("pages", []),
         "site_pages_omitted": site.get("omitted", 0),
     }
@@ -411,6 +447,19 @@ def brief_documents(
         if len(documents[folder[name]]) > limit:
             raise ValueError(f"The planning brief's {name} exceeds its bound.")
     return documents
+
+
+# What the agent sees of each page Tin read; v10 pages also carry their title and outline.
+PAGE_VIEW_FIELDS = (
+    "page_id",
+    "source_id",
+    "url",
+    "status",
+    "title",
+    "description",
+    "outline",
+    "text",
+)
 
 
 def render_brief(program, competitors, sources, folder, cited_sites=()):
@@ -571,6 +620,11 @@ def normalize(context, pages, portfolio, *, file_sizes=None):
     seen_titles = {legacy_title(item["title"]) for item in fixed}
     seen_destinations = {item["destination"].rstrip("/") for item in fixed if item["destination"]}
     kept, left_out = [], []
+    # v10 plans name the existing pages closest to each new item (context["page_coverage"]).
+    nearby_limit = (context.get("page_coverage") or {}).get("nearby", 0)
+    refresh_reach = bool(context.get("page_coverage"))
+    read = [p for p in pages["pages"] if p.get("status") == "inspected" and p.get("source_id")]
+    page_bytes = {p["source_id"]: len(canonical_json(p)) for p in read}
 
     def leave(raw, reason):
         left_out.append({"title": _text(raw.get("title"), 180) or "(untitled)", "reason": reason})
@@ -591,6 +645,14 @@ def normalize(context, pages, portfolio, *, file_sizes=None):
             fmt = "update"
         if action == "new_page" and fmt not in NEW_FORMATS:
             fmt = "guide"
+        reformatted = ""
+        if refresh_reach and fmt == "refresh" and REFRESH_REACH.search(brief):
+            # A refresh replaces lines in place; this brief needs the page itself rewritten.
+            fmt = "update"
+            reformatted = (
+                "Planned as an update: the brief changes a table, section or FAQ, which a "
+                "refresh cannot."
+            )
         destination = ""
         if action == "update_page":
             destination = _destination(raw.get("destination"), host)
@@ -641,7 +703,26 @@ def normalize(context, pages, portfolio, *, file_sizes=None):
                     rationale_files.append(path)
         if destination and inspected.get(page_path(destination), {}).get("source_id"):
             sources.append(inspected[page_path(destination)]["source_id"])
-        sources = list(dict.fromkeys(sources))[:MAX_SOURCES]
+        # A comparison or alternatives page is about one competitor; every such page shares
+        # "vs" and the product's words, so word overlap would only name the other comparisons.
+        nearby = (
+            nearby_pages(title, _text(raw.get("target_query"), 200), read, limit=nearby_limit)
+            if action == "new_page" and nearby_limit and fmt not in COMPARISON_FORMATS
+            else []
+        )
+        # content.generate loads each page source into a 64 KB context; nearby pages join only
+        # while the item's pages stay within NEARBY_EVIDENCE_BYTES.
+        used = sum(page_bytes.get(source, 0) for source in sources)
+        near_ids = []
+        for page in nearby:
+            if page["source_id"] in sources or used + page_bytes[page["source_id"]] > (
+                NEARBY_EVIDENCE_BYTES
+            ):
+                continue
+            used += page_bytes[page["source_id"]]
+            near_ids.append(page["source_id"])
+        nearby = [page for page in nearby if page["source_id"] in near_ids]
+        sources = list(dict.fromkeys(sources))[: MAX_SOURCES - len(near_ids)] + near_ids
         strength = raw.get("evidence_strength")
         if strength not in STRENGTHS:
             strength = "inferred" if sources else "bet"
@@ -666,7 +747,10 @@ def normalize(context, pages, portfolio, *, file_sizes=None):
             "action": action,
             "destination": destination,
             "source_ids": sources,
-            "verification": _texts(raw.get("verification"), 500, 8) or [DEFAULT_CHECK],
+            "verification": (
+                ([nearby_check(nearby)] if nearby else [])
+                + (_texts(raw.get("verification"), 500, 8) or [DEFAULT_CHECK])
+            )[:8],
             "readiness": "needs_verification",
             "format": fmt,
             "evidence_strength": strength,
@@ -700,12 +784,99 @@ def normalize(context, pages, portfolio, *, file_sizes=None):
                         ("family", _text(raw.get("family"), 80)),
                         ("rejected", "; ".join(_texts(raw.get("rejected"), 200, 6))),
                         ("files", ", ".join(rationale_files)),
+                        ("nearby", ", ".join(page_path(page["url"]) for page in nearby)),
+                        ("format", reformatted),
                     )
                     if value
                 },
             }
         )
     return kept, left_out
+
+
+def _stem(word):
+    """A crude English stem, so "replies", "receiving" and "messages" meet "reply", "receive"
+    and "message"."""
+    if len(word) > 4 and word.endswith("ies"):
+        return word[:-3] + "y"
+    for suffix in ("ing", "ed", "es", "s"):
+        if len(word) > len(suffix) + 3 and word.endswith(suffix):
+            word = word[: -len(suffix)]
+            break
+    return word[:-1] if len(word) > 4 and word.endswith("e") else word
+
+
+def _words(text):
+    return {
+        _stem(word)
+        for word in re.findall(r"[a-z0-9]+", str(text).casefold())
+        if len(word) > 1 and word not in NEARBY_STOPWORDS
+    }
+
+
+def nearby_pages(title, query, pages, *, limit):
+    """The read pages closest to a proposed new page, best first, at most `limit`.
+
+    The item's title and target search are matched against each page's title, meta
+    description, outline and address (counting double) and its opening text. Each word counts
+    by how rare it is on the site, so the brand name and words every page shares count for
+    nothing. A page must carry at least NEARBY_MIN_SCORE of the item's words that appear
+    anywhere on the site.
+    """
+    from tin_lite.content_plan_editorial import page_path
+
+    docs, seen = [], set()
+    for page in pages:
+        path = page_path(page["url"])
+        # A redirect alias is the same page. The home and about pages touch every topic, and
+        # legal and sign-in pages none: neither is the page a new article would repeat. A
+        # translated copy (/blog/zh/...) is another language's page.
+        if (
+            path in seen
+            or path == "/"
+            or path.rsplit("/", 1)[-1] in NEARBY_SKIPPED_PAGES
+            or LANGUAGE_SEGMENT.search(path)
+        ):
+            continue
+        seen.add(path)
+        head = _words(
+            " ".join(
+                [
+                    page.get("title") or "",
+                    page.get("description") or "",
+                    " ".join(page.get("outline") or []),
+                    path.replace("-", " ").replace("/", " "),
+                ]
+            )
+        )
+        docs.append((page, head, _words(page.get("text") or "")))
+    if not docs:
+        return []
+    frequency = Counter(word for _, head, body in docs for word in head | body)
+    wanted = {word for word in _words(f"{title} {query}") if frequency[word]}
+    weight = {word: math.log((len(docs) + 1) / (frequency[word] + 1)) for word in wanted}
+    total = 2 * sum(weight.values())
+    if not total:
+        return []
+    scored = []
+    for page, head, body in docs:
+        score = sum(
+            weight[word] * (2 if word in head else 1 if word in body else 0) for word in wanted
+        )
+        if score / total >= NEARBY_MIN_SCORE:
+            scored.append((score, page))
+    scored.sort(key=lambda entry: (-entry[0], entry[1]["url"]))
+    return [page for _, page in scored[:limit]]
+
+
+def nearby_check(pages):
+    from tin_lite.content_plan_editorial import page_path
+
+    paths = ", ".join(page_path(page["url"]) for page in pages)
+    return (
+        f"Read {paths} first: if one already answers this reader, the outcome is "
+        "already_covered or an update of that page, not a new page."
+    )[:500]
 
 
 def with_decision_refreshes(context, kept):

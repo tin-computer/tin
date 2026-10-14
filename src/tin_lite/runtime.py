@@ -454,6 +454,7 @@ async def build_runtime(settings: Settings) -> RuntimeServices:
         characters.character_failure,
         content_planner.content_plan_research,
         content_planner.content_plan_execute,
+        content_planner.content_plan_approved,
         content_planner.content_plan_failure,
         keywords.keyword_prepare,
         keywords.keyword_collect,

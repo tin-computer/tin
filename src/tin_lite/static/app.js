@@ -5034,7 +5034,9 @@ function supportsArticleFeedback(run) {
   if (!run) return false;
   // A writing style proposal reads its review too: approval binds the exact version shown.
   return Boolean(workflowForRun(run)?.definition?.procedure?.output?.apply_on_approval) ||
-    ["content.generate", "content.public_article", "social.x_style", "style.capture"].includes(workflowForRun(run)?.key || run?.workflow_name);
+    ["content.generate", "content.public_article", "social.x_style", "style.capture"].includes(workflowForRun(run)?.key || run?.workflow_name) ||
+    // A first content plan waits for approval and can be revised from feedback (1.1.0).
+    ((workflowForRun(run)?.key || run?.workflow_name) === "content.plan" && Boolean(run.review_required));
 }
 
 function mountArticleFeedback(host, runId, reader = false, documentContext = {}) {
@@ -5444,7 +5446,7 @@ function renderDecisions() {
     button.addEventListener("click", (event) => decideWebsiteChange(decision, event.currentTarget));
   });
   bindPageUrls();
-  if (decision?.run_id && supportsArticleFeedback(state.runs.find(run => run.id === decision.run_id) || {workflow_name: decision.workflow_key})) {
+  if (decision?.run_id && supportsArticleFeedback(state.runs.find(run => run.id === decision.run_id) || {workflow_name: decision.workflow_key, review_required: true})) {
     state.documentCleanup = mountArticleFeedback(main.querySelector(".decision-detail-card"), decision.run_id);
   }
 }

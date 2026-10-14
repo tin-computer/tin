@@ -2892,6 +2892,15 @@ class Database:
                 # This is the current conservative project default. A future project-wide
                 # autonomy setting will resolve this boolean here, once, when the run starts.
                 review_required = True
+                if workflow["key"] == "content.plan" and workflow["project_id"] is None:
+                    # Only a program's first plan waits for approval: a later batch follows
+                    # the approved plan, and a revision preview has its own apply.
+                    planned = project_workflow_id is not None and await conn.fetchval(
+                        "SELECT plan_revision IS NOT NULL FROM content_programs "
+                        "WHERE project_workflow_id=$1",
+                        project_workflow_id,
+                    )
+                    review_required = not input_payload.get("amendment_id") and not planned
             temporal_workflow_id = f"{executor}:{run_id}"
             # A saved configuration is one lease lineage: a newer generation fences the older.
             # Ad-hoc runs are independent jobs, so each gets its own lineage; sharing the
@@ -7957,6 +7966,54 @@ class Database:
                 )
                 await self._track_run(run_id, "run_held", conn=conn, summary=summary[:1000])
             return review_required
+
+    async def repoint_review_artifact(
+        self,
+        *,
+        run_id: UUID,
+        canonical_commit_sha: str,
+        artifact_path: str,
+        artifact_ref: str,
+        explanation: str | None = None,
+    ) -> bool:
+        """Point a waiting review at a revised copy: the run and its pending decision.
+
+        Only while the run still waits with no decision, so an approval always binds the copy
+        the founder was shown. A content plan revised from feedback uses it.
+        """
+        async with self.pool.acquire() as conn, conn.transaction():
+            updated = await conn.fetchval(
+                """
+                UPDATE workflow_runs
+                SET canonical_commit_sha = $2, artifact_path = $3, artifact_ref = $4,
+                    progress_updated_at = now()
+                WHERE id = $1 AND status = 'needs_input' AND review_required
+                  AND review_decision IS NULL
+                RETURNING id
+                """,
+                run_id,
+                canonical_commit_sha,
+                artifact_path,
+                artifact_ref,
+            )
+            if updated is None:
+                return False
+            await conn.execute(
+                """
+                UPDATE run_decisions
+                SET items = jsonb_build_array(jsonb_build_object(
+                        'id', $2::text, 'title', regexp_replace($2::text, '^.*/', ''),
+                        'file', $2::text, 'revision', $3::text,
+                        'media_type', 'text/markdown')),
+                    explanation = COALESCE($4::text, explanation)
+                WHERE run_id = $1 AND status = 'pending'
+                """,
+                run_id,
+                artifact_path,
+                canonical_commit_sha,
+                explanation[:2000] if explanation else None,
+            )
+            return True
 
     async def record_human_review(
         self,

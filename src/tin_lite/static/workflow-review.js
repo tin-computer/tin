@@ -151,7 +151,7 @@
         <p>${esc(review.feedback_hint || "For this draft only. Your feedback won’t change your saved writing style.")}</p>
         <textarea id="${esc(id)}" name="feedback" maxlength="8000" required placeholder="What should we change, keep, or explain better? Mention any project files to use.">${esc(draft.feedback)}</textarea>
         <p class="review-error" role="alert" hidden></p>
-        <footer><button type="submit" class="review-submit">${review.artifact?.assessment ? "Recheck with feedback" : "Revise draft"}</button></footer>`;
+        <footer><button type="submit" class="review-submit">${esc(submitLabel())}</button></footer>`;
       region.append(form);
       form.elements.feedback.oninput = () => {draft.feedback = form.elements.feedback.value; draft.request = null;};
       form.onsubmit = async event => {
@@ -167,14 +167,26 @@
           });
           draft.open = false;
           if (disposed) return;
+          if (successor.id === runId) {
+            // A content plan is revised in place: this review shows the revision as it runs.
+            draft.feedback = ""; draft.request = null;
+            review = await api(`/api/workflows/runs/${runId}/review`);
+            if (disposed) return;
+            reviews.set(key, review); redraw();
+            toast("Re-planning from your feedback. The plan stays here while Tin works.");
+            return;
+          }
           onRevised(successor);
         } catch (error) {
           if (disposed) return;
           errorBox.textContent = error.message; errorBox.hidden = false;
-          button.disabled = false; button.textContent = review.artifact?.assessment ? "Recheck with feedback" : "Revise draft";
+          button.disabled = false; button.textContent = submitLabel();
         }
       };
     };
+    function submitLabel() {
+      return review.submit_label || (review.artifact?.assessment ? "Recheck with feedback" : "Revise draft");
+    }
     requestButton.onclick = () => {
       draft.open = !draft.open; redraw();
       if (draft.open) region.querySelector("textarea")?.focus();

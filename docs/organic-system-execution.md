@@ -88,7 +88,11 @@ Child runs do not silently follow a later catalog publication.
    or earlier still starts `organic.technical_fix` (under `site-fix-v5` one PR for every
    fixable finding; earlier policies take one finding).
 3. After both research runs succeed, create one manual `content.plan` configuration in
-   My system, using these exact research run IDs, then run it.
+   My system, using these exact research run IDs, then run it. From `content.plan` 1.1.0 its
+   first plan waits in Decisions until the founder approves it, and the system's draft step
+   and weekly articles wait with it (the technical step runs beside it and does not wait). A
+   declined plan skips the draft and the weekly articles (`content_plan_declined`); the
+   system never falls back to an older saved plan the founder did not choose.
 4. Publish `reports/organic-system/{run_id}/RESULT.md`, linking the exact child artifacts
    and recording skipped, blocked, or failed branches honestly.
 

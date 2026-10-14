@@ -1,5 +1,6 @@
 """Local Temporal retry/replay proof, with no model/provider access."""
 
+import asyncio
 import shutil
 from uuid import uuid4
 
@@ -125,3 +126,58 @@ async def test_content_plan_dispatches_its_planning_agent_with_identifiers_only(
         event.HasField("child_workflow_execution_failed_event_attributes")
         for event in history.events
     )
+
+
+@pytest.mark.asyncio
+async def test_a_first_plan_waits_for_approval_then_finishes_with_identifiers_only():
+    """v10: a first plan published for review waits, with no timer, for the approve signal."""
+    binary = shutil.which("temporal")
+    if binary is None:
+        pytest.skip("Local Temporal CLI required")
+    run_id, calls, published = str(uuid4()), [], asyncio.Event()
+
+    @activity.defn(name="content_plan_research")
+    async def research(value: str):
+        return {}
+
+    @activity.defn(name="content_plan_execute")
+    async def execute(value: str):
+        calls.append("execute")
+        published.set()
+        return {"review": True}
+
+    @activity.defn(name="content_plan_approved")
+    async def approved(value: str):
+        calls.append("approved")
+
+    @activity.defn(name="content_plan_failure")
+    async def fail(value: str):
+        raise AssertionError("An approved plan finishes")
+
+    async with await WorkflowEnvironment.start_local(
+        dev_server_existing_path=binary, dev_server_log_level="error"
+    ) as env:
+        async with Worker(
+            env.client,
+            task_queue="content-plan-approval-proof",
+            workflows=[ContentPlanWorkflow],
+            activities=[research, execute, approved, fail],
+        ):
+            handle = await env.client.start_workflow(
+                ContentPlanWorkflow.run,
+                run_id,
+                id=f"content-plan-approval-proof:{run_id}",
+                task_queue="content-plan-approval-proof",
+            )
+            await published.wait()
+            await asyncio.sleep(0.3)
+            assert calls == ["execute"]  # still waiting
+            await handle.signal("approve")
+            await handle.result()
+            history = await handle.fetch_history()
+        await Replayer(workflows=[ContentPlanWorkflow]).replay_workflow(history)
+    assert calls == ["execute", "approved"]
+    for event in history.events:
+        if event.HasField("activity_task_scheduled_event_attributes"):
+            payloads = event.activity_task_scheduled_event_attributes.input.payloads
+            assert payloads[0].data == f'"{run_id}"'.encode()

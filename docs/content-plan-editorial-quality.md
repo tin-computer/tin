@@ -134,3 +134,78 @@ Nothing the agent paid for fails the run: an unusable portfolio still publishes 
 report names every reason. Only an agent run that did not finish fails the plan, with its
 reason. Plans pinned to v8 and older keep their single model call. The organic system's v8
 recipe (`organic-traffic-v8`) sizes the plan's share of its pool for the agent.
+
+## Every listed page, its outline and its nearest pages (content-editorial-v10)
+
+`content.plan` 1.1.0 pins `content-editorial-v10`. On 2026-10-08 a production plan's
+brief held 65 site addresses but the text of 15: the inventory reads only pages with search
+signal (refresh rows, plan destinations, ranking pages). The agent read `pages.json` but never
+fetched a page it had only the address of, and the title-only duplicate check let through new
+pages for questions `/docs` and four agency guides already answered. `content.generate` then
+judged two of them `already_covered` and a third `needs_replanning`, each a paid run.
+
+- **Tin reads every listed page.** After the up to 60 candidates (read at 6,000 bytes as
+  before), `page_inventory` reads every other page in `site_pages`, most impressions first, up
+  to 150 (a runaway guard; `omitted_known_pages` counts the rest), at 1,500 bytes, eight at a
+  time. Every page keeps its `title`, meta `description` and `outline`: its H1 to H3 headings
+  in order (30 at most, 100 characters each; a page's own `<header>` counts, navigation and
+  footers do not). The outline shows coverage the opening misses: `/docs` opens with a
+  quickstart and reaches "Receiving Messages" far below it. Reading is Tin's code, not an
+  instruction the agent may skip; the brief's `pages.json` (bound raised to 2 MB) carries it all.
+- **Tin names each new item's nearest pages.** `normalize` scores every read page against the
+  item's title and target search (`nearby_pages`): words weighted by how rare they are on the
+  site, so the brand name counts for nothing, matches in the title, description, outline and
+  address counting double, crude stemming so "replies" meets "reply". The home, about, legal
+  and sign-in pages and redirect aliases are skipped. Up to three pages carrying at least 35%
+  of the item's weighted words join its `source_ids` (content.generate loads them as evidence;
+  they join only while the item's pages stay under 24 KB of its 64 KB context), and its first
+  check says to read them and choose `already_covered` or an update when one already answers
+  the reader. The rationale records them (`nearby`). Nothing is left out on this score.
+- **A refresh brief stays within a refresh.** content.generate's refresh replaces the title,
+  meta description, H1, lead and up to three body paragraphs in place; it cannot change a table,
+  list, link, section or FAQ. The planner's skill and `formats` say so, and `normalize` plans a
+  refresh whose brief names a table, row, column, section or FAQ as an `update`, with the reason
+  in its rationale (a refresh asking for "a compact choice table" was judged `needs_replanning`).
+
+Plans pinned to v9 keep its page reads, briefs and normalization exactly.
+
+### The plan opens with its targets, and the founder approves it first
+
+The 10/8 outside run found nothing to approve before the first article: the targets, the
+prompts and the plan were files, and no view said which keyword or question each page serves.
+
+- **Targets and pages.** `PLAN.md` opens with `## Targets and pages`
+  (`content_plan_targets`), computed from the plan and its research, never written by a model.
+  One row per keyword group (served by an item citing the group or one of its keywords, or
+  targeting one of its searches; demand is its keywords' summed volume and impressions), per
+  page searchers see (refresh rows and Page decisions' refresh or rewrite, served by the item
+  changing that page), per competitor the planner chose to write about (served by an item
+  naming it), and per buyer question in the audit's panel (served by an item whose title,
+  target search and brief carry at least half of its distinctive words). Targets with no page
+  and pages with no target are listed under it. `evidence.json` keeps the mapping
+  (`editorial.targets`). On the 10/8 plan of a production project it showed the two largest
+  keyword groups with no page and ten late bets serving no target.
+- **Approval before drafting.** `content.plan` 1.1.0 declares a review policy. Only a
+  program's first plan requires review (`db.create_run`): a later batch follows the approved
+  plan, and a revision preview keeps its own apply. The first run publishes the plan as before,
+  then requests review instead of finishing (`request_human_review`, artifact `PLAN.md`, the
+  card's line from `review_line`), and the workflow waits on its `approve` signal behind
+  `content-plan-approval-v1`, with no timer; `content_plan_approved` records the approval and
+  the success. Until then `content.generate` refuses with "Approve the content plan in
+  Decisions before drafting from it." (`ContentPrograms.approval_hold`, checked by discovery
+  and selection before any run or spend). Declining ends the run; nothing drafts from that
+  program. Programs saved before 1.1.0 have no review policy and draft as before.
+- **Request changes on the waiting plan** (`content_plan_feedback`). The plan's reader offers
+  Request changes like a draft's ("Revise plan"; HTTP `request-changes`, MCP
+  `request_workflow_changes`). The feedback becomes an ordinary plan revision
+  (`begin_revision` over every week not started, plus one metered revision run of the planning
+  agent); a receipt (`content_plan_feedback_v1`) ties it to the waiting run. While it runs the
+  plan stays readable, approving it is refused ("Tin is revising this plan from your
+  feedback…") and a second request is refused. When the revision run finishes, Tin applies it
+  (the existing exact base check) and points the same waiting review at the revised `PLAN.md`
+  (`repoint_review_artifact`, only while no decision exists), so the card never moves and an
+  approval binds the copy shown; the reader notes "Revised once by Tin, from your feedback". If
+  the founder edited the plan meanwhile, the revision is discarded and the review says their
+  edits were kept; if the revision run fails, the review says so and the plan they read stays
+  approvable. A plan decided meanwhile leaves the revision as an ordinary preview.
+
