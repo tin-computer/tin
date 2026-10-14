@@ -44,12 +44,13 @@ MAX_PORTFOLIO_BYTES = 400_000
 MAX_OPPORTUNITIES = 120
 
 BRIEF_FOLDER = "reports/content-plan/{run_id}/brief"
+# Runaway guards, well above a large site's brief.
 BRIEF_FILES = {
-    "BRIEF.md": 120_000,
-    "context.json": 200_000,
-    "research.json": 600_000,
+    "BRIEF.md": 1_000_000,
+    "context.json": 1_000_000,
+    "research.json": 4_000_000,
     # v10 adds the opening and outline of up to 150 more pages.
-    "pages.json": 2_000_000,
+    "pages.json": 4_000_000,
 }
 
 # What a planned page is. The format says how content.generate should build it; the item's kind

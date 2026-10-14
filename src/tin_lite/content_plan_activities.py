@@ -290,7 +290,9 @@ class ContentPlanActivities:
                 await self.active(run.id, conn=conn)
 
             output_paths = paths(str(run.id))
-            limits = {"PLAN.md": 300_000, "plan.json": 240_000, "evidence.json": 400_000}
+            # Runaway guards: evidence keeps every page the plan read (up to 210, with text and
+            # outline), and PLAN.md renders a plan up to plan.json's own 240 KB bound.
+            limits = {"PLAN.md": 1_000_000, "plan.json": 240_000, "evidence.json": 4_000_000}
             working_path = plan_path(run.project_workflow_id)
             if working_path in documents:
                 output_paths["working_plan"] = working_path

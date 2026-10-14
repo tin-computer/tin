@@ -99,7 +99,9 @@ async def publish_artifacts(
         content = documents[path]
         content.decode("utf-8")
         if not 0 < len(content) <= limits[name]:
-            raise ValueError("Audit artifact exceeds its safe read contract.")
+            raise ValueError(
+                f"{path} is {len(content)} bytes; publication allows 1 to {limits[name]}."
+            )
     repo = await storage.get_repo(repo_id)
     async with asyncio.timeout(120):
         head = await storage.head_sha(repo, branch)
