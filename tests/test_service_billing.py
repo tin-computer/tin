@@ -1019,3 +1019,43 @@ async def test_x_parent_and_both_children_share_one_budget(billed):
         f.billing.terms(SPECS["social.x_draft"].definition, f.project.id)["maximum_nanos"]
         == 1_000_000_000  # Voice capture and composition at worst about $0.81 (2026-10-08).
     )
+
+
+@pytest.mark.parametrize(("cents", "parallel"), [(10_000, True), (1_000, False)])
+async def test_the_planning_agent_fans_out_only_when_its_room_holds_every_request(
+    billed, cents, parallel
+):
+    from tin_lite.codex_api import PARALLEL_PROCEDURE_CONTRACT, PROCEDURE_CONTRACT_V5
+    from tin_lite.codex_api_pricing import parallel_room
+
+    f = billed
+    await fund(f, cents)
+    f.settings.codex_api_projects = {f.project.id}
+    plan_inputs = {
+        "audit_run_id": str(uuid4()),
+        "keyword_run_id": str(uuid4()),
+        "start_date": "2026-10-19",
+    }
+    parent = await admit(f, "content.plan", plan_inputs)
+    child = await admit(
+        f,
+        "content.plan_research",
+        {
+            "plan_run_id": str(parent.id),
+            "brief_folder": f"reports/content-plan/{parent.id}/brief",
+            "brief_revision": "a" * 40,
+            "host": "example.com",
+            "slots": 18,
+        },
+        parent=parent,
+        step=f"content:{parent.id}:research",
+    )
+    terms = json.loads(
+        await f.db.pool.fetchval("SELECT terms FROM billing_run_budgets WHERE run_id=$1", child.id)
+    )
+    # $100 holds five reservations and the lead's; $10 would starve them, so it works serially.
+    assert parallel_room(PARALLEL_PROCEDURE_CONTRACT) == 6 * terms["request_maximum_nanos"]
+    assert terms["codex_contract"] == (
+        PARALLEL_PROCEDURE_CONTRACT if parallel else PROCEDURE_CONTRACT_V5
+    )
+    assert terms["maximum_nanos"] == 12_000_000_000

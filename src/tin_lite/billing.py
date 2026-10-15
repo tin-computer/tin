@@ -775,7 +775,26 @@ class BillingService:
                 from tin_lite.codex_api_pricing import api_terms
 
                 if parent_terms.get("codex_api_children"):
-                    terms = api_terms(definition, child=True)
+                    # A procedure that fans out to subagents runs them only when the
+                    # credits, the project's limits and the parent's budget can hold their
+                    # reservations at once; otherwise it works one request at a time.
+                    root_budget = await conn.fetchrow(
+                        "SELECT maximum_nanos, committed_nanos FROM billing_run_budgets "
+                        "WHERE run_id=$1",
+                        parent["root_run_id"],
+                    )
+                    spend_room = min(
+                        run_room(
+                            await conn.fetchrow(
+                                "SELECT * FROM billing_project_policies WHERE project_id=$1",
+                                run["project_id"],
+                            ),
+                            await self.month_usage(conn, run["project_id"]),
+                            await self.wallet_credits(conn, account),
+                        ),
+                        root_budget["maximum_nanos"] - root_budget["committed_nanos"],
+                    )
+                    terms = api_terms(definition, child=True, spend_room=spend_room)
                 else:
                     terms = self.fallback_terms(definition)
                 terms = {**terms, "mode": self.mode}

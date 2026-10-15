@@ -64,9 +64,10 @@ class RelayRejected(HTTPException):
 CONTRACT_REJECTION = "This API request exceeds its reserved execution contract"
 # Refusals of one parallel request while others hold the run's room; never a run's cause.
 PARALLEL_REJECTIONS = frozenset({"parallel_limit", "parallel_reservation"})
-# How long a parallel request waits for a slot before it is refused. The whole admission and
-# upstream connect must finish inside relay_codex_api's 200-second bound; streaming follows.
-PARALLEL_WAIT_SECONDS = 120
+# How long a parallel request waits for a slot before it is refused: a subagent's response with
+# several searches can stream for minutes. Admission and the upstream connect must finish
+# inside relay_codex_api's 200-second bound; streaming follows.
+PARALLEL_WAIT_SECONDS = 170
 PARALLEL_WAIT_STEP_SECONDS = 1.0
 # Spending refusals that requests in flight can cause by holding their reservations.
 HELD_ROOM_CODES = frozenset({"run_limit", "project_limit", "insufficient_funds"})

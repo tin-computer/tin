@@ -255,7 +255,13 @@ category.
   the run's cause and not a spending stop; with nothing in flight the ceiling stops the run as
   before. The planning agent's ceiling is $12 (five reservations are $9.65), and so is the
   standalone plan's. An image without the controller change ignores the field, and the agent
-  runs the channels itself.
+  runs the channels itself. A parallel request refused only because others hold the slots or
+  the room waits up to 170 seconds for one to settle; Codex does not retry, so a refusal would
+  fail the turn that sent it. The parallel contract is pinned only when the run can reserve
+  six requests at once ($11.58: the credits available, the project's limits and the parent's
+  budget). With less, the subagents would starve each other for credits, so the agent gets
+  the one-request contract and runs the channels itself. On staging a $4 wallet held two
+  reservations, and long multi-search responses kept the rest waiting past the old 120 seconds.
 - **Leads, not a list.** Tin adds two sources to the merged leads: the comparison pages the site
   already has (`/alternatives/<name>`, `/vs/<name>`, `/compare/<a>-vs-<b>`, `/<a>-vs-<b>`,
   `/<name>-alternatives`, from the site's page list) and the set an earlier plan checked. Leads

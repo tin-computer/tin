@@ -10,9 +10,12 @@ from tin_lite.codex_api import (
     DIAGRAM_VALIDATORS,
     MODE,
     MODEL,
+    PARALLEL_PROCEDURE_CONTRACT,
     PROCEDURE_CONTRACT,
+    PROCEDURE_CONTRACT_V5,
     SESSION_CONTRACT,
     SESSION_CONTRACT_V4,
+    parallel_requests,
     procedure_contract,
 )
 from tin_lite.workflow_costs import SESSION_FUNDING
@@ -176,11 +179,28 @@ def request_maximum(contract):
     )
 
 
-def api_terms(definition, *, session_budget=False, before_v5=False, child=False, room=None):
+def parallel_room(contract):
+    """What a parallel contract needs free to run as one: every request it may keep in flight
+    reserved at once, and one more for the lead. With less, its requests would starve each
+    other for credits, so the run pins the one-request contract instead."""
+    return (parallel_requests(contract) + 1) * request_maximum(contract)
+
+
+def api_terms(
+    definition,
+    *,
+    session_budget=False,
+    before_v5=False,
+    child=False,
+    room=None,
+    spend_room=None,
+):
     """Terms a new admission pins. `before_v5` rebuilds the terms (v3/v4 contract, $5
     default) that quotes issued before v5 carry, only to honor such a quote while valid.
     `child` is a run funded inside its parent's budget; it keeps the $5 child ceiling.
-    `room` is what a root run may still spend (`default_maximum`)."""
+    `room` is what a root run may still spend (`default_maximum`). `spend_room` is what the
+    run can actually reserve now (credits, project limits, its parent's budget); a parallel
+    contract needs `parallel_room` of it, else the run works one request at a time."""
     validator = definition.get("procedure", {}).get("output", {}).get("validator")
     terms = {
         "rate_card": RATE_CARD["id"],
@@ -210,6 +230,12 @@ def api_terms(definition, *, session_budget=False, before_v5=False, child=False,
             contract = DIAGRAM_CONTRACT if validator in DIAGRAM_VALIDATORS else PROCEDURE_CONTRACT
         else:
             contract = procedure_contract(validator)
+            if (
+                contract == PARALLEL_PROCEDURE_CONTRACT
+                and spend_room is not None
+                and spend_room < parallel_room(contract)
+            ):
+                contract = PROCEDURE_CONTRACT_V5
         terms.update(
             codex_contract=contract,
             request_maximum_input_bytes=contract["max_request_bytes"],
