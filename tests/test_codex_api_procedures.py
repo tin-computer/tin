@@ -1030,3 +1030,35 @@ async def test_a_stream_its_client_left_is_read_on_and_settled(publication_db):
     finally:
         await client.aclose()
         await relay.close()
+
+
+async def test_a_stream_whose_settlement_fails_ends_instead_of_hanging(publication_db):
+    from starlette.datastructures import Headers
+    from test_codex_api import HEADERS
+
+    from tin_lite.codex_api import PARALLEL_PROCEDURE_CONTRACT
+
+    run, relay, client, sent = await setup_relay(publication_db)
+
+    async def broken(*args, **kwargs):
+        raise KeyError("settlement failed")
+
+    relay.observe = broken
+    try:
+        await upgrade_attempt(publication_db, run, PARALLEL_PROCEDURE_CONTRACT)
+        response = await relay.relay(
+            run.id,
+            "synthetic-run-bound-grant-only-for-tests",
+            json.dumps(BODY).encode(),
+            "responses",
+            Headers(HEADERS),
+        )
+
+        async def collect():
+            return [chunk async for chunk in response.body_iterator]
+
+        chunks = await asyncio.wait_for(collect(), 5)
+        assert chunks[-1].startswith(b'data: {"type":"error"')
+    finally:
+        await client.aclose()
+        await relay.close()
