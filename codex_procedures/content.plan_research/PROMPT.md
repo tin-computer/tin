@@ -17,8 +17,9 @@ truly run out of distinct, honest pages for this product, and say exactly why in
 
 Follow `$content-portfolio`. It says how to choose competitors, page families, answer pages and
 refreshes, how to check a choice against search results, and how to write the portfolio. Settle
-the competitive set first, with the four research channels in its `COMPETITORS.md`; when you can
-start subagents, run the channels in parallel. Use web search to see what ranks and what
+the competitive set first, with the four research channels in its `COMPETITORS.md`. When
+`spawn_agent` is among your tools, start one subagent per channel as soon as you have framed the
+search, with direct tool calls, and read the project while they search. Use web search to see what ranks and what
 competitors publish; cite what you used.
 
 Take positioning from the project's files: who the product is for, what it does and why it wins.
