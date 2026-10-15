@@ -564,6 +564,12 @@ def test_product_ui_assets_are_packaged_beside_the_application() -> None:
     assert "function decisionsPace()" in script
     assert "nearest deadline ${systemDateTime(nearestDeadline)}" in script
     assert "${escapeHtml(decisionListTitle(item))}</strong></span>" in script
+    # Reviews, website changes and questions each sit under their own heading.
+    assert "function decisionGroups(items)" in script
+    assert '{ title: "Website changes", has: (item) => item.kind === "website_change" }' in script
+    assert (
+        '<h2 class="decision-group-title">${escapeHtml(title)}<code>${grouped.length}</code></h2>'
+    ) in script
     assert "${escapeHtml(item.workflow_title)}</strong><small>" not in script
     assert "${escapeHtml(decision.title)}</h2>" not in script
     # One Open button and prose only: no file rows or diffs on the card.

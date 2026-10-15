@@ -5488,6 +5488,28 @@ html[data-theme="dark"] .system-week-nav button {
   flex-direction: column;
 }
 
+.decision-group + .decision-group {
+  margin-top: 16px;
+}
+
+.decision-group-title {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+  margin: 0 0 4px;
+  padding: 0 10px;
+  font-size: 13px;
+  font-weight: 600;
+  line-height: 18px;
+}
+
+.decision-group-title code {
+  color: var(--ink-muted);
+  font-family: var(--mono);
+  font-size: 11px;
+  font-weight: 400;
+}
+
 .decision-list-item {
   display: grid;
   grid-template-columns: 8px minmax(0, 1fr) max-content;

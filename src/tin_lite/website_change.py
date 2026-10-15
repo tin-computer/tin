@@ -897,7 +897,7 @@ async def list_changes(
         SELECT * FROM website_changes
         WHERE project_id=$1 AND ($2::text IS NULL OR status=$2)
         ORDER BY status <> 'pending', CASE WHEN status = 'pending' THEN proposed_at END,
-                 decided_at DESC NULLS LAST, change_id
+                 decided_at DESC NULLS LAST, detail->>'group' NULLS LAST, title, change_id
         LIMIT $3
         """,
         project_id,
