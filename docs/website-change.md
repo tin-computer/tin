@@ -174,7 +174,8 @@ is refused. A trigger in Postgres refuses any update to a decided row.
 | approve | `POST …/{change_id}/approve` `{request_id, content_sha256}` | `approve_website_change` |
 | decline | `POST …/{change_id}/decline` `{request_id, content_sha256}` | `decline_website_change` |
 | preview a source's changes (`source`: `audit`, `planned`) | `POST /api/projects/{id}/website-changes/preflight` | `preflight_website_change` |
-| open judgment calls | `GET /api/projects/{id}/website-changes/questions` | (in `preflight_website_change`) |
+| open judgment calls | `GET /api/projects/{id}/website-changes/questions` | (in `preflight_website_change` and `list_open_decisions`) |
+| everything waiting in Decisions | | `list_open_decisions` |
 | read protected pages | `GET /api/projects/{id}/protected-paths` | `get_protected_paths` |
 | set protected pages | `PUT /api/projects/{id}/protected-paths` `{request_id, expected_revision, paths}` | `set_protected_paths` |
 

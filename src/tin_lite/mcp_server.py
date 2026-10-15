@@ -681,7 +681,8 @@ get_workflow_authoring_guide and build it with create_project_workflow (or updat
 update_project_workflow); tell the founder that result's relay. When the first result of a run
 is in, offer once to talk through how Tin can help the business grow: what they have tried, what
 they do by hand, what Tin could add; build what they agree to. list_project_workflows shows what
-runs on a schedule and list_project_runs what ran. Do not poll get_run in a tight loop; a check
+runs on a schedule, list_project_runs what ran and list_open_decisions what waits for the
+founder. Do not poll get_run in a tight loop; a check
 every few minutes while a run is in flight is right, and results show under My system and
 anything waiting under Decisions; whenever you tell the founder something landed, link one of
 those two pages (`links` in get_run).
@@ -1388,6 +1389,54 @@ def create_mcp_app(
             "changes": await website_change.list_changes(
                 runtime().database, project_id=project, status=status
             )
+        }
+
+    @server.tool(annotations=ToolAnnotations(readOnlyHint=True))
+    async def list_open_decisions(project_id: str) -> dict[str, Any]:
+        """Everything on the project's Decisions page that waits for the founder, in one call.
+
+        `reviews` are runs waiting for a review, an answer or a resolved output; read
+        get_workflow_review(run_id) for the exact version before acting. `website_changes`
+        are pending change rows (approve_website_change or decline_website_change).
+        `judgment_calls` are open questions the coding agent answers with the next website
+        change run; there is nothing to approve. `paid_ads_proposals` are pending Google Ads
+        changes. Show each to the founder and ask; never decide for them.
+        """
+        from tin_lite import website_change, website_change_audit
+
+        token = await caller()
+        project = _mcp_uuid(project_id, field="project_id")
+        await require_project(project, token, tool_name="list_open_decisions")
+        database = runtime().database
+        reviews = await database.list_pending_decisions(project_id=project)
+        changes = await website_change.list_changes(database, project_id=project, status="pending")
+        calls = await website_change_audit.judgment_calls(database, project)
+        proposals = await database.list_paid_ads_proposals(project_id=project, status="pending")
+        return {
+            "reviews": [
+                {
+                    "run_id": str(item["run_id"]),
+                    "kind": item["kind"],
+                    "workflow_key": item["workflow_key"],
+                    "workflow_title": item["workflow_title"],
+                    "title": item["title"],
+                    "explanation": item["explanation"],
+                    "consequence": item["consequence"] or None,
+                    "files": [
+                        entry["file"]
+                        for entry in item["items"]
+                        if isinstance(entry, dict) and entry.get("file")
+                    ],
+                    "deadline_at": (
+                        item["deadline_at"].isoformat() if item["deadline_at"] else None
+                    ),
+                    "created_at": item["created_at"].isoformat(),
+                }
+                for item in reviews
+            ],
+            "website_changes": changes,
+            "judgment_calls": calls,
+            "paid_ads_proposals": [_mcp_proposal_view(row) for row in proposals],
         }
 
     async def _decide_website_change(

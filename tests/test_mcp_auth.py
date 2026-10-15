@@ -178,6 +178,7 @@ async def test_mcp_exposes_personal_project_bootstrap_explicitly() -> None:
     } <= {tool.name for tool in tools}
     assert {
         "list_website_changes",
+        "list_open_decisions",
         "approve_website_change",
         "decline_website_change",
         "get_protected_paths",
@@ -197,7 +198,7 @@ async def test_mcp_exposes_personal_project_bootstrap_explicitly() -> None:
     assert "member_clerk_user_id" not in save_author.input_schema["properties"]
     style_guide = next(tool for tool in tools if tool.name == "get_writing_style_guide")
     assert "author_id" in style_guide.input_schema["properties"]
-    assert len(tools) == 107
+    assert len(tools) == 108
     assert "refund_billing_payment" not in {tool.name for tool in tools}
     start = next(tool for tool in tools if tool.name == "start_workflow")
     assert "instruction and title are only for project.task" in start.description
