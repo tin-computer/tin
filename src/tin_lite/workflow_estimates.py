@@ -33,16 +33,13 @@ ESTIMATES_USD: dict[str, str] = {
     "content.refresh": "0.20",
     "website.change": "0.60",
     # Retired; kept for pinned runs, retries and saved schedules.
-    "content.deliver": "0.75",
     "content.blog_index": "0.75",
-    "organic.technical_fix": "0.30",
     # Codex procedures.
     "product.code_map": "2.00",
     "product.deep_dive": "2.50",
     "qa.product_audit": "2.50",
     "project.task": "1.00",
     "research.deep_dive": "1.25",
-    "content.public_article": "1.20",
     "outreach.awesome_lists": "1.75",
     "outreach.email_shortlist": "1.00",
     "product.analytics_brief": "0.50",
@@ -74,7 +71,6 @@ ESTIMATES_USD: dict[str, str] = {
     "style.capture": "0.15",
     "social.x_style": "0.03",
     "social.x_revise": "0.02",
-    "content.answer_page": "0.04",
     "project.memory": "0.02",
     "project.weekly_brief": "0.01",
     "scan.report": "0.01",
@@ -138,8 +134,8 @@ def _step(key: str, executor: str, inputs: dict | None = None) -> int:
 def _organic_system(definition: dict, inputs: dict) -> int:
     """The traffic system's own run, as service_pricing composes its ceiling.
 
-    organic-traffic-v8 is measured as a whole (TRAFFIC_SYSTEM_V8_BASE_USD); earlier versions
-    sum the children their run starts. The traffic snapshot makes no paid call. Later weekly
+    organic-traffic-v8 is measured as a whole (TRAFFIC_SYSTEM_V8_BASE_USD); v6 and v7 sum the
+    children their run starts. The traffic snapshot makes no paid call. Later weekly
     runs are ordinary scheduled runs with their own estimates, not part of this one.
     """
     from tin_lite.service_pricing import amount_nanos
@@ -150,7 +146,6 @@ def _organic_system(definition: dict, inputs: dict) -> int:
     keyword_maximum = amount_nanos(inputs.get("keyword_max_cost_usd", 2))
     if keyword_maximum is not None:
         keywords = min(keywords, keyword_maximum)
-    writer = "website.change" if number >= 6 else None
     if number >= 8:
         total = _nanos(TRAFFIC_SYSTEM_V8_BASE_USD) + keywords
     else:
@@ -158,22 +153,12 @@ def _organic_system(definition: dict, inputs: dict) -> int:
         total += _step("content.plan", "content.plan")
         if number >= 7:
             total += _step("organic.content_efficacy", "workflow.code")
-        if number >= 2:
-            total += _step("content.generate", "codex.procedure")
-        if number >= 5:
-            total += _step("content.refresh", "codex.procedure")
+        total += _step("content.generate", "codex.procedure")
+        total += _step("content.refresh", "codex.procedure")
     if inputs.get("technical_fix"):
-        total += (
-            _step(writer, "codex.procedure", {"source": "audit"})
-            if writer
-            else _step("organic.technical_fix", "codex.procedure")
-        )
-    if number >= 2 and inputs.get("content_delivery", "auto") == "auto":
-        total += (
-            _step(writer, "codex.procedure", {"source": "content_draft"})
-            if writer
-            else _step("content.deliver", "codex.procedure")
-        )
+        total += _step("website.change", "codex.procedure", {"source": "audit"})
+    if inputs.get("content_delivery", "auto") == "auto":
+        total += _step("website.change", "codex.procedure", {"source": "content_draft"})
     return total
 
 

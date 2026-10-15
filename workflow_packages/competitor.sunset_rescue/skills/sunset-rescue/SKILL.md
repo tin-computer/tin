@@ -87,7 +87,8 @@ If no event clears the vetoes, skip Station 5. That is a valid, useful result.
    input format, field mapping, duplicate rule, and what the user sees when the import is done.
    Mark it as a proposal, not a shipped feature.
 3. Hand-offs, each ready to paste into the named Tin workflow:
-   - Draft a public article (`content.public_article`): a `brief` for the migration page. It
+   - Plan upcoming content (`content.plan`): this report in `context_files` and a migration
+     page as the next planned item, for content.generate to draft. The item's brief
      names the searches moving users type ("<tool> alternative", "export from <tool>", "move
      from <tool> before <date>"), the deadline with its source link, the carries-over table,
      the import steps, the hard no's, and a required honest section "What <tool> did better".

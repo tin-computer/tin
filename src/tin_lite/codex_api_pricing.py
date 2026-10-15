@@ -110,7 +110,6 @@ PROCEDURE_KEY_MAXIMUMS: dict[str, int] = {
         "outreach.awesome_lists": 8,
         "growth.free_tool": 8,
         "content.generate": 6,
-        "content.public_article": 6,
         "outreach.email_shortlist": 6,
         "organic.mention_backlinks": 6,
         "content.diagram": 6,

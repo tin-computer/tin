@@ -1,8 +1,5 @@
-"""Blog posts get the answer-page search structure as guidance, without its code checks."""
+"""Planned blog posts get the answer-page search structure as guidance, without its code checks."""
 
-import pytest
-
-from tin_lite.article_review import search_listing, validate_article
 from tin_lite.catalog import BUILTIN_WORKFLOWS
 from tin_lite.content_delivery import document_body, page_frontmatter
 
@@ -13,52 +10,25 @@ def workflow(key):
     return next(w for w in BUILTIN_WORKFLOWS if w.key == key)
 
 
-def test_public_article_may_start_with_its_search_listing():
+def test_delivery_merges_a_search_listing_into_one_site_header():
     listing = (
         '---\nmeta_title: "Which runner keeps AI work reliable?"\n'
         'meta_description: "A durable runner keeps recurring AI work reliable: it saves run '
         'state and retries safely."\n---\n\n'
     )
-    validate_article((listing + BODY).encode())
-    validate_article(BODY.encode())  # The listing stays optional.
-    # Delivery merges the same listing into one site header and keeps the title.
+    # The Markdown publisher splits the listing off a document and keeps its title.
     article, title = document_body((listing + BODY).encode())
     metadata, copy = page_frontmatter(article)
     assert title == "Which runner keeps AI work reliable?"
     assert set(metadata) == {"meta_title", "meta_description"}
     assert copy.startswith("# Which runner")
-    assert search_listing(listing + BODY)[0] == metadata
+    assert page_frontmatter(BODY) == ({}, BODY)  # The listing stays optional.
 
 
-@pytest.mark.parametrize(
-    "listing",
-    [
-        "---\nmeta_title: Runners: a guide\n---\n\n",  # An unquoted colon is not YAML.
-        '---\nmeta_title: "Title"\nauthor: "Someone"\n---\n\n',
-        "---\nmeta_title:\n  - one\n---\n\n",
-        '---\nmeta_title: ""\n---\n\n',
-    ],
-)
-def test_a_listing_delivery_could_not_merge_is_refused(listing):
-    with pytest.raises(ValueError, match="search listing"):
-        validate_article((listing + BODY).encode())
-
-
-def test_listing_does_not_excuse_a_missing_title():
-    with pytest.raises(ValueError, match="title"):
-        validate_article(('---\nmeta_title: "Title"\n---\n\n' + BODY[2:]).encode())
-
-
-@pytest.mark.parametrize(
-    ("key", "version", "skill"),
-    [
-        ("content.public_article", "1.15.0", "search-and-answer-engines"),
-        ("content.generate", "1.17.0", "search-and-answer-engines"),
-    ],
-)
-def test_blog_workflows_pin_the_search_structure_guidance(key, version, skill):
-    spec = workflow(key)
-    assert spec.version_label == version
+def test_planned_drafts_pin_the_search_structure_guidance():
+    skill = "search-and-answer-engines"
+    spec = workflow("content.generate")
+    assert spec.version_label == "1.17.0"
     _, files = spec.definition_and_resource_files()
     text = next(
         content.decode()
@@ -73,42 +43,10 @@ def test_blog_workflows_pin_the_search_structure_guidance(key, version, skill):
     assert "search-and-answer-engines" in prompt
 
 
-def test_a_public_article_cites_only_pages_a_reader_can_open():
-    # Sheepdogs, content.public_article 760bbad2: Sources linked ../../reports/
-    # GROWTH_ONBOARDING_PLAN.md, because the skill said to list project documents.
-    _, files = workflow("content.public_article").definition_and_resource_files()
-    skills = {path.rsplit("/", 2)[-2]: content.decode() for path, content in files.items()}
-    assert "list the project documents" not in skills["search-and-answer-engines"]
-    assert "Only public pages a reader can open" in skills["search-and-answer-engines"]
-    assert "never link to them or list them as sources" in skills["public-article"]
-
-
-def test_public_articles_carry_the_listing_and_planned_drafts_do_not():
-    article = (
-        workflow("content.public_article").procedure.root
-        / "skills/search-and-answer-engines/SKILL.md"
-    ).read_text()
+def test_planned_drafts_do_not_carry_the_listing():
     planned = (
         workflow("content.generate").procedure.root / "skills/search-and-answer-engines/SKILL.md"
     ).read_text()
-    assert "meta_title" in article and "meta_description" in article
     # Planned drafts keep a title-first file: their delivery writes the site header.
     assert "meta_title" not in planned and "no frontmatter" in planned.replace("\n   ", " ")
     assert "keep the destination's structure" in planned
-
-
-def test_the_listing_carries_the_slug_the_founder_approves():
-    from tin_lite.approved_document import _metadata
-    from tin_lite.article_review import search_listing
-
-    page = (
-        '---\nmeta_title: "Filming the trailers"\nslug: "filming-sheepdogs-trailers"\n---\n\n# T\n'
-    )
-    listing, _ = search_listing(page)
-    assert listing["slug"] == "filming-sheepdogs-trailers"
-    assert _metadata(listing)["slug"] == "filming-sheepdogs-trailers"
-    # An odd slug is left to delivery rather than failing the draft.
-    odd, _ = search_listing('---\nmeta_title: "T"\nslug: "How I Filmed It"\n---\n\n# T\n')
-    assert "slug" not in odd and "slug" not in _metadata({"slug": "How I Filmed It"})
-    with pytest.raises(ValueError, match="search listing"):
-        search_listing('---\nmeta_title: "T"\nauthor: "x"\n---\n\n# T\n')

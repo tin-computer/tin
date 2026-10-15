@@ -19,7 +19,7 @@
     { "id": "diff_not_summary", "question": "Does the report list only changes against the previous evidence block, with before -> after and the source page, rather than restating the competitor's site?" },
     { "id": "no_invented_urgency", "question": "Is every suggested response tied to a material change listed under What changed, and does a week with no material change say 'Nothing needs a response this week' with no table?" },
     { "id": "grounded_in_project", "question": "Is impact judged against the project's own plans from the Feature map, Code map or onboarding plan (or the stated override), citing where it came from?" },
-    { "id": "real_workflows", "question": "Does each suggested response name a real Tin workflow (content.public_article, research.deep_dive or content.plan) with concrete inputs, and none that a hard no rules out?" },
+    { "id": "real_workflows", "question": "Does each suggested response name a real Tin workflow (content.plan or research.deep_dive) with concrete inputs, and none that a hard no rules out?" },
     { "id": "honest_coverage", "question": "Is every page that was not read listed under Not read with its status, and was nothing filled in from snippets or memory?" }
   ],
   "cases": [

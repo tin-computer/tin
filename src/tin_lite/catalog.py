@@ -7,7 +7,6 @@ from typing import Any
 from uuid import UUID
 
 from tin_lite import (
-    article_review,
     awesome_submit,
     connection_collection,
     content_draft,
@@ -38,7 +37,6 @@ from tin_lite.character_design import MODEL_ROUTE as CHARACTER_MODEL_ROUTE
 from tin_lite.code_storage import CodeStorage
 from tin_lite.db import Database
 from tin_lite.domain import (
-    ANSWER_PAGE_WORKFLOW_NAME,
     CODEX_PROCEDURE_EXECUTOR,
     CONTENT_DIAGRAM_WORKFLOW_NAME,
     CREATIVE_CHARACTER_WORKFLOW_NAME,
@@ -54,7 +52,6 @@ from tin_lite.domain import (
     PRODUCT_DEEP_DIVE_WORKFLOW_NAME,
     PROJECT_MEMORY_WORKFLOW_NAME,
     PROJECT_TASK_WORKFLOW_NAME,
-    PUBLIC_ARTICLE_WORKFLOW_NAME,
     QA_PRODUCT_AUDIT_WORKFLOW_NAME,
     QA_SIGNUP_WALKTHROUGH_WORKFLOW_NAME,
     RESEARCH_DEEP_DIVE_PATH,
@@ -157,11 +154,9 @@ DESIGN_MD_WORKFLOW_ID = UUID("00000000-0000-4000-8000-000000000001")
 PROJECT_MEMORY_WORKFLOW_ID = UUID("00000000-0000-4000-8000-000000000002")
 SCAN_REPORT_WORKFLOW_ID = UUID("00000000-0000-4000-8000-000000000003")
 VISIBILITY_AUDIT_WORKFLOW_ID = UUID("00000000-0000-4000-8000-000000000004")
-ANSWER_PAGE_WORKFLOW_ID = UUID("00000000-0000-4000-8000-000000000005")
 PROJECT_TASK_WORKFLOW_ID = UUID("00000000-0000-4000-8000-000000000006")
 WEEKLY_BRIEF_WORKFLOW_ID = UUID("00000000-0000-4000-8000-000000000007")
 RESEARCH_DEEP_DIVE_WORKFLOW_ID = UUID("00000000-0000-4000-8000-000000000008")
-PUBLIC_ARTICLE_WORKFLOW_ID = UUID("00000000-0000-4000-8000-000000000009")
 SITE_HEALTH_WORKFLOW_ID = UUID("00000000-0000-4000-8000-000000000010")
 EMAIL_SHORTLIST_WORKFLOW_ID = UUID("00000000-0000-4000-8000-000000000011")
 EMAIL_CAMPAIGN_WORKFLOW_ID = UUID("00000000-0000-4000-8000-000000000012")
@@ -195,6 +190,12 @@ RETIRED_BUILTIN_WORKFLOW_IDS = {
     UUID("00000000-0000-4000-8000-000000000037"): "growth.paid_ads_assessment",
     UUID("00000000-0000-4000-8000-000000000038"): "growth.paid_ads_launch",
     UUID("00000000-0000-4000-8000-000000000039"): "growth.paid_ads_monitor",
+    # content.generate writes every page and website.change puts it on the site; these left
+    # the codebase on 2026-10-15 (migration 070 archives their rows).
+    UUID("00000000-0000-4000-8000-000000000005"): "content.answer_page",
+    UUID("00000000-0000-4000-8000-000000000009"): "content.public_article",
+    UUID("00000000-0000-4000-8000-000000000028"): "organic.technical_fix",
+    UUID("00000000-0000-4000-8000-000000000036"): "content.deliver",
 }
 
 
@@ -265,17 +266,6 @@ class HumanReviewPolicy:
         }
 
 
-ANSWER_PAGE_REVIEW_POLICY = HumanReviewPolicy(
-    reason="Produces customer-facing content.",
-    review_label="Review draft",
-    defer_label="Not now",
-    summary=(
-        "Your answer-page draft is ready. Review it before Tin marks the workflow complete; "
-        "otherwise it stays safely on hold."
-    ),
-    queue_clause="Answer-page draft ready to finish",
-)
-
 STYLE_CAPTURE_REVIEW_POLICY = HumanReviewPolicy(
     reason="Future drafts follow this guide.",
     review_label="Review guide",
@@ -323,9 +313,9 @@ CONTENT_REFRESH_REVIEW_POLICY = HumanReviewPolicy(
     queue_clause="Page refresh ready to review",
 )
 
-# Emre's v2 organic map: content.generate is the one workflow that writes copy, so these two
-# stay registered for pinned runs and saved schedules but leave discovery.
-RETIRED_CONTENT_KEYS = frozenset({ANSWER_PAGE_WORKFLOW_NAME, content_refresh.KEY})
+# Emre's v2 organic map: content.generate is the one workflow that writes copy, so this one
+# stays registered for pinned runs and saved schedules but leaves discovery.
+RETIRED_CONTENT_KEYS = frozenset({content_refresh.KEY})
 
 # content.generate 1.9.0 drafts three kinds of plan item. The article keeps the planned-content
 # policy above; an answer page and a page refresh each get their own review wording, and all
@@ -600,18 +590,11 @@ class BuiltinWorkflow:
                 raise ValueError(
                     "procedures that use a test identity require the Google Workspace mailbox"
                 )
-        if self.key in {
-            "content.public_article",
-            SITE_HEALTH_WORKFLOW_NAME,
-            VISIBILITY_AUDIT_WORKFLOW_NAME,
-            technical_fix.KEY,
-            content_repository_delivery.KEY,
-        }:
-            # Site health is folded into the technical fix, and the technical fix and
-            # content.deliver into website.change (its audit and content_draft sources): saved
-            # configurations and schedules keep running at their pinned revision, but new
-            # setups use the newer workflow.
-            # The AI visibility audit is folded into the organic audit's buyer questions.
+        if self.key in {SITE_HEALTH_WORKFLOW_NAME, VISIBILITY_AUDIT_WORKFLOW_NAME}:
+            # Site health is folded into website.change's audit source: saved configurations
+            # and schedules keep running at their pinned revision, but new setups use the newer
+            # workflow. The AI visibility audit is folded into the organic audit's buyer
+            # questions.
             definition["public_discovery"] = False
         from tin_lite.native_skill_pins import suite_for_workflow
 
@@ -720,139 +703,12 @@ BUILTIN_WORKFLOWS = (
         input_schema=organic_system.INPUT_SCHEMA,
     ),
     BuiltinWorkflow(
-        id=content_repository_delivery.WORKFLOW_ID,
-        key=content_repository_delivery.KEY,
-        # Hidden (public_discovery: false): approvals start website.change instead.
-        title="Prepare article PR",
-        description="Put an approved article, answer page or public article on the connected "
-        "website repository in the site's own format (Markdown, a component, plain HTML or "
-        "whatever it uses), adding its route when the site has none. Keep its wording, open "
-        "a reviewable GitHub PR, and keep the Markdown original in Tin. Tin merges the PR "
-        "only when your delivery setting commits to main, the page keeps the approved "
-        "wording, and the PR adds nothing but the page, or the page at the route you chose "
-        "for such pages.",
-        executor=CODEX_PROCEDURE_EXECUTOR,
-        version_label="1.9.0",
-        presentation=WorkflowDiagram(
-            direction="TD",
-            nodes=(
-                DiagramNode(
-                    "pin",
-                    "step",
-                    "Pin the approved page",
-                    "approved article, answer or public article",
-                ),
-                DiagramNode(
-                    "adapt",
-                    "step",
-                    "Adapt it to the site",
-                    "Codex keeps the wording, at most 30 files",
-                ),
-                DiagramNode(
-                    "pull_request",
-                    "surface",
-                    "Pull request",
-                    "Tin opens it after checking the wording",
-                ),
-                DiagramNode(
-                    "files",
-                    "store",
-                    "Receipt in project Files",
-                    "in content/deliveries, with the PR body",
-                ),
-                DiagramNode("poll", "wait", "Wait for GitHub", "checks every 15 s, up to 3.5 min"),
-                DiagramNode(
-                    "merged",
-                    "surface",
-                    "Merged into main",
-                    "only the page, or the page at your route",
-                ),
-                DiagramNode("open", "ghost", "Left open for you", "yours to review and merge"),
-            ),
-            edges=(
-                DiagramEdge("pin", "adapt"),
-                DiagramEdge("adapt", "pull_request"),
-                DiagramEdge("pull_request", "files"),
-                DiagramEdge("files", "poll", "call", "if commit to main and rules pass"),
-                DiagramEdge("files", "open", "call", "otherwise"),
-                DiagramEdge("poll", "merged", "signal", "clean"),
-                DiagramEdge("poll", "open", "signal", "not clean in time"),
-            ),
-        ),
-        system=ORGANIC_TRAFFIC_SYSTEM,
-        schedule_modes=("on_demand",),
-        input_schema={
-            "type": "object",
-            "additionalProperties": False,
-            "properties": {
-                "project_id": {"type": "string", "format": "uuid"},
-                "source_run_id": {
-                    "type": "string",
-                    "format": "uuid",
-                    "title": "Approved page run",
-                    "description": "An approved planned article, answer page or public article.",
-                },
-                "retry_run_id": {
-                    "type": "string",
-                    "default": "",
-                    "pattern": r"^(|[0-9a-f-]{36})$",
-                    "title": "Failed adaptation to retry",
-                    "description": "Internal retry context. A fresh adaptation is a new "
-                    "metered run; retrying a saved PR delivery does not use this input.",
-                },
-                "expected_repository": {
-                    "type": "string",
-                    "minLength": 3,
-                    "maxLength": 140,
-                    "pattern": r"^[A-Za-z0-9][A-Za-z0-9-]{0,38}/[A-Za-z0-9_.-]{1,100}$",
-                    "title": "Website repository",
-                },
-                "direction": {
-                    "type": "string",
-                    "default": "",
-                    "maxLength": 2000,
-                    "title": "Site instructions",
-                    "description": "Optional site root or routing conventions. "
-                    "Does not authorize changing the approved article.",
-                    "x-tin-ui": {"control": "textarea", "order": 30},
-                },
-            },
-            "required": ["project_id", "source_run_id", "expected_repository"],
-        },
-        integration_requirements=(
-            IntegrationRequirement(
-                provider_key=GITHUB_PROVIDER,
-                capabilities=(
-                    "contents.read",
-                    "contents.write",
-                    "pull_requests.read",
-                    "pull_requests.write",
-                ),
-                required=True,
-            ),
-        ),
-        procedure=CodexProcedureSource(
-            root=Path(__file__).resolve().parents[2]
-            / "codex_procedures"
-            / content_repository_delivery.KEY,
-            entry_skill="article-delivery",
-            github_pull_request=GitHubPullRequestProcedure(
-                receipt_path_template="content/deliveries/{run_id}.md",
-                verification_commands=(content_repository_delivery.CHECK_COMMAND,),
-                # Runaway guards: a page in any format with its figures and embeds, its route,
-                # index and sitemap.
-                max_files=30,
-                max_bytes=2_000_000,
-            ),
-        ),
-    ),
-    BuiltinWorkflow(
         id=content_repository_delivery.WEBSITE_CHANGE_ID,
         key=website_change.KEY,
         title="Change the website",
-        description="Put approved changes on your website repository: an approved article, "
-        "answer page or public article, adapted to the site's own format at the route you "
-        "chose with its wording kept; the technical fixes the latest audit found; the "
+        description="Put approved changes on your website repository: an approved article or "
+        "answer page, adapted to the site's own format at the route you chose with its "
+        "wording kept; the technical fixes the latest audit found; the "
         "redirects and noindex changes your page decisions and site plan made; the copy fix "
         "planned from what people said about your product; or the blog index plan. Each fix, "
         "planned change or plan is a change you approve or decline once in Tin. What you "
@@ -889,8 +745,7 @@ BUILTIN_WORKFLOWS = (
                     "default": "",
                     "pattern": r"^(|[0-9a-f-]{36})$",
                     "title": "Approved page run",
-                    "description": "For content_draft: an approved planned article, answer "
-                    "page or public article.",
+                    "description": "For content_draft: an approved planned article or answer page.",
                 },
                 "expected_repository": {
                     "type": "string",
@@ -1749,100 +1604,6 @@ BUILTIN_WORKFLOWS = (
         ),
     ),
     BuiltinWorkflow(
-        id=UUID("00000000-0000-4000-8000-000000000028"),
-        key=technical_fix.KEY,
-        # Hidden (public_discovery: false): the public plugin no longer starts it either.
-        title="Fix what the audit found",
-        description=(
-            "Recheck an audit's findings on the live site and fix every one Tin can in one PR: "
-            "indexing, the sitemap and robots.txt, redirects and merges, page structure, "
-            "accessibility, structured data, social previews and internal links, in any "
-            "framework. Your coding agent answers the judgment calls first. Copy stays with "
-            "the content workflows, and steps outside the repository are listed. Tin checks "
-            "each finding on the live site after you deploy. Never merges or deploys."
-        ),
-        version_label="0.6.1",
-        presentation=WorkflowDiagram(
-            direction="TD",
-            nodes=(
-                DiagramNode(
-                    "plan",
-                    "step",
-                    "Plan the audit's repairs",
-                    "up to 30, unanswered judgment calls left out",
-                ),
-                DiagramNode(
-                    "recheck",
-                    "step",
-                    "Recheck the live site",
-                    "up to 40 page reads, drops what is fixed",
-                ),
-                DiagramNode(
-                    "fix",
-                    "step",
-                    "Repair in the site's own code",
-                    "Codex sandbox, at most 20 files, 800 lines",
-                ),
-                DiagramNode(
-                    "pull_request",
-                    "surface",
-                    "Pull request on your repo",
-                    "GitHub, never merged by Tin",
-                ),
-                DiagramNode("no_change", "ghost", "No change made", "RESULT.md says why, no PR"),
-                DiagramNode(
-                    "receipt", "receipt", "Fix receipt", "RESULT.md, live check after you merge"
-                ),
-            ),
-            edges=(
-                DiagramEdge("plan", "recheck"),
-                DiagramEdge("recheck", "fix"),
-                DiagramEdge("recheck", "no_change", "call", "all already fixed"),
-                DiagramEdge("fix", "pull_request"),
-                DiagramEdge("fix", "no_change", "call", "no safe patch"),
-                DiagramEdge("pull_request", "receipt"),
-                DiagramEdge("no_change", "receipt"),
-            ),
-        ),
-        prerequisites=(
-            WorkflowPrerequisite(
-                kind="run",
-                level="required",
-                workflow=AUDIT_KEY,
-                via_input="audit_run_id",
-                reason="A technical fix repairs findings from a successful, pinned audit.",
-            ),
-        ),
-        executor="codex.procedure",
-        system=ORGANIC_TRAFFIC_SYSTEM,
-        schedule_modes=("on_demand",),
-        input_schema=technical_fix.BATCH_INPUT_SCHEMA,
-        integration_requirements=(
-            IntegrationRequirement(
-                provider_key=GITHUB_PROVIDER,
-                capabilities=(
-                    "contents.read",
-                    "contents.write",
-                    "pull_requests.read",
-                    "pull_requests.write",
-                ),
-                required=True,
-            ),
-        ),
-        procedure=CodexProcedureSource(
-            root=Path(__file__).parents[2] / "codex_procedures" / technical_fix.KEY,
-            entry_skill="audit-batch-repair",
-            github_pull_request=GitHubPullRequestProcedure(
-                receipt_path_template="reports/technical-fix/{run_id}/RESULT.md",
-                verification_commands=tuple(
-                    technical_fix.policy_commands(technical_fix.BATCH_POLICY)
-                ),
-                repair_policy=technical_fix.BATCH_POLICY,
-                max_files=technical_fix.POLICY_MAX_FILES[technical_fix.BATCH_POLICY],
-            ),
-        ),
-    ),
-    BuiltinWorkflow(
         id=UUID("00000000-0000-4000-8000-000000000025"),
         key=content_plan.KEY,
         public_mcp=PublicMCPExposure("start_content_plan", destructive=True, open_world=True),
@@ -2475,8 +2236,8 @@ BUILTIN_WORKFLOWS = (
         ),
         title="Improve site health",
         description=(
-            "Retired: use Fix what the audit found, which repairs every finding of an organic "
-            "audit in one pull request. Saved schedules of this workflow keep running: it "
+            "Retired: Change the website fixes every finding of an organic audit in one pull "
+            "request. Saved schedules of this workflow keep running: it "
             "inspects one public site against its GitHub repository, makes one bounded "
             "mechanical improvement and opens a pull request for review."
         ),
@@ -2687,72 +2448,6 @@ BUILTIN_WORKFLOWS = (
         },
     ),
     BuiltinWorkflow(
-        id=ANSWER_PAGE_WORKFLOW_ID,
-        key=ANSWER_PAGE_WORKFLOW_NAME,
-        # Retired from discovery, so it has no ChatGPT plugin tool either; content.generate
-        # (start_content_draft) drafts answer pages, and saved configurations keep running.
-        title="Draft an answer page",
-        description=(
-            "Retired: Draft planned content writes answer pages for the AI-visibility gaps your "
-            "content plan schedules. Saved schedules keep running: create a public-facing "
-            "Markdown content draft from the latest AI visibility findings; not for general "
-            "advice or internal business questions."
-        ),
-        executor=ANSWER_PAGE_WORKFLOW_NAME,
-        version_label="1.7.0",
-        presentation=WorkflowDiagram(
-            direction="TD",
-            nodes=(
-                DiagramNode(
-                    "sources",
-                    "store",
-                    "Audit, memory and positioning",
-                    "newest organic or AI visibility audit",
-                ),
-                DiagramNode(
-                    "draft",
-                    "step",
-                    "Research and write the page",
-                    "one model call, 12 searches, one repair",
-                ),
-                DiagramNode(
-                    "page", "store", "Page in project Files", "content/answers, plus evidence.json"
-                ),
-                DiagramNode("review", "gate", "Review the draft", "no deadline, it stays on hold"),
-                DiagramNode(
-                    "pull_request", "surface", "Pull request", "left open for you to merge"
-                ),
-                DiagramNode("commit", "surface", "Commit to main", "lands on your default branch"),
-                DiagramNode(
-                    "receipt", "receipt", "Approved page", "stays in Files whatever delivery does"
-                ),
-            ),
-            edges=(
-                DiagramEdge("sources", "draft"),
-                DiagramEdge("draft", "page"),
-                DiagramEdge("page", "review"),
-                DiagramEdge("review", "pull_request", "signal", "if pull request"),
-                DiagramEdge("review", "commit", "signal", "if commit to main"),
-                DiagramEdge("review", "receipt", "signal", "keep in Files"),
-                DiagramEdge("pull_request", "receipt"),
-                DiagramEdge("commit", "receipt"),
-            ),
-        ),
-        prerequisites=(
-            WorkflowPrerequisite(
-                kind="run",
-                level="recommended",
-                workflow=AUDIT_KEY,
-                reason=(
-                    "The latest organic audit's AI buyer questions supply the questions the "
-                    "page answers."
-                ),
-            ),
-        ),
-        system=ORGANIC_TRAFFIC_SYSTEM,
-        review_policy=ANSWER_PAGE_REVIEW_POLICY,
-    ),
-    BuiltinWorkflow(
         id=WEEKLY_BRIEF_WORKFLOW_ID,
         key=WEEKLY_BRIEF_WORKFLOW_NAME,
         public_mcp=PublicMCPExposure("start_weekly_brief", destructive=True, open_world=False),
@@ -2959,144 +2654,6 @@ BUILTIN_WORKFLOWS = (
             entry_skill="research-deep-dive",
             output_path=RESEARCH_DEEP_DIVE_PATH,
             output_max_bytes=300_000,
-        ),
-    ),
-    BuiltinWorkflow(
-        id=PUBLIC_ARTICLE_WORKFLOW_ID,
-        key=PUBLIC_ARTICLE_WORKFLOW_NAME,
-        public_mcp=PublicMCPExposure("start_public_article", destructive=True, open_world=True),
-        title="Draft a public article",
-        description=(
-            "Turn durable project evidence and original thinking into a rigorous, reviewable "
-            "public article."
-        ),
-        executor=CODEX_PROCEDURE_EXECUTOR,
-        version_label="1.15.0",
-        presentation=WorkflowDiagram(
-            direction="TD",
-            nodes=(
-                DiagramNode(
-                    "context",
-                    "store",
-                    "Project Files and voice guide",
-                    "brand, notes, memory, Start here plan",
-                ),
-                DiagramNode(
-                    "write", "step", "Write the article", "Codex, web search only if Sources allows"
-                ),
-                DiagramNode(
-                    "draft",
-                    "store",
-                    "Draft in project Files",
-                    "article, notes, up to 12 figure files",
-                ),
-                DiagramNode(
-                    "review", "gate", "Review the article", "no deadline, it stays on hold"
-                ),
-                DiagramNode(
-                    "pull_request", "surface", "Pull request", "left open for you to merge"
-                ),
-                DiagramNode("commit", "surface", "Commit to main", "lands on your default branch"),
-                DiagramNode(
-                    "receipt",
-                    "receipt",
-                    "Approved article",
-                    "stays in Files whatever delivery does",
-                ),
-            ),
-            edges=(
-                DiagramEdge("context", "write"),
-                DiagramEdge("write", "draft"),
-                DiagramEdge("draft", "review"),
-                DiagramEdge("review", "write", "signal", "request changes"),
-                DiagramEdge("review", "pull_request", "signal", "if pull request"),
-                DiagramEdge("review", "commit", "signal", "if commit to main"),
-                DiagramEdge("review", "receipt", "signal", "keep in Files"),
-                DiagramEdge("pull_request", "receipt"),
-                DiagramEdge("commit", "receipt"),
-            ),
-        ),
-        system=ORGANIC_TRAFFIC_SYSTEM,
-        prerequisites=(
-            WorkflowPrerequisite(
-                kind="artifact",
-                level="recommended",
-                path=STYLE_PATH,
-                producer=style_capture.KEY,
-                reason="A captured writing style guide shapes expression; voice_notes still win.",
-            ),
-        ),
-        review_policy=PUBLIC_ARTICLE_REVIEW_POLICY,
-        input_schema={
-            "type": "object",
-            "additionalProperties": False,
-            "properties": {
-                "project_id": {"type": "string", "format": "uuid"},
-                "brief": {
-                    "type": "string",
-                    "minLength": 1,
-                    "maxLength": 4000,
-                    "title": "Article brief",
-                    "description": (
-                        "The finding, argument, or original work the article should share."
-                    ),
-                    "x-tin-ui": {"control": "textarea", "order": 10},
-                },
-                "audience": {
-                    "type": "string",
-                    "minLength": 1,
-                    "maxLength": 240,
-                    "default": "An informed general audience",
-                    "title": "Audience",
-                    "x-tin-ui": {"control": "text", "order": 20},
-                },
-                "goal": {
-                    "type": "string",
-                    "enum": ["explain", "argue", "share_findings", "announce"],
-                    "default": "explain",
-                    "title": "Goal",
-                    "x-tin-ui": {"control": "select", "order": 30},
-                },
-                "length": {
-                    "type": "string",
-                    "enum": ["concise", "standard", "long"],
-                    "default": "standard",
-                    "title": "Length",
-                    "x-tin-ui": {"control": "select", "order": 40},
-                },
-                "source_policy": {
-                    "type": "string",
-                    "enum": ["project_only", "project_and_web"],
-                    "default": "project_and_web",
-                    "title": "Sources",
-                    "x-tin-ui": {"control": "select", "order": 50},
-                },
-                "voice_notes": {
-                    "type": "string",
-                    "maxLength": 2000,
-                    "default": "",
-                    "title": "Voice notes",
-                    "description": "Optional tone, vocabulary, or authorial constraints.",
-                    "x-tin-ui": {"control": "textarea", "order": 60},
-                },
-            },
-            "required": ["project_id", "brief"],
-        },
-        procedure=CodexProcedureSource(
-            root=Path(__file__).parents[2] / "codex_procedures" / PUBLIC_ARTICLE_WORKFLOW_NAME,
-            entry_skill="public-article",
-            output_path_template=article_review.PATH_TEMPLATE,
-            output_validator="public-article.v2",
-            output_max_bytes=300_000,
-            # Its figures and embeds (page_assets), approved with its words.
-            output_assets=AssetPolicy(max_files=12, max_bytes=2_000_000),
-            project_skills=(
-                ProjectSkillDependency(
-                    name="writing-style",
-                    path=".agents/skills/writing-style/SKILL.md",
-                    required=False,
-                ),
-            ),
         ),
     ),
     BuiltinWorkflow(
@@ -4842,15 +4399,12 @@ def executor_replaced_by(builtin_key: str, executor: str) -> str | None:
 
 PARENT_CHILD_KEYS: dict[str, tuple[str, ...]] = {
     x_draft.KEY: tuple(x_draft.STEPS.values()),
-    # The weekly page refresh is pinned beside the steps, so a v5 run reads its exact definition.
+    # The weekly page refresh is pinned beside the steps, so a run reads its exact definition.
     organic_system.KEY: (
-        *organic_system.STEPS.values(),
+        *dict.fromkeys(organic_system.STEPS.values()),
         organic_system.REFRESH_KEY,
         # v7 pins the two weekly measurement packages, with their code, beside the steps.
         *organic_system.MEASURE_STEPS.values(),
-        # v6 on, the technical and delivery steps run website.change; without it here a fresh
-        # registry has no website.change file at the system's revision.
-        organic_system.WEBSITE_KEY,
     ),
     growth_onboarding.KEY: tuple(growth_onboarding.STEPS.values()),
     # content.plan 1.0.0 starts its planning agent at the plan's own pinned revision.

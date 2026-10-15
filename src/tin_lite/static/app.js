@@ -1110,7 +1110,7 @@ function workflowFieldPresentation(workflow, name, definition) {
 function systemTemplateSetupCard(workflow) {
   const schema = workflow.definition?.input_schema || {};
   const required = new Set(schema.required || []);
-  const fields = isXAuthoring(workflow) ? xWorkflowFields(workflow) : workflow.key === "content.deliver" ? window.TinContentDelivery.fields() : workflow.key === "content.generate" ? window.TinContentDraft.fields({}, schema) : workflow.key === "style.capture" ? window.TinStyleCapture.fields({authors: Boolean(schema.properties?.author_id)}) : workflow.key === "content.plan" ? window.TinContentPlan.fields() : groupWorkflowFields(schema, ([name, definition]) => {
+  const fields = isXAuthoring(workflow) ? xWorkflowFields(workflow) : workflow.key === "content.generate" ? window.TinContentDraft.fields({}, schema) : workflow.key === "style.capture" ? window.TinStyleCapture.fields({authors: Boolean(schema.properties?.author_id)}) : workflow.key === "content.plan" ? window.TinContentPlan.fields() : groupWorkflowFields(schema, ([name, definition]) => {
     definition = workflowFieldPresentation(workflow, name, definition);
     const label = definition.title || humanize(name);
     const fieldId = `template-input-${String(name).replace(/[^a-z0-9_-]/gi, "-")}`;
@@ -2157,7 +2157,6 @@ function clearWorkflowSearch() {
 
 function bindWorkflowResultControls(root) {
   if (state.project) window.TinContentDraft?.mount(root, {api, projectId: state.project.id});
-  if (state.project) window.TinContentDelivery?.bindPickers(root, {api, projectId: state.project.id});
   root.querySelectorAll("[data-stop-content-run]").forEach(button => button.onclick = async () => {
     button.disabled = true;
     try {
@@ -3144,7 +3143,7 @@ function systemProjectWorkflowEditor(workflow, configured, run = null) {
   if (workflow.key === "content.plan") return systemContentProgramEditor(workflow, configured, run);
   const schema = configured.input_schema || workflow.definition?.input_schema || {};
   const required = new Set(schema.required || []);
-  const fields = isXAuthoring(workflow) ? xWorkflowFields(workflow, configured.inputs) : workflow.key === "content.deliver" ? window.TinContentDelivery.fields(configured.inputs) : workflow.key === "content.generate" ? window.TinContentDraft.fields(configured.inputs, schema) : groupWorkflowFields(schema, ([name, definition]) => {
+  const fields = isXAuthoring(workflow) ? xWorkflowFields(workflow, configured.inputs) : workflow.key === "content.generate" ? window.TinContentDraft.fields(configured.inputs, schema) : groupWorkflowFields(schema, ([name, definition]) => {
     definition = workflowFieldPresentation(workflow, name, definition);
     const label = definition.title || humanize(name);
     const fieldId = `system-input-${String(name).replace(/[^a-z0-9_-]/gi, "-")}`;
@@ -3884,9 +3883,6 @@ function registryWorkflowCard(workflow, query = "") {
 
 function latestArtifactLabel(workflow) {
   if (workflow?.key === "content.diagram") return "Latest diagram";
-  if (["content.answer_page", "content.public_article"].includes(workflow?.key)) {
-    return "Latest draft";
-  }
   if (["research.deep_dive", "scan.report", "visibility.audit", "project.weekly_brief"].includes(workflow?.key)) {
     return "Latest report";
   }
@@ -3994,7 +3990,7 @@ function groupWorkflowFields(schema, renderField) {
 function workflowDraftForm(workflow) {
   const schema = workflow.definition?.input_schema || {};
   const required = new Set(schema.required || []);
-  const fields = isXAuthoring(workflow) ? xWorkflowFields(workflow) : workflow.key === "content.deliver" ? window.TinContentDelivery.fields() : workflow.key === "content.generate" ? window.TinContentDraft.fields({}, schema) : workflow.key === "style.capture" ? window.TinStyleCapture.fields({authors: Boolean(schema.properties?.author_id)}) : workflow.key === "content.plan" ? window.TinContentPlan.fields() : groupWorkflowFields(schema, ([name, definition]) => workflowInputField(
+  const fields = isXAuthoring(workflow) ? xWorkflowFields(workflow) : workflow.key === "content.generate" ? window.TinContentDraft.fields({}, schema) : workflow.key === "style.capture" ? window.TinStyleCapture.fields({authors: Boolean(schema.properties?.author_id)}) : workflow.key === "content.plan" ? window.TinContentPlan.fields() : groupWorkflowFields(schema, ([name, definition]) => workflowInputField(
       name,
       definition,
       undefined,
@@ -4648,10 +4644,9 @@ async function saveProjectWorkflow(event) {
   const saveAndRun = submit.hasAttribute("data-save-and-run");
   submit.textContent = runNow || saveAndRun ? "Starting" : "Saving";
   const schema = workflow.definition?.input_schema || {};
-  if (["style.capture", "content.generate", "content.deliver"].includes(workflow.key)) {
+  if (["style.capture", "content.generate"].includes(workflow.key)) {
     try {
       if (workflow.key === "style.capture") await window.TinStyleCapture.prepare(form, styleCaptureServices());
-      else if (workflow.key === "content.deliver") window.TinContentDelivery.prepare(form);
       else window.TinContentDraft.prepare(form, {forRun: runNow || saveAndRun});
     } catch (error) {
       if (!isCurrentProjectContext(context)) return;
@@ -5104,7 +5099,7 @@ function supportsArticleFeedback(run) {
   if (!run) return false;
   // A writing style proposal reads its review too: approval binds the exact version shown.
   return Boolean(workflowForRun(run)?.definition?.procedure?.output?.apply_on_approval) ||
-    ["content.generate", "content.public_article", "social.x_style", "style.capture"].includes(workflowForRun(run)?.key || run?.workflow_name) ||
+    ["content.generate", "social.x_style", "style.capture"].includes(workflowForRun(run)?.key || run?.workflow_name) ||
     // A first content plan waits for approval and can be revised from feedback (1.1.0).
     ((workflowForRun(run)?.key || run?.workflow_name) === "content.plan" && Boolean(run.review_required));
 }
@@ -5186,7 +5181,7 @@ function sameText(left, right) {
 }
 
 // A page refresh delivers the same way: exact replacements in a pull request or a commit.
-const REPOSITORY_DELIVERY_WORKFLOWS = new Set(["content.generate", "content.public_article", "content.answer_page", "content.refresh"]);
+const REPOSITORY_DELIVERY_WORKFLOWS = new Set(["content.generate", "content.refresh"]);
 
 function connectedRepository() {
   const github = state.integrations.find((item) => item.key === "infra.github");
@@ -5209,12 +5204,11 @@ function isProposal(decision) {
   return decision.kind === "review" && PROPOSAL_WORKFLOWS.has(decision.workflow_key);
 }
 
-// Answer pages and public articles that Tin adapts to the site (a metered website.change run)
-// get one Publish button. The server says whether adaptation applies (for
-// content.generate, only its answer pages) and, from the saved delivery setting and the cost
+// Pages that Tin adapts to the site (a metered website.change run) get one Publish button. The
+// server says whether adaptation applies and, from the saved delivery setting and the cost
 // preview, the footer line: what Publish does and about what it costs. Everything about that
 // card lives here so its wording and layout stay easy to change.
-const ADAPTED_PAGE_WORKFLOWS = new Set(["content.public_article", "content.answer_page", "content.generate"]);
+const ADAPTED_PAGE_WORKFLOWS = new Set(["content.generate"]);
 const publishPreviews = new Map();
 
 function publishPreview(run) {

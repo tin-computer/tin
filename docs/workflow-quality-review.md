@@ -14,7 +14,6 @@ Subsequent discussion established these decisions:
 - Improve the existing workflows; do not create overlapping replacements. Check relevant new integrations before auditing or briefing, but do not confuse connection availability with measured evidence.
 - Distinguish successful empty keyword measurement from a failed or skipped lookup. The former supports conservative low/unproven traffic expectations; the latter does not support a demand conclusion. Do not invent search volumes.
 - Take positioning from the project's brand and positioning files; content planning and drafts follow it and never narrow it. Price can matter, but it is not a universal position. Answer pages should reinforce a supportable argument and verify competitor facts.
-- Hide `content.public_article` from public discovery and onboarding recommendations while preserving direct execution, saved configurations, schedules and history.
 - Test Product analytics with the newly authorized PostHog GET/POST access. Keep the added-evidence comparison separate from same-evidence prompt comparisons.
 - Preserve useful memory behavior, explain costs by cause, save partial research early, and defer a proposed workflow/model-optimization field.
 - Include the observations, source types, user decisions, tests and remaining acceptance gaps in the PR. Produce a review pack alongside the original artifacts.
@@ -54,7 +53,7 @@ The [artifact review and comparison pack](https://tin-artifacts.vercel.app/tin-m
 
 `organic-audit-v9` preserves canonical/sitemap applicability, distinguishes problem/pass/not-applicable/unknown, exposes evidence completeness and retains broken resources for HTTP checks. It enables sitemap use and adds a bounded 28-day matching-property Search Console page sample through the existing integration gateway and effect receipts. GSC rows establish observed search performance, not comprehensive indexing or absence.
 
-Older audit policies keep their former normalization and schema. New finding schema 2 is validated by the technical-fix source reader; this compatibility adjustment adds no repairs. Completion accepts the pinned compatible policy, preserves successful answers and records missing context as unknown. Historical normalized artifacts cannot recover discarded provider context.
+Older audit policies keep their former normalization and schema. New finding schema 2 is validated by the technical repair source reader (`technical_fix_sources.py`); this compatibility adjustment adds no repairs. Completion accepts the pinned compatible policy, preserves successful answers and records missing context as unknown. Historical normalized artifacts cannot recover discarded provider context.
 
 Keywords use v5 instructions and broader supported buyer-job seeds; explicit older pins remain valid. Content-plan v5 requests buyer/decision/alternatives/advantage/proof, a structured argument and an actual coverage gap. It increases the excerpt limit for already fetched pages without adding an unbounded crawl. New keyword definitions prefer connected matching-property GSC evidence; previous explicit settings remain pinned.
 

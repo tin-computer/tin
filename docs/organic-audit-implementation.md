@@ -4,7 +4,7 @@
 
 Tin checks a bounded sample of your public website, asks an AI adviser a fixed set of
 buyer questions, and saves what it found. You get a readable report and a structured
-list for later technical-fix and content-planning workflows. Nothing edits your site.
+list for later technical repair (website.change) and content planning. Nothing edits your site.
 
 This reference includes the version 0.2 scoring contract and its versioned follow-ups.
 Use [feature status](feature-status.md) for current availability. Changes to policy or
@@ -343,8 +343,8 @@ stated as not measured. Earlier finding fields (`id`, `check_id`, `status`, `sev
 `urls`, `next_action` and so on) are unchanged, so downstream readers keep working.
 
 `findings.json` is schema 3. `evidence_status` keeps its technical-crawl meaning, which
-`organic.technical_fix` recomputes; `coverage_status`, `coverage`, `site_check_coverage`
-and `summary` are new. Technical fix accepts v10 audits. Under `site-fix-v5` every finding
+website.change's technical repair recomputes; `coverage_status`, `coverage`,
+`site_check_coverage` and `summary` are new. Technical repair accepts v10 audits. Under `site-fix-v5` every finding
 has a place: repaired in the repository, left to the content workflows, a manual step, or
 a judgment call; see [Technical repair](technical-fix.md).
 
@@ -710,7 +710,7 @@ request it did before; tests freeze v13's policy and the files a synthetic v13 r
 
 v14 also sets `next_action_fix: "website_change"`: a finding Tin can fix says `next_action:
 "website_change"` instead of `"technical_fix"`, because website.change (`source: audit`) is
-the one workflow that fixes audit findings and organic.technical_fix refuses new starts. Both
+the one workflow that fixes audit findings. Both
 the published findings and the technical inventory a fix recomputes use the pinned policy's
 label, so v13 and earlier keep `"technical_fix"` and still verify.
 

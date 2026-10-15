@@ -49,7 +49,7 @@ async def harness(db, monkeypatch, *, plan=UNTICKED, executor=growth_onboarding.
         "outreach.email_shortlist",
         "site.health_improve",
         "project.weekly_brief",
-        "content.public_article",
+        "content.generate",
     ):
         await install(SimpleNamespace(db=db), key)
     storage.repo.edit({PLAN_PATH: plan.encode()}, "growth.onboarding_plan")

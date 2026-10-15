@@ -14,9 +14,7 @@ from tin_lite.integrations import GitHubRepositoryBinding
 from tin_lite.organic_audit import digest
 from tin_lite.organic_audit_site import parse_robots, parse_sitemap, url_key
 from tin_lite.repository_limits import describe_omission, left_out_write
-from tin_lite.run_reports import publish_run_report
-from tin_lite.technical_build_profile import archive_files, match_profile
-from tin_lite.technical_fix_sources import TechnicalFixSources
+from tin_lite.technical_build_profile import archive_files
 
 MAX_SITEMAP_READS = 6
 SITEMAP_GUESSES = ("/sitemap.xml", "/sitemap_index.xml")
@@ -119,159 +117,29 @@ class TechnicalFixExecution:
 
     async def once(self, run_id, step, operation):
         key = f"technical:{run_id}:{step}"
-        async with self.db.effect_lock(key, contract.KEY) as (conn, receipt):
+        async with self.db.effect_lock(key, contract.OPERATION) as (conn, receipt):
             if receipt and receipt.status == "completed":
                 return receipt.result
             await self.active(run_id)
-            await self.db.start_effect(conn, execution_key=key, operation=contract.KEY)
+            await self.db.start_effect(conn, execution_key=key, operation=contract.OPERATION)
             value = await operation()
             # UUID values belong to Postgres JSON, not Temporal payloads.
             value = json.loads(json.dumps(value, default=str))
             await self.db.complete_effect(conn, execution_key=key, result=value)
             return value
 
-    async def prepare(self, run, *, policy=contract.LEGACY_POLICY):
-        if contract.batches(policy):
-            return await self._prepare_batch(run)
-
-        async def select():
-            result = await TechnicalFixSources(
-                database=self.db,
-                storage=self.storage,
-                integrations=self.integrations,
-                supported_checks=contract.supported_checks(policy),
-            ).preflight(
-                project_id=run.project_id,
-                audit_run_id=UUID(run.input["audit_run_id"]),
-                **{
-                    key: run.input[key]
-                    for key in (
-                        "audit_revision",
-                        "finding_id",
-                        "expected_repository",
-                        "repository_serves_site",
-                    )
-                },
-            )
-            return {**result, "input_sha256": digest(run.input)}
-
-        selection = await self.once(run.id, "binding", select)
-        if selection["input_sha256"] != digest(run.input):
-            raise ValueError("Technical repair inputs changed after preparation.")
-
-        async def resolve():
-            pages = []
-            for index, url in enumerate(selection["selection"]["affected_urls"]):
-
-                async def observe(url=url):
-                    return await self.fetch(
-                        url, host=contract.verified_page_host(url, selection["target"])
-                    )
-
-                pages.append(await self.once(run.id, f"page:{index}", observe))
-            check = selection["selection"]["finding"]["check_id"]
-            reason, originals, profile, overlapping = None, {}, {}, []
-            unsupported, missing = [], {}
-            if all(contract.has_metadata(page["html"], check) for page in pages):
-                reason = "already_resolved"
-            else:
-                binding = binding_from(selection)
-                bundle = await self.integrations.github_repository_bundle(
-                    project_id=run.project_id,
-                    run_id=run.id,
-                    execution_key=f"{run.id}:procedure_repository_workspace",
-                    expected_binding=binding,
-                )
-                # A build profile is proven over the whole repository, so an incomplete
-                # snapshot stops the run and names what Tin couldn't read.
-                incomplete = policy != contract.LEGACY_POLICY and not getattr(
-                    bundle, "complete", True
-                )
-                if policy == contract.LEGACY_POLICY:
-                    originals = contract.matched_sources(bundle.archive, pages)
-                elif not incomplete:
-                    matched = match_profile(
-                        bundle.archive, pages, check, allow_partial=policy == contract.POLICY
-                    )
-                    originals = matched["originals"] if matched else None
-                    profile = matched["verification_profile"] if matched else {}
-                    unsupported = matched["unsupported_pages"] if matched else []
-                if incomplete:
-                    reason, missing = "repository_incomplete", contract.missing_record(bundle)
-                elif originals is None:
-                    reason, originals = "unsupported_source", {}
-                else:
-                    evidence = await self.integrations.github_open_pull_requests(
-                        project_id=run.project_id,
-                        run_id=run.id,
-                        execution_key=f"{run.id}:procedure_open_pull_requests",
-                        base_branch=binding.default_branch,
-                        expected_binding=binding,
-                    )
-                    if set(originals).intersection(evidence.changed_paths):
-                        reason = "open_pr_overlap"
-                        document = json.loads(getattr(evidence, "document", b"{}"))
-                        overlapping = [
-                            {"number": pull["number"], "url": pull["url"]}
-                            for pull in document.get("pull_requests", [])
-                            if any(
-                                file["path"] in originals or file.get("previous_path") in originals
-                                for file in pull.get("files", [])
-                            )
-                        ]
-                    elif evidence.truncated:
-                        reason = "incomplete_pr_evidence"
-            prepared = {
-                **selection,
-                "policy": policy,
-                "verification_profile": profile,
-                "overlapping_pull_requests": overlapping,
-                "unsupported_pages": unsupported,
-                "pages": [
-                    {key: value for key, value in page.items() if key != "html"} for page in pages
-                ],
-                "originals": originals,
-                "reason": reason,
-            }
-            prepared.update(missing)
-            # Context travels through the existing bounded sandbox environment. Do
-            # not discover an oversized escaped payload after allocating compute.
-            if len(json.dumps(prepared, separators=(",", ":")).encode()) > 70_000:
-                prepared.update(reason="unsupported_source", originals={})
-            return prepared
-
-        prepared = await self.once(run.id, "prepare", resolve)
-        return await self._finish_preparation(run, prepared)
-
-    async def _finish_preparation(self, run, prepared):
-        if prepared["reason"]:
-            await publish_run_report(
-                database=self.db,
-                storage=self.storage,
-                run_id=run.id,
-                workflow_key=contract.KEY,
-                prefix="technical",
-                path=f"reports/technical-fix/{run.id}/RESULT.md",
-                content=contract.report(prepared, reason=prepared["reason"]),
-                summary=contract.preparation_summary(prepared),
-                # A run that couldn't read the repository failed; it didn't find the site fine.
-                failed=contract.preparation_failed(prepared),
-            )
-            return True
-        return False
-
-    async def prepare_selection(self, run, select, *, finish=None):
+    async def prepare_selection(self, run, select, *, finish):
         """site-fix-v5 preparation from a plan: `select` returns the run's selection (a
         TechnicalFixSources.batch result with the run's input digest), receipted once.
 
-        organic.technical_fix selects from its own inputs; website.change passes the plan it
-        pinned at admission and its own `finish`, which reports a run with nothing to change.
+        website.change passes the plan it pinned at admission and its own `finish`, which
+        reports a run with nothing to change.
         """
         selection = await self.once(run.id, "binding", select)
         if selection["input_sha256"] != digest(run.input):
             raise ValueError("Technical repair inputs changed after preparation.")
         prepared = await self.once(run.id, "prepare", lambda: self._resolve_batch(run, selection))
-        return await (finish or self._finish_preparation)(run, prepared)
+        return await finish(run, prepared)
 
     # --- served-file reads ---------------------------------------------------------------
 
@@ -309,27 +177,6 @@ class TechnicalFixExecution:
         return None
 
     # --- site-fix-v5 -------------------------------------------------------------------
-
-    async def _prepare_batch(self, run):
-        async def select():
-            result = await TechnicalFixSources(
-                database=self.db,
-                storage=self.storage,
-                integrations=self.integrations,
-                supported_checks=contract.supported_checks(contract.BATCH_POLICY),
-                batch=True,
-            ).batch(
-                project_id=run.project_id,
-                audit_run_id=UUID(run.input["audit_run_id"]),
-                audit_revision=run.input["audit_revision"],
-                expected_repository=run.input["expected_repository"],
-                repository_serves_site=run.input["repository_serves_site"],
-                finding_ids=run.input.get("finding_ids") or [],
-                decisions=run.input.get("decisions") or [],
-            )
-            return {**result, "input_sha256": digest(run.input)}
-
-        return await self.prepare_selection(run, select)
 
     async def _resolve_batch(self, run, selection):
         """Re-read the live site, drop what's already fixed, and name the files the diff
@@ -632,22 +479,4 @@ class TechnicalFixExecution:
         contract.validate_manifest(manifest, prepared)
         if manifest["outcome"] == "no_change":
             return
-        if prepared.get("batch"):
-            return await self._validate_batch_delivery(run, manifest, prepared)
-        # Recheck the website at delivery too. Changed or unavailable HTML never
-        # becomes authorization to send a stale patch, nor a claim of resolution.
-        for page in prepared["pages"]:
-            if prepared.get("policy") == contract.POLICY and page["url"] not in {
-                observation["url"]
-                for observation in prepared["verification_profile"]["observations"]
-            }:
-                continue
-            check = contract.selected_check(prepared)
-            present = "has_title" if check == contract.TITLE_CHECK else "has_description"
-            if page.get(present, False):
-                continue
-            current = await self.fetch(
-                page["url"], host=contract.verified_page_host(page["url"], prepared["target"])
-            )
-            if current["sha256"] != page["sha256"] or contract.has_metadata(current["html"], check):
-                raise ValueError("The website changed after preparation. Start a new repair.")
+        await self._validate_batch_delivery(run, manifest, prepared)

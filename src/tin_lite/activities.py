@@ -18,18 +18,10 @@ from temporalio import activity
 from temporalio.exceptions import ApplicationError
 
 from tin_lite import analytics_brief
-from tin_lite.answer_page import (
-    AnswerPageDrafter,
-    AnswerPageSource,
-    page_title,
-    validate_answer_page_artifacts,
-)
 from tin_lite.billing_contracts import BillingError
 from tin_lite.code_storage import CodeStorage, reviewed_task_diff
 from tin_lite.db import Database
 from tin_lite.domain import (
-    ANSWER_PAGE_DIR,
-    ANSWER_PAGE_WORKFLOW_NAME,
     ARTIFACT_PATH,
     CODEX_PROCEDURE_EXECUTOR,
     EMAIL_CAMPAIGN_WORKFLOW_NAME,
@@ -54,8 +46,6 @@ from tin_lite.domain import (
     StaleGenerationError,
     Workflow,
     WorkflowRun,
-    answer_page_evidence_path,
-    answer_page_path,
     site_health_report_path,
     visibility_evidence_path,
     weekly_brief_evidence_path,
@@ -333,7 +323,6 @@ class TinActivities:
         memory_gardener: MemoryGardener | None = None,
         scan_reporter: ScanReporter | None = None,
         visibility_auditor: VisibilityAuditor | None = None,
-        answer_page_drafter: AnswerPageDrafter | None = None,
         weekly_brief_reporter: WeeklyBriefReporter | None = None,
         site_health_improver: SiteHealthImprover | None = None,
         integrations: IntegrationService | None = None,
@@ -346,7 +335,6 @@ class TinActivities:
         self._memory_gardener = memory_gardener
         self._scan_reporter = scan_reporter
         self._visibility_auditor = visibility_auditor
-        self._answer_page_drafter = answer_page_drafter
         self._weekly_brief_reporter = weekly_brief_reporter
         self._site_health_improver = site_health_improver
         self._integrations = integrations
@@ -2260,226 +2248,6 @@ class TinActivities:
     async def project_visibility_failure(self, payload: dict[str, str]) -> None:
         await self._fail_run(UUID(payload["run_id"]), payload)
 
-    @activity.defn(name="draft_answer_page")
-    async def draft_answer_page(self, run_id_text: str) -> None:
-        if self._answer_page_drafter is None:
-            raise RuntimeError("content.answer_page requires a configured answer-page drafter")
-        run_id = UUID(run_id_text)
-        run = await self._require_run(run_id)
-        reporter = await self._pinned_native_reporter(
-            run, self._answer_page_drafter, "content.answer_page"
-        )
-        project = await self._require_project(run.project_id)
-        await self._db.mark_run_running(run_id)
-        sources = await self._answer_page_sources(
-            run_id=run_id,
-            project=project,
-            positioning=getattr(reporter, "reads_positioning", False),
-        )
-        day = (run.created_at or datetime.now(UTC)).date().isoformat()
-        draft = await self._await_with_heartbeats(
-            self._answer_page_effect(
-                run_id=run_id,
-                execute=lambda: reporter.draft(
-                    project_name=project.name,
-                    sources=sources,
-                    today=day,
-                ),
-            ),
-            details={"stage": "answer_page_draft"},
-        )
-        if draft.get("failed_checks"):
-            # One repair of the exact failed checks, reusing the paid research. Both calls
-            # are receipted, so a retry never buys either of them again.
-            missed = draft
-            draft = await self._await_with_heartbeats(
-                self._answer_page_effect(
-                    run_id=run_id,
-                    execute=lambda: reporter.repair(draft=missed, today=day),
-                    repair=True,
-                ),
-                details={"stage": "answer_page_repair"},
-            )
-            if draft.get("failed_checks"):
-                raise ApplicationError(
-                    "The answer page still misses its checks after one repair: "
-                    f"{draft['failed_checks'][0]}",
-                    type="AnswerPageChecksFailed",
-                    non_retryable=True,
-                )
-        evidence_path = answer_page_evidence_path(run_id)
-        title = page_title(str(draft["markdown"]))
-        execution_key = f"{run_id}:answer_page_commit"
-        operation = "answer_page_commit"
-        async with self._db.effect_lock(execution_key, operation) as (conn, existing):
-            if existing is not None and existing.status == "completed":
-                return
-            await self._db.start_effect(conn, execution_key=execution_key, operation=operation)
-            try:
-                async with self._db.project_state_lock(conn, project.id):
-                    # Under the project lock, so two same-day pages with one question
-                    # cannot both claim the unsuffixed name.
-                    artifact_path = await self._answer_page_destination(
-                        project=project,
-                        run_id=run_id,
-                        title=title,
-                        day=day,
-                        evidence_path=evidence_path,
-                    )
-                    page, evidence = reporter.build_artifacts(
-                        run_id=str(run_id),
-                        source_refs=[source.artifact_ref for source in sources],
-                        draft=draft,
-                        artifact_path=artifact_path,
-                        evidence_path=evidence_path,
-                    )
-                    canonical_sha, changed = await self._storage.publish_state_documents(
-                        repo_id=project.state_repo_id,
-                        branch=project.canonical_branch,
-                        documents={artifact_path: page, evidence_path: evidence},
-                        workflow_key=ANSWER_PAGE_WORKFLOW_NAME,
-                        execution_key=execution_key,
-                        run_id=str(run_id),
-                    )
-                await self._db.add_activity(
-                    run_id=run_id,
-                    event_type="answer_page_drafted",
-                    details={"source_count": len(sources), "changed": changed, "title": title},
-                    dedupe_key=f"{execution_key}:answer_page_drafted",
-                )
-                await self._db.complete_effect(
-                    conn,
-                    execution_key=execution_key,
-                    result={
-                        "canonical_commit_sha": canonical_sha,
-                        "artifact_path": artifact_path,
-                        "title": title,
-                        "evidence_path": evidence_path,
-                        "source_refs": [source.artifact_ref for source in sources],
-                        "changed": changed,
-                    },
-                )
-            except Exception as exc:
-                await self._db.fail_effect(
-                    conn,
-                    execution_key=execution_key,
-                    error_message=_safe_failure(exc),
-                )
-                raise
-
-    @activity.defn(name="project_answer_page_result")
-    async def project_answer_page_result(self, run_id_text: str) -> None:
-        run_id = UUID(run_id_text)
-        execution_key = f"{run_id}:answer_page_projection"
-        operation = "answer_page_projection"
-        async with self._db.effect_lock(execution_key, operation) as (conn, existing):
-            if existing is not None and existing.status == "completed":
-                return
-            await self._db.start_effect(conn, execution_key=execution_key, operation=operation)
-            try:
-                committed = await self._db.get_effect(f"{run_id}:answer_page_commit")
-                if committed is None or committed.status != "completed" or committed.result is None:
-                    raise RuntimeError("answer-page commit step has not completed")
-                sha = str(committed.result["canonical_commit_sha"])
-                path = str(committed.result["artifact_path"])
-                evidence_path = str(committed.result["evidence_path"])
-                run = await self._require_run(run_id)
-                project = await self._require_project(run.project_id)
-                content = await self._storage.read_canonical_artifact(
-                    repo_id=project.state_repo_id,
-                    commit_sha=sha,
-                    path=path,
-                )
-                evidence = await self._storage.read_canonical_artifact(
-                    repo_id=project.state_repo_id,
-                    commit_sha=sha,
-                    path=evidence_path,
-                )
-                validate_answer_page_artifacts(
-                    content,
-                    evidence,
-                    artifact_path=path,
-                    evidence_path=evidence_path,
-                )
-                artifact_ref = f"code.storage://{project.state_repo_id}@{sha}/{path}"
-                await self._db.project_success(
-                    run_id=run_id,
-                    canonical_commit_sha=sha,
-                    artifact_ref=artifact_ref,
-                    artifact_path=path,
-                )
-                await self._db.add_activity(
-                    run_id=run_id,
-                    event_type="answer_page_ready",
-                    details={"artifact_ref": artifact_ref},
-                    summary="Answer page draft is ready.",
-                    audience="product",
-                    dedupe_key=f"{execution_key}:answer_page_ready",
-                )
-                await self._db.complete_effect(
-                    conn,
-                    execution_key=execution_key,
-                    result={"artifact_ref": artifact_ref},
-                )
-            except Exception as exc:
-                await self._db.fail_effect(
-                    conn,
-                    execution_key=execution_key,
-                    error_message=_safe_failure(exc),
-                )
-                raise
-
-    @activity.defn(name="request_answer_page_review")
-    async def request_answer_page_review(self, run_id_text: str) -> bool:
-        run_id = UUID(run_id_text)
-        committed = await self._db.get_effect(f"{run_id}:answer_page_commit")
-        if committed is None or committed.status != "completed" or committed.result is None:
-            raise RuntimeError("answer-page commit step has not completed")
-        sha = str(committed.result["canonical_commit_sha"])
-        path = str(committed.result["artifact_path"])
-        evidence_path = str(committed.result["evidence_path"])
-        run = await self._require_run(run_id)
-        project = await self._require_project(run.project_id)
-        content = await self._storage.read_canonical_artifact(
-            repo_id=project.state_repo_id,
-            commit_sha=sha,
-            path=path,
-        )
-        evidence = await self._storage.read_canonical_artifact(
-            repo_id=project.state_repo_id,
-            commit_sha=sha,
-            path=evidence_path,
-        )
-        validate_answer_page_artifacts(
-            content,
-            evidence,
-            artifact_path=path,
-            evidence_path=evidence_path,
-        )
-        artifact_ref = f"code.storage://{project.state_repo_id}@{sha}/{path}"
-        from tin_lite.content_delivery import review_line
-
-        return await self._db.request_human_review(
-            run_id=run_id,
-            canonical_commit_sha=sha,
-            artifact_ref=artifact_ref,
-            artifact_path=path,
-            artifact_title=committed.result.get("title") or page_title(content.decode("utf-8")),
-            # The decision card says what the page answers; Activity keeps the review notice.
-            explanation=review_line(content) or "",
-        )
-
-    @activity.defn(name="record_answer_page_approval")
-    async def record_answer_page_approval(self, run_id_text: str) -> None:
-        await self._db.record_human_review(
-            run_id=UUID(run_id_text),
-            decision="approved",
-        )
-
-    @activity.defn(name="project_answer_page_failure")
-    async def project_answer_page_failure(self, payload: dict[str, str]) -> None:
-        await self._fail_run(UUID(payload["run_id"]), payload)
-
     @activity.defn(name="generate_weekly_brief")
     async def generate_weekly_brief(self, run_id_text: str) -> None:
         if self._weekly_brief_reporter is None:
@@ -2997,7 +2765,6 @@ class TinActivities:
     async def prepare_codex_procedure(self, run_id_text: str) -> bool:
         from tin_lite import content_draft
         from tin_lite.content_draft_sources import ContentDraftSources
-        from tin_lite.technical_fix_execution import TechnicalFixExecution
 
         run_id = UUID(run_id_text)
         _definition, procedure = await self._pinned_codex_procedure(run_id)
@@ -3066,36 +2833,7 @@ class TinActivities:
                     f"Ready to draft: {context['item']['title']}. Waiting for the writing worker."
                 )[:240],
             )
-            return False
-        if procedure.repair_policy is None:
-            return False
-        run = await self._require_run(run_id)
-        await self._db.mark_run_running(run_id)
-        await self._db.project_run_progress(
-            run_id=run_id,
-            mode="steps",
-            current=0,
-            total=3,
-            step="verify_source",
-            summary="Checking the selected audit finding and its current source.",
-        )
-        execution = TechnicalFixExecution(
-            database=self._db, storage=self._storage, integrations=self._integrations
-        )
-        handled = await self._await_with_heartbeats(
-            execution.prepare(run, policy=procedure.repair_policy),
-            details={"stage": "technical_verification"},
-        )
-        if not handled:
-            await self._db.project_run_progress(
-                run_id=run_id,
-                mode="steps",
-                current=1,
-                total=3,
-                step="prepare_patch",
-                summary="Preparing a bounded metadata-only change.",
-            )
-        return handled
+        return False
 
     async def _prepare_website_repairs(self, run) -> bool:
         """A website.change run with the audit's changes: site-fix-v5's preparation of the
@@ -3415,9 +3153,7 @@ class TinActivities:
 
             repository_delivery = content_repository_delivery.adapts(run)
             # A website.change run with the audit's changes is a repair, not a page delivery.
-            technical_run = bool(procedure.repair_policy) or (
-                content_repository_delivery.repairs_site(run)
-            )
+            technical_run = content_repository_delivery.repairs_site(run)
             if (
                 procedure.result_kind == PROJECT_ARTIFACT_RESULT
                 or technical_run
@@ -3728,7 +3464,7 @@ class TinActivities:
                         )
                         expected_binding = content_repository_delivery.binding_from(content_source)
                     website_repairs = content_repository_delivery.repairs_site(run)
-                    if procedure.repair_policy or website_repairs:
+                    if website_repairs:
                         from tin_lite.technical_fix_execution import binding_from, prepared_result
 
                         technical = await prepared_result(self._db, run_id)
@@ -4162,11 +3898,7 @@ class TinActivities:
                 from tin_lite import content_repository_delivery
 
                 website_repairs = content_repository_delivery.repairs_site(run)
-                immutable_checkpoint = (
-                    bool(procedure.repair_policy)
-                    or website_repairs
-                    or content_repository_delivery.adapts(run)
-                )
+                immutable_checkpoint = website_repairs or content_repository_delivery.adapts(run)
                 checkpoint = (
                     b""
                     if immutable_checkpoint
@@ -4199,7 +3931,7 @@ class TinActivities:
                         source = await content_repository_delivery.saved_source(self._db, run_id)
                         copy_proof = content_repository_delivery.validate_patch(manifest, source)
                         expected_binding = content_repository_delivery.binding_from(source)
-                    if procedure.repair_policy or website_repairs:
+                    if website_repairs:
                         from tin_lite import technical_fix
                         from tin_lite.technical_fix_execution import (
                             TechnicalFixExecution,
@@ -4455,7 +4187,6 @@ class TinActivities:
         raw = await self._storage.read_procedure_checkpoint(
             repo_id=project.state_repo_id, revision=revision, path=procedure.companion_path
         )
-        from tin_lite import article_review
 
         if procedure.documents:
             from tin_lite.procedure_documents import validate_document
@@ -4476,10 +4207,6 @@ class TinActivities:
                         type="BrandCaptureInvalid",
                         non_retryable=True,
                     ) from exc
-        elif procedure.output_validator == article_review.VALIDATOR:
-            article_review.validate_notes(
-                raw, revision=procedure.review_revision_context is not None
-            )
         else:
             content_draft.validate_notes(raw, procedure.content_draft_context)
         return (
@@ -5403,7 +5130,6 @@ class TinActivities:
         if not isinstance(
             reporter,
             (
-                AnswerPageDrafter,
                 VisibilityAuditor,
                 WeeklyBriefReporter,
                 MemoryGardener,
@@ -5554,166 +5280,6 @@ class TinActivities:
                 ),
             )
         return sources
-
-    async def _answer_page_destination(
-        self, *, project, run_id: UUID, title: str, day: str, evidence_path: str
-    ) -> str:
-        """The page's dated file, with the run's short ID when another page already has it.
-
-        A retry finds its own evidence file and reuses the path that evidence names, so an
-        earlier attempt that committed but lost its receipt never writes a second copy.
-        """
-        path = answer_page_path(title, day)
-        repo = await self._storage.get_repo(project.state_repo_id)
-        head = await self._storage.head_sha(repo, project.canonical_branch)
-        if head is None:
-            return path
-        saved = await self._storage.read_canonical_artifact_if_exists(
-            repo_id=project.state_repo_id, commit_sha=head, path=evidence_path
-        )
-        if saved is not None:
-            try:
-                prior = json.loads(saved).get("artifact_path")
-            except (ValueError, AttributeError):
-                prior = None
-            if isinstance(prior, str) and prior.startswith(f"{ANSWER_PAGE_DIR}/"):
-                return prior
-        taken = await self._storage.read_canonical_artifact_if_exists(
-            repo_id=project.state_repo_id, commit_sha=head, path=path
-        )
-        return path if taken is None else answer_page_path(title, day, suffix=run_id.hex[:8])
-
-    async def _answer_page_effect(
-        self,
-        *,
-        run_id: UUID,
-        execute: Callable[[], Awaitable[dict[str, object]]],
-        repair: bool = False,
-    ) -> dict:
-        # The repair call is its own metered step with its own receipt and usage record.
-        step = "answer_page_repair" if repair else "answer_page"
-        execution_key = f"{run_id}:answer_page:repair" if repair else f"{run_id}:answer_page:model"
-        operation = "answer_page_repair_model" if repair else "answer_page_model"
-        label = "answer page repair" if repair else "answer page"
-        async with self._db.effect_lock(execution_key, operation) as (conn, existing):
-            if existing is not None and existing.status == "completed":
-                if existing.result is None:
-                    raise RuntimeError("completed answer-page effect has no result")
-                return existing.result
-            await self._db.start_effect(conn, execution_key=execution_key, operation=operation)
-            try:
-                await _refuse_repeated_model_request(
-                    self._db, conn, run_id=run_id, step=step, label=label
-                )
-                with external_usage_scope(self._db, conn, run_id, step):
-                    result = await execute()
-                await self._db.complete_effect(
-                    conn,
-                    execution_key=execution_key,
-                    result=result,
-                )
-                return result
-            except BaseException as exc:
-                await _record_effect_failure(self._db, conn, execution_key=execution_key, exc=exc)
-                if isinstance(exc, ObservationAlreadyRecorded):
-                    raise _interrupted_model_request(label) from exc
-                raise
-
-    async def _answer_page_sources(
-        self, *, run_id: UUID, project, positioning: bool = False
-    ) -> list[AnswerPageSource]:
-        sources: list[AnswerPageSource] = []
-        if project.memory_commit_sha is not None and project.memory_index_path is not None:
-            content = await self._storage.read_canonical_artifact(
-                repo_id=project.state_repo_id,
-                commit_sha=project.memory_commit_sha,
-                path=project.memory_index_path,
-            )
-            sources.append(
-                AnswerPageSource(
-                    label="project memory",
-                    artifact_ref=(
-                        f"code.storage://{project.state_repo_id}"
-                        f"@{project.memory_commit_sha}/{project.memory_index_path}"
-                    ),
-                    content=content.decode("utf-8"),
-                )
-            )
-
-        source_runs = await self._db.list_memory_source_runs(
-            project_id=project.id,
-            exclude_run_id=run_id,
-        )
-        # The organic audit asks the same kind of buyer questions, graded the same way, so
-        # the newest of either audit supplies the questions the page answers.
-        visibility_runs = [
-            source_run
-            for source_run in source_runs
-            if source_run.executor in {VISIBILITY_AUDIT_WORKFLOW_NAME, "organic.audit"}
-        ]
-        selected_runs = (
-            visibility_runs[-1:] if visibility_runs else ([] if sources else source_runs[-5:])
-        )
-        # Availability is useful context, but cannot replace durable project evidence.
-        sources.insert(
-            0,
-            AnswerPageSource(
-                label="current integration availability",
-                artifact_ref=f"tin.project://{project.id}/integrations",
-                content=await self._integration_evidence(project),
-            ),
-        )
-        for source_run in selected_runs:
-            if (
-                source_run.canonical_commit_sha is None
-                or source_run.artifact_path is None
-                or source_run.artifact_ref is None
-            ):
-                raise RuntimeError("answer-page source run has no durable artifact")
-            content = await self._storage.read_canonical_artifact(
-                repo_id=project.state_repo_id,
-                commit_sha=source_run.canonical_commit_sha,
-                path=source_run.artifact_path,
-            )
-            sources.append(
-                AnswerPageSource(
-                    label=(
-                        "latest AI visibility audit"
-                        if source_run.executor == VISIBILITY_AUDIT_WORKFLOW_NAME
-                        else "latest organic audit, with its AI buyer questions"
-                        if source_run.executor == "organic.audit"
-                        else source_run.executor
-                    ),
-                    artifact_ref=source_run.artifact_ref,
-                    content=content.decode("utf-8"),
-                )
-            )
-        if positioning:
-            sources.extend(await self._positioning_sources(project))
-        return sources
-
-    async def _positioning_sources(self, project) -> list[AnswerPageSource]:
-        """The brand guide, founder notes and Start here plan at the project's head."""
-        from tin_lite.content_plan_sources import positioning_files
-
-        repo = await self._storage.get_repo(project.state_repo_id)
-        head = await self._storage.head_sha(repo, project.canonical_branch)
-        if head is None:
-            return []
-        files = await positioning_files(
-            storage=self._storage,
-            project=project,
-            revision=head,
-            include_memory=project.memory_index_path is None,
-        )
-        return [
-            AnswerPageSource(
-                label=f"project positioning: {item['path']}",
-                artifact_ref=f"code.storage://{project.state_repo_id}@{head}/{item['path']}",
-                content=item["content"],
-            )
-            for item in files
-        ]
 
     async def _visibility_effect(
         self,

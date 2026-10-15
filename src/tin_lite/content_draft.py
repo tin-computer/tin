@@ -159,7 +159,7 @@ def answer_metadata(text: str) -> tuple[dict[str, str], str]:
 
 
 def validate_answer(content: bytes) -> None:
-    """content.answer_page's quality rules for an answer draft: a meta title and description,
+    """The quality rules for an answer draft: a meta title and description,
     a 40 to 60 word direct answer, question headings, an FAQ and at least three cited sources."""
     text = content.decode("utf-8")
     metadata, page = answer_metadata(text)

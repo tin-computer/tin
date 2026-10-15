@@ -8,9 +8,14 @@ their exact outputs initialize an editable content program, and optional technic
 repair remains a separate branch. The parent then runs `content.generate` for the
 next article in chronological plan order.
 
+The sections below name the version that added each step. The current recipes
+(`organic-traffic-v6`, `-v7` and `-v8`) carry all of them; a run pinned to an older policy
+fails at preparation.
+
 With a selected GitHub repository, the review action is **Approve & open PR**.
-After the final revision is approved, the existing `content.deliver` procedure
-adapts that exact copy to the repository's format and opens an unmerged PR.
+After the final revision is approved, `website.change` (`source: content_draft`)
+adapts that exact copy to the repository's format and opens a PR, which Tin merges
+only under [website.change's rules](website-change.md#two-modes).
 The original Markdown remains readable in Tin. Generation notes stay separate
 from the public article.
 
@@ -28,7 +33,7 @@ than repurchasing research.
 
 ## Weekly drafting (0.3.0)
 
-`organic.traffic_system` 0.3.0 (policy `organic-traffic-v3`) keeps the same child runs.
+`organic.traffic_system` 0.3.0 keeps the same child runs.
 Once the content plan exists, and beside the first draft, it also saves one weekly
 `content.generate` configuration for that program in My system:
 
@@ -48,7 +53,7 @@ Once the content plan exists, and beside the first draft, it also saves one week
   a changed brief), the schedule pauses with that reason in My system instead of failing a
   run every week.
 - Occurrences follow the program's saved delivery settings, like any manual draft. They do
-  not reuse the parent's `content.deliver` adaptation, which belongs to the parent run.
+  not reuse the parent's website.change adaptation, which belongs to the parent run.
 - The configuration is not a child run and adds nothing to the parent's spending bound.
   Each occurrence is an ordinary scheduled run with its own funding: the content.generate
   ceiling ($5), project limits and standing schedule authority apply. Under the earlier
@@ -58,9 +63,6 @@ Once the content plan exists, and beside the first draft, it also saves one week
   as succeeded, skipped (`weekly_articles_off`, `content_plan_unavailable`), blocked
   (`weekly_schedule_unsupported`, `scheduling_unavailable`) or failed
   (`weekly_schedule_not_saved`).
-
-In-flight v2 histories replay through the `organic-weekly-articles-v1` patch boundary; a
-v2 parent that reaches the new step records `not_in_pinned_recipe` and saves nothing.
 
 ## Shared dashboard and MCP behavior
 
@@ -85,16 +87,15 @@ v2 parent that reaches the new step records `not_in_pinned_recipe` and saves not
 ## Compatibility and cost
 
 The parent and all six child definitions/resources publish in one registry revision.
-The v2 recipe pins that revision for every child. Historic v1 definitions and saved
-configurations retain the research/planning-only recipe. Existing in-flight Temporal
-histories replay through the `organic-content-continuation-v1` patch boundary.
+The recipe pins that revision for every child. Existing in-flight Temporal histories replay
+through the `organic-content-continuation-v1` patch boundary.
 Users do not choose internal definition versions.
 
-The v2 estimate includes one draft and, for automatic delivery, one repository
+The estimate includes one draft and, for automatic delivery, one repository
 adaptation. New content children share the parent's existing usage ledger only when
 their pinned definitions match its prepared recipe. This is not a second charge or
 a six-month reservation. Historical quotes remain unchanged; API-billed execution
-must be available before a new billed v2 parent starts research. User-requested
+must be available before a new billed parent starts research. User-requested
 revision runs retain their existing separate accounting.
 
 No database migration, new model route, sandbox build, credentials, payment-mode
@@ -112,14 +113,13 @@ intentionally not a release blocker for this composition change.
 
 ## When the new plan does not finish (0.4.0)
 
-`organic.traffic_system` 0.4.0 pins policy `organic-traffic-v4`. If its own content plan
+From `organic.traffic_system` 0.4.0, if its own content plan
 fails or is blocked, for example because the plan's model call timed out or research was
 unavailable, the draft and the weekly articles use the project's most recent content program
 whose plan did finish. Tin picks that program once per run and saves the choice, so a retried
 step reads the same program. `RESULT.md` gains a "Content plan used" section naming it. The
 run itself still reports that a step could not finish. Without any finished plan, the draft
-and weekly steps stay blocked or skipped with `content_plan_unavailable`, as before. v3 and
-older recipes keep their behaviour.
+and weekly steps stay blocked or skipped with `content_plan_unavailable`.
 
 Reusing a program also preserves its existing article schedule and any pause or timing edits.
 Tin creates a schedule only when that program has none; concurrent system runs share this
@@ -127,7 +127,7 @@ short save. A paused schedule stays paused and the result says `existing_schedul
 
 ## Refresh existing pages first (0.5.0)
 
-`organic.traffic_system` 0.5.0 pins policy `organic-traffic-v5`, which adds a weekly page
+`organic.traffic_system` 0.5.0 adds a weekly page
 refresh (`content.refresh`, see [refreshing existing pages](content-refresh.md)). At the start
 of the draft step, before drafting a new article, the system:
 
@@ -137,11 +137,11 @@ of the draft step, before drafting a new article, the system:
 
 That child run is the schedule's first run, so nothing else runs at the first slot and the next
 refresh comes a week later. The refresh child draws on the system's budget under the start key
-`system:{run}:refresh`, admitted only when the run pinned v5 and the exact `content.refresh`
-definition. The system waits for the refresh child before it finishes, so its budget never
+`system:{run}:refresh`, admitted only when the run's pinned recipe has a refresh step and the exact
+`content.refresh` definition. The system waits for the refresh child before it finishes, so its budget never
 settles while the refresh is still spending. If the
 project already has an active or paused weekly refresh, the system keeps it and starts nothing
 new. A refresh that cannot start (no Temporal, billing refused, a missing prerequisite) never
-blocks the article; `RESULT.md` gains a "Page refresh" section that says what happened. v4 and
-older recipes keep their behaviour, and in-flight runs keep the recipe they pinned. The parent's
+blocks the article; `RESULT.md` gains a "Page refresh" section that says what happened.
+In-flight runs keep the recipe they pinned. The parent's
 registry revision now carries the exact `content.refresh` definition beside its steps.

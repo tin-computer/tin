@@ -27,7 +27,7 @@ When there are none: "Nothing material." Omit this section on a baseline.>
 <At most three rows, each tied to a change above. Leave out any row that a hard no rules out.>
 | Change | Response | Tin workflow | Start it with |
 |---|---|---|---|
-| <Name> raised Pro from $12 to $16 | A comparison page while the gap is fresh | Draft a public article (`content.public_article`) | brief: "<one or two sentences naming the change, the source URL and this report's path>" |
+| <Name> raised Pro from $12 to $16 | A comparison page while the gap is fresh | Plan upcoming content (`content.plan`) | context_files: this report, with a planned page "<one or two sentences naming the change, the source URL and this report's path>" |
 <When nothing needs a response: "Nothing needs a response this week." and no table.>
 
 ## Also seen
@@ -66,10 +66,10 @@ founder's decision: suggest research, never "match their price".
 
 | Material change | Usual response | Workflow |
 |---|---|---|
-| They raised a price, added a seat minimum, dropped a free tier or trial, or moved a feature up-tier, and your plans compare well on that point | A comparison or "alternative to <them>" page | Draft a public article (`content.public_article`), goal `argue`. When a content program exists, Plan upcoming content (`content.plan`) can take this report in `context_files` if it is under 20 KB. |
+| They raised a price, added a seat minimum, dropped a free tier or trial, or moved a feature up-tier, and your plans compare well on that point | A comparison or "alternative to <them>" page | Plan upcoming content (`content.plan`), with this report in `context_files` if it is under 20 KB; content.generate drafts the page. |
 | They cut a price, added a free tier or a cheaper plan, or now include something you charge for | Test whether your pricing still holds for your buyers | Research a question deeply (`research.deep_dive`), with the question written out |
 | They shipped or now highlight a capability the Feature map shows you lack, and it matches `watch_for` | Decide whether it is table stakes for your buyers | Research a question deeply (`research.deep_dive`) |
-| They moved a plan from self-serve to "contact sales", or stopped showing prices | Point buyers to your public prices and self-serve start | Draft a public article (`content.public_article`) only when your own pricing page already shows prices; otherwise one line for the founder, no workflow |
+| They moved a plan from self-serve to "contact sales", or stopped showing prices | Point buyers to your public prices and self-serve start | Plan upcoming content (`content.plan`) only when your own pricing page already shows prices; otherwise one line for the founder, no workflow |
 
 Never suggest paid ads, cold email or any channel the onboarding plan lists as a hard no. Never
 suggest contacting the competitor, and never invent urgency from a copy change.

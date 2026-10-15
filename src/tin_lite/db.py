@@ -2864,11 +2864,9 @@ class Database:
                     raise ValueError(
                         "Select the approved article before creating its delivery run."
                     )
-                if workflow_id == content_repository_delivery.WORKFLOW_ID:
-                    guard = content_repository_delivery.guard_source
-                else:
-                    from tin_lite.website_change import guard_source as guard
-                await guard(
+                from tin_lite.website_change import guard_source
+
+                await guard_source(
                     conn,
                     project_id=project_id,
                     inputs=input_payload,
@@ -5893,14 +5891,6 @@ class Database:
                 )
                 return _run(row)
 
-    async def stop_technical_fix(self, *, run_id: UUID, project_id: UUID, actor: str):
-        return await self.stop_codex_procedure(
-            run_id=run_id,
-            project_id=project_id,
-            actor=actor,
-            workflow_key="organic.technical_fix",
-        )
-
     async def stop_codex_procedure(
         self,
         *,
@@ -5961,7 +5951,6 @@ class Database:
                             "Publication or delivery has started. Its result must be reconciled, "
                             "not recalled."
                         )
-                    technical = row["workflow_key"] == "organic.technical_fix"
                     code = row["executor"] == "workflow.code"
                     row = await conn.fetchrow(
                         "UPDATE workflow_runs SET status='stopped', finished_at=now(), "
@@ -5975,28 +5964,20 @@ class Database:
                     await self.add_activity(
                         conn=conn,
                         run_id=run_id,
-                        event_type=(
-                            "technical_fix_stopped"
-                            if technical
-                            else "code_workflow_stopped"
-                            if code
-                            else "codex_procedure_stopped"
-                        ),
+                        event_type="code_workflow_stopped" if code else "codex_procedure_stopped",
                         details={
                             "kind": "your_edits",
                             "status": "stopped",
                             "actor_clerk_user_id": actor,
                         },
                         summary=(
-                            "You stopped the technical repair. No new PR will be delivered."
-                            if technical
-                            else "You stopped the code workflow. Saved output remains available."
+                            "You stopped the code workflow. Saved output remains available."
                             if code
                             else "You stopped the procedure. Saved output remains available; "
                             "already accepted provider work may still incur costs."
                         ),
                         audience="product",
-                        dedupe_key=f"{'technical' if technical else 'procedure'}:{run_id}:stopped",
+                        dedupe_key=f"procedure:{run_id}:stopped",
                     )
                     return _run(row)
             finally:
@@ -7335,7 +7316,6 @@ class Database:
                 "Today's Google Ads check is done.",
             ),
             "organic.traffic_system": ("organic_system_ready", "Organic traffic system finished."),
-            "organic.technical_fix": ("technical_fix_ready", "Technical fix inspection finished."),
             "content.refresh": ("content_refresh_ready", "No page is due for a refresh."),
             # A website.change run with the audit's changes when the live site needs none.
             "website.change": ("website_change_ready", "Website changes checked."),
@@ -7384,7 +7364,7 @@ class Database:
                 artifact_ref,
                 summary,
                 "codex.procedure"
-                if workflow_key in {"organic.technical_fix", "content.refresh", "website.change"}
+                if workflow_key in {"content.refresh", "website.change"}
                 else workflow_key,
                 final_status,
                 result_line(summary),
@@ -7940,7 +7920,7 @@ class Database:
                 filename = artifact_title or artifact_path.rsplit("/", 1)[-1]
                 workflow_row = await conn.fetchrow(
                     "SELECT title, project_id IS NULL "
-                    "AND key IN ('content.generate','content.public_article') "
+                    "AND key='content.generate' "
                     "AS revision_supported FROM workflows WHERE id=$1",
                     row["workflow_id"],
                 )
@@ -8928,7 +8908,6 @@ def _failure_summary(executor: str) -> str:
         "scan.report": "Project scan",
         "site.health_improve": "Site-health improvement",
         "visibility.audit": "AI visibility audit",
-        "content.answer_page": "Answer page draft",
         "project.task": "One-off project task",
     }.get(executor, "Workflow run")
     if executor == PROJECT_TASK_WORKFLOW_NAME:

@@ -1,4 +1,4 @@
-"""A v4 traffic system keeps going from the last finished plan when today's plan fails."""
+"""The traffic system keeps going from the last finished plan when today's plan fails."""
 
 import asyncio
 from types import SimpleNamespace
@@ -9,7 +9,7 @@ import pytest
 from test_organic_content import effect, system_fixture
 from test_procedure_publication import publication_db as publication_db
 
-from tin_lite import content_draft, organic_system
+from tin_lite import content_draft
 from tin_lite.organic_system_activities import fallback_section
 
 FAILED_PLAN = {"status": "blocked", "reason": "research_unavailable"}
@@ -95,21 +95,6 @@ async def test_draft_and_weekly_articles_use_the_last_finished_plan(publication_
     report = publish.await_args.kwargs["content"].decode()
     assert "## Content plan used" in report
     assert "This run's content plan did not finish" in report
-
-
-async def test_an_older_recipe_still_stops_without_its_own_plan(publication_db, monkeypatch):
-    f = await system_fixture(
-        publication_db,
-        monkeypatch,
-        content=FAILED_PLAN,
-        policy=organic_system.WEEKLY_POLICY,
-    )
-    await f.db.pool.execute(
-        "UPDATE workflow_runs SET status='succeeded', finished_at=now() WHERE id=$1", f.initial.id
-    )
-    result = await f.system.organic_system_step({"run_id": str(f.parent.id), "step": "draft"})
-    assert result == {"status": "blocked", "reason": "content_plan_unavailable"}
-    assert await f.db.get_effect(f"traffic:{f.parent.id}:content_fallback") is None
 
 
 async def test_no_finished_plan_means_nothing_to_draft_from(publication_db, monkeypatch):

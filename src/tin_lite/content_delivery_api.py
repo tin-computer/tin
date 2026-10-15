@@ -45,13 +45,6 @@ def page_url_service(runtime, settings=None):
     )
 
 
-def adapt_on_approval(settings, run):
-    """Whether an approval's repository pick for this run starts website.change."""
-    from tin_lite.content_delivery import adaptable
-
-    return adaptable(settings, run)
-
-
 async def delivery_cost(*, runtime, settings, run, actor, repository):
     """The configured cost preview of adapting this page with website.change, or None where
     billing is off."""
@@ -99,8 +92,8 @@ def cost_about(cost):
 async def publish_preview(*, runtime, settings, run, actor):
     """What Publish does for a page Tin adapts to the site, before the founder presses it.
 
-    `adapt` is False where approval keeps today's choices: no selected repository, a page
-    refresh, or an answer page or public article without Codex API execution. `mode` is
+    `adapt` is False where approval keeps today's choices: no selected repository, or a page
+    refresh. `mode` is
     the delivery the founder saved (commit to main, else a pull request); `footer` is the
     card's one line, with the configured cost preview when billing is on.
     """
@@ -120,13 +113,13 @@ async def publish_preview(*, runtime, settings, run, actor):
 
     kind = await delivery_service(runtime).plan_kind(run)
     generated = run.workflow_id == DRAFT_WORKFLOW_ID and kind != "refresh"
-    if not repository or not (generated or adapt_on_approval(settings, run)):
+    if not repository or not generated:
         return {"adapt": False}
-    from tin_lite.page_routes import PageRouteService, ask_the_founder, page_type
+    from tin_lite.page_routes import PageRouteService, ask_the_founder
 
-    # Answer pages and public articles live at a route the founder chooses; a planned
-    # article names its own address in the plan.
-    page = "answer_page" if kind == "answer" else None if generated else page_type(run)
+    # Answer pages live at a route the founder chooses; a planned article names its own
+    # address in the plan.
+    page = "answer_page" if kind == "answer" else None
     mode = await delivery_service(runtime).saved_mode(run)
     cost = await delivery_cost(
         runtime=runtime,
@@ -213,14 +206,6 @@ async def get_settings(
         return await service.settings(project_id=project_id, program_id=program_id)
     except (LookupError, ValueError) as exc:
         raise HTTPException(status_code=409, detail=public_error_text(exc)) from exc
-
-
-@router.get("/content-drafts/delivery-sources")
-async def delivery_sources(project_id: UUID, request: Request, user: AuthContext = USER):
-    await authorized(request, project_id, user)
-    from tin_lite.content_repository_delivery import discover
-
-    return await discover(request.app.state.runtime.database, project_id)
 
 
 @router.put("/content-programs/{program_id}/delivery")

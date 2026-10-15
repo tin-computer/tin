@@ -215,7 +215,7 @@ def writing_style_guide(*, author=None):
             "Style is not evidence. Never invent facts, quotes, product capabilities "
             "or experience to imitate a voice. Workflow permissions and review rules still apply.\n"
         ),
-        "consumers": ["New content.public_article definitions read this guide when present."],
+        "consumers": ["content.generate drafts read this guide when present."],
         "limits": [
             "This is guidance for the caller, not a claim that style has already been captured.",
             "Existing saved workflow configurations keep their pinned definition.",

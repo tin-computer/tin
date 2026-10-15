@@ -7,50 +7,28 @@ from tin_lite.organic_audit import MARKETS, public_site
 from tin_lite.schedules import WEEKDAYS
 
 KEY = "organic.traffic_system"
-TECHNICAL_KEY = "organic.technical_fix"
-LEGACY_STEPS = {
+WEBSITE_KEY = "website.change"
+# The recipe's two writer steps go through website.change, the one workflow that edits the
+# site: the technical step with the latest audit's fixes (`source: audit`), the delivery step
+# with the approved draft (`source: content_draft`).
+STEPS = {
     "audit": "organic.audit",
     "keywords": "organic.keyword_plan",
-    "technical": TECHNICAL_KEY,
+    "technical": WEBSITE_KEY,
     "content": "content.plan",
+    "draft": "content.generate",
+    "delivery": WEBSITE_KEY,
 }
-LEGACY_POLICY = {
-    "version": "organic-traffic-v1",
-    "steps": LEGACY_STEPS,
-    "max_technical_findings": 1,
-    "schedule": "manual_only",
-}
-STEPS = {**LEGACY_STEPS, "draft": "content.generate", "delivery": "content.deliver"}
-CONTENT_POLICY = {**LEGACY_POLICY, "version": "organic-traffic-v2", "steps": STEPS}
-# v3 keeps the same child runs and then saves one weekly content.generate configuration
-# for the program it planned. The saved schedule is not a child run and not parent spend.
-WEEKLY_POLICY = {
-    **CONTENT_POLICY,
-    "version": "organic-traffic-v3",
-    "schedule": "weekly_articles",
-}
-# v4: when this run's content plan does not finish, the draft and the weekly articles use
-# the project's most recent content program whose plan did finish, and the report says so.
-FALLBACK_POLICY = {
-    **WEEKLY_POLICY,
-    "version": "organic-traffic-v4",
-    "content_fallback": "latest_saved_plan",
-}
-# v5 also refreshes existing pages before drafting new ones. The system starts the first page
-# refresh itself, as a child run, before its first draft; that run is the refresh schedule's
-# first run, so the saved weekly refresh schedule's first occurrence comes a week later.
-REFRESH_POLICY = {**FALLBACK_POLICY, "version": "organic-traffic-v5", "refresh": "weekly_refresh"}
-# v6 (Emre, 10/1): the recipe's two writer steps go through website.change, the one workflow
-# that edits the site. The technical step starts website.change with the latest audit's
-# fixes (`source: audit`) instead of organic.technical_fix, and the delivery step puts the
-# approved draft on the site with website.change (`source: content_draft`) instead of
-# content.deliver. Everything else is v5's. Runs pinned to v5 and earlier keep their steps.
-WEBSITE_KEY = "website.change"
-WEBSITE_STEPS = {**STEPS, "technical": WEBSITE_KEY, "delivery": WEBSITE_KEY}
+# v6 (Emre, 10/1) is the oldest recipe that still runs; runs pinned to v1-v5 started workflows
+# that left the codebase and fail at preparation. It drafts and schedules weekly articles,
+# falls back to the latest saved plan, and refreshes existing pages weekly.
 WEBSITE_POLICY = {
-    **REFRESH_POLICY,
     "version": "organic-traffic-v6",
-    "steps": WEBSITE_STEPS,
+    "steps": STEPS,
+    "max_technical_findings": 1,
+    "schedule": "weekly_articles",
+    "content_fallback": "latest_saved_plan",
+    "refresh": "weekly_refresh",
     "site_writer": WEBSITE_KEY,
 }
 # v7 also measures the site each week. After the audit it runs the traffic snapshot and then
@@ -69,14 +47,11 @@ MEASUREMENT_POLICY = {
 # of the system's spending pool grows to the agent's ceiling (service_pricing). The steps and
 # their order are v7's.
 POLICY = {**MEASUREMENT_POLICY, "version": "organic-traffic-v8", "content_planner": "agent"}
-DRAFT_POLICIES = (CONTENT_POLICY, WEEKLY_POLICY, FALLBACK_POLICY, REFRESH_POLICY)
-WEBSITE_POLICIES = (WEBSITE_POLICY, MEASUREMENT_POLICY, POLICY)
+POLICIES = (WEBSITE_POLICY, MEASUREMENT_POLICY, POLICY)
 REFRESH_KEY = "content.refresh"
 # The executor each child must have; any other step's executor is its own key.
 CHILD_EXECUTORS = {
-    TECHNICAL_KEY: "codex.procedure",
     "content.generate": "codex.procedure",
-    "content.deliver": "codex.procedure",
     WEBSITE_KEY: "codex.procedure",
     SNAPSHOT_KEY: "workflow.code",
     DECISIONS_KEY: "workflow.code",
@@ -84,12 +59,8 @@ CHILD_EXECUTORS = {
 
 
 def policy_steps(policy):
-    if policy == LEGACY_POLICY:
-        return LEGACY_STEPS
-    if policy in DRAFT_POLICIES:
+    if policy in POLICIES:
         return STEPS
-    if policy in WEBSITE_POLICIES:
-        return WEBSITE_STEPS
     raise ValueError("Unsupported organic system policy.")
 
 
@@ -97,25 +68,9 @@ def child_executor(workflow_key):
     return CHILD_EXECUTORS.get(workflow_key, workflow_key)
 
 
-def writes_with_website_change(policy):
-    """Whether this recipe's technical and delivery steps start website.change (v6 on)."""
-    return policy in WEBSITE_POLICIES
-
-
-def drafts_articles(policy):
-    return policy in DRAFT_POLICIES or policy in WEBSITE_POLICIES
-
-
-def schedules_articles(policy):
-    return policy in (WEEKLY_POLICY, FALLBACK_POLICY, REFRESH_POLICY, *WEBSITE_POLICIES)
-
-
-def falls_back_to_saved_plan(policy):
-    return policy in (FALLBACK_POLICY, REFRESH_POLICY, *WEBSITE_POLICIES)
-
-
-def refreshes_pages(policy):
-    return policy in (REFRESH_POLICY, *WEBSITE_POLICIES)
+def runs_recipe(policy):
+    """Whether a run pinned to this policy drafts, schedules and delivers with this code."""
+    return policy in POLICIES
 
 
 def measures_pages(policy):
@@ -227,10 +182,9 @@ async def system_facts(*, database, project_id, run_id):
         raise LookupError("Organic traffic system run not found.")
     prepared = await database.get_effect(f"traffic:{run_id}:prepare")
     policy = (prepared.result or {}).get("policy") if prepared else None
-    # Old receipts and old runs retain their four-step projection.
-    selected_steps = policy_steps(
-        policy or (CONTENT_POLICY if "content_delivery" in run.input else LEGACY_POLICY)
-    )
+    # A run keeps the steps its pinned policy recorded, including retired recipes; before
+    # preparation it shows the current recipe's steps.
+    selected_steps = (policy or {}).get("steps") or ({} if prepared else STEPS)
     steps = []
     for step, key in selected_steps.items():
         receipt = await database.get_effect(f"traffic:{run_id}:step:{step}")

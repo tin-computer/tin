@@ -13,7 +13,6 @@ from test_procedure_publication import publication_db as publication_db
 
 from tin_lite.catalog import BUILTIN_WORKFLOWS
 from tin_lite.domain import RunStatus
-from tin_lite.growth_onboarding_activities import GrowthOnboardingActivities
 from tin_lite.onboarding_experience import onboarding_experience, result_links, validate_plan
 
 DEFINITIONS = {w.key: w.definition for w in BUILTIN_WORKFLOWS}
@@ -114,7 +113,7 @@ async def test_approval_judges_the_repaired_inputs_setup_will_use():
     assert not await validate_plan(
         database=db_fixture(),
         project_id=uuid4(),
-        text=plan("content.public_article", brief="A synthetic guide", goal="get more customers"),
+        text=plan("research.deep_dive", question="Who buys synthetic guides?", depth="very deep"),
         systems=["progress"],
         timezone="UTC",
     )
@@ -362,14 +361,13 @@ async def test_scheduled_first_run_failure_is_not_called_complete():
         result={
             "actions": [
                 {
-                    "system": "articles",
-                    "key": "content.public_article",
+                    "system": "code",
+                    "key": "product.code_map",
                     "mode": "weekly",
                     "status": "scheduled",
                     "project_workflow_id": str(schedule_id),
                     "first_run_status": "blocked",
                     "reason": "Prerequisite missing",
-                    "delivery_error": "Draft delivery was not configured",
                 },
             ]
         },
@@ -378,10 +376,7 @@ async def test_scheduled_first_run_failure_is_not_called_complete():
         database=db, storage=None, settings=SETTINGS, project_id=project_id, run=parent
     )
     assert view["setup_status"] == "partial"
-    assert {i["code"] for i in view["incomplete_setup"]} == {
-        "first_run_blocked",
-        "delivery_not_configured",
-    }
+    assert {i["code"] for i in view["incomplete_setup"]} == {"first_run_blocked"}
     assert not view["result_links"]
     assert {n["provider"] for n in view["access_needs"]} == {"infra.github", "analytics.gsc"}
 
@@ -419,11 +414,18 @@ async def test_recommended_access_omitted_from_legacy_plan_can_be_recorded(
     publication_db, monkeypatch
 ):
     text = (
-        "# Plan\n## What Tin would run\n- [ ] progress **Articles**\n"
+        "# Plan\n## What Tin would run\n- [ ] progress **Progress**\n"
         "## Control\n- [ ] control: review_in_tin\n"
-        + plan("content.public_article", brief="One synthetic guide")
+        + plan("project.weekly_brief", focus="Activation and the next useful experiment")
     )
     h = await harness(publication_db, monkeypatch, plan=text)
+    # The founder named a website repository, so GitHub is recommended though the plan,
+    # written before connections were listed, leaves it out.
+    await h.db.pool.execute(
+        "UPDATE workflow_runs SET input=$2::jsonb WHERE id=$1",
+        h.run.id,
+        json.dumps({"system_repository": "acme/site"}),
+    )
     result = await call(
         h,
         "record_onboarding_picks",
@@ -441,42 +443,6 @@ async def test_recommended_access_omitted_from_legacy_plan_can_be_recorded(
     }
     assert result["access_needs"][0]["decision"] == "declined"
     assert not result["connection_batch"]["arguments"]["providers"]
-
-
-async def test_partial_delivery_configuration_records_each_actual_destination(monkeypatch):
-    db = db_fixture()
-    db.get_integration_connection = AsyncMock(
-        return_value=SimpleNamespace(
-            status="connected",
-            configuration={"selected_repository": "example/site"},
-        )
-    )
-    delivery = SimpleNamespace(
-        save_settings=AsyncMock(
-            side_effect=[
-                ValueError("private provider payload must not appear in the report"),
-                {"revision": "b" * 40},
-            ]
-        )
-    )
-    monkeypatch.setattr(
-        "tin_lite.growth_onboarding_activities.ContentDelivery", lambda **kw: delivery
-    )
-    activities = GrowthOnboardingActivities(
-        database=db, storage=None, settings=SETTINGS, integrations=None
-    )
-    run = SimpleNamespace(id=uuid4(), project_id=uuid4(), started_by_clerk_user_id="synthetic_user")
-    outcomes = [
-        {"status": "scheduled", "key": key, "project_workflow_id": str(uuid4())}
-        for key in ["content.answer_page", "content.public_article"]
-    ]
-    result = await activities._configure_delivery(run, outcomes, "a" * 40)
-    assert result["mode"] == "partial"
-    assert outcomes[0]["delivery_mode"] == "draft_only"
-    assert outcomes[0]["delivery_error"]
-    assert "private provider payload" not in str(outcomes)
-    assert outcomes[1]["delivery_mode"] == "github_pr"
-    assert result["configured_programs"] == [outcomes[1]["project_workflow_id"]]
 
 
 def live_connection(provider_key, **configuration):

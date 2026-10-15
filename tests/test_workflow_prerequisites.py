@@ -177,7 +177,6 @@ def test_builtin_tree_is_acyclic_and_names_only_known_workflows():
         ("run", "required", "organic.audit"),
         ("run", "required", "organic.keyword_plan"),
     ]
-    assert edges["organic.technical_fix"] == [("run", "required", "organic.audit")]
     assert edges["creative.product_demo"] == [
         ("artifact", "recommended", "product.deep_dive"),
         ("artifact", "required", "creative.character"),
@@ -878,19 +877,23 @@ async def test_list_workflows_and_get_workflow_expose_prerequisites_and_readines
 
 
 def test_short_view_leaves_out_required_inputs_tin_fills():
-    # The technical fix requires repository_serves_site, but Tin fills its default, so the
-    # caller need not. It left discovery, but its pinned definition still has the shape.
-    fix = next(w for w in BUILTIN_WORKFLOWS if w.key == "organic.technical_fix")
+    # The visibility audit requires a target, but Tin fills its default, so the caller need
+    # not. It left discovery, but its pinned definition still has the shape.
+    audit = next(w for w in BUILTIN_WORKFLOWS if w.key == "visibility.audit")
+    assert "target" in audit.definition["input_schema"]["required"]
     workflow = SimpleNamespace(
-        id=fix.id,
-        key=fix.key,
-        title=fix.title,
-        description=fix.description,
-        definition=fix.definition,
+        id=audit.id,
+        key=audit.key,
+        title=audit.title,
+        description=audit.description,
+        definition=audit.definition,
     )
     view = _short_workflow_view(workflow, {"state": "ready", "unmet": []})
-    assert "audit_run_id" in view["required_inputs"]
-    assert "repository_serves_site" not in view["required_inputs"]
+    assert "target" not in view["required_inputs"]
+    # A required input without a default is still the caller's to supply.
+    deep_dive = next(w for w in BUILTIN_WORKFLOWS if w.key == "product.deep_dive")
+    view = _short_workflow_view(deep_dive, {"state": "ready", "unmet": []})
+    assert view["required_inputs"] == ["product_url"]
 
 
 async def test_short_listing_names_only_what_an_agent_needs_to_choose(publication_db, monkeypatch):
@@ -934,8 +937,7 @@ async def test_short_listing_names_only_what_an_agent_needs_to_choose(publicatio
         row["schedule_modes"] for row in full_rows if row["key"] == "product.deep_dive"
     )
     # Workflows hidden from discovery are not listed; their saved configurations still run.
-    assert "visibility.audit" not in by_key and "organic.technical_fix" not in by_key
-    assert "content.deliver" not in by_key
+    assert "visibility.audit" not in by_key and "content.refresh" not in by_key
     descriptions = [row["description"] for row in short_rows]
     assert all("\n" not in text and len(text) <= 160 for text in descriptions)
     assert len(json.dumps(short_rows)) * 5 < len(json.dumps(full_rows))

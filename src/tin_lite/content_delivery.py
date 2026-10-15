@@ -31,29 +31,18 @@ WORKFLOW = "tin.content_draft_delivery"
 OPERATION = "content_draft_delivery_v1"
 CHOICE_OPERATION = "content_draft_delivery_choice_v1"
 DRAFT_WORKFLOW_ID = UUID("00000000-0000-4000-8000-000000000031")
-PUBLIC_ARTICLE_WORKFLOW_ID = UUID("00000000-0000-4000-8000-000000000009")
-ANSWER_PAGE_WORKFLOW_ID = UUID("00000000-0000-4000-8000-000000000005")
 # content.refresh: approved replacements on an existing page (see content_refresh.py).
 REFRESH_WORKFLOW_ID = UUID("00000000-0000-4000-8000-000000000044")
 REFRESH_KIND = "refresh"
 # Runs whose approval may choose a repository delivery for that one document.
-CHOICE_WORKFLOW_IDS = frozenset(
-    {DRAFT_WORKFLOW_ID, PUBLIC_ARTICLE_WORKFLOW_ID, ANSWER_PAGE_WORKFLOW_ID, REFRESH_WORKFLOW_ID}
-)
+CHOICE_WORKFLOW_IDS = frozenset({DRAFT_WORKFLOW_ID, REFRESH_WORKFLOW_ID})
 REPOSITORY_MODES = frozenset({"github_pr", "github_commit"})
 APPROVAL_CHOICES = ("github_pr", "github_commit", "none")
-# Approved pages that Tin adapts into the site's own format (website.change) instead of
-# committing their Markdown as it is, when Codex API execution is on for the project.
-ADAPTED_WORKFLOW_IDS = frozenset({PUBLIC_ARTICLE_WORKFLOW_ID, ANSWER_PAGE_WORKFLOW_ID})
 ADAPTER = "repository"
 ADAPTATION_OPERATION = "content_draft_adaptation_v1"
 ADAPTED_PATH = "Repository-adapted page"
 # The largest reviewed document each workflow saves; the Markdown publisher reads it whole.
-DOCUMENT_MAX_BYTES = {
-    ANSWER_PAGE_WORKFLOW_ID: 150_000,
-    PUBLIC_ARTICLE_WORKFLOW_ID: 300_000,
-    REFRESH_WORKFLOW_ID: 40_000,
-}
+DOCUMENT_MAX_BYTES = {REFRESH_WORKFLOW_ID: 40_000}
 
 
 def settings_path(program_id):
@@ -107,15 +96,6 @@ def chosen_mode(intent):
 def adaptation_start_key(run_id):
     """The start key of the one adaptation run (website.change) an approval may start."""
     return f"approval-delivery:{UUID(str(run_id))}"
-
-
-def adaptable(settings, run):
-    """Whether approving this page adapts it to the site instead of committing its Markdown."""
-    from tin_lite.codex_api import api_enabled
-
-    return getattr(run, "workflow_id", None) in ADAPTED_WORKFLOW_IDS and api_enabled(
-        settings, run.project_id
-    )
 
 
 def adapted(intent):
@@ -264,7 +244,7 @@ def document_destination(settings, title, run_id):
 
 
 def document_body(raw):
-    """The exact reviewed Markdown of a public article or answer page, plus its title."""
+    """The exact reviewed Markdown of a reviewed document, plus its title."""
     article = raw.decode("utf-8").strip() + "\n"
     title = re.search(r"(?m)^# (.+)$", article)
     if title is None:
@@ -609,16 +589,8 @@ class ContentDelivery:
             )
         return run.project_workflow_id, None
 
-    async def choose(
-        self, *, run, mode, remember=False, actor=None, adapt=False, trigger_source="manual"
-    ):
-        """Record the reviewer's delivery pick for one document; optionally keep it.
-
-        `adapt` (the caller checked `adaptable`) sends an answer page or public article
-        through website.change instead of the Markdown publisher, as every content.generate
-        article and answer page goes; `mode` still says whether its pull request stays open or
-        Tin merges it.
-        """
+    async def choose(self, *, run, mode, remember=False, actor=None, trigger_source="manual"):
+        """Record the reviewer's delivery pick for one document; optionally keep it."""
         if run.workflow_id not in CHOICE_WORKFLOW_IDS:
             raise ValueError("This run does not publish to a repository.")
         if mode not in APPROVAL_CHOICES:
@@ -633,14 +605,6 @@ class ContentDelivery:
             return await self.choose_refresh(run=run, mode=mode, remember=remember, actor=actor)
         if kind == content_draft.ANSWER and mode in REPOSITORY_MODES:
             # An answer page always goes to the site through website.change at its route.
-            return await self.choose_adaptation(
-                run=run,
-                mode=mode,
-                remember=remember,
-                actor=actor,
-                trigger_source=trigger_source,
-            )
-        if adapt and run.workflow_id in ADAPTED_WORKFLOW_IDS and mode in REPOSITORY_MODES:
             return await self.choose_adaptation(
                 run=run,
                 mode=mode,
@@ -677,17 +641,6 @@ class ContentDelivery:
                 remember=remember,
                 actor=actor,
                 trigger_source=trigger_source,
-            )
-        if mode == "none" and run.workflow_id != DRAFT_WORKFLOW_ID and not run.project_workflow_id:
-            # Keeping a one-off page in Tin leaves nothing to configure or remember.
-            return await self.record_choice(
-                run,
-                {
-                    "settings": DeliverySettings().model_dump(),
-                    "settings_revision": None,
-                    "path": None,
-                    "chosen_by": actor,
-                },
             )
         program_id, selected = await self.program_for(run)
         configured = await self.settings(project_id=run.project_id, program_id=program_id)
@@ -1065,7 +1018,7 @@ class ContentDelivery:
         return record
 
     async def document_source(self, run):
-        """The exact reviewed Markdown of a non-plan run (public article, answer page)."""
+        """The exact reviewed Markdown of a non-plan run (a page refresh)."""
         if not run.canonical_commit_sha or not run.artifact_path:
             raise ValueError("The reviewed document's publication proof is unavailable.")
         project = await self.db.get_project(run.project_id)

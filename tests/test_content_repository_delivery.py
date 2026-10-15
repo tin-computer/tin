@@ -11,24 +11,18 @@ from test_private_workflows import ACTOR, app, mcp, structured
 from test_procedure_publication import publication_db as publication_db
 
 from tin_lite import content_repository_delivery as delivery
+from tin_lite import website_change
 from tin_lite.catalog import BUILTIN_WORKFLOWS
 from tin_lite.organic_audit import canonical_json
 from tin_lite.procedures import procedure_checkpoint_path
-from tin_lite.run_service import RETIRED, start_workflow_run
+from tin_lite.run_service import start_workflow_run
 from tin_lite.workflow_inputs import WorkflowInputError
-
-
-@pytest.fixture(autouse=True)
-def pinned_content_deliver(monkeypatch):
-    # content.deliver refuses new starts (test_content_deliver_retired); these tests start it
-    # directly to exercise the machinery its existing runs, retries and v5 pins still use.
-    monkeypatch.delitem(RETIRED, delivery.KEY)
 
 
 def test_repository_workspaces_share_the_gateway_bounds():
     from tin_lite.procedures import validate_codex_procedure_definition
 
-    chosen = next(w for w in BUILTIN_WORKFLOWS if w.key == delivery.KEY)
+    chosen = next(w for w in BUILTIN_WORKFLOWS if w.key == website_change.KEY)
     definition, _ = chosen.definition_and_resource_files()
     spec = validate_codex_procedure_definition(definition)
     for workflow in BUILTIN_WORKFLOWS:
@@ -52,7 +46,7 @@ async def prepared(db, monkeypatch, *, approved=True):
     source = await start(f)
     source, f.context, f.raw = await publish_draft(f, source)
     f.source = await approve(f, source) if approved else source
-    spec = next(w for w in BUILTIN_WORKFLOWS if w.key == delivery.KEY)
+    spec = next(w for w in BUILTIN_WORKFLOWS if w.key == website_change.KEY)
     definition, resources = spec.definition_and_resource_files()
     await db.upsert_registry_workflow(
         workflow_id=spec.id,
@@ -84,7 +78,11 @@ async def prepared(db, monkeypatch, *, approved=True):
 
     f.storage.publish_state_document = publish
     f.delivery_workflow = await db.get_workflow(spec.id)
-    f.delivery_inputs = {"source_run_id": str(f.source.id), "expected_repository": "owner/site"}
+    f.delivery_inputs = {
+        "source": "content_draft",
+        "source_run_id": str(f.source.id),
+        "expected_repository": "owner/site",
+    }
     return f
 
 
@@ -119,7 +117,7 @@ async def test_existing_approved_article_atomic_binding_and_duplicate_starts(
     assert (await f.db.get_run(f.source.id)).canonical_commit_sha == f.source.canonical_commit_sha
     assert (
         await f.db.pool.fetchval(
-            "SELECT count(*) FROM workflow_runs WHERE workflow_id=$1", delivery.WORKFLOW_ID
+            "SELECT count(*) FROM workflow_runs WHERE workflow_id=$1", website_change.WORKFLOW_ID
         )
         == 1
     )
@@ -134,7 +132,7 @@ async def test_approval_and_project_boundary_before_dispatch(publication_db, mon
         await deliver_start(f, inputs={**f.delivery_inputs, "source_run_id": str(uuid4())})
     f.runtime.temporal.start_workflow.assert_not_called()
     assert not await f.db.pool.fetchval(
-        "SELECT id FROM workflow_runs WHERE workflow_id=$1", delivery.WORKFLOW_ID
+        "SELECT id FROM workflow_runs WHERE workflow_id=$1", website_change.WORKFLOW_ID
     )
 
 
@@ -212,17 +210,17 @@ async def test_mcp_contract_and_http_start_share_source_guard(publication_db, mo
     server = mcp(f, monkeypatch)
     contract = structured(
         await server.call_tool(
-            "get_workflow", {"project_id": str(f.project.id), "workflow_key": delivery.KEY}
+            "get_workflow", {"project_id": str(f.project.id), "workflow_key": website_change.KEY}
         )
     )
-    # Retired for new work: no preparation steers an agent to start it.
-    assert "preparation" not in contract
-    assert contract["id"] == str(delivery.WORKFLOW_ID)
+    # The contract's preparation offers this project's approved article as a page source.
+    assert contract["id"] == str(website_change.WORKFLOW_ID)
+    assert str(f.source.id) in json.dumps(contract["preparation"])
     async with httpx.AsyncClient(
         transport=httpx.ASGITransport(app=app(f)), base_url="https://tin.test"
     ) as client:
         response = await client.post(
-            f"/api/workflows/{delivery.WORKFLOW_ID}/runs",
+            f"/api/workflows/{website_change.WORKFLOW_ID}/runs",
             json={"project_id": str(f.project.id), "inputs": f.delivery_inputs},
             headers={"Idempotency-Key": str(uuid4())},
         )
@@ -235,28 +233,24 @@ async def test_mcp_contract_and_http_start_share_source_guard(publication_db, mo
         transport=httpx.ASGITransport(app=app(f, "outsider")), base_url="https://tin.test"
     ) as client:
         denied = await client.post(
-            f"/api/workflows/{delivery.WORKFLOW_ID}/runs",
+            f"/api/workflows/{website_change.WORKFLOW_ID}/runs",
             json={"project_id": str(f.project.id), "inputs": f.delivery_inputs},
         )
     assert denied.status_code == 404
 
 
-async def test_mcp_start_reuses_the_same_run_and_discovery_has_titles(publication_db, monkeypatch):
+async def test_mcp_start_reuses_the_same_run(publication_db, monkeypatch):
     f = await prepared(publication_db, monkeypatch)
     server = mcp(f, monkeypatch)
     args = {
         "project_id": str(f.project.id),
-        "workflow_id": delivery.KEY,
+        "workflow_id": website_change.KEY,
         "inputs": f.delivery_inputs,
         "request_id": str(uuid4()),
     }
     first = structured(await server.call_tool("start_workflow", args))
     repeated = structured(await server.call_tool("start_workflow", args))
     assert first["id"] == repeated["id"]
-    sources = await delivery.discover(f.db, f.project.id)
-    assert sources["articles"] == [
-        {"run_id": str(f.source.id), "title": f.context["item"]["title"]}
-    ]
 
 
 async def checkpoint(f, run, *, extra_files=()):
@@ -386,6 +380,7 @@ async def test_explicit_failed_adaptation_retry_is_not_delivery_retry(publicatio
 async def test_delivery_funds_one_api_session_without_quote_approval(publication_db, monkeypatch):
     from tin_lite.billing import BillingService
     from tin_lite.billing_contracts import ProjectSpendingPolicy, object_value
+    from tin_lite.codex_api_pricing import PROCEDURE_KEY_MAXIMUMS
 
     f = await prepared(publication_db, monkeypatch)
     f.settings.billing_test_enabled = True
@@ -430,7 +425,11 @@ async def test_delivery_funds_one_api_session_without_quote_approval(publication
     )
     assert terms["kind"] == "codex_api" and terms["funding"] == "procedure_session_v1"
     assert terms["codex_contract"]["protocol"] == "tin-codex-api-v5"
-    assert await f.db.pool.fetchval("SELECT reserved_nanos FROM billing_accounts") == 10_000_000_000
+    # One session at website.change's own procedure ceiling, under the project's per-run cap.
+    assert (
+        await f.db.pool.fetchval("SELECT reserved_nanos FROM billing_accounts")
+        == PROCEDURE_KEY_MAXIMUMS[website_change.KEY]
+    )
     assert await f.db.pool.fetchval("SELECT count(*) FROM billing_quotes") == 0
 
 

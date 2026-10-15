@@ -23,19 +23,12 @@ from uuid import UUID
 import httpx
 
 from tin_lite import content_draft
-from tin_lite.content_delivery import (
-    ANSWER_PAGE_WORKFLOW_ID,
-    DRAFT_WORKFLOW_ID,
-    PUBLIC_ARTICLE_WORKFLOW_ID,
-    slug_for,
-)
+from tin_lite.content_delivery import DRAFT_WORKFLOW_ID, slug_for
 from tin_lite.organic_audit import public_site
 
 logger = logging.getLogger(__name__)
 
-PAGE_WORKFLOW_IDS = frozenset(
-    {DRAFT_WORKFLOW_ID, PUBLIC_ARTICLE_WORKFLOW_ID, ANSWER_PAGE_WORKFLOW_ID}
-)
+PAGE_WORKFLOW_IDS = frozenset({DRAFT_WORKFLOW_ID})
 OPERATION = "page_url_projection_v1"
 CHECK_EVERY = timedelta(minutes=10)
 # A deploy normally lands within minutes; after this, a missing page is reported plainly.
@@ -44,13 +37,6 @@ DEPLOY_WINDOW = timedelta(minutes=30)
 CHECK_FOR = timedelta(days=30)
 FOLDER_CHECK_EVERY = timedelta(hours=12)
 CHECK_SECONDS = 20
-# Runs whose inputs name the project's site, newest first, when a draft has no plan host.
-SITE_INPUTS = (
-    ("organic.traffic_system", "site_url"),
-    ("organic.audit", "site_url"),
-    ("organic.keyword_plan", "site_url"),
-    ("visibility.audit", "target"),
-)
 PR_URL = re.compile(r"^https://github\.com/[^/]+/[^/]+/pull/\d+$")
 ROUTE_LINE = re.compile(
     r"(?im)^[\s>*_-]*public\s+(?:url|route)[*_]*\s*:[\s*_]*[`<]*(\S+?)[`>*_.]*\s*$"
@@ -138,37 +124,30 @@ def safe_pull_request(value):
     return {"url": value["url"], "number": number if type(number) is int else None}
 
 
-def base_for(run, *, selection=None, site=None, title=None, route=None, slug=None):
-    """The page's address before delivery: the plan's destination, else the draft's own slug
-    (or one from its title), under the route the founder chose for such pages when there is
-    one."""
-    title = title or run.artifact_title
-    if run.workflow_id == DRAFT_WORKFLOW_ID:
-        if not selection:
-            return None
-        item = selection.get("item") or {}
-        host = site_host(selection.get("host"))
-        title = title or item.get("title")
-        destination = page_url(item.get("destination"), host)
-        if destination and host:
-            return {
-                "url": destination,
-                "host": host,
-                "title": title,
-                "source": "plan_destination",
-                "final": item.get("action") == "update_page",
-            }
-    else:
-        host = site_host(site)
+def base_for(run, *, selection=None):
+    """The draft's address before delivery: the plan's destination, else a slug from its
+    title."""
+    if not selection:
+        return None
+    item = selection.get("item") or {}
+    host = site_host(selection.get("host"))
+    title = run.artifact_title or item.get("title")
+    destination = page_url(item.get("destination"), host)
+    if destination and host:
+        return {
+            "url": destination,
+            "host": host,
+            "title": title,
+            "source": "plan_destination",
+            "final": item.get("action") == "update_page",
+        }
     if not host or not title:
         return None
-    slug = slug or slug_for(title, "page")
-    routed = route_url(route.replace("{slug}", slug), host) if route else None
     return {
-        "url": routed or f"https://{host}/{slug}",
+        "url": f"https://{host}/{slug_for(title, 'page')}",
         "host": host,
         "title": title,
-        "source": "saved_route" if routed else "title_slug",
+        "source": "title_slug",
         "final": False,
     }
 
@@ -391,66 +370,8 @@ class PageUrls:
         receipt = await self.db.get_effect(content_draft.selection_key(run_id))
         return receipt.result if receipt and receipt.status == "completed" else None
 
-    async def _site(self, project_id):
-        rows = await self.db.pool.fetch(
-            "SELECT executor, input FROM workflow_runs WHERE project_id = $1 "
-            "AND status = 'succeeded' AND executor = ANY($2::text[]) "
-            "ORDER BY created_at DESC LIMIT 10",
-            project_id,
-            [executor for executor, _ in SITE_INPUTS],
-        )
-        fields = dict(SITE_INPUTS)
-        for row in rows:
-            value = row["input"]
-            value = json.loads(value) if isinstance(value, str) else value or {}
-            host = site_host(value.get(fields.get(row["executor"], "site_url")))
-            if host:
-                return host
-        return None
-
-    async def _title(self, run):
-        if run.artifact_title or not (self.storage and run.canonical_commit_sha):
-            return run.artifact_title
-        from tin_lite.content_delivery import ContentDelivery
-
-        try:
-            _raw, _article, title = await ContentDelivery(
-                database=self.db, storage=self.storage
-            ).document_source(run)
-        except (ValueError, LookupError):
-            return None
-        return title
-
     async def _base(self, run):
-        selection = None
-        if run.workflow_id == DRAFT_WORKFLOW_ID:
-            selection = await self._selection(run.id)
-            return base_for(run, selection=selection)
-        title = await self._title(run)
-        if not title:
-            return None
-        route = slug = None
-        if self.storage is not None:
-            from tin_lite.page_routes import PageRouteService
-
-            route = await PageRouteService(database=self.db, storage=self.storage).route_for(run)
-            slug = await self._slug(run)
-        return base_for(
-            run, site=await self._site(run.project_id), title=title, route=route, slug=slug
-        )
-
-    async def _slug(self, run):
-        """The slug the founder approves with the draft's listing, or None."""
-        from tin_lite.article_review import page_slug
-        from tin_lite.content_delivery import ContentDelivery, page_frontmatter
-
-        try:
-            _raw, article, _title = await ContentDelivery(
-                database=self.db, storage=self.storage
-            ).document_source(run)
-            return page_slug(page_frontmatter(article)[0].get("slug"))
-        except (ValueError, LookupError):
-            return None
+        return base_for(run, selection=await self._selection(run.id))
 
     async def _approval(self, run, delivery):
         """What Publish now or Open a pull request would write, before the reviewer chooses."""
@@ -464,7 +385,6 @@ class PageUrls:
         from tin_lite.content_delivery import (
             ContentDelivery,
             DeliverySettings,
-            adaptable,
             destination,
             document_destination,
         )
@@ -473,7 +393,7 @@ class PageUrls:
             database=self.db, storage=self.storage, integrations=self.integrations
         )
         answer = await service.plan_kind(run) == "answer"
-        if answer or (self.settings is not None and adaptable(self.settings, run)):
+        if answer:
             # Publish adapts the page into the site's own folder; no file path is known yet.
             connection = await self.db.get_integration_connection(
                 project_id=run.project_id, provider_key="infra.github"
@@ -529,7 +449,7 @@ class PageUrls:
         base = record.get("base")
         since = _minutes_since(record.get("base_at"), now)
         if not base or (
-            base["source"] in {"title_slug", "saved_route"}
+            base["source"] == "title_slug"
             and (since is None or since >= CHECK_EVERY.total_seconds() / 60)
         ):
             # A proposed address follows the title and the founder's saved route, so it is read

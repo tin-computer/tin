@@ -3,8 +3,8 @@
 Emre's v2 map of the organic traffic system
 ([proposed](https://tin-artifacts.vercel.app/organic-flow/proposed), 30 Sep 2026) gives copy
 one writer: `content.generate` drafts the next item of the content plan, whatever it is.
-`content.answer_page` and `content.refresh` stay registered for pinned runs and saved
-schedules, but they leave discovery.
+`content.refresh` stays registered for pinned runs and saved schedules, but it leaves
+discovery. The standalone `content.answer_page` workflow is gone.
 
 ## Plan items have a kind
 
@@ -48,7 +48,7 @@ article. A founder can also add an `answer` or `refresh` item by editing the pla
 | Kind | Selected when | Drafted as | Checked by | Approval sends it to |
 | --- | --- | --- | --- | --- |
 | article | next in plan order | today's article | `content-draft.v3` | the delivery setting, unchanged |
-| answer | next in plan order, and the founder chose where answer pages live | a page with a search listing, a 40 to 60 word direct answer, question headings, an FAQ and at least three cited sources | `content-draft.v3` plus `answer_page`'s own checks | `website.change`, at the saved route |
+| answer | next in plan order, and the founder chose where answer pages live | a page with a search listing, a 40 to 60 word direct answer, question headings, an FAQ and at least three cited sources | `content-draft.v3` plus `answer_page.py`'s checks | `website.change`, at the saved route |
 | refresh | next in plan order, unless its page still waits | `content.refresh`'s `tin-refresh.v1` proposal of exact old to new lines | `content-draft.v3` plus `content_refresh.validate_document` | the existing refresh applier (`deliver_refresh`) |
 
 - **Kinds per pin.** The 1.9.0 definition lists `content_kinds`. A definition pinned before it
@@ -203,13 +203,12 @@ do-not-plan rows, and converting and weak pages with their counts.
 
 ## Retired entry points
 
-`content.answer_page` 1.7.0 and `content.refresh` 1.1.0 get `public_discovery: false` and a
-"Retired:" description, and leave the organic program's workflow list in
-`growth_plan_assets/programs.json`. Nothing else in their definitions or procedure files
-changed (a test pins the digests their 1.6.0 and 1.0.0 shipped with), so pinned runs, saved
-schedules and the traffic system's weekly refresh keep working. `start_answer_page` leaves the
-ChatGPT plugin, as #239 does for the workflows it hides; `start_content_draft` drafts answer
-pages there now.
+`content.refresh` 1.1.0 gets `public_discovery: false` and a "Retired:" description, and
+leaves the organic program's workflow list in `growth_plan_assets/programs.json`. Nothing else
+in its definition or procedure files changed (a test pins the digest 1.0.0 shipped with), so
+pinned runs, saved schedules and the traffic system's weekly refresh keep working.
+`content.answer_page` is deleted: `content.generate` drafts every answer page, and
+`start_content_draft` drafts them in the ChatGPT plugin.
 
 ## Versions
 
@@ -217,37 +216,10 @@ pages there now.
 | --- | --- | --- |
 | `content.generate` | 1.8.0 | 1.9.0 |
 | `content.plan` | 0.7.0 (`content-editorial-v6`) | 0.8.0 (`content-editorial-v7`, with the site's page list and the refresh upside order) |
-| `content.answer_page` | 1.6.0 | 1.7.0 |
 | `content.refresh` | 1.0.0 | 1.1.0 |
 
 No open `origin/feat/*` branch uses these versions. `organic.traffic_system` stays 0.5.0, as it
 did when its children moved before: its next published revision carries the new children.
-
-## Merging with #239
-
-PR #239 (`feat/public-loop-workflows`, rebased on main at d69d337) merges with this branch with
-four conflicts, and needs these changes (checked by a trial merge and the full suite):
-
-- **programs.json conflicts.** Both branches change the organic program's workflow list next to
-  each other. Keep both: drop `content.refresh` and `content.answer_page` (here) and
-  `organic.mention_backlinks` and `organic.error_surface` (#239), and keep #239's five loop
-  packages.
-- **docs/workflows.md conflicts.** Regenerate it with `scripts/dump_catalog.py`.
-- **docs/public-plugin.md and test_mcp_public.py conflict** over the plugin count (below).
-- **#239's freeze test must allow the retirement.** `test_planned_url_changes.py` pins
-  content.refresh's definition at main's 1.0.0 digest. Here it is 1.1.0 with
-  `public_discovery: false` and a "Retired:" description, and nothing else changed
-  (`test_one_content_generate.py` pins that). Compare the definition without `version`,
-  `description` and `public_discovery`, or drop content.refresh from that freeze.
-- **Page decisions' refresh rows.** content.plan reads `content/efficacy.md` itself
-  (`content_plan_sources.page_decisions`, a small local parser of the `content.efficacy/1`
-  block), so it does not import `planned_url_changes`, which moves between PRs. Nothing needs
-  wiring at merge time.
-- **#239's onboarding test.** `test_onboarding.py` reads `rows["content.refresh"]` as a visible
-  sample; content.refresh is hidden here, so it needs another sample (`content.generate`).
-- **Plugin count.** Both branches remove ChatGPT tools, so `docs/public-plugin.md` and
-  `test_mcp_public.py` need one recount: 27 native workflows and 16 packages, for 43 starts,
-  with `start_answer_page` among the hidden tools.
 
 ## Not done here
 

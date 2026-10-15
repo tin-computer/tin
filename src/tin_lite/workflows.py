@@ -20,7 +20,6 @@ from tin_lite.codex_execution import (
     execute_project_codex,
 )
 from tin_lite.domain import (
-    ANSWER_PAGE_WORKFLOW_NAME,
     AWESOME_SUBMIT_WORKFLOW_NAME,
     CODEX_PROCEDURE_EXECUTOR,
     CREATIVE_CHARACTER_WORKFLOW_NAME,
@@ -457,71 +456,6 @@ class VisibilityAuditWorkflow:
                 retry_policy=RetryPolicy(maximum_attempts=3),
             )
             raise
-
-
-@workflow.defn(name=ANSWER_PAGE_WORKFLOW_NAME)
-class AnswerPageWorkflow:
-    def __init__(self) -> None:
-        self._approved = False
-
-    @workflow.signal(name="approve")
-    async def approve(self) -> None:
-        self._approved = True
-
-    @workflow.run
-    async def run(self, run_id: str) -> None:
-        try:
-            await wait_for_prerequisites(run_id)
-            # A draft and one repair, each may wait 10 minutes.
-            await workflow.execute_activity(
-                "draft_answer_page",
-                run_id,
-                start_to_close_timeout=timedelta(minutes=25),
-                schedule_to_close_timeout=timedelta(minutes=50),
-                heartbeat_timeout=timedelta(seconds=20),
-                retry_policy=RetryPolicy(
-                    maximum_attempts=3,
-                    maximum_interval=timedelta(seconds=10),
-                ),
-            )
-            if workflow.patched("answer-page-human-review-v1"):
-                review_required = await workflow.execute_activity(
-                    "request_answer_page_review",
-                    run_id,
-                    start_to_close_timeout=timedelta(minutes=1),
-                    retry_policy=RetryPolicy(maximum_attempts=5),
-                )
-                if review_required:
-                    await workflow.wait_condition(lambda: self._approved)
-                    await workflow.execute_activity(
-                        "record_answer_page_approval",
-                        run_id,
-                        start_to_close_timeout=timedelta(minutes=1),
-                        retry_policy=RetryPolicy(maximum_attempts=5),
-                    )
-            await workflow.execute_activity(
-                "project_answer_page_result",
-                run_id,
-                start_to_close_timeout=timedelta(minutes=1),
-                retry_policy=RetryPolicy(maximum_attempts=5),
-            )
-        except BaseException as exc:
-            await workflow.execute_activity(
-                "project_answer_page_failure",
-                {"run_id": run_id, **failure_fields(exc)},
-                start_to_close_timeout=timedelta(minutes=1),
-                retry_policy=RetryPolicy(maximum_attempts=3),
-            )
-            raise
-        if workflow.patched("answer-page-delivery-v1"):
-            # The reviewer's pick (pull request or publish now) ships the approved page; the
-            # approved draft stays successful and readable whatever delivery does.
-            try:
-                await execute_content_delivery(run_id)
-            except ActivityError:
-                workflow.logger.warning(
-                    "Answer page delivery needs attention", extra={"run_id": run_id}
-                )
 
 
 @workflow.defn(name=CREATIVE_CHARACTER_WORKFLOW_NAME)
@@ -2044,7 +1978,6 @@ def registered_workflows() -> list[type]:
         PaidAdsMonitorWorkflow,
         AwesomeSubmitWorkflow,
         PaymentRecoveryWorkflow,
-        AnswerPageWorkflow,
         CharacterDesignWorkflow,
         CodexProcedureWorkflow,
         WeeklyBriefWorkflow,
@@ -2085,7 +2018,6 @@ def registered_workflow_implementations() -> dict[str, type]:
         PAID_ADS_MONITOR_WORKFLOW_NAME: PaidAdsMonitorWorkflow,
         AWESOME_SUBMIT_WORKFLOW_NAME: AwesomeSubmitWorkflow,
         PAYMENT_RECOVERY_WORKFLOW_NAME: PaymentRecoveryWorkflow,
-        ANSWER_PAGE_WORKFLOW_NAME: AnswerPageWorkflow,
         CODEX_PROCEDURE_EXECUTOR: CodexProcedureWorkflow,
         WEEKLY_BRIEF_WORKFLOW_NAME: WeeklyBriefWorkflow,
         PROJECT_TASK_WORKFLOW_NAME: ProjectTaskWorkflow,

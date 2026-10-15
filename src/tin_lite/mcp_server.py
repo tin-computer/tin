@@ -30,7 +30,7 @@ from tin_lite.campaign_revisions import request_email_campaign_revision
 from tin_lite.capture_revisions import ProposalFile
 from tin_lite.connection_collection import validate_inputs as validate_collection_inputs
 from tin_lite.connection_collection import visible as collection_visible
-from tin_lite.content_delivery import ADAPTED_WORKFLOW_IDS, DeliverySettings
+from tin_lite.content_delivery import DRAFT_WORKFLOW_ID, DeliverySettings
 from tin_lite.content_delivery_api import (
     SaveDelivery,
     delivery_service,
@@ -1824,7 +1824,7 @@ def create_mcp_app(
         """Retry only GitHub delivery for an already approved, delivery-enabled draft.
 
         Does not approve a draft, change article bytes, merge, or publish. It runs no model,
-        except for an answer page or public article whose adaptation could not start (for
+        except for an answer page whose adaptation could not start (for
         example, too few credits, or no chosen route yet): then it tries that metered
         adaptation again. Read get_run.content_delivery for status and the confirmed PR link.
         """
@@ -1840,9 +1840,6 @@ def create_mcp_app(
             )
         except (LookupError, ValueError) as exc:
             raise ToolError(str(exc)) from exc
-
-    # organic.technical_fix is retired for new work; website.change (source audit) previews
-    # and records the same repairs with preflight_website_change.
 
     @server.tool()
     async def list_projects() -> list[dict[str, Any]]:
@@ -3312,16 +3309,16 @@ def create_mcp_app(
             "content_delivery": delivery,
             # Where a proposed page will appear, and whether Tin has found it live.
             "page_url": await page_url_service(runtime(), settings).view(run, delivery, check=True),
-            # After a technical fix's PR merges: whether the live site still shows the problem.
+            # After an audit fix's PR merges: whether the live site still shows the problem.
             "live_check": await live_service(runtime()).view(run, check=True),
-            # Before approval: what Publish does for a page Tin adapts to the site.
+            # Before approval: what Publish does for a draft Tin adapts to the site.
             **(
                 {
                     "delivery_preview": await publish_preview(
                         runtime=runtime(), settings=settings, run=run, actor=clerk_user_id
                     )
                 }
-                if run.status is RunStatus.NEEDS_INPUT and run.workflow_id in ADAPTED_WORKFLOW_IDS
+                if run.status is RunStatus.NEEDS_INPUT and run.workflow_id == DRAFT_WORKFLOW_ID
                 else {}
             ),
             "progress": {
@@ -3420,20 +3417,6 @@ def create_mcp_app(
         try:
             return await stop(runtime=runtime(), run_id=run.id, actor=token.subject)
         except (LookupError, SideEffectConflictError) as exc:
-            raise ToolError(str(exc)) from exc
-
-    @server.tool()
-    async def stop_technical_fix(run_id: str) -> dict[str, Any]:
-        """Stop a technical repair before external delivery. Never recalls or closes a PR."""
-        from tin_lite.organic_system_control import stop_technical
-
-        token = await caller()
-        run = await require_run(
-            _mcp_uuid(run_id, field="run_id"), token, tool_name="stop_technical_fix"
-        )
-        try:
-            return await stop_technical(runtime=runtime(), run_id=run.id, actor=token.subject)
-        except (LookupError, ValueError, SideEffectConflictError) as exc:
             raise ToolError(str(exc)) from exc
 
     @server.tool()
@@ -4116,11 +4099,11 @@ def create_mcp_app(
         `delivery` the program's setting applies; a page outside a saved workflow stays in
         Tin, like none. Tell the founder the result's `relay` in your words.
 
-        A planned article, answer page or public article with a GitHub repository is not
+        A planned article or answer page with a GitHub repository is not
         committed as-is: approving with github_pr or github_commit starts a separately
         metered adaptation (website.change, charged on actual usage; `delivery_cost` is its
         configured preview) that fits the page into the site's own format and opens a pull
-        request: an answer page or public article at the route the founder chose, a planned
+        request: an answer page at the route the founder chose, a planned
         article at the address its plan item names. With github_commit, Tin then merges that
         pull request once the site's build (its deploy preview, else its CI) and the
         repository's required checks pass, unless the page is
@@ -4155,15 +4138,12 @@ def create_mcp_app(
 
             if run.workflow_id not in CHOICE_WORKFLOW_IDS:
                 raise ToolError("invalid: this run does not publish to a repository")
-            from tin_lite.content_delivery_api import adapt_on_approval
-
             try:
                 chosen = await delivery_service(runtime()).choose(
                     run=run,
                     mode=delivery,
                     remember=remember,
                     actor=clerk_user_id,
-                    adapt=adapt_on_approval(settings, run),
                     trigger_source="mcp",
                 )
             except (ValueError, LookupError, ProjectFileError, IntegrationError) as exc:
@@ -4177,10 +4157,13 @@ def create_mcp_app(
                 delivery_words, delivery_cost_view = await _adaptation_words(
                     run, chosen, clerk_user_id
                 )
-                if not chosen.get("route"):
-                    from tin_lite.page_routes import ask_the_founder, page_type
+                if (
+                    not chosen.get("route")
+                    and await delivery_service(runtime()).plan_kind(run) == "answer"
+                ):
+                    from tin_lite.page_routes import ask_the_founder
 
-                    route_question = ask_the_founder(page_type(run), None)
+                    route_question = ask_the_founder("answer_page", None)
 
         from tin_lite.capture_revisions import STYLE_KEY, binds_style_approval
         from tin_lite.reviewed_documents import document_spec
@@ -4517,7 +4500,6 @@ def create_mcp_app(
             else {}
         )
         draft_preparation = {}
-        # content.deliver is retired for new work: website.change's preparation covers pages.
         if (
             parsed_project_id is not None
             and workflow.key == "website.change"
@@ -4535,8 +4517,8 @@ def create_mcp_app(
                 )["routes"]
             except (LookupError, ValueError):
                 routes = {}
-            # One question at a time: answer pages first, then articles.
-            unchosen = [kind for kind in ("answer_page", "article") if kind not in routes]
+            # Answer pages live at a route the founder chooses; ask until one is saved.
+            unchosen = [kind for kind in ("answer_page",) if kind not in routes]
             protected = await website_change.project_protected_paths(
                 runtime().database.pool, project_id=parsed_project_id
             )
@@ -4546,12 +4528,12 @@ def create_mcp_app(
                     "page_routes": routes,
                     "protected_paths": protected["effective"],
                     **({"ask_the_founder": ask_the_founder(unchosen[0], None)} if unchosen else {}),
-                    "instruction": "Choose an approved article, answer page or public article "
+                    "instruction": "Choose an approved article or answer page "
                     "by title from preparation.articles, and confirm the website repository "
                     "with get_integration(infra.github). Start website.change with "
                     "source_run_id and expected_repository through the ordinary quote/start "
-                    "flow. An answer page or public article needs a chosen route first: when "
-                    "preparation.page_routes has none for its type, ask the founder as "
+                    "flow. An answer page needs a chosen route first: when "
+                    "preparation.page_routes has none for it, ask the founder as "
                     "ask_the_founder describes and call save_page_route. A page approved in "
                     "Tin by a named reviewer, with commit to main, publishes (Tin merges the "
                     "PR once the repository's required checks pass); otherwise, and for the "

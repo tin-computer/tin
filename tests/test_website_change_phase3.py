@@ -253,7 +253,7 @@ def plan_text(files=FILES, *, base_sha=None, route="/blog", **extra):
 
 async def blog_index_run(f, text=None):
     """A succeeded content.blog_index run whose PLAN.md is saved in project files."""
-    definition = dict(f.definitions["content.answer_page"], key="content.blog_index")
+    definition = dict(f.definitions["content.generate"], key="content.blog_index")
     workflow = await f.db.upsert_registry_workflow(
         workflow_id=uuid4(),
         key="content.blog_index",

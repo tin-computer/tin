@@ -11,7 +11,6 @@ from temporalio.worker import Replayer
 from tin_lite.activity_lanes import ActivityLaneInterceptor
 from tin_lite.codex_execution import ProjectCodexExecution
 from tin_lite.workflows import (
-    AnswerPageWorkflow,
     CodeWorkflow,
     CodexProcedureWorkflow,
     ConnectionCollectionWorkflow,
@@ -96,16 +95,6 @@ ACCEPTED_HISTORIES = (
         VisibilityAuditWorkflow,
         "visibility.audit:ccd7d6a4-5706-45b2-b902-e3c9c1b161e6",
         FIXTURES / "visibility_audit_history.json",
-    ),
-    (
-        AnswerPageWorkflow,
-        "content.answer_page:87ff41d8-5109-4d5e-a147-ab941b4849e2",
-        FIXTURES / "answer_page_history.json",
-    ),
-    (
-        AnswerPageWorkflow,
-        "content.answer_page:22f09a94-8540-4f34-b14e-605668403ee2",
-        FIXTURES / "answer_page_review_history.json",
     ),
     (
         ProjectTaskWorkflow,

@@ -1040,9 +1040,7 @@ class BillingService:
                 REFRESH_KEY,
                 STEPS,
                 measures_pages,
-                policy_steps,
-                refreshes_pages,
-                writes_with_website_change,
+                runs_recipe,
             )
 
             if definition["key"] in MEASURE_STEPS.values():
@@ -1057,48 +1055,30 @@ class BillingService:
                     and prepared.result["definitions"].get(step) == definition
                 )
             if definition["key"] == REFRESH_KEY:
-                # The v5 recipe's first page refresh, pinned at preparation like its steps.
+                # The recipe's first page refresh, pinned at preparation like its steps.
                 prepared = await self.db.get_effect(f"traffic:{parent_id}:prepare", conn=conn)
                 return bool(
                     key == f"system:{parent_id}:refresh"
                     and prepared
                     and prepared.status == "completed"
-                    and refreshes_pages(prepared.result.get("policy"))
+                    and runs_recipe(prepared.result.get("policy"))
                     and prepared.result["definitions"].get("refresh") == definition
                 )
             prepared = await self.db.get_effect(f"traffic:{parent_id}:prepare", conn=conn)
             policy = (prepared.result or {}).get("policy") if prepared else None
-            if writes_with_website_change(policy):
-                # v6: website.change is both the technical and the delivery step, so its step
-                # comes from the start key and it must be the definition pinned for that step.
-                # content.deliver and organic.technical_fix are not v6 children.
-                steps = policy_steps(policy)
-                pinned = prepared.status == "completed" and prepared.result.get("definitions", {})
-                if definition["key"] == steps["delivery"]:
-                    step = key.removeprefix(f"system:{parent_id}:")
-                    return bool(
-                        step in {"technical", "delivery"}
-                        and pinned
-                        and pinned.get(step) == definition
-                    )
-                step = next(
-                    (s for s, workflow in steps.items() if workflow == definition["key"]), None
+            if not runs_recipe(policy):
+                return False
+            # website.change is both the technical and the delivery step, so its step comes
+            # from the start key and it must be the definition pinned for that step.
+            pinned = prepared.status == "completed" and prepared.result.get("definitions", {})
+            if definition["key"] == STEPS["delivery"]:
+                step = key.removeprefix(f"system:{parent_id}:")
+                return bool(
+                    step in {"technical", "delivery"} and pinned and pinned.get(step) == definition
                 )
-                if step == "draft" and (not pinned or pinned.get(step) != definition):
-                    return False
-                return step is not None and key == f"system:{parent_id}:{step}"
             step = next((s for s, workflow in STEPS.items() if workflow == definition["key"]), None)
-            if step in {"draft", "delivery"}:
-                from tin_lite.organic_system import drafts_articles
-
-                prepared = await self.db.get_effect(f"traffic:{parent_id}:prepare", conn=conn)
-                if (
-                    not prepared
-                    or prepared.status != "completed"
-                    or not drafts_articles(prepared.result.get("policy"))
-                    or prepared.result["definitions"].get(step) != definition
-                ):
-                    return False
+            if step == "draft" and (not pinned or pinned.get(step) != definition):
+                return False
             return step is not None and key == f"system:{parent_id}:{step}"
         if parent["executor"] == "content.plan":
             # v9: the plan's one child is its planning agent, at the plan's own registry

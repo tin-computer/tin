@@ -53,27 +53,27 @@ async function serve({draft: revision, release, extra = [], waitingTasks = false
           explanation: "Announces six features and one improvement, with drafts for X, LinkedIn and your newsletter."})});
   }
   if (adapted !== undefined) {
-    // An answer page Tin adapts to the site; the server's publish preview drives the card.
-    const draft = {id: "d7af0000-0000-4000-8000-000000000005", project_id: project.id, workflow_id: "answer-page", workflow_name: "content.answer_page",
-      status: "needs_input", review_required: true, artifact_path: "content/answers/2026-09-28-coding-agent-tools.md", canonical_commit_sha: "b".repeat(40), created_at: minutesAgo(30),
+    // A content.generate answer page Tin adapts to the site; the server's publish preview drives the card.
+    const draft = {id: "d7af0000-0000-4000-8000-000000000005", project_id: project.id, workflow_id: "content-generate", workflow_name: "content.generate",
+      status: "needs_input", review_required: true, artifact_path: "content/drafts/d7af0000-0000-4000-8000-000000000005.md", canonical_commit_sha: "b".repeat(40), created_at: minutesAgo(30),
       page_url: {url: "https://example.com/which-tools-work-with-coding-agents", state: "proposed", label: "Proposed URL", source: "title_slug", final: false, checkable: false,
         note: "After you approve, Tin adapts the page to your site and commits it to main."}};
     runs.push(draft);
     Object.assign(integrations[0], {connection_id: "github-1", status: "connected", project_id: project.id, configuration: {selected_repository: "example/site"}});
-    decisions.splice(0, decisions.length, {id: "adapted-decision", run_id: draft.id, project_id: project.id, workflow_key: "content.answer_page",
-      workflow_title: "Draft an answer page", kind: "review", title: "Review: Which tools work with coding agents?", output_title: "Which tools work with coding agents?",
+    decisions.splice(0, decisions.length, {id: "adapted-decision", run_id: draft.id, project_id: project.id, workflow_key: "content.generate",
+      workflow_title: "Draft planned content", kind: "review", title: "Review: Which tools work with coding agents?", output_title: "Which tools work with coding agents?",
       explanation: "Most marketing tools reach coding agents through an MCP server or a command-line tool.",
       consequence: "", items: [{file: draft.artifact_path, revision: draft.canonical_commit_sha, title: "Which tools work with coding agents?"}],
       created_at: draft.created_at, version_saved_at: draft.created_at});
   }
   if (revision !== undefined) {
-    // An answer page draft saved two days ago, with GitHub ready to publish it.
-    const draft = {id: "d7af0000-0000-4000-8000-000000000003", project_id: project.id, workflow_id: "answer-page", workflow_name: "content.answer_page",
-      status: "needs_input", review_required: true, artifact_path: "content/answers/which-tools.md", canonical_commit_sha: "a".repeat(40), created_at: minutesAgo(2 * 24 * 60)};
+    // A content.generate answer page draft saved two days ago, with GitHub ready to publish it.
+    const draft = {id: "d7af0000-0000-4000-8000-000000000003", project_id: project.id, workflow_id: "content-generate", workflow_name: "content.generate",
+      status: "needs_input", review_required: true, artifact_path: "content/drafts/which-tools.md", canonical_commit_sha: "a".repeat(40), created_at: minutesAgo(2 * 24 * 60)};
     runs.push(draft);
     Object.assign(integrations[0], {connection_id: "github-1", status: "connected", project_id: project.id, configuration: {selected_repository: "example/site"}});
-    decisions.splice(0, decisions.length, {id: "draft-decision", run_id: draft.id, project_id: project.id, workflow_key: "content.answer_page",
-      workflow_title: "Draft an answer page", kind: "review", title: "Review: Which tools work with coding agents?", output_title: "Which tools work with coding agents?",
+    decisions.splice(0, decisions.length, {id: "draft-decision", run_id: draft.id, project_id: project.id, workflow_key: "content.generate",
+      workflow_title: "Draft planned content", kind: "review", title: "Review: Which tools work with coding agents?", output_title: "Which tools work with coding agents?",
       explanation: "Most marketing tools reach coding agents through an MCP server or a command-line tool.",
       consequence: "", items: [{file: draft.artifact_path, revision: draft.canonical_commit_sha, title: "which-tools.md"}], created_at: draft.created_at,
       version_saved_at: "2026-09-28T22:50:00Z",
@@ -128,7 +128,7 @@ async function serve({draft: revision, release, extra = [], waitingTasks = false
     if (url.pathname === "/api/projects") return send([project]);
     if (url.pathname.endsWith("/publish-preview")) return send(adapted ?? {adapt: false});
     if (/\/api\/projects\/[^/]+\/workflows$/.test(url.pathname)) return send([{id: "saved", workflow_key: "research.deep_dive", status: "active"}]);
-    if (/\/api\/projects\/[^/]+\/runs$/.test(url.pathname)) return send(olderDraft ? runs.filter(run => run.workflow_name !== "content.answer_page") : runs);
+    if (/\/api\/projects\/[^/]+\/runs$/.test(url.pathname)) return send(olderDraft ? runs.filter(run => run.workflow_name !== "content.generate") : runs);
     const requestedRun = runs.find(run => url.pathname === `/api/workflows/runs/${run.id}`);
     if (requestedRun) {
       runReads.push(requestedRun.id);
@@ -136,6 +136,9 @@ async function serve({draft: revision, release, extra = [], waitingTasks = false
       return send(requestedRun);
     }
     if (review && url.pathname === `/api/workflows/runs/${review.runId}/review`) return send(review.current);
+    // A content.generate draft's current review: it may be approved, or revised from feedback.
+    const drafted = runs.find(run => run.workflow_name === "content.generate" && url.pathname === `/api/workflows/runs/${run.id}/review`);
+    if (drafted) return send({run_id: drafted.id, status: drafted.status, version: 1, is_current: true, can_approve: true, can_request_changes: true, review_token: `token-${drafted.id}`});
     if (url.pathname.endsWith("/decisions")) return send(decisions);
     if (url.pathname.endsWith("/integrations")) return send(integrations);
     if (url.pathname.endsWith("/infra.github/options")) return send([{id: "repo-1", label: "example/site"}]);
@@ -146,7 +149,7 @@ async function serve({draft: revision, release, extra = [], waitingTasks = false
         filename: saved.artifact_path.split("/").at(-1), path: saved.artifact_path, revision: saved.canonical_commit_sha,
         source_url: `/api/workflows/runs/${saved.id}/artifact`, timestamp: saved.created_at, word_count: 8, reading_minutes: 1, headings: [], related_documents: []});
     }
-    if (url.pathname.endsWith("/files")) return send({revision: "a".repeat(40), files: [{path: "content/answers/which-tools.md"}, {path: "content/answers/other.md"}]});
+    if (url.pathname.endsWith("/files")) return send({revision: "a".repeat(40), files: [{path: "content/drafts/which-tools.md"}, {path: "content/drafts/other.md"}]});
     if (url.pathname.startsWith("/api/")) return send([]);
     response.writeHead(404).end();
   });
@@ -408,11 +411,11 @@ test("the button row holds only controls, and a draft opened from Decisions show
     const crumbs = page.locator("nav.markdown-filename");
     await crumbs.waitFor();
     // The same clickable path as the Files file view: folders open Files, the name is text.
-    assert.deepEqual(await crumbs.locator("button").allTextContents(), ["content", "answers"]);
+    assert.deepEqual(await crumbs.locator("button").allTextContents(), ["content", "drafts"]);
     assert.equal(await crumbs.locator('[aria-current="page"]').textContent(), "which-tools.md");
-    await crumbs.getByRole("button", {name: "answers", exact: true}).click();
+    await crumbs.getByRole("button", {name: "drafts", exact: true}).click();
     await page.waitForURL(url => new URL(url).pathname === "/files");
-    assert.equal(await page.evaluate(() => state.filesDirectory), "content/answers");
+    assert.equal(await page.evaluate(() => state.filesDirectory), "content/drafts");
     assert.deepEqual(errors, []);
     await context.close();
   } finally { await browser.close(); server.close(); }

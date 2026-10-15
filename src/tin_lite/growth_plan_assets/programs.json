@@ -31,7 +31,6 @@
           "content.plan",
           "style.capture",
           "content.generate",
-          "content.public_article",
           "competitor.watch"
         ],
         "integrations": [
@@ -309,7 +308,6 @@
       "tin": {
         "coverage": "partial",
         "workflows": [
-          "content.public_article",
           "project.weekly_brief",
           "content.release_announce"
         ],
@@ -343,7 +341,6 @@
         "workflows": [
           "creative.product_demo",
           "creative.character",
-          "content.public_article",
           "content.diagram",
           "content.release_announce",
           "outreach.speaking_shortlist",
@@ -563,11 +560,9 @@
   ],
   "workflow_titles": {
     "brand.capture": "Capture brand and design",
-    "content.deliver": "Prepare article PR",
     "website.change": "Change the website",
     "organic.traffic_system": "Run the organic traffic system",
     "style.capture": "Capture writing style",
-    "organic.technical_fix": "Fix what the audit found",
     "content.plan": "Plan upcoming content",
     "content.generate": "Draft planned content",
     "content.refresh": "Refresh an existing page",
@@ -577,11 +572,9 @@
     "project.memory": "Garden project memory",
     "scan.report": "Scan project",
     "site.health_improve": "Improve site health",
-    "content.answer_page": "Draft an answer page",
     "project.weekly_brief": "Create a weekly project brief",
     "project.task": "One-off project task",
     "research.deep_dive": "Research a question deeply",
-    "content.public_article": "Draft a public article",
     "content.diagram": "Create a diagram",
     "outreach.email_shortlist": "Build an email outreach shortlist",
     "outreach.email_campaign": "Run an email outreach campaign",
@@ -625,11 +618,9 @@
   "workflow_scope": {
     "social.x_revise": "Revise an existing X post or proposed writing guide from verbatim feedback. Automatically carry clear reusable writing preferences into the X guide, keeping factual corrections and one-off edits local. Started only through feedback on a saved draft; never publishes, schedules or bypasses initial guide approval.",
     "brand.capture": "Inspect a website and optional repository or source packet once. Propose missing BRAND.md and DESIGN.md together; one review adopts them. Existing documents stay unchanged. No source edits, automatic refresh or asset generation.",
-    "content.deliver": "Adapt an existing approved content.generate article to the connected website repository and open an unmerged PR. Requires source_run_id and expected_repository; no new drafting or implicit approval. Reuses the normal metered Codex procedure runner. Exact Markdown source preservation is checked; repository build and rendered equivalence are separate checks, never implied. CMS and WordPress publication require future connectors.",
     "website.change": "Put approved changes on the connected website repository: an approved article, answer page or public article at the route the founder chose with its copy unchanged, or the technical fixes the latest audit found (indexing, sitemap, robots.txt, redirects, page structure, accessibility, structured data, internal links), each a change the founder approves or declines once. Approved changes publish (Tin merges the PR once the required checks pass, then checks the live site); anything else, and any change to a protected page such as /sign-in, opens a PR for the founder to merge. The coding agent answers judgment calls first; copy goes to the content workflows. Never touches dependencies or lockfiles.",
     "organic.traffic_system": "Audit your website and research buyer searches, then save an editable content plan to My system and draft its first article for review. With GitHub connected, the approved article is adapted into an unmerged PR; otherwise its Markdown stays in Tin. Saves a weekly schedule that drafts the next planned article, one review at a time (article_weekdays, default Tuesday; an empty list saves none). Also runs and saves the weekly traffic snapshot and page decisions, ahead of a weekly page refresh. With GitHub connected, also opens one unmerged PR with the audit's fixes in the selected repository. Runs once per plan: running it again buys the research again. Does not send outreach, merge or publish.",
     "style.capture": "Use your coding agent to select writing samples, or add samples here. Save an editable voice guide for future content. Nothing is published.",
-    "organic.technical_fix": "Older runs and schedules only: recheck an audit's findings and fix them in one unmerged pull request. New technical fixes go through website.change (source audit).",
     "content.plan": "Turn an audit and keyword research into an editable two-week to six-month roadmap with one list to write from: new articles, answer pages for buyer questions where AI answers missed the product (from the audit's AI-visibility findings), and refreshes of existing pages the audit or Page decisions marked. The newest competitor.watch report's material changes add up to three comparison or refresh items, each citing the competitor's page. Save to My system to prepare weekly batches. Does not write or publish anything.",
     "content.refresh": "Retired: content.generate refreshes the pages the content plan schedules. Saved schedules keep running: refresh one existing page each week, chosen from the latest organic audit, proposing exact replacements for its title, meta description, H1 and opening answer for review; never add it to a new setup.",
     "content.generate": "Draft the next item of an initialized content program, using the project writing guide when available: a new article; an answer page for a buyer question AI answers missed the product on (a direct 40 to 60 word answer, cited sources and a search listing, published by website.change at the route the founder chose); or a refresh of an existing page (exact replacements for its title, meta description, H1 and opening answer, which Tin applies in the site's source after approval). Saves a separate reviewable draft with factual checks, or explains why no draft is needed. Requires program_id; omit item_id to take the next eligible item, or select an explicit item through get_content_draft_sources. On demand, or weekly against one program: each weekly run drafts the next item and waits while an earlier draft of that program awaits review. Delivery follows approval and the delivery setting. Does not change the roadmap.",
@@ -639,11 +630,9 @@
     "project.memory": "Consolidate durable project outputs into the project wiki.",
     "scan.report": "Review durable project knowledge against the system scanning guide and publish SCAN.md.",
     "site.health_improve": "Inspect one public site against its selected GitHub repository, make one bounded mechanical improvement, and open a pull request for review. When no safe change is justified, save a no-change report without opening a PR.",
-    "content.answer_page": "Create a public-facing Markdown content draft from the latest AI visibility findings; not for general advice or internal business questions.",
     "project.weekly_brief": "Summarize what moved, what needs attention, and the smallest useful next steps from this project's durable week of activity.",
     "project.task": "Use an isolated Codex task when the founder asks Tin to inspect, research, or change project files and no narrower registered workflow fits.",
     "research.deep_dive": "Test a project question and its upstream assumptions against current, source-backed evidence.",
-    "content.public_article": "Turn durable project evidence and original thinking into a rigorous, reviewable public article.",
     "content.diagram": "Turn a process or system into one clear Tin-styled diagram whose Mermaid source stays editable in project Files.",
     "outreach.email_shortlist": "Review the connected Gmail and Calendar history to create a bounded, evidence-backed outreach shortlist in project Files.",
     "outreach.email_campaign": "Snapshot selected shortlist recipients and exact email copy for approval, then send with reply-aware follow-up timers.",

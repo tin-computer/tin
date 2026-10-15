@@ -1,6 +1,6 @@
 """The fixed system's delivery intent, shared with review and admission.
 
-No new publisher: approved copy travels through website.change (content.deliver on v5 pins).
+No new publisher: approved copy travels through website.change.
 """
 
 from dataclasses import asdict
@@ -44,7 +44,7 @@ async def draft_intent(database, *, parent_id, project_id, actor, selected):
         or parent.started_by_clerk_user_id != actor
         or not prepared
         or prepared.status != "completed"
-        or not organic_system.drafts_articles(prepared.result.get("policy"))
+        or not organic_system.runs_recipe(prepared.result.get("policy"))
         or not content
         or content.status != "completed"
     ):

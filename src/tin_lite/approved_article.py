@@ -137,7 +137,7 @@ async def select(*, database, storage, project_id, source_run_id, include_style=
         "item": prepared.result["item"],
         "program_id": prepared.result["program_id"],
         "due_date": prepared.result["due_date"],
-        # A content.generate answer page is adapted like content.answer_page's pages.
+        # An answer page carries its search listing beside the page.
         **({"source_kind": "answer_page", "page_metadata": metadata} if metadata else {}),
         **(
             {

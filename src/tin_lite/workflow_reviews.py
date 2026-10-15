@@ -8,13 +8,8 @@ from tin_lite.domain import RunStatus
 from tin_lite.project_files import safe_project_file_path
 from tin_lite.workflow_review_store import ReviewConflict, accept_approval, digest, unpack
 
-SUPPORTED = frozenset({"content.generate", "content.public_article"})
-SUPPORTED_IDS = frozenset(
-    {
-        UUID("00000000-0000-4000-8000-000000000031"),
-        UUID("00000000-0000-4000-8000-000000000009"),
-    }
-)
+SUPPORTED = frozenset({"content.generate"})
+SUPPORTED_IDS = frozenset({UUID("00000000-0000-4000-8000-000000000031")})
 CAPABILITY = "content-revision.v1"
 MAX_CONTEXT_BYTES = 64_000
 

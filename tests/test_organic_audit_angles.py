@@ -6,9 +6,6 @@ Every check runs on saved evidence from synthetic sites; nothing here touches th
 from __future__ import annotations
 
 import json
-from types import SimpleNamespace
-from unittest.mock import AsyncMock
-from uuid import uuid4
 
 import httpx
 import pytest
@@ -641,37 +638,3 @@ def test_summary_separates_unsearched_answers_and_names_the_sites_answers_cite()
 
     cited = [f for f in content_review_findings(ai, HOST) if f["check_id"] == "ai.cited_instead"]
     assert cited and cited[0]["area"] == "authority"
-
-
-@pytest.mark.asyncio
-async def test_answer_pages_take_questions_from_the_newest_audit_of_either_kind():
-    from tin_lite.activities import TinActivities
-    from tin_lite.domain import Project
-
-    project = Project(uuid4(), "Tin", "projects/test", "main")
-    runs = [
-        SimpleNamespace(
-            executor=executor,
-            canonical_commit_sha=sha * 40,
-            artifact_path=path,
-            artifact_ref=f"code.storage://projects/test@{sha * 40}/{path}",
-        )
-        for executor, sha, path in (
-            ("visibility.audit", "a", "reports/AI_VISIBILITY.md"),
-            ("organic.audit", "b", "reports/organic/AUDIT.md"),
-        )
-    ]
-    activities = object.__new__(TinActivities)
-    activities._db = SimpleNamespace(list_memory_source_runs=AsyncMock(return_value=runs))
-    activities._storage = SimpleNamespace(read_canonical_artifact=AsyncMock(return_value=b"# Q"))
-    activities._integrations = None
-
-    async def evidence(project):
-        return "none"
-
-    activities._integration_evidence = evidence
-    sources = await activities._answer_page_sources(run_id=uuid4(), project=project)
-    assert [source.label for source in sources] == [
-        "current integration availability",
-        "latest organic audit, with its AI buyer questions",
-    ]

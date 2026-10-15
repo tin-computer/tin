@@ -1,8 +1,10 @@
-"""Pure metadata-only checks, shared with the pinned sandbox verifier."""
+"""Pure metadata-only checks for site repairs."""
 
 import re
 from html import unescape
 from html.parser import HTMLParser
+
+from tin_lite.technical_title_rules import has_title, verify_title_change
 
 MAX_HTML_BYTES = 250_000
 TITLE_CHECK = "metadata.title_missing"
@@ -44,11 +46,6 @@ class MetadataParser(HTMLParser):
 
 def has_metadata(html, check):
     if check == TITLE_CHECK:
-        # Local import also works when the pure modules are installed together.
-        try:
-            from tin_lite.technical_title_rules import has_title
-        except ModuleNotFoundError:
-            from technical_title_rules import has_title
         return has_title(html)
     if check != DESCRIPTION_CHECK:
         raise ValueError("Unsupported metadata check.")
@@ -61,10 +58,6 @@ def has_metadata(html, check):
 
 def verify_metadata_change(before, after, check):
     if check == TITLE_CHECK:
-        try:
-            from tin_lite.technical_title_rules import verify_title_change
-        except ModuleNotFoundError:
-            from technical_title_rules import verify_title_change
         return verify_title_change(before, after)
     if check != DESCRIPTION_CHECK or len(after.encode()) > MAX_HTML_BYTES:
         raise ValueError("Unsupported metadata change.")

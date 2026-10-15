@@ -54,7 +54,6 @@ async def test_parent_publication_pins_children_on_first_sync_and_child_only_upg
     for child in catalog.BUILTIN_WORKFLOWS:
         if child.key not in (
             *organic_system.STEPS.values(),
-            *organic_system.WEBSITE_STEPS.values(),
             *organic_system.MEASURE_STEPS.values(),
             organic_system.REFRESH_KEY,
         ):
@@ -84,7 +83,6 @@ def test_the_organic_system_pins_every_workflow_its_prepare_step_reads():
     # if they are pinned; an older registry hid the gap because earlier commits carried them.
     read = {
         *organic_system.STEPS.values(),
-        *organic_system.WEBSITE_STEPS.values(),
         *organic_system.MEASURE_STEPS.values(),
         organic_system.REFRESH_KEY,
     }
@@ -137,13 +135,11 @@ async def test_database_cannot_repurpose_a_published_builtin_id(publication_db):
     )
     await publication_db.upsert_registry_workflow(**values)
     with pytest.raises(RuntimeError, match="different workflow"):
-        await publication_db.upsert_registry_workflow(**{**values, "key": "organic.technical_fix"})
+        await publication_db.upsert_registry_workflow(**{**values, "key": "website.change"})
     saved = await publication_db.get_workflow(values["workflow_id"])
     assert saved.key == values["key"] and saved.current_commit_sha == "a" * 40
-    repaired = next(
-        item for item in catalog.BUILTIN_WORKFLOWS if item.key == "organic.technical_fix"
-    )
-    assert repaired.id == UUID("00000000-0000-4000-8000-000000000028")
+    website = next(item for item in catalog.BUILTIN_WORKFLOWS if item.key == "website.change")
+    assert website.id == UUID("00000000-0000-4000-8000-000000000045")
     await publication_db.upsert_registry_workflow(**{**values, "title": "Updated same workflow"})
     assert (
         await publication_db.get_workflow(values["workflow_id"])

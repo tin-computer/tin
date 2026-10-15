@@ -197,12 +197,8 @@ price it. The opt-in image test forces the real CLI through compaction and conti
 [Codex context configuration](https://learn.chatgpt.com/docs/config-file/config-reference),
 [OpenAI compaction](https://developers.openai.com/api/docs/guides/compaction).
 
-Repository-authored verification commands still run as the credential-free tool user.
-Only `organic.technical_fix`'s two fixed Tin-owned offline metadata/title verifiers run
-as the controller, **after all author processes stop and the checkout is frozen**. They
-receive only context-location environment values, not grants, and read the protected
-baseline/result. Arbitrary commands and private workflows cannot opt into that path.
-The gateway independently validates and delivers any GitHub proposal as before.
+Repository-authored verification commands run as the credential-free tool user. No
+verifier runs as the controller, and no workflow can opt into that path. The gateway independently validates and delivers any GitHub proposal as before.
 
 Production acceptance exposed two boundary mismatches. First, this CLI omits hosted web
 search from its custom-provider tool list. The v2 relay explicitly supplies OpenAI's native

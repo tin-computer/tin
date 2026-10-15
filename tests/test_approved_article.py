@@ -49,7 +49,6 @@ async def test_approved_article_is_available_even_with_automatic_delivery(
     source = await selected(f)
     assert source["source_run_id"] == str(f.source.id)
     assert "content" not in source["style"]
-    assert (await approved_article.discover(f.db, f.project.id))[0]["run_id"] == str(f.source.id)
 
 
 async def test_altered_review_artifact_or_version_fails_closed(publication_db, monkeypatch):

@@ -1,17 +1,15 @@
-"""Approved answer pages and public articles become pages on the site through website.change.
+"""Approved content.generate pages become pages on the site through website.change.
 
-Approval with a GitHub repository (and Codex API execution) starts one metered adaptation,
-never the Markdown publisher. content.deliver is retired for new work; the merge tests below
-cover the content.deliver runs approvals started before that, which keep its rules: the
-founder's commit-to-main setting merges a page-only PR once GitHub calls it clean, and anything
-else stays an open PR that says why. test_website_change covers website.change's own rules.
+Approval with a GitHub repository starts one metered adaptation, never the Markdown publisher.
+The page's approved copy is the authority: the source is pinned at its exact revision and
+publication digest, and anything not approved in this project is refused.
+test_website_change covers website.change's own merge rules.
 """
 
 import hashlib
-import json
-from datetime import UTC, datetime, timedelta
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, MagicMock
+from uuid import uuid4
 
 import httpx
 import pytest
@@ -20,13 +18,12 @@ from test_private_workflows import ACTOR, app, mcp, structured
 from test_private_workflows import fixture as private_fixture
 from test_procedure_publication import publication_db as publication_db
 
-from tin_lite import approved_document
+from tin_lite import approved_article, content_draft, website_change
 from tin_lite import content_repository_delivery as delivery
 from tin_lite.activities import TinActivities
 from tin_lite.catalog import BUILTIN_WORKFLOWS
 from tin_lite.content_delivery import (
-    ANSWER_PAGE_WORKFLOW_ID,
-    PUBLIC_ARTICLE_WORKFLOW_ID,
+    DRAFT_WORKFLOW_ID,
     ContentDelivery,
     about_usd,
     adaptation_start_key,
@@ -37,49 +34,68 @@ from tin_lite.content_delivery_api import publish_preview, retry_delivery
 from tin_lite.integrations import GitHubPullRequestResult, GitHubRepositoryBinding
 from tin_lite.organic_audit import canonical_json
 from tin_lite.page_routes import PATH as ROUTES_PATH
-from tin_lite.page_urls import PageUrls, present
+from tin_lite.page_urls import PageUrls
 from tin_lite.procedures import procedure_checkpoint_path
-from tin_lite.run_service import RETIRED, start_workflow_run
-from tin_lite.workflow_reviews import WorkflowReviews
+from tin_lite.publication import OutputCheckpoint
 
-KEYS = ("content.answer_page", "content.public_article", "content.deliver", "website.change")
+KEYS = ("content.generate", "website.change")
+TITLE = "How to keep recurring AI work reliable"
 LISTING = (
-    "---\nmeta_title: How to keep AI work reliable\n"
-    "meta_description: Keep recurring AI work reliable with durable runs, receipts and "
-    "a review before anything ships.\n---\n\n"
+    '---\nmeta_title: "How to keep AI work reliable"\n'
+    'meta_description: "Keep recurring AI work reliable with durable runs, receipts and '
+    'a review before anything ships."\n---\n\n'
 )
-ANSWER_BODY = (
-    "# How to keep recurring AI work reliable\n\nLast updated: 2026-09-28\n\n"
-    + " ".join(["Durable runs keep receipts, so a retry never repeats a paid call."] * 6)
-    + "\n"
-)
+ANSWER_BODY = f"""# {TITLE}
+
+Last updated: 2026-09-28
+
+Recurring AI work stays reliable when every run is durable, every paid call leaves a receipt
+and a person reviews the result before anything ships. A retry then reuses the receipt
+instead of paying again, and the review catches a wrong answer before a customer reads it.
+
+## Why does a retry repeat a paid call?
+
+Without a [receipt](https://example.com/docs/receipts), a retried step cannot tell that the
+call already happened, so it pays for it twice.
+
+## How does a review help?
+
+A [review](https://example.com/docs/reviews) shows the exact result before it ships, and
+approval binds that version.
+
+## FAQ
+
+### Does a retry cost twice?
+
+No. The receipt records the call, so the retry reuses it.
+
+### Can I edit the result before it ships?
+
+Yes. Feedback revises the same document before approval.
+
+## Sources
+
+- [Receipts](https://example.com/docs/receipts)
+- [Reviews](https://example.com/docs/reviews)
+- [Durable runs](https://example.com/docs/runs)
+"""
 ARTICLE_BODY = (
-    "# A useful public article\n\n"
+    "# A useful planned article\n\n"
     + " ".join(["Keep this useful explanation and its source."] * 12)
     + "\n"
 )
 PR_URL = "https://github.com/owner/site/pull/42"
 
 
-@pytest.fixture(autouse=True)
-def pinned_content_deliver(monkeypatch):
-    # Approvals start website.change; pinned_adaptation below starts the content.deliver run an
-    # approval started before content.deliver's retirement, which test_content_deliver_retired
-    # otherwise refuses.
-    monkeypatch.delitem(RETIRED, delivery.KEY)
-
-
 def choose_routes(f, **routes):
     """The founder's saved choices, as save_page_route writes them."""
-    routes = routes or {"answer_page": "/answers/{slug}", "article": "/blog/{slug}"}
+    routes = routes or {"answer_page": "/answers/{slug}"}
     f.storage.repo.edit({ROUTES_PATH: canonical_json({"routes": routes})})
 
 
-async def fixture(db, monkeypatch, *, api=True):
+async def fixture(db, monkeypatch):
     monkeypatch.setattr("tin_lite.activities.activity.heartbeat", lambda details: None)
     f = await private_fixture(db)
-    if not api:
-        f.settings.codex_api_projects = set()
     f.definitions, files = {}, {}
     for spec in (w for w in BUILTIN_WORKFLOWS if w.key in KEYS):
         definition, resources = spec.definition_and_resource_files()
@@ -138,6 +154,13 @@ async def fixture(db, monkeypatch, *, api=True):
         github_commit_files=AsyncMock(),
         github_pull_request_merge_state=AsyncMock(),
         github_merge_pull_request=AsyncMock(),
+        # The site's main branch requires a build check, and its build passed.
+        github_required_status_checks=AsyncMock(
+            return_value={"readable": True, "contexts": ["build"]}
+        ),
+        github_commit_checks=AsyncMock(
+            return_value={"readable": True, "checks": [{"name": "build", "state": "success"}]}
+        ),
     )
     f.runtime.temporal.get_workflow_handle = MagicMock(
         return_value=SimpleNamespace(signal=AsyncMock())
@@ -156,37 +179,83 @@ async def fixture(db, monkeypatch, *, api=True):
     return f
 
 
-async def answer_page(f, *, body=ANSWER_BODY, project=None):
-    """A reviewed answer page waiting for approval, saved the way the workflow saves it."""
+async def save(db, key, operation, result):
+    async with db.effect_lock(key, operation) as (conn, _):
+        await db.start_effect(conn, execution_key=key, operation=operation)
+        await db.complete_effect(conn, execution_key=key, result=result)
+
+
+async def draft(f, *, kind="answer", body=None, project=None, title=TITLE):
+    """A content.generate draft waiting for review, saved the way the procedure saves it: its
+    plan selection, its prepared context and its published page."""
     project = project or f.project
+    item = {"id": f"item-{uuid4().hex[:8]}", "title": title, "kind": kind}
+    program_id = str(uuid4())
     run, _ = await f.db.create_run(
         project_id=project.id,
-        workflow_id=ANSWER_PAGE_WORKFLOW_ID,
+        workflow_id=DRAFT_WORKFLOW_ID,
         started_by_clerk_user_id=ACTOR,
         definition_commit_sha="d" * 40,
-        pinned_definition=f.definitions["content.answer_page"],
+        pinned_definition=f.definitions["content.generate"],
+        input_payload={"program_id": program_id, "item_id": item["id"]},
     )
-    path = f"content/answers/2026-09-28-reliable-ai-work-{run.id.hex[:6]}.md"
-    revision = f.storage.repo.edit({path: (LISTING + body).encode()})
-    key = f"{run.id}:answer_page_commit"
-    async with f.db.effect_lock(key, "answer_page_commit") as (conn, _):
-        await f.db.start_effect(conn, execution_key=key, operation="answer_page_commit")
-        await f.db.complete_effect(
-            conn,
-            execution_key=key,
-            result={"canonical_commit_sha": revision, "artifact_path": path, "title": "Reliable"},
-        )
+    await save(
+        f.db,
+        content_draft.selection_key(run.id),
+        content_draft.SELECTION_OPERATION,
+        {"program_id": program_id, "item": item, "mode": "selected"},
+    )
+    await save(
+        f.db,
+        content_draft.receipt_key(run.id),
+        content_draft.KEY,
+        {
+            "output_validator": content_draft.EDITORIAL_VALIDATOR,
+            "program_id": program_id,
+            "item": item,
+            "due_date": "2026-09-28",
+            "style": {"path": None, "revision": None, "sha256": None},
+            **({"kind": content_draft.ANSWER} if kind == "answer" else {}),
+        },
+    )
+    if body is None:
+        body = LISTING + ANSWER_BODY if kind == "answer" else ARTICLE_BODY
+    raw = body.encode()
+    await f.db.pool.execute(
+        "UPDATE workflow_runs SET expected_head_sha=$2 WHERE id=$1", run.id, "e" * 40
+    )
+    run = await f.db.get_run(run.id)
+    path = content_draft.PATH_TEMPLATE.format(run_id=run.id)
+    revision = f.storage.repo.edit({path: raw})
+    await save(
+        f.db,
+        f"{run.id}:procedure_canonical_commit",
+        "procedure_canonical_commit",
+        {
+            "canonical_commit_sha": revision,
+            "artifact_path": path,
+            "checkpoint": OutputCheckpoint.create(
+                run=run, revision=revision, path=path, media_type="text/markdown", content=raw
+            ).to_dict(),
+        },
+    )
     await f.db.request_human_review(
         run_id=run.id,
         canonical_commit_sha=revision,
         artifact_path=path,
         artifact_ref=f"code.storage://{project.state_repo_id}@{revision}/{path}",
-        artifact_title="How to keep recurring AI work reliable",
+        artifact_title=title,
     )
     return await f.db.get_run(run.id)
 
 
+async def answer_page(f, *, body=None, project=None):
+    """A content.generate answer page waiting for review."""
+    return await draft(f, kind="answer", body=body, project=project)
+
+
 async def approve_answer_page(f, run):
+    """The founder's recorded approval: who approved it, and the exact revision."""
     await f.db.set_review_actor(run_id=run.id, clerk_user_id=ACTOR)
     await f.db.record_human_review(run_id=run.id, decision="approved")
     await f.db.project_success(
@@ -198,50 +267,8 @@ async def approve_answer_page(f, run):
     return await f.db.get_run(run.id)
 
 
-async def public_article(f, *, body=ARTICLE_BODY, listing=LISTING):
-    run, _ = await f.db.create_run(
-        project_id=f.project.id,
-        workflow_id=PUBLIC_ARTICLE_WORKFLOW_ID,
-        started_by_clerk_user_id=ACTOR,
-        definition_commit_sha="d" * 40,
-        pinned_definition=f.definitions["content.public_article"],
-        input_payload={"brief": "Explain a practical buyer problem."},
-    )
-    path = f"content/articles/{run.id}.md"
-    raw = (listing + body).encode()
-    revision = f.storage.repo.edit({path: raw})
-    key = f"{run.id}:procedure_canonical_commit"
-    async with f.db.effect_lock(key, "procedure_canonical_commit") as (conn, _):
-        await f.db.start_effect(conn, execution_key=key, operation="procedure_canonical_commit")
-        await f.db.complete_effect(
-            conn,
-            execution_key=key,
-            result={
-                "canonical_commit_sha": revision,
-                "artifact_path": path,
-                "checkpoint": {"sha256": hashlib.sha256(raw).hexdigest()},
-            },
-        )
-    await f.db.request_human_review(
-        run_id=run.id,
-        canonical_commit_sha=revision,
-        artifact_path=path,
-        artifact_ref=f"code.storage://{f.project.state_repo_id}@{revision}/{path}",
-        artifact_title="A useful public article",
-    )
-    return await f.db.get_run(run.id)
-
-
-async def approve_article(f, run):
-    reviews = WorkflowReviews(runtime=f.runtime, settings=f.settings)
-    view = await reviews.view(run.id, ACTOR)
-    await reviews.approve(run_id=run.id, actor=ACTOR, token=view["review_token"])
-    await f.db.pool.execute("UPDATE workflow_runs SET status='succeeded' WHERE id=$1", run.id)
-    return await f.db.get_run(run.id)
-
-
 async def children(f, source):
-    """The page's adaptations, by website.change or (pinned) content.deliver."""
+    """The page's adaptations by website.change."""
     return await f.db.pool.fetch(
         "SELECT r.id, r.status, r.workflow_id FROM workflow_runs r JOIN effect_receipts s "
         "ON s.execution_key='content-delivery:' || r.id::text || ':source' "
@@ -251,36 +278,18 @@ async def children(f, source):
     )
 
 
-async def pinned_adaptation(f, run):
-    """The content.deliver run an approval started before content.deliver's retirement."""
-    workflow = await f.db.get_workflow(delivery.WORKFLOW_ID)
-
-    async def start(source, intent):
-        return await start_workflow_run(
-            runtime=f.runtime,
-            settings=f.settings,
-            workflow=workflow,
-            project_id=source.project_id,
-            started_by_clerk_user_id=intent.get("chosen_by") or ACTOR,
-            start_idempotency_key=adaptation_start_key(source.id),
-            input_payload={
-                "source_run_id": str(source.id),
-                "expected_repository": intent["settings"]["repository"],
-                "direction": "",
-            },
-            _approval_delivery=True,
-        )
-
-    await f.delivery.adapt(run.id, start=start)
-
-
 async def select(f, run, **inputs):
-    return await delivery.select_source(
+    return await website_change.select_source(
         database=f.db,
         storage=f.storage,
         integrations=f.runtime.integrations,
         project_id=f.project.id,
-        inputs={"source_run_id": str(run.id), "expected_repository": "owner/site", **inputs},
+        inputs={
+            "source": "content_draft",
+            "source_run_id": str(run.id),
+            "expected_repository": "owner/site",
+            **inputs,
+        },
     )
 
 
@@ -289,6 +298,7 @@ async def select(f, run, **inputs):
 
 async def test_answer_page_source_splits_listing_from_the_exact_copy(publication_db, monkeypatch):
     f = await fixture(publication_db, monkeypatch)
+    choose_routes(f)
     run = await approve_answer_page(f, await answer_page(f))
     source = await select(f, run)
     assert source["source_kind"] == "answer_page"
@@ -299,35 +309,16 @@ async def test_answer_page_source_splits_listing_from_the_exact_copy(publication
         "meta_description": "Keep recurring AI work reliable with durable runs, receipts and "
         "a review before anything ships.",
     }
-    assert source["title"] == "How to keep recurring AI work reliable"
+    assert source["title"] == TITLE
     assert source["source_revision"] == run.canonical_commit_sha
     assert source["binding"]["repository"] == "owner/site"
-    assert "approval" not in source  # Only the approval's own start carries a delivery.
-
-
-async def test_public_article_source_needs_its_exact_review_token(publication_db, monkeypatch):
-    f = await fixture(publication_db, monkeypatch)
-    run = await approve_article(f, await public_article(f))
-    source = await select(f, run)
-    assert source["source_kind"] == "public_article"
-    assert source["article"] == ARTICLE_BODY and source["page_metadata"]["meta_title"]
-    async with f.db.pool.acquire() as conn:
-        await approved_document.guard(conn, project_id=f.project.id, source=source)
-    await f.db.pool.execute(
-        "UPDATE workflow_review_commands SET review_token=$2 WHERE source_run_id=$1",
-        run.id,
-        "0" * 64,
-    )
-    with pytest.raises(ValueError, match="review proof"):
-        await select(f, run)
-    async with f.db.pool.acquire() as conn:
-        with pytest.raises(ValueError, match="review proof"):
-            await approved_document.guard(conn, project_id=f.project.id, source=source)
+    assert source["route"] == "/answers/{slug}"
 
 
 async def test_changed_bytes_or_revision_drift_refuse_the_page(publication_db, monkeypatch):
     f = await fixture(publication_db, monkeypatch)
-    run = await approve_article(f, await public_article(f))
+    choose_routes(f)
+    run = await approve_answer_page(f, await draft(f, kind="article"))
     read = f.storage.read_canonical_artifact
 
     async def tampered(**kw):
@@ -347,7 +338,7 @@ async def test_changed_bytes_or_revision_drift_refuse_the_page(publication_db, m
         await select(f, page)
     async with f.db.pool.acquire() as conn:
         with pytest.raises(ValueError, match="not approved"):
-            await approved_document.guard(conn, project_id=f.project.id, source=source)
+            await approved_article.guard(conn, project_id=f.project.id, source=source)
 
 
 async def test_unapproved_foreign_or_oversized_pages_are_refused(publication_db, monkeypatch):
@@ -359,8 +350,10 @@ async def test_unapproved_foreign_or_oversized_pages_are_refused(publication_db,
     foreign = await approve_answer_page(f, await answer_page(f, project=other))
     with pytest.raises(ValueError, match="from this project"):
         await select(f, foreign)
-    huge = await approve_answer_page(f, await answer_page(f, body=ANSWER_BODY + "x" * 150_000))
-    with pytest.raises(ValueError, match="150 KB"):
+    huge = await approve_answer_page(
+        f, await draft(f, kind="article", body=ARTICLE_BODY + "x" * 80_000)
+    )
+    with pytest.raises(ValueError, match="size limit"):
         await select(f, huge)
 
 
@@ -396,6 +389,7 @@ async def test_approval_starts_one_adaptation_on_both_transports(
     choice = (await f.db.get_effect(choice_key(run.id))).result
     assert choice["adapter"] == "repository" and choice["path"] is None
     assert choice["settings"]["mode"] == "github_commit"
+    assert choice["route"] == "/answers/{slug}"
     assert choice["trigger_source"] == ("mcp" if surface == "mcp" else "manual")
     run = await approve_answer_page(f, run)
     for _ in range(2):
@@ -421,101 +415,33 @@ async def test_approval_starts_one_adaptation_on_both_transports(
     assert (await f.delivery.statuses([run]))[run.id] == status
 
 
-async def test_public_article_approval_adapts_and_keeps_its_review(publication_db, monkeypatch):
+async def test_an_approved_article_adapts_without_a_route(publication_db, monkeypatch):
     f = await fixture(publication_db, monkeypatch)
     choose_routes(f)
-    run = await public_article(f)
-    await f.delivery.choose(run=run, mode="github_pr", actor=ACTOR, adapt=True)
-    run = await approve_article(f, run)
+    run = await draft(f, kind="article")
+    await f.delivery.choose(run=run, mode="github_pr", actor=ACTOR)
+    run = await approve_answer_page(f, run)
     await f.activities.deliver_content_draft(str(run.id))
     started = await children(f, run)
     assert len(started) == 1 and started[0]["workflow_id"] == delivery.WEBSITE_CHANGE_ID
     source = await delivery.saved_source(f.db, started[0]["id"])
-    assert source["source_kind"] == "public_article" and source["route"] == "/blog/{slug}"
+    # A planned article names its own address; only answer pages wait for a chosen route.
+    assert source["source_kind"] == "article" and source["route"] is None
+    assert source["article"] == ARTICLE_BODY
     assert source["publish"]["mode"] == "pull_request"
     f.runtime.integrations.github_create_pull_request.assert_not_called()
 
 
-async def test_without_api_execution_publish_keeps_the_markdown_publisher(
-    publication_db, monkeypatch
-):
-    f = await fixture(publication_db, monkeypatch, api=False)
-    run = await answer_page(f)
-    assert (await publish_preview(runtime=f.runtime, settings=f.settings, run=run, actor=ACTOR))[
-        "adapt"
-    ] is False
-    # Not adapted: the generic pick needs a saved workflow, exactly as before.
-    async with httpx.AsyncClient(
-        transport=httpx.ASGITransport(app=app(f)), base_url="https://tin.test"
-    ) as client:
-        response = await client.post(
-            f"/api/workflows/runs/{run.id}/approve", json={"delivery": "github_commit"}
-        )
-    assert response.status_code == 409 and "Save this workflow" in response.text
-    assert not await children(f, run)
-
-
-@pytest.mark.parametrize("surface", ["http", "mcp"])
-async def test_a_one_off_page_approved_with_no_delivery_stays_in_tin(
-    publication_db, monkeypatch, surface
-):
-    # Sheepdogs, content.public_article b9bf3237: approving with delivery "none" failed with
-    # "Save this workflow to the project before choosing where it publishes."
+async def test_a_page_already_committed_as_markdown_is_not_adapted(publication_db, monkeypatch):
     f = await fixture(publication_db, monkeypatch)
-    run = await public_article(f)
-    assert run.project_workflow_id is None
-    token = (await WorkflowReviews(runtime=f.runtime, settings=f.settings).view(run.id, ACTOR))[
-        "review_token"
-    ]
-    if surface == "http":
-        async with httpx.AsyncClient(
-            transport=httpx.ASGITransport(app=app(f)), base_url="https://tin.test"
-        ) as client:
-            response = await client.post(
-                f"/api/workflows/runs/{run.id}/approve",
-                json={"delivery": "none", "review_token": token},
-            )
-        assert response.status_code == 202, response.text
-    else:
-        result = structured(
-            await mcp(f, monkeypatch).call_tool(
-                "approve_workflow_run",
-                {"run_id": str(run.id), "delivery": "none", "review_token": token},
-            )
-        )
-        assert result["review_decision"] == "approved"
-    choice = (await f.db.get_effect(choice_key(run.id))).result
-    assert choice["settings"]["mode"] == "draft_only" and choice["path"] is None
-    await f.db.pool.execute("UPDATE workflow_runs SET status='succeeded' WHERE id=$1", run.id)
-    await f.activities.deliver_content_draft(str(run.id))
-    # Nothing left Tin: no adaptation run, no commit, no pull request.
-    assert not await children(f, run)
-    f.runtime.integrations.github_commit_files.assert_not_called()
-    f.runtime.integrations.github_create_pull_request.assert_not_called()
-
-
-async def test_prepare_pr_is_refused_for_a_page_already_committed_as_markdown(
-    publication_db, monkeypatch
-):
-    f = await fixture(publication_db, monkeypatch)
+    choose_routes(f)
     run = await answer_page(f)
     await f.delivery.record_choice(
         run, {"settings": {"mode": "github_commit", "repository": "owner/site"}, "path": "x.md"}
     )
     run = await approve_answer_page(f, run)
-    with pytest.raises(ValueError, match="already has automatic delivery"):
+    with pytest.raises(ValueError, match="already ships through its Markdown delivery"):
         await select(f, run)
-    # An approval start with no adaptation choice cannot carry a delivery setting.
-    unchosen = await approve_answer_page(f, await answer_page(f))
-    with pytest.raises(ValueError, match="did not ask"):
-        await delivery.select_source(
-            database=f.db,
-            storage=f.storage,
-            integrations=f.runtime.integrations,
-            project_id=f.project.id,
-            inputs={"source_run_id": str(unchosen.id), "expected_repository": "owner/site"},
-            approval=True,
-        )
 
 
 # Billing: an ordinary metered session, and a refused admission the founder can retry.
@@ -570,7 +496,7 @@ async def test_adaptation_is_one_metered_session_with_a_cost_preview(publication
     assert preview["footer"] == (
         "Tin adapts it to your site and opens a pull request · about $0.60, at most $4"
     )
-    await f.delivery.choose(run=run, mode="github_pr", actor=ACTOR, adapt=True)
+    await f.delivery.choose(run=run, mode="github_pr", actor=ACTOR)
     run = await approve_answer_page(f, run)
     await f.activities.deliver_content_draft(str(run.id))
     child = (await children(f, run))[0]["id"]
@@ -586,7 +512,7 @@ async def test_insufficient_credits_record_a_failed_delivery_to_retry(publicatio
     choose_routes(f)
     run = await answer_page(f)
     await billed(f, 0)
-    await f.delivery.choose(run=run, mode="github_commit", actor=ACTOR, adapt=True)
+    await f.delivery.choose(run=run, mode="github_commit", actor=ACTOR)
     run = await approve_answer_page(f, run)
     with pytest.raises(ApplicationError) as refused:
         await f.activities.deliver_content_draft(str(run.id))
@@ -615,22 +541,19 @@ async def test_insufficient_credits_record_a_failed_delivery_to_retry(publicatio
     assert (await f.delivery.status(run))["status"] in {"pending", "started"}
 
 
-# After the PR, for a content.deliver run started before its retirement: merge only a
-# page-only PR that GitHub calls clean.
+# After the approval: the website.change run that opened the page's pull request.
 
 
 async def adapted_pull_request(
-    f, *, mode="github_commit", extra_files=(), route=None, chosen_route=None
+    f, *, mode="github_commit", extra_files=(), route=None, chosen_route="/answers/{slug}"
 ):
-    if chosen_route:
-        # The founder's saved choice, as save_page_route writes it.
-        from tin_lite.page_routes import PATH
-
-        f.storage.repo.edit({PATH: canonical_json({"routes": {"answer_page": chosen_route}})})
+    """An approved answer page adapted by the website.change run its approval started, up to
+    the opened pull request. `route` is the public URL the pull request names."""
+    choose_routes(f, answer_page=chosen_route)
     run = await answer_page(f)
-    await f.delivery.choose(run=run, mode=mode, actor=ACTOR, adapt=True)
+    await f.delivery.choose(run=run, mode=mode, actor=ACTOR)
     run = await approve_answer_page(f, run)
-    await pinned_adaptation(f, run)
+    await f.activities.deliver_content_draft(str(run.id))
     child = await f.db.get_run((await children(f, run))[0]["id"])
     await f.activities.prepare_codex_procedure(str(child.id))
     await f.activities.create_codex_procedure_sandbox(str(child.id))
@@ -645,7 +568,7 @@ async def adapted_pull_request(
         "body": "Adds the approved page. Build not run.\n\n"
         + (f"Public URL: {route}\n" if route else "Public URL: unknown\n"),
         "files": [
-            {"path": "content/answers/reliable-ai-work.md", "content": page},
+            {"path": "content/pages/reliable-ai-work.md", "content": page},
             *extra_files,
         ],
         "verification": [delivery.CHECK_COMMAND],
@@ -686,63 +609,9 @@ def clean(**extra):
     }
 
 
-async def test_commit_setting_merges_a_clean_page_only_pull_request(publication_db, monkeypatch):
-    f = await fixture(publication_db, monkeypatch)
-    run, child = await adapted_pull_request(f, route="https://example.com/answers/reliable")
-    integrations = f.runtime.integrations
-    integrations.github_pull_request_merge_state.side_effect = [
-        clean(mergeable=None, mergeable_state="unknown"),
-        clean(),
-    ]
-    integrations.github_merge_pull_request.return_value = {
-        "merged": True,
-        "commit": "b" * 40,
-        "url": f"https://github.com/owner/site/commit/{'b' * 40}",
-    }
-    naps = []
-
-    async def nap(seconds):
-        naps.append(seconds)
-
-    monkeypatch.setattr(delivery.asyncio, "sleep", nap)
-    for _ in range(2):  # The recorded outcome is reused; GitHub is asked to merge once.
-        await f.activities.deliver_content_draft(str(child.id))
-    integrations.github_merge_pull_request.assert_awaited_once()
-    call = integrations.github_merge_pull_request.call_args.kwargs
-    assert call["number"] == 42 and call["expected_head_sha"] == "a" * 40
-    assert call["execution_key"] == f"{child.id}:procedure_pull_request_merge"
-    assert [item.path for item in call["files"]] == ["content/answers/reliable-ai-work.md"]
-    assert call["new_paths"] == ("content/answers/reliable-ai-work.md",)
-    assert naps == [delivery.MERGE_POLL_SECONDS]
-    merge = (await f.db.get_effect(delivery.merge_key(child.id))).result
-    assert merge["status"] == "merged" and merge["commit"] == "b" * 40
-    status = await f.delivery.status(run)
-    assert status["merged"] is True and status["pull_request"]["number"] == 42
-    assert status["public_route"] == "https://example.com/answers/reliable"
-    events = await f.db.pool.fetch(
-        "SELECT run_id FROM activity_events WHERE event_type='content_delivery_merged'"
-    )
-    assert {row["run_id"] for row in events} == {run.id, child.id}
-    page = present(
-        {
-            "base": {
-                "url": "https://example.com/x",
-                "host": "example.com",
-                "title": "T",
-                "source": "title_slug",
-                "final": False,
-            }
-        },
-        status,
-    )
-    assert page["source"] == "delivery_route" and page["state"] == "merged"
-    assert page["url"] == "https://example.com/answers/reliable"
-    assert page["note"] == "Merged into owner/site. Waiting for your site to deploy it."
-
-
 async def test_retargeted_page_stays_open(publication_db, monkeypatch):
     f = await fixture(publication_db, monkeypatch)
-    _, child = await adapted_pull_request(f)
+    _, child = await adapted_pull_request(f, route="https://example.com/answers/reliable-ai-work")
     f.runtime.integrations.github_pull_request_merge_state.return_value = clean(
         base_ref="release/elsewhere"
     )
@@ -751,66 +620,6 @@ async def test_retargeted_page_stays_open(publication_db, monkeypatch):
     f.runtime.integrations.github_merge_pull_request.assert_not_called()
     result = (await f.db.get_effect(delivery.merge_key(child.id))).result
     assert result["status"] == "left_open" and "destination branch" in result["reason"]
-
-
-@pytest.mark.parametrize(
-    ("verdict", "reason"),
-    [
-        ("dirty", "It conflicts with the default branch."),
-        ("blocked", "GitHub needs a review or a required check before it can merge"),
-        ("unstable", "Its checks had not all passed after a few minutes"),
-    ],
-)
-async def test_an_unmergeable_pull_request_stays_open_and_says_why(
-    publication_db, monkeypatch, verdict, reason
-):
-    f = await fixture(publication_db, monkeypatch)
-    run, child = await adapted_pull_request(f)
-    monkeypatch.setattr(delivery, "MERGE_WAIT_SECONDS", 0)
-    monkeypatch.setattr(delivery.asyncio, "sleep", AsyncMock())
-    f.runtime.integrations.github_pull_request_merge_state.return_value = clean(
-        mergeable=verdict != "dirty", mergeable_state=verdict
-    )
-    await f.activities.deliver_content_draft(str(child.id))
-    f.runtime.integrations.github_merge_pull_request.assert_not_called()
-    merge = (await f.db.get_effect(delivery.merge_key(child.id))).result
-    assert merge["status"] == "left_open" and merge["reason"].startswith(reason)
-    status = await f.delivery.status(run)
-    assert status["merged"] is False and status["status"] == "completed"
-    page = present(
-        {
-            "base": {
-                "url": "https://example.com/x",
-                "host": "example.com",
-                "title": "T",
-                "source": "title_slug",
-                "final": False,
-            }
-        },
-        status,
-    )
-    assert page["state"] == "proposed" and reason in page["note"]
-
-
-async def test_a_pull_request_with_site_code_is_never_merged(publication_db, monkeypatch):
-    f = await fixture(publication_db, monkeypatch)
-    route = {"path": "src/app/answers/[slug]/page.tsx", "content": "export default 1;\n"}
-    _, child = await adapted_pull_request(f, extra_files=(route,))
-    await f.activities.deliver_content_draft(str(child.id))
-    f.runtime.integrations.github_pull_request_merge_state.assert_not_called()
-    f.runtime.integrations.github_merge_pull_request.assert_not_called()
-    merge = (await f.db.get_effect(delivery.merge_key(child.id))).result
-    assert merge["status"] == "left_open" and "site files besides the page" in merge["reason"]
-
-
-async def test_pull_request_setting_never_merges(publication_db, monkeypatch):
-    f = await fixture(publication_db, monkeypatch)
-    run, child = await adapted_pull_request(f, mode="github_pr")
-    await f.activities.deliver_content_draft(str(child.id))
-    f.runtime.integrations.github_pull_request_merge_state.assert_not_called()
-    assert await f.db.get_effect(delivery.merge_key(child.id)) is None
-    status = await f.delivery.status(run)
-    assert status["pull_request"]["url"] == PR_URL and status["merge"] is None
 
 
 # Page URLs and the card line.
@@ -825,7 +634,7 @@ async def test_page_url_uses_the_adaptation_route_and_says_what_approval_does(
     base = {
         "url": "https://example.com/how-to-keep-recurring-ai-work-reliable",
         "host": "example.com",
-        "title": "How to keep recurring AI work reliable",
+        "title": TITLE,
         "source": "title_slug",
         "final": False,
     }
@@ -836,7 +645,9 @@ async def test_page_url_uses_the_adaptation_route_and_says_what_approval_does(
         "After you approve, Tin adapts the page to your site and opens a pull request."
     )
     assert (await pages.views([run], {}))[run.id]["note"] == before["note"]
-    run, child = await adapted_pull_request(f, route="https://example.com/answers/reliable-ai-work")
+    run, child = await adapted_pull_request(
+        f, mode="github_pr", route="https://example.com/answers/reliable-ai-work"
+    )
     await pages._save(run.id, {"base": base})
     status = await f.delivery.status(run)
     after = await pages.view(run, status)
@@ -844,43 +655,6 @@ async def test_page_url_uses_the_adaptation_route_and_says_what_approval_does(
     assert after["url"] == "https://example.com/answers/reliable-ai-work"
     assert after["pull_request"]["number"] == 42
     assert after["note"].startswith("Pull request #42 is open.")
-
-
-async def test_a_proposed_url_follows_the_saved_route(publication_db, monkeypatch):
-    # Sheepdogs, content.public_article b9bf3237: page_url kept proposing the title slug at the
-    # site root after the founder chose /blog/{slug}; the first guess was saved for good.
-    f = await fixture(publication_db, monkeypatch)
-    run = await public_article(f)
-    pages = PageUrls(database=f.db, storage=f.storage, settings=f.settings)
-    pages._site = AsyncMock(return_value="example.com")  # the site the audit read
-    now = datetime.now(UTC)
-    first = await pages.view(run, None, now=now)
-    assert first["url"] == "https://example.com/a-useful-public-article"
-    assert first["source"] == "title_slug" and first["final"] is False
-    f.storage.repo.edit({ROUTES_PATH: canonical_json({"routes": {"article": "/blog/{slug}"}})})
-    # Read again at most every ten minutes, like the delivery preview.
-    assert (await pages.view(run, None, now=now + timedelta(minutes=1)))["url"] == first["url"]
-    later = await pages.view(run, None, now=now + timedelta(minutes=11))
-    assert later["url"] == "https://example.com/blog/a-useful-public-article"
-    assert later["source"] == "saved_route" and later["final"] is False
-
-
-async def test_the_approved_address_is_the_drafts_own_slug(publication_db, monkeypatch):
-    # Sheepdogs: Tin proposed /blog/how-i-filmed-the-sheepdogs-trailers-inside-the-game and
-    # content.deliver d93bbfd0 published /blog/filming-sheepdogs-trailers.
-    f = await fixture(publication_db, monkeypatch)
-    f.storage.repo.edit({ROUTES_PATH: canonical_json({"routes": {"article": "/blog/{slug}"}})})
-    listing = LISTING.replace("---\n\n", 'slug: "keep-ai-work-reliable"\n---\n\n', 1)
-    run = await public_article(f, listing=listing)
-    pages = PageUrls(database=f.db, storage=f.storage, settings=f.settings)
-    pages._site = AsyncMock(return_value="example.com")
-    view = await pages.view(run, None)
-    assert view["url"] == "https://example.com/blog/keep-ai-work-reliable"
-    run = await approve_article(f, run)
-    source = await approved_document.select(
-        database=f.db, storage=f.storage, project_id=f.project.id, source_run_id=run.id
-    )
-    assert source["page_metadata"]["slug"] == "keep-ai-work-reliable"
 
 
 def test_card_cost_is_rounded_to_a_dollar_or_cents():
@@ -909,7 +683,6 @@ async def test_publish_preview_follows_the_saved_delivery_setting(publication_db
         "cost": None,
         "footer": waits,
     }
-    f.delivery.saved_mode = AsyncMock(return_value="github_commit")
     monkeypatch.setattr(
         "tin_lite.content_delivery.ContentDelivery.saved_mode",
         AsyncMock(return_value="github_commit"),
@@ -919,7 +692,7 @@ async def test_publish_preview_follows_the_saved_delivery_setting(publication_db
     choose_routes(f)
     routed = await publish_preview(runtime=f.runtime, settings=f.settings, run=run, actor=ACTOR)
     assert routed["footer"] == "Tin adapts it to your site and commits it to main"
-    assert "ask_the_founder" not in routed
+    assert routed["route"] == "/answers/{slug}" and "ask_the_founder" not in routed
     async with httpx.AsyncClient(
         transport=httpx.ASGITransport(app=app(f)), base_url="https://tin.test"
     ) as client:
@@ -934,21 +707,6 @@ async def test_publish_preview_follows_the_saved_delivery_setting(publication_db
             f"/api/projects/{f.project.id}/content-drafts/{run.id}/publish-preview"
         )
     assert denied.status_code == 404
-    shown = structured(await mcp(f, monkeypatch).call_tool("get_run", {"run_id": str(run.id)}))
-    assert shown["delivery_preview"]["footer"] == routed["footer"]
-
-
-async def test_discovery_lists_approved_pages_by_title(publication_db, monkeypatch):
-    f = await fixture(publication_db, monkeypatch)
-    page = await approve_answer_page(f, await answer_page(f))
-    article = await approve_article(f, await public_article(f))
-    found = await delivery.discover(f.db, f.project.id)
-    assert {"run_id": str(page.id), "title": "How to keep recurring AI work reliable"} in found[
-        "articles"
-    ]
-    assert {"run_id": str(article.id), "title": "A useful public article"} in found["articles"]
-    assert found["repository"] == "owner/site"
-    assert json.dumps(found)  # Plain data for MCP preparation.
 
 
 def test_publish_waits_for_the_founder_to_choose_a_route():

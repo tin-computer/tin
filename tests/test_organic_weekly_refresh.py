@@ -31,13 +31,13 @@ async def refresh_fixture(db, monkeypatch, *, policy=None):
         version_label=spec.version_label,
         definition=spec.definition,
     )
-    if organic_system.refreshes_pages(policy or organic_system.REFRESH_POLICY):
-        await db.pool.execute(
-            "UPDATE effect_receipts SET result=jsonb_set(result, '{definitions,refresh}', "
-            "$2::jsonb) WHERE execution_key=$1",
-            f"traffic:{f.parent.id}:prepare",
-            json.dumps(spec.definition),
-        )
+    # Every recipe that still runs (v6 on) pins the refresh at preparation.
+    await db.pool.execute(
+        "UPDATE effect_receipts SET result=jsonb_set(result, '{definitions,refresh}', "
+        "$2::jsonb) WHERE execution_key=$1",
+        f"traffic:{f.parent.id}:prepare",
+        json.dumps(spec.definition),
+    )
     f.client, f.refresh = client, spec
     return f
 
@@ -50,18 +50,14 @@ async def refresh_runs(f):
     )
 
 
-def test_the_v5_recipe_refreshes_pages_and_older_recipes_do_not():
+def test_every_recipe_that_still_runs_refreshes_pages_and_schedules_articles():
     recipe = next(w for w in BUILTIN_WORKFLOWS if w.key == organic_system.KEY).definition
-    # New runs pin v8, which keeps v5's page refresh.
+    # New runs pin v8, which keeps v6's page refresh and weekly articles.
     assert recipe["organic_system_policy"]["version"] == "organic-traffic-v8"
-    for policy in (
-        organic_system.REFRESH_POLICY,
-        organic_system.WEBSITE_POLICY,
-        organic_system.POLICY,
-    ):
-        assert organic_system.refreshes_pages(policy)
-        assert organic_system.schedules_articles(policy)
-    assert not organic_system.refreshes_pages(organic_system.FALLBACK_POLICY)
+    for policy in organic_system.POLICIES:
+        assert organic_system.runs_recipe(policy)
+        assert policy["refresh"] == "weekly_refresh"
+        assert policy["schedule"] == "weekly_articles"
 
 
 async def test_the_systems_refresh_is_the_schedules_first_run(publication_db, monkeypatch):
@@ -114,13 +110,6 @@ async def test_an_existing_weekly_refresh_is_kept_and_not_doubled(publication_db
     assert len(await refresh_runs(f)) == 1
 
 
-async def test_a_recipe_without_refresh_starts_none(publication_db, monkeypatch):
-    f = await refresh_fixture(publication_db, monkeypatch, policy=organic_system.FALLBACK_POLICY)
-    await f.system.organic_system_step({"run_id": str(f.parent.id), "step": "draft"})
-    assert await f.db.get_effect(f"traffic:{f.parent.id}:refresh") is None
-    assert await refresh_runs(f) == []
-
-
 async def test_without_temporal_the_refresh_is_blocked_not_guessed(publication_db, monkeypatch):
     f = await refresh_fixture(publication_db, monkeypatch)
     f.system.temporal = None
@@ -149,12 +138,3 @@ async def test_the_system_dispatches_its_refresh_as_a_child_it_waits_for(
     assert len(await refresh_runs(f)) == 1
     f.client.start_workflow.assert_not_awaited()
     assert await f.system.organic_system_refresh(str(f.parent.id)) == started
-
-
-async def test_an_older_recipe_dispatches_no_refresh(publication_db, monkeypatch):
-    f = await refresh_fixture(publication_db, monkeypatch, policy=organic_system.FALLBACK_POLICY)
-    assert await f.system.organic_system_refresh(str(f.parent.id)) == {
-        "status": "skipped",
-        "reason": "not_in_pinned_recipe",
-    }
-    assert await refresh_runs(f) == []

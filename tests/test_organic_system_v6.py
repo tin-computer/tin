@@ -1,8 +1,8 @@
 """organic-traffic-v6: the traffic system's two writer steps go through website.change.
 
-v6 starts website.change for the approved draft (its page source) instead of content.deliver,
-and with the latest audit's fixes (`source: audit`) instead of organic.technical_fix. Runs
-pinned to v5 and earlier keep their children, receipts and report word for word.
+v6 starts website.change for the approved draft (its page source) and with the latest audit's
+fixes (`source: audit`). It is the oldest recipe that still runs: runs pinned to v5 and
+earlier fail at preparation (test_organic_system_db).
 """
 
 import json
@@ -20,22 +20,10 @@ from tin_lite import organic_system, website_change_audit
 from tin_lite.catalog import BUILTIN_WORKFLOWS
 from tin_lite.codex_api_pricing import api_terms
 from tin_lite.organic_audit import digest
-from tin_lite.organic_system_activities import boundaries
 from tin_lite.service_pricing import service_terms
 
-# organic-traffic-v5 as main shipped it (d69d337), the policy pinned runs carry.
-V5_DIGEST = "8bc98c935e546045a9ac6a9eb7f01259712a429b19b69158d6be4700a1e296a4"
 # v6 as main shipped it; runs pinned to it keep its steps when v7 is the default.
 V6_DIGEST = "0d91792e3fce3969699985a349b08a649ca855aaebcd97659ea969e3ceeb2a27"
-V5_BOUNDARIES = (
-    "One technical finding at most; others remain for review. No eligible finding means no "
-    "technical-fix compute or PR. The next planned article is drafted when this recipe "
-    "includes generation. Its final approved copy can become an unmerged PR; without GitHub, "
-    "the Markdown stays readable in Tin for manual export or a later delivery. The existing "
-    "writing guide is used when available; no style samples are invented. Backlinks and "
-    "outreach are not part of this version. Plan dates do not automatically generate the rest "
-    "of the roadmap. An open PR is not a published website."
-)
 TECHNICAL = {
     "technical_fix": True,
     "expected_repository": "owner/site",
@@ -43,7 +31,7 @@ TECHNICAL = {
 }
 
 
-def test_v6_steps_and_v5_pins_are_unchanged():
+def test_v6_steps_and_pins_are_unchanged():
     recipe = next(w for w in BUILTIN_WORKFLOWS if w.key == organic_system.KEY)
     # New runs pin v8: v7's steps and weekly measurement, with the agent-planned content plan.
     assert recipe.version_label == "0.8.1"
@@ -58,21 +46,9 @@ def test_v6_steps_and_v5_pins_are_unchanged():
     for policy in (organic_system.WEBSITE_POLICY, organic_system.POLICY):
         v6 = organic_system.policy_steps(policy)
         assert (v6["technical"], v6["delivery"]) == ("website.change", "website.change")
-        assert organic_system.writes_with_website_change(policy)
+        assert organic_system.runs_recipe(policy)
     assert not organic_system.measures_pages(organic_system.WEBSITE_POLICY)
     assert organic_system.measures_pages(organic_system.POLICY)
-    # v5 is byte for byte what main shipped: its steps, its children and its report text.
-    assert digest(organic_system.REFRESH_POLICY) == V5_DIGEST
-    v5 = organic_system.policy_steps(organic_system.REFRESH_POLICY)
-    assert (v5["technical"], v5["delivery"]) == ("organic.technical_fix", "content.deliver")
-    assert not organic_system.writes_with_website_change(organic_system.REFRESH_POLICY)
-    assert boundaries(False)[2] == V5_BOUNDARIES
-    for policy in (
-        organic_system.REFRESH_POLICY,
-        organic_system.WEBSITE_POLICY,
-        organic_system.POLICY,
-    ):
-        assert organic_system.drafts_articles(policy) and organic_system.refreshes_pages(policy)
     assert organic_system.child_executor("website.change") == "codex.procedure"
 
 
@@ -273,15 +249,10 @@ def test_the_v6_ceiling_still_covers_its_children():
     website = next(w for w in BUILTIN_WORKFLOWS if w.key == "website.change").definition
     inputs = {"keyword_max_cost_usd": 2, "technical_fix": True, "content_delivery": "auto"}
     v8 = service_terms(recipe, inputs=inputs)["maximum_nanos"]
-    v7, v6, v5 = (
+    v7, v6 = (
         service_terms({**recipe, "organic_system_policy": policy}, inputs=inputs)["maximum_nanos"]
-        for policy in (
-            organic_system.MEASUREMENT_POLICY,
-            organic_system.WEBSITE_POLICY,
-            organic_system.REFRESH_POLICY,
-        )
+        for policy in (organic_system.MEASUREMENT_POLICY, organic_system.WEBSITE_POLICY)
     )
-    assert v6 == v5
     # v7 adds Page decisions' $1 share; the snapshot makes no model call.
     assert v7 == v6 + 1_000_000_000
     # v8 has its own calibrated ceiling (2026-10-08): the keyword limit + $12 + $3 for each of
@@ -364,17 +335,15 @@ async def test_v6_budget_admits_website_change_for_its_writer_steps_only(billed)
 
         for step in ("technical", "delivery"):
             assert await f.billing.valid_child(conn, system, child(step), website)
-        # Not under another step's key, not a definition the recipe did not pin, and not the
-        # workflows v6 replaced.
+        # Not under another step's key, and not a definition the recipe did not pin.
         assert not await f.billing.valid_child(conn, system, child("draft"), website)
         assert not await f.billing.valid_child(
             conn, system, child("delivery"), {**website, "title": "Changed"}
         )
-        for replaced in ("content.deliver", "organic.technical_fix"):
-            for step in ("technical", "delivery"):
-                assert not await f.billing.valid_child(
-                    conn, system, child(step), SPECS[replaced].definition
-                )
+        for step in ("technical", "delivery"):
+            assert not await f.billing.valid_child(
+                conn, system, child(step), SPECS["content.generate"].definition
+            )
         assert await f.billing.valid_child(
             conn, system, child("draft"), SPECS["content.generate"].definition
         )

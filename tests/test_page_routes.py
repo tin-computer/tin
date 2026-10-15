@@ -12,7 +12,6 @@ from test_adapted_page_delivery import (
     children,
     clean,
     fixture,
-    pinned_content_deliver,  # noqa: F401  (autouse: the merge tests adapt with content.deliver)
 )
 from test_private_workflows import ACTOR, mcp, structured
 from test_procedure_publication import publication_db as publication_db
@@ -114,7 +113,8 @@ async def test_the_route_is_saved_once_per_project_and_per_page_type(publication
     assert current["path"] == PATH
     assert current["routes"] == {"answer_page": "/guides/{slug}", "article": "/blog/{slug}"}
     run = await answer_page(f)
-    assert await service.route_for(run) == "/guides/{slug}"
+    assert await service.route_for(run, page_type="answer_page") == "/guides/{slug}"
+    assert await service.route_for(run) is None
 
 
 async def test_a_retried_save_replays_after_the_head_moved(publication_db, monkeypatch):
@@ -207,9 +207,6 @@ async def test_until_a_route_is_chosen_the_agent_asks_the_founder(publication_db
         "arguments": {"page_type": "answer_page", "route": "<the route the founder confirmed>"},
     }
     tools = mcp(f, monkeypatch)
-    shown = structured(await tools.call_tool("get_run", {"run_id": str(run.id)}))
-    assert shown["delivery_preview"]["ask_the_founder"]["question"] == ask["question"]
-
     saved = structured(
         await tools.call_tool(
             "save_page_route",
@@ -253,7 +250,7 @@ async def test_approval_pins_the_route_and_tells_the_adaptation(publication_db, 
         actor=ACTOR,
     )
     run = await answer_page(f)
-    await f.delivery.choose(run=run, mode="github_commit", actor=ACTOR, adapt=True)
+    await f.delivery.choose(run=run, mode="github_commit", actor=ACTOR)
     run = await approve_answer_page(f, run)
     await f.activities.deliver_content_draft(str(run.id))
     started = (await children(f, run))[0]

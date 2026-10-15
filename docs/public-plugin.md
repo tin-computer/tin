@@ -83,16 +83,14 @@ Input schemas come from `client_input_schema(entry.definition)`; the project is 
 outside workflow inputs by the shared run service. The public tool inventory combines
 `BUILTIN_WORKFLOWS` and `PUBLIC_WORKFLOWS`:
 26 native workflows plus 16 reviewed published packages, for 42 named starts. Workflows hidden
-from discovery (`visibility.audit`, `organic.technical_fix`, `organic.error_surface`,
-`organic.mention_backlinks`, and `content.answer_page`, whose answer pages `content.generate` now
-drafts) have no start tool; their saved configurations keep running in Tin.
+from discovery (`visibility.audit`, `organic.error_surface` and `organic.mention_backlinks`)
+have no start tool; their saved configurations keep running in Tin.
 Package schemas are read through the same safe manifest decoder used by catalog
 publication. No package code runs during discovery, and unregistered folders,
 `example.*` packages and private `custom.*` workflows are not exposed.
 
-Within the reviewed scope, four catalog entries lack a standalone start: `growth.onboarding`,
-`growth.onboarding_plan` and `project.task` are outside this plugin's scope;
-`content.deliver` is retired for new work (approvals start website.change). New entries
+Within the reviewed scope, three catalog entries lack a standalone start: `growth.onboarding`,
+`growth.onboarding_plan` and `project.task` are outside this plugin's scope. New entries
 still require explicit reviewed presentation metadata; registration does not silently
 expand the public callable surface.
 
@@ -132,10 +130,8 @@ falls outside the reviewed public contract, exclude it explicitly from public ex
 before release; never silently move a saved configuration to a newer revision.
 
 Style capture takes an existing, explicitly user-selected sample packet in project Files.
-organic.technical_fix is hidden (Emre, 10/1: technical fixes go through website.change, which
-this plugin does not expose), so the plugin has no tool that starts, stops or lists technical
-fixes, and `preflight_technical_fix` is gone with organic.technical_fix's retirement for new
-work.
+Technical fixes go through website.change, which this plugin does not expose, so the plugin
+has no tool that starts, stops or lists technical fixes.
 
 There is no generic `start_workflow` escape hatch, client-selected
 executor or dynamic schema-discovery/execution pair.

@@ -127,8 +127,9 @@ async def test_mcp_exposes_personal_project_bootstrap_explicitly() -> None:
         "list_technical_fix_sources",
         "get_technical_fix_source",
         "preflight_technical_fix",
+        "stop_technical_fix",
     } & {tool.name for tool in tools}
-    assert {"stop_organic_system", "stop_technical_fix"} <= {tool.name for tool in tools}
+    assert "stop_organic_system" in {tool.name for tool in tools}
     assert "stop_procedure" in {tool.name for tool in tools}
     assert "delete_project" in {tool.name for tool in tools}
     deletion = next(tool for tool in tools if tool.name == "delete_project")
@@ -210,7 +211,7 @@ async def test_mcp_exposes_personal_project_bootstrap_explicitly() -> None:
     forget = next(tool for tool in tools if tool.name == "forget_person")
     assert forget.annotations.destructive_hint is True
     assert "confirm_name" in forget.input_schema["required"]
-    assert len(tools) == 114
+    assert len(tools) == 113
     assert "refund_billing_payment" not in {tool.name for tool in tools}
     start = next(tool for tool in tools if tool.name == "start_workflow")
     assert "instruction and title are only for project.task" in start.description

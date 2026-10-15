@@ -5,7 +5,6 @@ from pathlib import Path
 from tin_lite.skills import MAX_SKILL_SUITE_BYTES, load_skill_suite
 
 SUITES = {
-    "content.answer_page": "answer-page",
     "visibility.audit": "visibility-audit",
     "project.weekly_brief": "weekly-brief",
     "project.memory": "project-memory",

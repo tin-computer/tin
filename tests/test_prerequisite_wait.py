@@ -29,10 +29,12 @@ from tin_lite.activities import TinActivities
 from tin_lite.activity_lanes import ActivityLaneInterceptor, trusted_task_queue, workflow_runner
 from tin_lite.domain import PREREQUISITE_WAIT_MEMO
 from tin_lite.workflow_prerequisites import PrerequisiteError
-from tin_lite.workflows import AnswerPageWorkflow, ScheduledDispatchWorkflow
+from tin_lite.workflows import CodexProcedureWorkflow, ScheduledDispatchWorkflow
 
-# Answer pages recommend the latest organic audit, whose fixed questions they answer.
-ANSWER = ("organic.audit", "content.answer_page")
+# Page refreshes recommend the latest organic audit, whose page findings they act on.
+REFRESH = ("organic.audit", "content.refresh")
+# The refresh also recommends the style guide; the project holds one so only the audit is open.
+STYLE = {".agents/skills/writing-style/SKILL.md": b"# Writing style\n"}
 
 
 async def running_run(f, key, inputs, *, status="running"):
@@ -63,8 +65,8 @@ def activities(f):
     return TinActivities(database=f.db, storage=f.storage, sandboxes=None, settings=f.settings)
 
 
-async def test_answer_page_waits_for_a_running_audit_then_reads_it(publication_db, monkeypatch):
-    f = await project_fixture(publication_db, extra=ANSWER)
+async def test_page_refresh_waits_for_a_running_audit_then_reads_it(publication_db, monkeypatch):
+    f = await project_fixture(publication_db, files=STYLE, extra=REFRESH)
     audit = await running_run(
         f, "organic.audit", {"site_url": "https://example.com/", "market": "US"}
     )
@@ -72,7 +74,7 @@ async def test_answer_page_waits_for_a_running_audit_then_reads_it(publication_d
     started = structured(
         await tools.call_tool(
             "start_workflow",
-            {"project_id": str(f.project.id), "workflow_id": "content.answer_page"},
+            {"project_id": str(f.project.id), "workflow_id": "content.refresh"},
         )
     )
     note = (
@@ -112,9 +114,9 @@ async def test_answer_page_waits_for_a_running_audit_then_reads_it(publication_d
 async def test_recommended_prerequisite_says_when_the_run_goes_without_it(
     publication_db, monkeypatch
 ):
-    f = await project_fixture(publication_db, extra=ANSWER)
+    f = await project_fixture(publication_db, files=STYLE, extra=REFRESH)
     tools = server(f, monkeypatch)
-    args = {"project_id": str(f.project.id), "workflow_id": "content.answer_page"}
+    args = {"project_id": str(f.project.id), "workflow_id": "content.refresh"}
     # Nothing is running and nothing succeeded: the start says so and does not wait.
     started = structured(await tools.call_tool("start_workflow", args))
     assert started["prerequisite_notes"] == [
@@ -219,7 +221,7 @@ async def test_workflow_that_cannot_wait_names_the_running_prerequisite(
 # ---------------------------------------------------------------- Temporal
 
 
-async def test_answer_page_holds_in_temporal_until_its_prerequisite_finishes(
+async def test_procedure_holds_in_temporal_until_its_prerequisite_finishes(
     temporal_env, monkeypatch
 ):
     # Unsandboxed, so the short test timings below reach the workflow code.
@@ -252,14 +254,14 @@ async def test_answer_page_holds_in_temporal_until_its_prerequisite_finishes(
             if name == "dispatch_scheduled_workflow":
                 return {
                     "run_id": waited,
-                    "executor": "content.answer_page",
-                    "temporal_workflow_id": f"content.answer_page:{waited}",
+                    "executor": "codex.procedure",
+                    "temporal_workflow_id": f"codex.procedure:{waited}",
                     "prerequisite_wait": [str(uuid4())],
                 }
-            if name == "request_answer_page_review":
-                return False
-            if name == "project_answer_page_failure":
-                reasons.append(value["reason"])
+            if name == "prepare_codex_procedure":
+                return True  # Handled in preparation: the run ends without compute.
+            if name == "project_codex_procedure_failure":
+                reasons.append((value["kind"], value["reason"]))
             return None
 
         return execute
@@ -267,11 +269,9 @@ async def test_answer_page_holds_in_temporal_until_its_prerequisite_finishes(
     names = [
         "dispatch_scheduled_workflow",
         "prerequisite_wait",
-        "draft_answer_page",
-        "request_answer_page_review",
-        "record_answer_page_approval",
-        "project_answer_page_result",
-        "project_answer_page_failure",
+        "prepare_codex_procedure",
+        "project_codex_procedure_result",
+        "project_codex_procedure_failure",
         "deliver_content_draft",
     ]
     stubs = [stub(name) for name in names]
@@ -280,7 +280,7 @@ async def test_answer_page_holds_in_temporal_until_its_prerequisite_finishes(
         Worker(
             temporal_env.client,
             task_queue=queue,
-            workflows=[AnswerPageWorkflow, ScheduledDispatchWorkflow],
+            workflows=[CodexProcedureWorkflow, ScheduledDispatchWorkflow],
             workflow_runner=UnsandboxedWorkflowRunner(),
             activities=stubs,
             interceptors=[ActivityLaneInterceptor()],
@@ -295,43 +295,43 @@ async def test_answer_page_holds_in_temporal_until_its_prerequisite_finishes(
         await asyncio.wait_for(dispatch.result(), 20)
         for run_id, memo in ((plain, None), (limited, [str(uuid4())])):
             handle = await client.start_workflow(
-                AnswerPageWorkflow.run,
+                CodexProcedureWorkflow.run,
                 run_id,
-                id=f"content.answer_page:{run_id}",
+                id=f"codex.procedure:{run_id}",
                 task_queue=queue,
                 **({"memo": {PREREQUISITE_WAIT_MEMO: memo}} if memo else {}),
             )
             await asyncio.wait_for(handle.result(), 20)
             histories.append(await handle.fetch_history())
         failing = await client.start_workflow(
-            AnswerPageWorkflow.run,
+            CodexProcedureWorkflow.run,
             refused,
-            id=f"content.answer_page:{refused}",
+            id=f"codex.procedure:{refused}",
             task_queue=queue,
             memo={PREREQUISITE_WAIT_MEMO: [str(uuid4())]},
         )
         with pytest.raises(WorkflowFailureError):
             await asyncio.wait_for(failing.result(), 20)
         histories.append(await failing.fetch_history())
-        child = client.get_workflow_handle(f"content.answer_page:{waited}")
+        child = client.get_workflow_handle(f"codex.procedure:{waited}")
         histories += [await dispatch.fetch_history(), await child.fetch_history()]
 
     def order(run_id):
         return [name for name, run in events if run == run_id]
 
-    # The child polled three times, and only then drafted the page.
-    assert order(waited)[:4] == ["prerequisite_wait"] * 3 + ["draft_answer_page"]
+    # The child polled three times, and only then prepared the procedure.
+    assert order(waited)[:4] == ["prerequisite_wait"] * 3 + ["prepare_codex_procedure"]
     # An ordinary start carries no memo and never touches the wait.
-    assert order(plain)[0] == "draft_answer_page" and "prerequisite_wait" not in order(plain)
+    assert order(plain)[0] == "prepare_codex_procedure" and "prerequisite_wait" not in order(plain)
     # The time limit reaches the activity as final, which then settles the wait.
-    assert finals[0] is False and finals[-1] is True and "draft_answer_page" in order(limited)
+    assert finals[0] is False and finals[-1] is True and "prepare_codex_procedure" in order(limited)
     # A refused wait fails the run before any work, through the usual failure projection.
-    assert order(refused) == ["prerequisite_wait", "project_answer_page_failure"]
-    assert reasons == ["PrerequisiteMissing: This run stopped before doing any work."]
+    # The founder reads Tin's own refusal, as something they can act on.
+    assert reasons == [("needs_you", "This run stopped before doing any work.")]
     monkeypatch.undo()  # Replay with the shipped timings, in the production sandbox.
     for history in histories:
         await Replayer(
-            workflows=[AnswerPageWorkflow, ScheduledDispatchWorkflow],
+            workflows=[CodexProcedureWorkflow, ScheduledDispatchWorkflow],
             workflow_runner=workflow_runner(),
             interceptors=[ActivityLaneInterceptor()],
         ).replay_workflow(history)

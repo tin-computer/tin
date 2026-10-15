@@ -80,7 +80,7 @@ code-workflow runtime provide storage and execution.
 Saved configurations and runs keep their pinned definitions. Version 1 retains its
 approved-article contract, and version 2 retains its article inputs and fixed
 `reports/SOCIAL_POST_BATCH.md` output. New version 3 configurations use the two modes
-and dated files. `content.deliver` keeps its separate exact-approved-copy contract
+and dated files. `website.change` keeps its separate exact-approved-copy contract
 for creating an external GitHub PR.
 
 ## Verification

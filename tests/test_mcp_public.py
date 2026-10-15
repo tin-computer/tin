@@ -555,7 +555,7 @@ async def test_stop_reuses_normal_control_and_cannot_stop_a_private_run(fixture,
 
 async def test_revision_delegates_the_exact_review_token_and_retry_key(fixture, monkeypatch):
     f = fixture
-    article = next(w for w in BUILTIN_WORKFLOWS if w.key == "content.public_article")
+    article = next(w for w in BUILTIN_WORKFLOWS if w.key == "content.generate")
     f.run.workflow_id = article.id
     f.run.executor = article.executor
     f.run.review_version = 2
@@ -617,7 +617,7 @@ def test_reviewed_public_catalog_coverage_and_explicit_exclusions():
     from tin_lite.public_workflows import PUBLIC_WORKFLOWS
 
     entries = published_workflows()
-    assert len(entries) == 43
+    assert len(entries) == 42
     assert {w.key for w in PUBLIC_WORKFLOWS if w.id not in entries} == {
         "social.x_compose",
         "competitor.sunset_rescue",
@@ -636,11 +636,8 @@ def test_reviewed_public_catalog_coverage_and_explicit_exclusions():
     assert {w.key for w in BUILTIN_WORKFLOWS if w.id not in entries} == {
         "connections.collect",
         "visibility.audit",
-        "content.deliver",
         "website.change",
-        "organic.technical_fix",
         "content.refresh",
-        "content.answer_page",
         "social.x_revise",
         "social.x_draft",
         "social.x_style",

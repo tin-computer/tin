@@ -1,6 +1,6 @@
 """Where a project's adapted pages live on its site, chosen once by the founder.
 
-Answer pages and public articles have no route until Tin adapts one to the site. Rather than
+Answer pages have no route until Tin adapts one to the site. Rather than
 let each adaptation pick a folder, the coding agent asks the founder once per page type,
 suggests a route from the site it can read, and saves the answer here. Approval pins the
 saved route into the adaptation's instructions, and a commit-to-main setting may then merge
@@ -17,14 +17,8 @@ from uuid import UUID
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator
 
-from tin_lite.content_delivery import ANSWER_PAGE_WORKFLOW_ID, PUBLIC_ARTICLE_WORKFLOW_ID
-
 PATH = "content/page-routes.json"
 PageType = Literal["answer_page", "article"]
-PAGE_TYPES: dict[UUID, PageType] = {
-    ANSWER_PAGE_WORKFLOW_ID: "answer_page",
-    PUBLIC_ARTICLE_WORKFLOW_ID: "article",
-}
 # How a founder would call these pages. "Answer page" is Tin's name, not a reader's.
 NOUNS: dict[str, str] = {
     "answer_page": "pages that answer buyer questions",
@@ -53,10 +47,6 @@ class PageRoutes(BaseModel):
                     "letters, digits and hyphens, at most three folders."
                 )
         return routes
-
-
-def page_type(run: Any) -> PageType | None:
-    return PAGE_TYPES.get(getattr(run, "workflow_id", None))
 
 
 def matches(pattern: str, address: str | None) -> bool:
@@ -134,9 +124,9 @@ class PageRouteService:
         return {"revision": revision, "path": PATH, "routes": dict(routes.routes)}
 
     async def route_for(self, run: Any, *, page_type: PageType | None = None) -> str | None:
-        """The saved route for the run's page type: its workflow's, or `page_type` (a
-        content.generate answer page passes "answer_page")."""
-        kind = page_type or PAGE_TYPES.get(getattr(run, "workflow_id", None))
+        """The saved route for `page_type` (a content.generate answer page passes
+        "answer_page"); None without one."""
+        kind = page_type
         if kind is None:
             return None
         try:

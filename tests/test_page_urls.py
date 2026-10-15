@@ -9,10 +9,7 @@ import pytest
 
 from tin_lite import content_draft
 from tin_lite import page_urls as pages
-from tin_lite.content_delivery import (
-    ANSWER_PAGE_WORKFLOW_ID,
-    DRAFT_WORKFLOW_ID,
-)
+from tin_lite.content_delivery import DRAFT_WORKFLOW_ID
 from tin_lite.content_repository_delivery import status_projection, validate_copy
 from tin_lite.domain import RunStatus
 
@@ -20,7 +17,7 @@ NOW = datetime(2026, 9, 28, 12, 0, tzinfo=UTC)
 PR = {"url": "https://github.com/owner/site/pull/7", "number": 7, "repository": "owner/site"}
 
 
-def run(workflow_id=ANSWER_PAGE_WORKFLOW_ID, **extra):
+def run(workflow_id=DRAFT_WORKFLOW_ID, **extra):
     values = {
         "id": uuid4(),
         "project_id": uuid4(),
@@ -47,21 +44,18 @@ def base(**extra):
 
 
 class FakeDB:
-    def __init__(self, receipts=None, site_runs=()):
+    def __init__(self, receipts=None):
         self.receipts = dict(receipts or {})
-        self.site_runs = list(site_runs)
         self.pool = self
 
     async def fetch(self, sql, *args):
-        if "FROM effect_receipts" in sql:
-            keys, operation = args
-            return [
-                {"execution_key": k, "result": json.dumps(v[1])}
-                for k, v in self.receipts.items()
-                if k in keys and v[0] == operation
-            ]
-        assert "FROM workflow_runs" in sql
-        return [{"executor": e, "input": json.dumps(i)} for e, i in self.site_runs]
+        assert "FROM effect_receipts" in sql
+        keys, operation = args
+        return [
+            {"execution_key": k, "result": json.dumps(v[1])}
+            for k, v in self.receipts.items()
+            if k in keys and v[0] == operation
+        ]
 
     async def execute(self, sql, key, operation, result):
         assert "ON CONFLICT (execution_key) DO UPDATE" in sql
@@ -167,9 +161,7 @@ def test_the_address_comes_from_the_plan_or_a_labelled_slug():
         "source": "title_slug",
         "final": False,
     }
-    answer = pages.base_for(run(), site="https://example.com/")
-    assert answer["url"] == "https://example.com/which-tools-work-with-coding-agents"
-    assert pages.base_for(run(), site=None) is None
+    assert pages.base_for(draft, selection=None) is None
 
 
 def test_without_github_the_page_is_proposed_and_published_outside_tin():
@@ -379,14 +371,6 @@ async def test_card_polling_reads_saved_projections_and_never_calls_providers():
     assert views[answer.id]["url"] == base()["url"]
     assert views[draft.id]["url"] == "https://example.com/set-up-the-cli"
     assert len(views) == 2
-
-
-async def test_the_first_view_saves_the_address_from_the_project_site():
-    answer = run()
-    db = FakeDB(site_runs=[("visibility.audit", {"target": "example.com"})])
-    view = await pages.PageUrls(database=db).view(answer, None, now=NOW)
-    assert view["url"] == base()["url"]
-    assert db.saved(answer.id)["base"]["source"] == "title_slug"
 
 
 def test_the_adaptation_records_its_public_route_with_the_copy_proof():

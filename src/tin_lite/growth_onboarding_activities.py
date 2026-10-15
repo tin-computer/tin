@@ -10,10 +10,8 @@ from temporalio import activity
 from temporalio.exceptions import ApplicationError
 
 from tin_lite import analytics, organic_system
-from tin_lite.content_delivery import ContentDelivery, DeliverySettings
 from tin_lite.failures import Failure, classify, failure_projection, split_failure_input
 from tin_lite.growth_onboarding import (
-    CONTENT_DRAFT_KEYS,
     KEY,
     PLAN_BLOCK,
     PLAN_PATH,
@@ -518,13 +516,11 @@ class GrowthOnboardingActivities:
                 await self.db.start_effect(conn, execution_key=action_key, operation=KEY)
                 await self.db.complete_effect(conn, execution_key=action_key, result=outcome)
                 outcomes.append(outcome)
-            delivery = await self._configure_delivery(run, outcomes, head)
             result = {
                 "setup_status": "partial"
                 if any(
                     row.get("status") in {"blocked", "skipped", "declined"}
                     or row.get("first_run_status") == "blocked"
-                    or row.get("delivery_error")
                     for row in outcomes
                 )
                 else "complete",
@@ -534,7 +530,6 @@ class GrowthOnboardingActivities:
                 "details": systems_details(block, systems),
                 "business": project.name,
                 "timezone": timezone,
-                "delivery": delivery,
                 "connections": connections,
                 "control": control,
                 "actions": outcomes,
@@ -683,63 +678,6 @@ class GrowthOnboardingActivities:
             await self.db.complete_effect(conn, execution_key=key, result=result)
             return result
 
-    async def _configure_delivery(self, run, outcomes, head):
-        """Point the scheduled content programs at GitHub when it is connected.
-
-        Drafts otherwise stay in Tin after approval; the report says which it is.
-        """
-        programs = [
-            row
-            for row in outcomes
-            if row.get("status") == "scheduled"
-            and row.get("key") in CONTENT_DRAFT_KEYS
-            and row.get("project_workflow_id")
-        ]
-        if not programs:
-            return None
-        connection = await self.db.get_integration_connection(
-            project_id=run.project_id, provider_key="infra.github"
-        )
-        repository = (
-            connection.configuration.get("selected_repository")
-            if connection is not None and connection.status == "connected"
-            else None
-        )
-        if not repository:
-            return {"mode": "draft_only", "repository": None}
-        settings = DeliverySettings(mode="github_pr", repository=repository)
-        service = ContentDelivery(
-            database=self.db, storage=self.storage, integrations=self.integrations
-        )
-        revision = head
-        configured_programs = []
-        for index, row in enumerate(programs):
-            try:
-                saved = await service.save_settings(
-                    project_id=run.project_id,
-                    program_id=UUID(row["project_workflow_id"]),
-                    settings=settings,
-                    request_id=uuid5(run.id, f"delivery:{index}:{row['key']}"),
-                    expected_revision=revision,
-                    actor=run.started_by_clerk_user_id,
-                    client_id=None,
-                )
-            except Exception:  # one program failing to configure must not stop setup
-                row["delivery_error"] = (
-                    "Pull-request delivery could not be saved; drafts stay in Tin."
-                )
-                row["delivery_mode"] = "draft_only"
-                continue
-            revision = saved.get("revision", revision)
-            row["delivery_mode"] = "github_pr"
-            configured_programs.append(str(row["project_workflow_id"]))
-        return {
-            "mode": "github_pr" if len(configured_programs) == len(programs) else "partial",
-            "repository": repository,
-            "path_pattern": settings.path_pattern,
-            "configured_programs": configured_programs,
-        }
-
     async def _schedule_costs(self, run, setup):
         """Each saved schedule's most runs in a month, per-run maximum and the amount admission
         checks (its estimate, or its whole session budget), plus the weekly articles an organic
@@ -792,7 +730,7 @@ class GrowthOnboardingActivities:
                 child = await self.db.get_run(UUID(action["run_id"]))
                 system = await self.db.get_registry_workflow(organic_system.KEY)
                 weekdays = list((child.input or {}).get("article_weekdays") or [])
-                if not weekdays or not organic_system.schedules_articles(
+                if not weekdays or not organic_system.runs_recipe(
                     system.definition.get("organic_system_policy")
                 ):
                     continue

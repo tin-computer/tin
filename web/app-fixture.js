@@ -90,13 +90,13 @@ function noted(person) {
 
 export async function serveApp({decisionCount = 4, people = syntheticPeople(), engagers = false} = {}) {
   const project = {id: "project", name: "Example Co", workspace_id: "ws", workspace_name: "Example", member_count: 1, hidden: false};
-  const catalog = [{id: "wf-answer", key: "content.answer_page", title: "Draft an answer page", description: "Draft one answer page for review.", definition: {schedule_modes: ["weekly", "on_demand"]}}];
+  const catalog = [{id: "wf-answer", key: "content.generate", title: "Draft planned content", description: "Draft the next planned page for review.", definition: {schedule_modes: ["weekly", "on_demand"]}}];
   // The workflow that finds people is offered only to some projects; People shows with it.
   if (engagers) catalog.push({id: "wf-engagers", key: "social.linkedin_engagers", title: "People who engaged with your LinkedIn posts", description: "Who reacted to your LinkedIn posts.", definition: {schedule_modes: ["daily", "on_demand"]}});
-  const projectWorkflows = [{id: "cfg-1", workflow_id: "wf-answer", name: "Draft an answer page", status: "active", schedule: {cadence: "weekly", weekdays: ["tuesday"], local_time: "10:00", timezone: "UTC"}, inputs: {}, created_at: "2026-09-20T00:00:00Z"}];
-  const runs = Array.from({length: decisionCount}, (_, index) => ({id: `run-${index}`, workflow_id: "wf-answer", workflow_name: "content.answer_page", status: "needs_input", created_at: `2026-09-2${index}T10:00:00Z`, artifact_path: "reports/answers/page-1.md", canonical_commit_sha: revision}));
+  const projectWorkflows = [{id: "cfg-1", workflow_id: "wf-answer", name: "Draft planned content", status: "active", schedule: {cadence: "weekly", weekdays: ["tuesday"], local_time: "10:00", timezone: "UTC"}, inputs: {}, created_at: "2026-09-20T00:00:00Z"}];
+  const runs = Array.from({length: decisionCount}, (_, index) => ({id: `run-${index}`, workflow_id: "wf-answer", workflow_name: "content.generate", status: "needs_input", created_at: `2026-09-2${index}T10:00:00Z`, artifact_path: "reports/answers/page-1.md", canonical_commit_sha: revision}));
   const decisions = runs.map((run, index) => ({
-    id: `decision-${index}`, run_id: run.id, project_id: project.id, workflow_key: "content.answer_page", workflow_title: "Draft an answer page",
+    id: `decision-${index}`, run_id: run.id, project_id: project.id, workflow_key: "content.generate", workflow_title: "Draft planned content",
     kind: "review", title: `Review answer page ${index + 1}`, explanation: "The draft answers which marketing tools work with coding agents. Read it, then approve it or ask for changes.",
     consequence: "Approving keeps the draft in Files.", items: [{file: run.artifact_path, revision, title: `Answer page ${index + 1}`}], created_at: run.created_at,
   }));

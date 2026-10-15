@@ -957,25 +957,6 @@ def execute() -> int:
                 proc.kill()
 
 
-def trusted_verifier(context, command):
-    # These two root-owned, offline parsers need the controller's pinned baseline
-    # and result, not repository code execution. Private commands never gain this path.
-    if context.get("workflow_key") != "organic.technical_fix":
-        return None
-    return {
-        "python3 /opt/tin-lite/verify-technical-title.py": [
-            "/usr/local/bin/python3",
-            "-I",
-            "/opt/tin-lite/verify-technical-title.py",
-        ],
-        "/opt/tin-lite/metadata-venv/bin/python -I /opt/tin-lite/verify-technical-metadata.py": [
-            "/opt/tin-lite/metadata-venv/bin/python",
-            "-I",
-            "/opt/tin-lite/verify-technical-metadata.py",
-        ],
-    }.get(command)
-
-
 def main() -> int:
     if not ISOLATED:
         return execute()
@@ -990,16 +971,12 @@ def main() -> int:
         stdout=subprocess.DEVNULL,
         stderr=subprocess.DEVNULL,
     )
-    trusted = []
     try:
         # Bounded readiness is subsequently verified by environment/add, not this delay.
         time.sleep(0.2)
         result = execute()
         context = _decode_context()
         for command in context.get("verification", {}).get("commands", []):
-            if argv := trusted_verifier(context, command):
-                trusted.append(argv)
-                continue
             subprocess.run(  # noqa: S603 — helper executes verification only after dropping UID
                 [*ISOLATION_HELPER, "verify", command], check=True, timeout=310
             )
@@ -1010,15 +987,6 @@ def main() -> int:
             remote.wait(timeout=5)
         except subprocess.TimeoutExpired:
             remote.kill()
-    # Only after freezing the checkout: no author process can race trusted reads.
-    for argv in trusted:
-        env = {
-            key: os.environ[key]
-            for key in ("TIN_PROCEDURE_CONTEXT_PATH", "TIN_PROCEDURE_CONTEXT_B64")
-            if key in os.environ
-        }
-        env["PATH"] = "/usr/local/bin:/usr/bin:/bin"
-        subprocess.run(argv, check=True, timeout=310, cwd=WORKSPACE, env=env, capture_output=True)  # noqa: S603
     return result
 
 

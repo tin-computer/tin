@@ -6,7 +6,7 @@ from uuid import UUID
 
 from temporalio.exceptions import WorkflowAlreadyStartedError
 
-from tin_lite import content_draft, content_plan, organic_system, technical_fix
+from tin_lite import content_draft, content_plan, organic_system
 from tin_lite.domain import PREREQUISITE_WAIT_MEMO, RunStatus, Workflow, WorkflowRun
 from tin_lite.executor_gates import (
     google_ads_gate,
@@ -76,12 +76,6 @@ class TemporalStartError(RuntimeError):
 
 # Workflows retired for new work, with where the work goes instead.
 RETIRED = {
-    # website.change (source audit) runs the same repair with a founder decision per fix.
-    technical_fix.KEY: (
-        "organic.technical_fix is retired. Fix an audit's findings with website.change: "
-        "call preflight_website_change (source audit), let the founder approve the changes, "
-        "then start website.change with source audit."
-    ),
     # Its triggers repeated the audit's orphan and competing-page checks, and nothing read
     # its page tree, URL rules or navigation; page decisions plan redirects and noindex.
     "organic.site_architecture": (
@@ -93,12 +87,6 @@ RETIRED = {
     "content.blog_index": (
         "content.blog_index is retired. website.change adds each published article to the "
         "site's own index, and the organic audit reports posts nothing links to."
-    ),
-    # website.change (source content_draft) adapts the same approved page, with protected
-    # pages and the required-checks merge rule; approvals start it.
-    "content.deliver": (
-        "content.deliver is retired. Put an approved page on the site with website.change: "
-        "start it with source content_draft, source_run_id and expected_repository."
     ),
 }
 RETIRED_WEBSITE_SOURCES = {
@@ -139,7 +127,6 @@ async def start_workflow_run(
     _review_transition: dict[str, Any] | None = None,
     _organic_parent_run_id: UUID | None = None,
     _system_step: bool = False,
-    _approval_delivery: bool = False,
     _x_publication: bool = False,
     _linkedin_publication: bool = False,
     _linkedin_listen: bool = False,
@@ -471,66 +458,6 @@ async def start_workflow_run(
             )
         except ValueError as exc:
             raise WorkflowInputError(public_error_text(exc, INPUT_FALLBACK)) from exc
-    if workflow.key == technical_fix.KEY and technical_fix.batches(
-        technical_fix.definition_policy(workflow.definition)
-    ):
-        from tin_lite.technical_fix_sources import TechnicalFixError, TechnicalFixSources
-
-        try:
-            preview = await TechnicalFixSources(
-                database=runtime.database,
-                storage=runtime.storage,
-                integrations=runtime.integrations,
-                supported_checks=technical_fix.supported_checks(technical_fix.BATCH_POLICY),
-                batch=True,
-            ).batch(
-                project_id=project_id,
-                audit_run_id=UUID(normalized_inputs["audit_run_id"]),
-                audit_revision=normalized_inputs["audit_revision"],
-                expected_repository=normalized_inputs["expected_repository"],
-                repository_serves_site=normalized_inputs["repository_serves_site"],
-                finding_ids=normalized_inputs.get("finding_ids") or [],
-                decisions=normalized_inputs.get("decisions") or [],
-            )
-        except TechnicalFixError as exc:
-            raise WorkflowInputError(public_error_text(exc, INPUT_FALLBACK)) from exc
-        if not preview["plan"]["repairs"]:
-            waiting = len(preview["decisions_needed"])
-            raise WorkflowInputError(
-                "Nothing in this audit is ready to fix"
-                + (
-                    f": {waiting} finding{'s' if waiting != 1 else ''} wait for a decision. "
-                    "Answer preflight_technical_fix's decisions_needed and pass them as decisions."
-                    if waiting
-                    else "; its findings are copy, manual steps or need no change."
-                )
-            )
-    elif workflow.key == technical_fix.KEY:
-        from tin_lite.technical_fix_sources import TechnicalFixError, TechnicalFixSources
-
-        try:
-            await TechnicalFixSources(
-                database=runtime.database,
-                storage=runtime.storage,
-                integrations=runtime.integrations,
-                supported_checks=technical_fix.supported_checks(
-                    technical_fix.definition_policy(workflow.definition)
-                ),
-            ).preflight(
-                project_id=project_id,
-                audit_run_id=UUID(normalized_inputs["audit_run_id"]),
-                **{
-                    key: normalized_inputs[key]
-                    for key in (
-                        "audit_revision",
-                        "finding_id",
-                        "expected_repository",
-                        "repository_serves_site",
-                    )
-                },
-            )
-        except TechnicalFixError as exc:
-            raise WorkflowInputError(public_error_text(exc, INPUT_FALLBACK)) from exc
     if workflow.executor == organic_system.KEY:
         try:
             organic_system.check_inputs(normalized_inputs)
@@ -646,21 +573,6 @@ async def start_workflow_run(
                 ):
                     raise WorkflowInputError(public_error_text(exc, INPUT_FALLBACK)) from exc
 
-    if workflow.id == content_repository_delivery.WORKFLOW_ID and existing is None:
-        try:
-            create_arguments[
-                "content_delivery_source"
-            ] = await content_repository_delivery.select_source(
-                database=runtime.database,
-                storage=runtime.storage,
-                integrations=runtime.integrations,
-                project_id=project_id,
-                inputs=normalized_inputs,
-                # Internal: an approval's own start carries the founder's delivery setting.
-                approval=_approval_delivery,
-            )
-        except (ValueError, LookupError, IntegrationError) as exc:
-            raise WorkflowInputError(public_error_text(exc, INPUT_FALLBACK)) from exc
     if workflow.id == content_repository_delivery.WEBSITE_CHANGE_ID and existing is None:
         from tin_lite import website_change
 
@@ -750,7 +662,6 @@ async def start_workflow_run(
     except ValueError as exc:
         if workflow.key in {
             content_draft.KEY,
-            content_repository_delivery.KEY,
             "website.change",
         } or (
             workflow.executor == "workflow.code"

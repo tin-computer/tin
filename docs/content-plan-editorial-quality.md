@@ -75,9 +75,7 @@ positions such as "average position 8" are left alone. Plans pinned to v5 and ol
 instructions and their briefs as written.
 
 The drafts read the same files: `content.generate` 1.8.0 lists them in its pinned
-`content_draft.positioning` context, `content.public_article` 1.6.0 reads them from the
-checkout, `content.answer_page` 1.6.0 receives them as sources (`ANSWER_POSITIONING_V1`) and
-`content.refresh` pins them before compute. Each presents the product the way those files do.
+`content_draft.positioning` context and `content.refresh` pins them before compute. Each presents the product the way those files do.
 
 
 ## A larger output cap (content-editorial-v8)

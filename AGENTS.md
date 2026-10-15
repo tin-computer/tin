@@ -224,19 +224,18 @@ outside marketing, or were written without ever being run. Full rules:
   linked in product context, never inserted into article copy. Raw files are untrusted;
   preserve safe download, sandbox and preview behavior.
 - Approved GitHub delivery follows the project's delivery setting through the selected
-  integration: an unmerged PR, or a commit to main. Approved pages (planned articles, answer
-  pages, public articles) reach the site through website.change; a page refresh changes exactly
+  integration: an unmerged PR, or a commit to main. Approved pages (planned articles and
+  answer pages) reach the site through website.change; a page refresh changes exactly
   its approved lines. Tin merges its own adaptation PR only when
   the setting is commit to main, the PR adds nothing but the approved page (or the page at the
   route the founder chose for such pages, with the site code that serves it) and GitHub reports
   it clean. Without GitHub, approved Markdown remains in Files. Approval is not website publication.
   Email-send approval, recipients and pacing are a separate contract.
 - `website.change` puts approved changes on a founder's site: approved pages, the technical
-  fixes the latest audit found (`source: audit`; organic.technical_fix refuses new starts and
-  is kept only for pinned runs, retries and saved schedules), planned redirects and noindex
-  changes (`planned`). organic.site_architecture, content.blog_index and the `blog_index` source
+  fixes the latest audit found (`source: audit`; organic.technical_fix is gone), planned
+  redirects and noindex changes (`planned`). organic.site_architecture, content.blog_index and the `blog_index` source
   refuse new starts and are kept only for pinned runs. Approved pages reach it from their
-  approval (content.deliver refuses new starts, the same way). Deleting a page stays with the
+  approval (content.deliver is gone). Deleting a page stays with the
   founder. Change rows
   are decided in Decisions or over MCP. It merges its own PR only for a change with a recorded
   approval in Postgres (a page's review that names its approver, with commit to main, or an

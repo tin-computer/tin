@@ -142,7 +142,7 @@ editing a package alone does not replace an already saved definition.
 
 Reading a file does not prove that someone approved its current contents. A workflow that
 publishes, sends or applies reviewed changes must keep that action's approval contract.
-For example, `content.deliver` still selects an exact approved article before creating a
+For example, `website.change` still selects an exact approved page before creating a
 GitHub PR. Those delivery checks do not restrict ordinary project-file reading.
 
 ## Verification

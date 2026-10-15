@@ -539,25 +539,10 @@ WORKFLOW_EXPECTATIONS: dict[str, dict[str, str]] = {
             "a refreshed page waits six weeks before its next refresh"
         ),
     },
-    "content.deliver": {
-        "first": "after an approved source article and repository are selected",
-        "lands": "your GitHub repository, as an unmerged pull request",
-        "watch": "review and merge the PR; publication depends on your site",
-    },
     "website.change": {
         "first": "after an approved page, or the latest audit's fixes, and the repository",
         "lands": "your GitHub repository: merged when you approved the change, else a PR",
         "watch": "approve or decline each audit fix once; protected pages wait for your merge",
-    },
-    "content.answer_page": {
-        "first": "about ten minutes after an organic audit",
-        "lands": "Decisions, as a draft to review",
-        "watch": "publish what you approve; search impressions follow in weeks",
-    },
-    "content.public_article": {
-        "first": "about fifteen minutes",
-        "lands": "Decisions, as a draft to review",
-        "watch": "one article per run; cadence is yours",
     },
     "site.health_improve": {
         "first": "about an hour",
@@ -786,8 +771,6 @@ WEEKDAY_NAMES = {
     "sunday": "Sunday",
 }
 
-CONTENT_DRAFT_KEYS = frozenset({"content.answer_page", "content.public_article"})
-
 
 def _when(action: dict[str, Any]) -> str:
     days = [WEEKDAY_NAMES.get(str(d).lower(), str(d)) for d in action.get("weekdays") or []]
@@ -818,17 +801,8 @@ def _local_date(value: Any, timezone: Any) -> str:
     return moment.replace(tzinfo=moment.tzinfo or UTC).astimezone(zone).date().isoformat()
 
 
-def _lands(action: dict[str, Any], delivery: dict[str, Any] | None) -> str:
-    lands = expectation(action["key"])["lands"]
-    if action["key"] in CONTENT_DRAFT_KEYS:
-        mode = action.get("delivery_mode") or (delivery or {}).get("mode")
-        where = (delivery or {}).get("repository") or "your repository"
-        if mode == "github_pr":
-            return f"Decisions, as a draft; your yes opens a pull request in {where}"
-        if mode == "github_commit":
-            return f"Decisions, as a draft; your yes publishes it to {where}"
-        return "Decisions, as a draft; approved copy stays in Tin"
-    return lands
+def _lands(action: dict[str, Any]) -> str:
+    return expectation(action["key"])["lands"]
 
 
 def founder_words(setup: dict[str, Any], *, titles: dict[str, str]) -> dict[str, Any]:
@@ -843,7 +817,6 @@ def founder_words(setup: dict[str, Any], *, titles: dict[str, str]) -> dict[str,
     actions = setup["actions"]
     links = setup["links"]
     details = setup.get("details") or {"names": [], "summary": "", "outlook": {}}
-    delivery = setup.get("delivery")
     started = [a for a in actions if a.get("status") == "started"]
     scheduled = [a for a in actions if a.get("status") == "scheduled"]
     not_running = [a for a in actions if a.get("status") in {"declined", "blocked", "skipped"}]
@@ -853,7 +826,6 @@ def founder_words(setup: dict[str, Any], *, titles: dict[str, str]) -> dict[str,
         for a in actions
         if a.get("status") in {"blocked", "skipped", "declined"}
         or a.get("first_run_status") == "blocked"
-        or a.get("delivery_error")
     ]
 
     def title(action: dict[str, Any]) -> str:
@@ -879,9 +851,7 @@ def founder_words(setup: dict[str, Any], *, titles: dict[str, str]) -> dict[str,
         lines.append(details["summary"])
     lines.append("")
     for a in scheduled:
-        lines.append(
-            f"- {_when(a)[0].upper()}{_when(a)[1:]}: {title(a)}. Lands in {_lands(a, delivery)}."
-        )
+        lines.append(f"- {_when(a)[0].upper()}{_when(a)[1:]}: {title(a)}. Lands in {_lands(a)}.")
         if a.get("first_run_status") == "blocked":
             lines.append(
                 f"  The schedule is active, but its first run was not admitted: {a['reason']}"
@@ -1065,7 +1035,6 @@ def render_report(setup: dict[str, Any], *, titles: dict[str, str]) -> str:
     names = details.get("names") or []
     scheduled = [a for a in actions if a.get("status") == "scheduled"]
     started = [a for a in actions if a.get("status") == "started"]
-    delivery = setup.get("delivery")
     timezone = setup.get("timezone")
 
     def title(action: dict[str, Any]) -> str:
@@ -1075,7 +1044,6 @@ def render_report(setup: dict[str, Any], *, titles: dict[str, str]) -> str:
     partial = any(
         a.get("status") in {"blocked", "skipped", "declined"}
         or a.get("first_run_status") == "blocked"
-        or a.get("delivery_error")
         for a in actions
     )
     label = "Tin setup needs attention" if partial else "Tin is set up"
@@ -1086,32 +1054,11 @@ def render_report(setup: dict[str, Any], *, titles: dict[str, str]) -> str:
     for a in scheduled:
         lines.append(
             f"- **{title(a)}**, {_when(a)}; next on {_local_date(a.get('next_run_at'), timezone)}. "
-            f"Lands in {_lands(a, delivery)}."
+            f"Lands in {_lands(a)}."
         )
     for a in started:
         first = expectation(a["key"])["first"]
         lines.append(f"- **{title(a)}**, once, running now; first result in {first}.")
-    if delivery:
-        mode = delivery.get("mode")
-        lines += ["", "## How drafts ship", ""]
-        if mode == "github_pr":
-            lines.append(
-                f"Approved drafts open a pull request in {delivery.get('repository')} under "
-                f"{delivery.get('path_pattern', 'content/blog/{slug}.md')}; you merge them."
-            )
-        elif mode == "github_commit":
-            lines.append(f"Approved drafts publish straight to {delivery.get('repository')}.")
-        elif mode == "partial":
-            lines.append(
-                "Pull-request delivery was saved for only some workflows. "
-                "See each workflow's destination above; the others keep drafts in Tin."
-            )
-        else:
-            lines.append(
-                "Approved drafts stay in Tin. Connect the website repository and configure "
-                "pull-request delivery to send approved copy to GitHub. "
-                "Nothing merges automatically."
-            )
     lines += ["", f"Plan revision: `{setup['plan_revision']}`.", ""]
     words = founder_words(setup, titles=titles)
     lines += [

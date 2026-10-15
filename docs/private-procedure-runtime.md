@@ -18,7 +18,7 @@ publication or PR that has started. It does not activate private packages yet.
 ## Implemented
 
 - `POST /api/workflows/runs/{run_id}/stop-procedure` and MCP `stop_procedure` use one
-  membership-gated service. The existing technical-fix control delegates to it. Task controls,
+  membership-gated service. Task controls,
   native workflows and review gates retain their existing semantics.
 - The service binds the exact run/project/generation, serializes duplicate requests, then
   takes the same non-blocking publication lock as delivery. A publication receipt, canonical

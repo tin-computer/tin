@@ -20,7 +20,6 @@ from tin_lite.domain import (
     EMAIL_SHORTLIST_WORKFLOW_NAME,
     PRODUCT_CODE_MAP_WORKFLOW_NAME,
     PRODUCT_DEEP_DIVE_WORKFLOW_NAME,
-    PUBLIC_ARTICLE_WORKFLOW_NAME,
     QA_PRODUCT_AUDIT_WORKFLOW_NAME,
     QA_SIGNUP_WALKTHROUGH_WORKFLOW_NAME,
     RESEARCH_DEEP_DIVE_WORKFLOW_NAME,
@@ -104,14 +103,8 @@ def test_procedure_sandbox_template_pins_repository_tooling(
     assert calls[3][0] == "run_cmd"
     assert "hatchling==1.32.0" in calls[3][1][0]
     assert calls[3][1][1] == {"user": "root"}
-    assert (
-        "copy",
-        (
-            "sandbox/verify_technical_metadata.py",
-            "/opt/tin-lite/verify-technical-metadata.py",
-            {"user": "root", "mode": 0o644},
-        ),
-    ) in calls
+    # The single-finding technical verifiers left with organic.technical_fix.
+    assert not any("verify_technical" in str(call) for call in calls)
     config = (ROOT / "sandbox" / "codex_config.toml").read_text()
     assert 'model = "gpt-6-sol"' in config
     assert "OPENAI_API_KEY" not in config
@@ -184,14 +177,11 @@ def test_concrete_procedure_packages_are_pinned_and_ui_renderable() -> None:
     }
 
     assert set(procedures) == {
-        "content.deliver",
         "website.change",
         "content.generate",
         "content.refresh",
         "content.plan_research",
-        "organic.technical_fix",
         RESEARCH_DEEP_DIVE_WORKFLOW_NAME,
-        PUBLIC_ARTICLE_WORKFLOW_NAME,
         SITE_HEALTH_WORKFLOW_NAME,
         EMAIL_SHORTLIST_WORKFLOW_NAME,
         QA_SIGNUP_WALKTHROUGH_WORKFLOW_NAME,
@@ -218,29 +208,6 @@ def test_concrete_procedure_packages_are_pinned_and_ui_renderable() -> None:
     assert research_definition["procedure"]["output"]["path"] == ("reports/RESEARCH_DEEP_DIVE.md")
     assert "human_review" not in research_definition
     assert any(path.endswith("research-deep-dive/SKILL.md") for path in research_files)
-
-    article = procedures[PUBLIC_ARTICLE_WORKFLOW_NAME]
-    article_definition, article_files = article.definition_and_resource_files()
-    assert article_definition["procedure"]["entry_skill"] == "public-article"
-    # Named by the run's date and the start of its ID, so Files lists them by day.
-    assert (
-        article_definition["procedure"]["output"]["path_template"]
-        == "content/articles/{run_folder}.md"
-    )
-    assert article_definition["human_review"] == {
-        "eligible": True,
-        "reason": "Produces a public-facing article draft.",
-        "review_label": "Review article",
-        "defer_label": "Not now",
-        "summary": (
-            "Your public article draft is ready. Review the claims and copy before Tin marks the "
-            "workflow complete; otherwise it stays safely on hold."
-        ),
-        "queue_clause": "Public article draft ready to finish",
-        "revision_adapter": "content-revision.v1",
-    }
-    assert any(path.endswith("public-article/SKILL.md") for path in article_files)
-    assert any(path.endswith("public-article-edit/SKILL.md") for path in article_files)
 
     site_health = procedures[SITE_HEALTH_WORKFLOW_NAME]
     site_definition, site_files = site_health.definition_and_resource_files()
@@ -421,18 +388,6 @@ def test_concrete_procedure_packages_are_pinned_and_ui_renderable() -> None:
         "audience": "Project founders and decision-makers",
         "known_assumptions": "",
         "constraints": "",
-    }
-    assert normalize_workflow_inputs(
-        schema=article_definition["input_schema"],
-        project_id=project_id,
-        inputs={"brief": "Explain what the research changes for founders."},
-    ) == {
-        "brief": "Explain what the research changes for founders.",
-        "audience": "An informed general audience",
-        "goal": "explain",
-        "length": "standard",
-        "source_policy": "project_and_web",
-        "voice_notes": "",
     }
 
 
@@ -645,11 +600,13 @@ def test_allow_no_change_is_an_explicit_pull_request_opt_in(tmp_path: Path) -> N
                 "procedure": {**artifact, "output": artifact_output},
             }
         )
-    technical = next(item for item in BUILTIN_WORKFLOWS if item.key == "organic.technical_fix")
-    technical_definition = json.loads(json.dumps(technical.definition))
-    technical_definition["procedure"]["output"]["allow_no_change"] = True
-    with pytest.raises(ValueError, match="allow_no_change"):
-        validate_codex_procedure_definition(technical_definition)
+    # organic.technical_fix's single-finding repair policy left with that workflow; a
+    # definition that still names one is refused rather than run without its contract.
+    website = next(item for item in BUILTIN_WORKFLOWS if item.key == "website.change")
+    website_definition = json.loads(json.dumps(website.definition))
+    website_definition["procedure"]["output"]["repair_policy"] = "html-metadata-v3"
+    with pytest.raises(ValueError, match="Unsupported technical repair policy"):
+        validate_codex_procedure_definition(website_definition)
 
 
 def test_pull_request_receipt_covers_no_change_and_requires_the_opened_pr() -> None:
@@ -1042,7 +999,7 @@ def test_procedure_bridge_uses_explicit_skills_web_search_and_one_output() -> No
     assert "replace that section in full" in bridge
 
 
-async def test_public_articles_are_named_by_date_and_short_run_id():
+async def test_page_refreshes_are_named_by_date_and_short_run_id():
     from copy import deepcopy
     from datetime import UTC, datetime
     from uuid import UUID
@@ -1050,7 +1007,7 @@ async def test_public_articles_are_named_by_date_and_short_run_id():
     from tin_lite.organic_audit import canonical_json
     from tin_lite.procedures import load_pinned_codex_procedure, validate_codex_procedure_definition
 
-    article = next(w for w in BUILTIN_WORKFLOWS if w.key == PUBLIC_ARTICLE_WORKFLOW_NAME)
+    article = next(w for w in BUILTIN_WORKFLOWS if w.key == "content.refresh")
     definition, resources = article.definition_and_resource_files()
     run_id = UUID("1a2b3c4d-0000-4000-8000-000000000031")
     started = datetime(2026, 9, 29, 23, 30, tzinfo=UTC)
@@ -1070,12 +1027,7 @@ async def test_public_articles_are_named_by_date_and_short_run_id():
         return procedure.resolve_inputs({}, started_at=started, run_id=run_id)
 
     resolved = await pinned(definition)
-    assert resolved.output_path == "content/articles/2026-09-29-1a2b3c4d.md"
-    assert resolved.companion_path == "content/articles/2026-09-29-1a2b3c4d.generation.md"
-    # Runs pinned before 1.5.0 keep their run-ID file name.
-    older = deepcopy(definition)
-    older["procedure"]["output"]["path_template"] = "content/articles/{run_id}.md"
-    assert (await pinned(older)).output_path == f"content/articles/{run_id}.md"
+    assert resolved.output_path == "content/refreshes/2026-09-29-1a2b3c4d.md"
     # Any other readable folder name stays reserved for reviewed document pairs.
     report = deepcopy(definition)
     report["procedure"]["output"].pop("validator")

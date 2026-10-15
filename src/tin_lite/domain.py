@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import re
 from dataclasses import dataclass, field
 from datetime import datetime
 from enum import StrEnum
@@ -12,9 +11,7 @@ PROJECT_MEMORY_WORKFLOW_NAME = "project.memory"
 SCAN_REPORT_WORKFLOW_NAME = "scan.report"
 SITE_HEALTH_WORKFLOW_NAME = "site.health_improve"
 VISIBILITY_AUDIT_WORKFLOW_NAME = "visibility.audit"
-ANSWER_PAGE_WORKFLOW_NAME = "content.answer_page"
 RESEARCH_DEEP_DIVE_WORKFLOW_NAME = "research.deep_dive"
-PUBLIC_ARTICLE_WORKFLOW_NAME = "content.public_article"
 CONTENT_DIAGRAM_WORKFLOW_NAME = "content.diagram"
 EMAIL_SHORTLIST_WORKFLOW_NAME = "outreach.email_shortlist"
 EMAIL_CAMPAIGN_WORKFLOW_NAME = "outreach.email_campaign"
@@ -50,11 +47,7 @@ ARTIFACT_PATH = "DESIGN.md"
 MEMORY_INDEX_PATH = "wiki/INDEX.md"
 SCAN_REPORT_PATH = "reports/SCAN.md"
 VISIBILITY_AUDIT_PATH = "reports/AI_VISIBILITY.md"
-# Answer pages drafted before per-page names all saved here; their runs still point at it.
-ANSWER_PAGE_PATH = "reports/ANSWER_PAGE.md"
-ANSWER_PAGE_DIR = "content/answers"
 RESEARCH_DEEP_DIVE_PATH = "reports/RESEARCH_DEEP_DIVE.md"
-PUBLIC_ARTICLE_PATH = "reports/PUBLIC_ARTICLE.md"
 EMAIL_SHORTLIST_PATH = "outreach/email/SHORTLIST.csv"
 GROWTH_ONBOARDING_PLAN_PATH = "reports/GROWTH_ONBOARDING_PLAN.md"
 PAID_ADS_REPORT_DIR = "reports/paid-ads"
@@ -88,20 +81,6 @@ def weekly_brief_evidence_path(run_id: UUID | str) -> str:
 
 def visibility_evidence_path(run_id: UUID | str) -> str:
     return f"reports/visibility/{run_id}/evidence.json"
-
-
-def answer_page_evidence_path(run_id: UUID | str) -> str:
-    return f"reports/answer-page/{run_id}/evidence.json"
-
-
-def answer_page_path(title: str, day: str, suffix: str | None = None) -> str:
-    """Name each answer page by its date and question, so Files and chat can tell them apart.
-
-    `suffix` (the start of the run ID) keeps a second page with the same question on the same
-    day from replacing the first.
-    """
-    slug = re.sub(r"[^a-z0-9]+", "-", title.casefold()).strip("-")[:80].rstrip("-")
-    return f"{ANSWER_PAGE_DIR}/{day}-{slug or 'answer-page'}{f'-{suffix}' if suffix else ''}.md"
 
 
 class RunStatus(StrEnum):

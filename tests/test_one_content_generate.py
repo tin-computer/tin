@@ -7,7 +7,9 @@ applier changes in the site's source after approval. Articles draft exactly as b
 """
 
 import hashlib
+import io
 import json
+import tarfile
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from types import SimpleNamespace
@@ -24,7 +26,6 @@ from test_content_refresh import EVIDENCE, GOOD, PAGE, PAGE_TSX, audit, document
 from test_private_workflows import ACTOR as PRIVATE_ACTOR
 from test_private_workflows import app, mcp, structured
 from test_procedure_publication import publication_db as publication_db
-from test_technical_title_repair import archive
 
 from tin_lite import approved_article, content_draft, website_change
 from tin_lite import content_refresh as refresh
@@ -44,6 +45,18 @@ from tin_lite.organic_audit import audit_paths, canonical_json
 from tin_lite.page_routes import PATH as ROUTES_PATH
 from tin_lite.run_service import start_workflow_run
 from tin_lite.workflow_inputs import WorkflowInputError
+
+
+def archive(files):
+    buffer = io.BytesIO()
+    with tarfile.open(fileobj=buffer, mode="w:gz") as tar:
+        for path, text in files.items():
+            raw = text.encode()
+            item = tarfile.TarInfo(path)
+            item.size = len(raw)
+            tar.addfile(item, io.BytesIO(raw))
+    return buffer.getvalue()
+
 
 ACTOR = "user_test"
 NOW = datetime(2026, 9, 29, 16, tzinfo=UTC)
@@ -560,22 +573,17 @@ async def test_an_approved_refresh_applies_only_the_exact_replacements(
         await approved_article.select(
             database=f.db, storage=f.storage, project_id=f.project.id, source_run_id=run.id
         )
-    assert str(run.id) not in json.dumps(await approved_article.discover(f.db, f.project.id))
 
 
 # The retired entry points: hidden from discovery, still runnable for pinned runs and schedules.
 
 # Digests of each retired definition (without its version, description, discovery flag and
-# drawing, none of which changes a run) and its procedure files, as content.refresh 1.0.0 and
-# content.answer_page 1.6.0 shipped.
+# drawing, none of which changes a run) and its procedure files, as content.refresh 1.0.0
+# shipped. content.answer_page has since left the codebase.
 RETIRED = {
     "content.refresh": (
         "1.1.0",
         "d4059a9cf5d9adcccc01e8e50287f734454c4fadb703e1d7eeca52d531e4b0db",
-    ),
-    "content.answer_page": (
-        "1.7.0",
-        "223f64f3aec7c8a2a8b2a2d14d9043570e6b859f263f3588d9ab8f70012f5bdc",
     ),
 }
 
@@ -668,19 +676,6 @@ async def test_retired_workflows_are_hidden_but_saved_configurations_still_run(
     publication_db, monkeypatch
 ):
     f = await fixture(publication_db, monkeypatch)
-    answer = spec("content.answer_page")
-    await f.db.upsert_registry_workflow(
-        workflow_id=answer.id,
-        key=answer.key,
-        title=answer.title,
-        description=answer.description,
-        executor=answer.executor,
-        definition_repo_id="registry/workflows",
-        definition_path=answer.definition_path,
-        current_commit_sha="e" * 40,
-        version_label=answer.version_label,
-        definition=answer.definition,
-    )
     server = mcp(f, monkeypatch)
     listed = str(
         structured(await server.call_tool("list_workflows", {"project_id": str(f.project.id)}))

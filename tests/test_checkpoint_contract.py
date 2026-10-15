@@ -17,7 +17,6 @@ from tin_lite.activities import TinActivities
 from tin_lite.api import router
 from tin_lite.auth import AuthContext, require_user
 from tin_lite.catalog import (
-    ANSWER_PAGE_WORKFLOW_ID,
     BUILTIN_WORKFLOWS,
     DESIGN_MD_WORKFLOW_ID,
     ORGANIC_TRAFFIC_SYSTEM,
@@ -29,6 +28,7 @@ from tin_lite.catalog import (
     sync_builtin_workflows,
 )
 from tin_lite.codex_execution import ProjectCodexExecution
+from tin_lite.content_delivery import DRAFT_WORKFLOW_ID
 from tin_lite.db import _effect_receipt
 from tin_lite.domain import (
     CODEX_PROCEDURE_EXECUTOR,
@@ -46,7 +46,6 @@ from tin_lite.procedures import PinnedCodexProcedure
 from tin_lite.rollouts import RolloutCapture, RolloutFile
 from tin_lite.system_wiki import SystemWikiRef
 from tin_lite.workflows import (
-    AnswerPageWorkflow,
     AwesomeSubmitWorkflow,
     CharacterDesignWorkflow,
     CodeWorkflow,
@@ -538,7 +537,6 @@ def test_workflow_registry_is_explicit_and_narrow() -> None:
         PaidAdsMonitorWorkflow,
         AwesomeSubmitWorkflow,
         PaymentRecoveryWorkflow,
-        AnswerPageWorkflow,
         CharacterDesignWorkflow,
         CodexProcedureWorkflow,
         WeeklyBriefWorkflow,
@@ -573,7 +571,6 @@ def test_workflow_registry_is_explicit_and_narrow() -> None:
         "ads.monitor": PaidAdsMonitorWorkflow,
         "outreach.awesome_submit": AwesomeSubmitWorkflow,
         "revenue.payment_recovery": PaymentRecoveryWorkflow,
-        "content.answer_page": AnswerPageWorkflow,
         "creative.character": CharacterDesignWorkflow,
         CODEX_PROCEDURE_EXECUTOR: CodexProcedureWorkflow,
         "workflow.code": CodeWorkflow,
@@ -657,26 +654,25 @@ async def test_builtin_sync_keeps_the_immutable_definition_commit(monkeypatch) -
     visibility = next(
         item for item in database.synced if item["workflow_id"] == VISIBILITY_AUDIT_WORKFLOW_ID
     )
-    answer_page = next(
-        item for item in database.synced if item["workflow_id"] == ANSWER_PAGE_WORKFLOW_ID
-    )
+    draft = next(item for item in database.synced if item["workflow_id"] == DRAFT_WORKFLOW_ID)
     assert scan["current_commit_sha"] == "d" * 40
     assert scan["definition"]["system_wiki"]["commit_sha"] == "w" * 40
     assert "system_wiki" not in visibility["definition"]
     assert "human_review" not in visibility["definition"]
-    assert answer_page["definition"]["input_schema"]["required"] == ["project_id"]
-    assert answer_page["definition"]["human_review"] == {
+    assert draft["definition"]["input_schema"]["required"] == ["project_id", "program_id"]
+    assert draft["definition"]["human_review"] == {
         "eligible": True,
-        "reason": "Produces customer-facing content.",
-        "review_label": "Review draft",
+        "reason": "Produces a public-facing article draft.",
+        "review_label": "Review article",
         "defer_label": "Not now",
         "summary": (
-            "Your answer-page draft is ready. Review it before Tin marks the workflow "
-            "complete; otherwise it stays safely on hold."
+            "Your public article draft is ready. Review the claims and copy before Tin marks "
+            "the workflow complete; otherwise it stays safely on hold."
         ),
-        "queue_clause": "Answer-page draft ready to finish",
+        "queue_clause": "Public article draft ready to finish",
+        "revision_adapter": "content-revision.v1",
     }
-    assert "not for general advice" in answer_page["description"]
+    assert "an answer page for a buyer question" in draft["description"]
 
 
 def test_builtin_ids_never_reuse_a_retired_number() -> None:
@@ -700,11 +696,11 @@ def test_registry_system_assignments_are_manifest_metadata_only() -> None:
     assert "agent_only" not in definitions["visibility.audit"]
     assert definitions["site.health_improve"]["system"] == ORGANIC_TRAFFIC_SYSTEM
     assert definitions["visibility.audit"]["system"] == ORGANIC_TRAFFIC_SYSTEM
-    assert definitions["content.answer_page"]["system"] == ORGANIC_TRAFFIC_SYSTEM
+    assert definitions["content.generate"]["system"] == ORGANIC_TRAFFIC_SYSTEM
     assert definitions["outreach.email_shortlist"]["system"] == OUTREACH_SYSTEM
     assert definitions["outreach.email_campaign"]["system"] == OUTREACH_SYSTEM
     assert "system" not in definitions["research.deep_dive"]
-    assert definitions["content.public_article"]["system"] == ORGANIC_TRAFFIC_SYSTEM
+    assert definitions["website.change"]["system"] == ORGANIC_TRAFFIC_SYSTEM
     assert "system" not in definitions["style.capture"]
     assert definitions["ads.assessment"]["system"] == "paid-ads"
     assert "agent_only" not in definitions["ads.assessment"]

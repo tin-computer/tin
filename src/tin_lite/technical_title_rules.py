@@ -1,4 +1,4 @@
-"""Dependency-free title-only verification shared by switchboard and sandbox."""
+"""Dependency-free title-only checks for site repairs."""
 
 import re
 from html.parser import HTMLParser

@@ -90,7 +90,7 @@ your own accounts before use; ordinary contributor tests need no production cred
 - [AI answers through DataForSEO](ai-answers-dataforseo.md): what each answer engine measures,
   vendor prices and how the organic audit calls it.
 - [Refreshing existing pages](content-refresh.md): the weekly page refresh and its exact source patch.
-- [Technical repair](technical-fix.md): finding selection, supported repairs and verification limits.
+- [Technical repair](technical-fix.md): site-fix-v5, the rules website.change applies to the latest audit.
 - [Diagram renderer](diagram-renderer.md), [composition checks](diagram-composition-quality.md)
   and [creative Studio](creative-studio.md).
 

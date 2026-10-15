@@ -112,7 +112,7 @@ for (const theme of ["light", "dark"]) test(`content delivery: ${theme}, scoped 
     await page.getByText("Drafts and pull requests · 3", {exact: true}).click();
     await page.getByRole("button", {name: "Prepare PR →", exact: true}).click();
     const prepared = await page.evaluate(() => writes.at(-1));
-    // Prepare PR starts website.change (content.deliver is retired for new work).
+    // Prepare PR starts website.change for the approved draft.
     assert.equal(prepared.path, "/api/workflows/00000000-0000-4000-8000-000000000045/runs");
     assert.deepEqual(JSON.parse(prepared.body), {project_id: "project", inputs: {source: "content_draft", source_run_id: "draft-one", expected_repository: "owner/site"}});
     assert.equal(await page.locator("[data-prepare-article-pr]").count(), 0);
@@ -139,16 +139,6 @@ for (const theme of ["light", "dark"]) test(`content delivery: ${theme}, scoped 
         await page.screenshot({path: `${process.env.TIN_DELIVERY_SCREENSHOTS}/delivery-${theme}-${width}.png`, fullPage: true});
       }
     }
-    await page.evaluate(() => {
-      document.body.insertAdjacentHTML("beforeend", `<form id="picker">${TinContentDelivery.fields()}</form>`);
-      TinContentDelivery.bindPickers(document.body, {projectId: "project", api: async () => ({articles: [{run_id: "approved-run-id", title: "An approved article"}], repository: "owner/site"})});
-    });
-    await page.getByRole("button", {name: "Approved article", exact: true}).click();
-    await page.getByRole("option", {name: "An approved article", exact: true}).click();
-    assert.equal(await page.locator('#picker [name="input:source_run_id"]').inputValue(), "approved-run-id");
-    assert.equal(await page.locator('#picker [name="input:expected_repository"]').inputValue(), "owner/site");
-    assert.equal((await page.locator("#picker").innerText()).includes("approved-run-id"), false);
-    await page.evaluate(() => TinContentDelivery.prepare(document.querySelector("#picker")));
     assert.deepEqual(errors, []);
   } finally {await browser.close();}
 });

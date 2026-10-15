@@ -137,24 +137,6 @@ def _tin_runtime(template):
             "chown root:root /opt/tin-lite && chmod 0755 /opt/tin-lite",
             user="root",
         )
-        .copy(
-            "sandbox/verify_technical_metadata.py",
-            "/opt/tin-lite/verify-technical-metadata.py",
-            user="root",
-            mode=0o644,
-        )
-        .copy(
-            "src/tin_lite/technical_metadata_rules.py",
-            "/opt/tin-lite/technical_metadata_rules.py",
-            user="root",
-            mode=0o644,
-        )
-        .copy(
-            "src/tin_lite/technical_build_profile.py",
-            "/opt/tin-lite/technical_build_profile.py",
-            user="root",
-            mode=0o644,
-        )
         .copy("sandbox/codex_config.toml", "/home/user/.codex/config.toml", user="user", mode=0o644)
         .copy("sandbox/run_design.sh", "/opt/tin-lite/run-design", user="user", mode=0o755)
         .copy("sandbox/run_task.sh", "/opt/tin-lite/run-task", user="user", mode=0o755)
@@ -181,18 +163,6 @@ def _tin_runtime(template):
             "/opt/tin-lite/procedure-app-server",
             user="user",
             mode=0o755,
-        )
-        .copy(
-            "sandbox/verify_technical_title.py",
-            "/opt/tin-lite/verify-technical-title.py",
-            user="user",
-            mode=0o755,
-        )
-        .copy(
-            "src/tin_lite/technical_title_rules.py",
-            "/opt/tin-lite/technical_title_rules.py",
-            user="root",
-            mode=0o644,
         )
     )
 

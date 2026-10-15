@@ -84,7 +84,6 @@ def tin_state():
                 required=("site_url", "market", "buyer_context"),
                 modes=("on_demand",),
             ),
-            workflow("content.public_article", "Write public article", required=("brief",)),
             workflow("research.deep_dive", "Research a question", required=("question",)),
             workflow(
                 "site.health_improve",

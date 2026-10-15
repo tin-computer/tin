@@ -66,12 +66,12 @@ Managed dependencies today: Temporal Cloud, E2B, PlanetScale Postgres, code.stor
 
 You start `visibility.audit` for a project, optionally naming a target. Tin resolves the target's name, domain, and aliases, writes five buyer questions that do not name the target, asks each one to a model twice (web search on, then no tools), and scores every answer: found, mentioned, evaluated, shortlisted, picked first. One commit publishes `reports/AI_VISIBILITY.md` and the raw evidence. No review.
 
-Next, `content.plan` schedules an answer page for a question you were absent from, beside planned articles and refreshes of existing pages, and `content.generate` drafts it when it comes up: a direct answer, cited sources and a search listing. The draft lands in Files and shows up in Decisions, where feedback revises it. When you approve it with a repository delivery, `website.change` adapts it into your site at the route you chose for answer pages, as a pull request, merged only when your setting commits to main. (`content.answer_page`, which picked its own question, is retired from discovery; saved schedules keep running.)
+Next, `content.plan` schedules an answer page for a question you were absent from, beside planned articles and refreshes of existing pages, and `content.generate` drafts it when it comes up: a direct answer, cited sources and a search listing. The draft lands in Files and shows up in Decisions, where feedback revises it. When you approve it with a repository delivery, `website.change` adapts it into your site at the route you chose for answer pages, as a pull request, merged only when your setting commits to main.
 
 ### Site health as a pull request
 
-`site.health_improve` is folded into `organic.technical_fix`, which fixes everything an
-organic audit finds in one pull request (see [technical repair](technical-fix.md)). Saved
+`site.health_improve` is folded into `website.change` (`source: audit`), which fixes
+everything an organic audit finds in one pull request (see [technical repair](technical-fix.md)). Saved
 site-health schedules keep running as described here.
 
 You connect GitHub, select the repository, and opt in to write access. You start `site.health_improve` with your site URL, a focus such as accessibility, and a change budget of one to three files. In a sandbox, the agent reads the live page and the repository, reads the open pull requests so it does not duplicate work, picks one evidenced defect, fixes it, and writes a PR description with the evidence, the change, and the verification. The switchboard opens the pull request with a short-lived installation token the sandbox never saw. The pull request stays unmerged. Your repository's own deployment process determines when an accepted change goes live.
@@ -90,8 +90,7 @@ This is a selection, not a complete catalog. The live Registry lists current inp
 |---|---|---|---|
 | `organic.audit` | Reads robots.txt, sitemaps and Search Console, inspects up to 100 chosen public pages by default for crawl, indexation, on-page and search issues, asks a fixed panel of buyer questions to an AI adviser, and reports whether the answers mention, cite, or recommend you | nothing | no |
 | `visibility.audit` | Retired from discovery; saved schedules still ask five buyer questions to a model with and without web search and score where you appear | nothing | no |
-| `content.answer_page` | Drafts one researched page for the strongest unanswered buyer question | nothing | yes |
-| `organic.technical_fix` | Every fixable finding from an organic audit, in one pull request grouped by kind of change | GitHub | the PR is yours to merge |
+| `website.change` | Puts approved pages and the latest audit's fixes on your site, one pull request per run, each change approved or declined once | GitHub | yes, each change |
 | `site.health_improve` | Retired from discovery; saved schedules still make one small evidenced fix per run | GitHub | the PR is yours to merge |
 | `outreach.email_shortlist` | Evidence-backed shortlist from your Gmail and Calendar history, as a CSV | Google Workspace | no |
 | `outreach.email_campaign` | Paced sends with reply-aware follow-ups, from selected rows and approved copy | Google Workspace | yes, before anything is sent |
@@ -104,7 +103,6 @@ This is a selection, not a complete catalog. The live Registry lists current inp
 | `project.memory` | Keeps the project wiki index current from durable outputs | nothing | no |
 | `content.design_md` | Writes `DESIGN.md` from your repository | GitHub | no |
 | `research.deep_dive` | Tests one project question against current, source-backed evidence | nothing | no |
-| `content.public_article` | A researched article with feedback and revisions | project context | yes |
 | `content.generate` | The next eligible article from a saved content plan, or an assessment explaining why it should not be drafted | prepared brief and writing guide | yes, when it produces an article |
 | `growth.onboarding` | A growth plan followed by setup of the work and connections you select | product context and founder constraints | yes, before setup |
 | `content.diagram` | One Tin-styled diagram whose Mermaid source stays editable in Files | nothing | yes |

@@ -88,6 +88,8 @@ _NEEDS_YOU = {
     "IntegrationInputError": "input",
     "WorkflowInputError": "input",
     "PrerequisiteError": "prerequisite",
+    # A procedure's waited prerequisite came back refused: Tin's own words, before any work.
+    "PrerequisiteMissing": "prerequisite",
 }
 _TRANSIENT = (
     "IntegrationRateLimitedError",

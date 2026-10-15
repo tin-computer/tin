@@ -514,6 +514,8 @@ def test_github_writes_fit_a_page_with_its_figures():
     assert (PULL_REQUEST_MAX_FILES, PULL_REQUEST_MAX_BYTES) == (30, 2_000_000)
     # Procedures that declare nothing keep their existing 512 KB contract.
     assert GitHubPullRequestProcedure("r/{run_id}.md", ()).max_bytes == DEFAULT_PULL_REQUEST_BYTES
-    deliver = next(w for w in BUILTIN_WORKFLOWS if w.key == "content.deliver")
-    output = deliver.definition_and_resource_files()[0]["procedure"]["output"]
-    assert (output["max_files"], output["max_bytes"]) == (30, 2_000_000)
+    # website.change puts an approved page and its figures on the site.
+    website = next(w for w in BUILTIN_WORKFLOWS if w.key == "website.change")
+    output = website.definition_and_resource_files()[0]["procedure"]["output"]
+    assert (output["max_files"], output["max_bytes"]) == (20, 2_000_000)
+    assert output["max_files"] <= PULL_REQUEST_MAX_FILES

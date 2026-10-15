@@ -468,7 +468,7 @@ def test_product_ui_assets_are_packaged_beside_the_application() -> None:
     assert "data-run-workflow-draft" in script
     assert "Run now uses these inputs once · saving pins v" in script
     assert 'return "Latest report"' in script
-    assert 'return "Latest draft"' in script
+    assert 'return "Latest draft"' not in script
     assert "body: JSON.stringify({ project_id: context.projectId, inputs })" in script
     assert "/workflows/${encodeURIComponent(projectWorkflowId)}/runs" in script
     assert 'gap: "18px",\n      overflow: "visible"' in script
@@ -865,10 +865,7 @@ def test_approval_offers_pull_request_or_publish_now_when_github_is_connected() 
     assert "await _choose_content_delivery(run, payload, request, user)" in api_source
     assert "delivery=payload.delivery,\n                remember=payload.remember," in api_source
     # Decisions card: two choices plus Discard and the remember checkbox when GitHub is connected.
-    assert (
-        'new Set(["content.generate", "content.public_article", "content.answer_page", '
-        '"content.refresh"])' in script
-    )
+    assert 'new Set(["content.generate", "content.refresh"])' in script
     assert "function connectedRepository()" in script
     assert "function repositoryDeliveryAvailable(run)" in script
     assert 'data-delivery="github_commit"${blocked}>Publish now</button>' in script

@@ -45,7 +45,6 @@ NATIVE_EXECUTORS = {
     "style.capture",
     "social.x_style",
     "social.x_revise",
-    "content.answer_page",
     "project.memory",
     "project.weekly_brief",
     "scan.report",
@@ -115,7 +114,6 @@ NATIVE_MAXIMUMS_USD = {
     "style.capture": "2.50",
     "social.x_style": "1",
     "social.x_revise": "1",
-    "content.answer_page": "0.50",
     "project.memory": "1",
     "project.weekly_brief": "0.50",
     "scan.report": "0.25",
@@ -193,32 +191,20 @@ def service_terms(definition, *, inputs=None):
                 + CONTENT_PLAN_SHARE_USD
                 + (5 if inputs.get("technical_fix") else 0)
             ) * NANOS_PER_DOLLAR
-            if version in {
-                "organic-traffic-v2",
-                "organic-traffic-v3",
-                "organic-traffic-v4",
-                "organic-traffic-v5",
-                "organic-traffic-v6",
-                "organic-traffic-v7",
-            }:
+            if version in {"organic-traffic-v6", "organic-traffic-v7"}:
                 # One draft and, unless explicitly disabled, one repository adaptation.
                 # This is a bound, not an upfront charge or six-month reservation. Weekly
-                # drafts saved by v3 are ordinary scheduled runs with their own funding.
+                # drafts are ordinary scheduled runs with their own funding.
                 maximum += (
                     5 + (5 if inputs.get("content_delivery", "auto") == "auto" else 0)
                 ) * NANOS_PER_DOLLAR
             pool = keywords + TRAFFIC_SYSTEM_POOL_USD * NANOS_PER_DOLLAR
-            if version in {
-                "organic-traffic-v5",
-                "organic-traffic-v6",
-                "organic-traffic-v7",
-            }:
-                # v5's first page refresh is a child run; later weekly refreshes are ordinary
+            if version in {"organic-traffic-v6", "organic-traffic-v7"}:
+                # The first page refresh is a child run; later weekly refreshes are ordinary
                 # scheduled runs with their own funding. The pool grows by the refresh's own
-                # ceiling, since a production run has not measured one yet. v6 keeps v5's
-                # children; its technical and delivery steps are website.change runs, each
-                # with the same $5 procedure ceiling as the workflows they replace. The refresh
-                # share stays the $2.50 its ceiling was when these versions shipped.
+                # ceiling, since a production run has not measured one yet. The technical and
+                # delivery steps are website.change runs, each with a $5 procedure ceiling.
+                # The refresh share stays the $2.50 its ceiling was when these versions shipped.
                 maximum += REFRESH_SHARE_BEFORE_V8_NANOS
                 pool += REFRESH_SHARE_BEFORE_V8_NANOS
             if version == "organic-traffic-v7":

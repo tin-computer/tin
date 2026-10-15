@@ -31,11 +31,13 @@ from tin_lite.workflow_review_store import ReviewConflict
 
 ACTOR = "user_documentreviewer"
 DESTINATIONS = ("brand/BRAND.md", "DESIGN.md")
+# A plain reviewed codex.procedure; each test swaps in the pair output contract.
+SOURCE_KEY = "content.diagram"
 BRAND, DESIGN = b"# Brand\nA considered identity.\n", b"# Design\nObserved components.\n"
 
 
 def definition():
-    source = next(w for w in BUILTIN_WORKFLOWS if w.key == "content.public_article")
+    source = next(w for w in BUILTIN_WORKFLOWS if w.key == SOURCE_KEY)
     result = deepcopy(source.definition_and_resource_files()[0])
     result["procedure"]["output"] = {
         "kind": "project.artifact",
@@ -135,7 +137,7 @@ def test_pair_contract_is_bounded_and_requires_review():
 async def test_pair_paths_may_use_a_readable_run_folder():
     from tin_lite.procedures import load_pinned_codex_procedure
 
-    source = next(w for w in BUILTIN_WORKFLOWS if w.key == "content.public_article")
+    source = next(w for w in BUILTIN_WORKFLOWS if w.key == SOURCE_KEY)
     _, resources = source.definition_and_resource_files()
     value = definition()
     output = value["procedure"]["output"]
@@ -390,7 +392,7 @@ def test_optional_source_contract_requires_matching_read_only_integration():
 async def test_bounded_pair_loader_resolves_both_paths_and_context():
     from tin_lite.procedures import load_pinned_codex_procedure, validate_procedure_artifact
 
-    source = next(w for w in BUILTIN_WORKFLOWS if w.key == "content.public_article")
+    source = next(w for w in BUILTIN_WORKFLOWS if w.key == SOURCE_KEY)
     _, resources = source.definition_and_resource_files()
     value = definition()
 

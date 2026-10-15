@@ -32,7 +32,7 @@ Every workflow a person can add or has saved shows how it runs in a right-side p
 ## Decisions
 
 1. **One field, described better.** Keep `presentation.flow` and its validator. The node `fact` is the node's description, so docs and the creator call it that. New and backfilled diagrams use `direction: "TD"`; `LR` stays valid for old pinned definitions. The validator's limits stay as they are, because `content.diagram` artifacts share it (`tin-diagram.v1`/`v2`).
-2. **Display-only.** Presentation never affects execution: no prompts, no sandbox inputs, no contract checks. Changing only the diagram needs no version bump. The `content.refresh` and `content.answer_page` contract-digest test (`test_one_content_generate.py`) leaves `presentation` out of the digest, as it already does for `description`.
+2. **Display-only.** Presentation never affects execution: no prompts, no sandbox inputs, no contract checks. Changing only the diagram needs no version bump. The `content.refresh` contract-digest test (`test_one_content_generate.py`) leaves `presentation` out of the digest, as it already does for `description`.
 3. **Which diagram a saved workflow shows.** Prefer the pinned definition's diagram.
    - If the pinned commit has none but differs from the current definition only by `presentation`, show the current diagram. This is the backfill case, and it is exact.
    - Otherwise show the current diagram, and the panel's key line says so in a few words: `content.generate · runs v1.12.0 · drawn from v1.15.0`.
@@ -114,8 +114,8 @@ Each diagram is written from the step logic. The inventory points to the code, t
 
 | Batch | Workflows | Count |
 |---|---|---|
-| 1 | organic.traffic_system, organic.audit, organic.keyword_plan, content.plan, content.generate, content.deliver, content.refresh, organic.technical_fix, style.capture, outreach.community_threads, revenue.payment_recovery; site.health_improve, project.weekly_brief and outreach.email_campaign flipped to top-to-bottom. Also drawn: example.csv_summary, example.feedback_digest, example.posthog_funnel, the three code examples and the creator itself | 14 |
-| 2 | the remaining visible built-ins: product-qa (4), creative (2), x (2), paid ads (3), project.memory, scan.report, content.design_md, research.deep_dive, content.diagram, outreach.email_shortlist, outreach.awesome_submit; hidden but schedulable: visibility.audit, content.answer_page, content.public_article | 21 |
+| 1 | organic.traffic_system, organic.audit, organic.keyword_plan, content.plan, content.generate, content.refresh, style.capture, outreach.community_threads, revenue.payment_recovery; site.health_improve, project.weekly_brief and outreach.email_campaign flipped to top-to-bottom. Also drawn: example.csv_summary, example.feedback_digest, example.posthog_funnel, the three code examples and the creator itself | 12 |
+| 2 | the remaining visible built-ins: product-qa (4), creative (2), x (2), paid ads (3), project.memory, scan.report, content.design_md, research.deep_dive, content.diagram, outreach.email_shortlist, outreach.awesome_submit; hidden but schedulable: visibility.audit | 19 |
 | 3 | the 28 packages still in `PRESENTATION_PENDING`, example.project_files among them | 28 |
 
 Batch 1 already includes outreach.community_threads, so batch 3 covers the rest of the 24 public packages. Agent-only workflows and `project.task` have no saved row, so they need no button. New ones still get a diagram from the creator rule.

@@ -13,7 +13,6 @@ from uuid import UUID
 
 from tin_lite import (
     analytics_brief,
-    article_review,
     blog_index_plan,
     content_draft,
     feedback_fix_plan,
@@ -96,7 +95,6 @@ REVIEWED_DIAGRAM_VALIDATORS = frozenset(
 )
 MEMORY_SECTION_VALIDATOR = "memory-section.v1"
 PRODUCT_AUDIT_VALIDATOR = "product-audit.v1"
-PUBLIC_ARTICLE_VALIDATOR = "public-article.v2"
 ANALYTICS_BRIEF_VALIDATOR = analytics_brief.VALIDATOR
 ANALYTICS_BRIEF_PATH_TEMPLATE = "reports/analytics/{run_id}.md"
 BLOG_INDEX_PLAN_VALIDATOR = blog_index_plan.VALIDATOR
@@ -113,7 +111,6 @@ ARTIFACT_VALIDATORS = frozenset(
         BLOG_INDEX_PLAN_VALIDATOR,
         FEEDBACK_FIX_PLAN_VALIDATOR,
         *content_draft.VALIDATORS,
-        PUBLIC_ARTICLE_VALIDATOR,
         CONTENT_REFRESH_VALIDATOR,
         EMAIL_SHORTLIST_VALIDATOR,
         SIGNUP_WALKTHROUGH_VALIDATOR,
@@ -310,7 +307,6 @@ class GitHubPullRequestProcedure:
     max_files: int = 3
     max_bytes: int = DEFAULT_PULL_REQUEST_BYTES
     provider_key: str = "infra.github"
-    repair_policy: str | None = None
     allow_no_change: bool = False
     # website.change: the repair rules its audit runs follow. Its page runs ignore it.
     site_repair_policy: str | None = None
@@ -374,7 +370,7 @@ def run_context_instruction(run_id: str) -> str:
 # Connected repositories other than the run's own workspace, unpacked read-only.
 REFERENCE_ROOT = "/home/user/repos"
 # Workflows whose pull requests change the website, so never a code repository.
-WEBSITE_WRITERS = frozenset({"website.change", "content.deliver", "organic.technical_fix"})
+WEBSITE_WRITERS = frozenset({"website.change"})
 
 
 def reference_path(repository: str) -> str:
@@ -445,7 +441,6 @@ class CodexProcedureSpec:
     output_section: OutputSection | None = None
     output_assets: AssetPolicy | None = None
     workspace_capabilities: tuple[str, ...] = ()
-    repair_policy: str | None = None
     allow_no_change: bool = False
     site_repair_policy: str | None = None
     services: tuple[ServiceBinding, ...] = ()
@@ -487,7 +482,6 @@ class PinnedCodexProcedure:
     # Article drafts that may write figures and embeds into their assets folder.
     output_assets: AssetPolicy | None = None
     workspace_capabilities: tuple[str, ...] = ()
-    repair_policy: str | None = None
     allow_no_change: bool = False
     site_repair_policy: str | None = None
     content_draft_context: dict[str, Any] | None = None
@@ -526,10 +520,7 @@ class PinnedCodexProcedure:
     def companion_path(self) -> str | None:
         if self.documents:
             return self.documents.companion_path
-        if (
-            self.output_validator in {*content_draft.CLEAN_VALIDATORS, PUBLIC_ARTICLE_VALIDATOR}
-            and self.output_path
-        ):
+        if self.output_validator in content_draft.CLEAN_VALIDATORS and self.output_path:
             return content_draft.notes_path(self.output_path)
         return None
 
@@ -602,8 +593,6 @@ class PinnedCodexProcedure:
                 output["reviewed_documents"] = True
                 output["companion_label"] = self.documents.companion_label
                 output["apply_on_approval"] = list(self.documents.destinations)
-        if self.repair_policy is not None:
-            output["repair_policy"] = self.repair_policy
         if self.allow_no_change:
             output["allow_no_change"] = True
         if self.site_repair_policy is not None:
@@ -872,8 +861,6 @@ class CodexProcedureSource:
                 "receipt_path_template": pull_request.receipt_path_template,
             }
             verification = {"commands": list(pull_request.verification_commands)}
-            if pull_request.repair_policy is not None:
-                output["repair_policy"] = pull_request.repair_policy
             if pull_request.allow_no_change:
                 output["allow_no_change"] = True
             if pull_request.site_repair_policy is not None:
@@ -1057,7 +1044,7 @@ def validate_codex_procedure_definition(definition: dict[str, Any]) -> CodexProc
             if (
                 placeholders == ["{run_folder}"]
                 and not documents
-                and output_validator not in {PUBLIC_ARTICLE_VALIDATOR, CONTENT_REFRESH_VALIDATOR}
+                and output_validator != CONTENT_REFRESH_VALIDATOR
             ):
                 raise ValueError("readable run folders are reserved for reviewed documents")
             if placeholders in (["{run_id}"], ["{run_folder}"]):
@@ -1073,7 +1060,6 @@ def validate_codex_procedure_definition(definition: dict[str, Any]) -> CodexProc
                     and output_validator
                     not in {
                         *content_draft.VALIDATORS,
-                        PUBLIC_ARTICLE_VALIDATOR,
                         CONTENT_REFRESH_VALIDATOR,
                         BLOG_INDEX_PLAN_VALIDATOR,
                         FEEDBACK_FIX_PLAN_VALIDATOR,
@@ -1160,23 +1146,12 @@ def validate_codex_procedure_definition(definition: dict[str, Any]) -> CodexProc
             or workspace_kind != PROJECT_STATE_WORKSPACE
         ):
             raise ValueError("Page refreshes require their run-owned Markdown output.")
-        if output_validator == PUBLIC_ARTICLE_VALIDATOR and (
-            definition.get("key") != "content.public_article"
-            or output_path_template not in article_review.PATH_TEMPLATES
-            or output_media_type != "text/markdown"
-            or workspace_kind != PROJECT_STATE_WORKSPACE
-        ):
-            raise ValueError("Public articles require their run-owned Markdown output.")
-        if documents or output_validator in {
-            *content_draft.CLEAN_VALIDATORS,
-            PUBLIC_ARTICLE_VALIDATOR,
-        }:
+        if documents or output_validator in content_draft.CLEAN_VALIDATORS:
             output_max_files = 2
         if output.get("assets") is not None:
-            if output_validator not in {
-                *content_draft.CLEAN_VALIDATORS,
-                PUBLIC_ARTICLE_VALIDATOR,
-            } or not resolved_path.endswith(".md"):
+            if output_validator not in content_draft.CLEAN_VALIDATORS or not resolved_path.endswith(
+                ".md"
+            ):
                 raise ValueError("Only article drafts carry an assets folder")
             output_assets = AssetPolicy.load(output["assets"])
         if output_validator == CHARACTER_SVG_VALIDATOR and (
@@ -1235,7 +1210,7 @@ def validate_codex_procedure_definition(definition: dict[str, Any]) -> CodexProc
             raise ValueError("procedure workspace and output providers must match")
         output_max_files = output.get("max_files")
         files_limit = MAX_PROCEDURE_PULL_REQUEST_FILES
-        batch_policy = output.get("repair_policy") or output.get("site_repair_policy")
+        batch_policy = output.get("site_repair_policy")
         if batch_policy:
             from tin_lite import technical_fix
 
@@ -1285,23 +1260,14 @@ def validate_codex_procedure_definition(definition: dict[str, Any]) -> CodexProc
         verification_commands.append(command)
     if result_kind == PROJECT_ARTIFACT_RESULT and verification_commands:
         raise ValueError("project artifact procedures cannot declare repository verification")
-    repair_policy = output.get("repair_policy")
-    if repair_policy is not None:
-        from tin_lite import technical_fix
-
-        if (
-            repair_policy not in technical_fix.POLICY_COMMANDS
-            or definition.get("key") != technical_fix.KEY
-            or result_kind != GITHUB_PULL_REQUEST_RESULT
-            or verification_commands != technical_fix.policy_commands(repair_policy)
-            or output_max_files > technical_fix.POLICY_MAX_FILES.get(repair_policy, 3)
-        ):
-            raise ValueError("Unsupported technical repair policy")
+    if "repair_policy" in output:
+        # organic.technical_fix's own repair policy left with that workflow.
+        raise ValueError("Unsupported technical repair policy")
     allow_no_change = output.get("allow_no_change", False)
     if type(allow_no_change) is not bool:
         raise ValueError("Codex procedure allow_no_change must be a boolean")
-    if allow_no_change and (result_kind != GITHUB_PULL_REQUEST_RESULT or repair_policy is not None):
-        raise ValueError("allow_no_change requires a pull-request result without a repair policy")
+    if allow_no_change and result_kind != GITHUB_PULL_REQUEST_RESULT:
+        raise ValueError("allow_no_change requires a pull-request result")
     site_repair_policy = output.get("site_repair_policy")
     if site_repair_policy is not None:
         from tin_lite import technical_fix
@@ -1313,7 +1279,6 @@ def validate_codex_procedure_definition(definition: dict[str, Any]) -> CodexProc
             or not technical_fix.batches(site_repair_policy)
             or definition.get("key") != "website.change"
             or result_kind != GITHUB_PULL_REQUEST_RESULT
-            or repair_policy is not None
             or not allow_no_change
         ):
             raise ValueError("Unsupported site repair policy")
@@ -1324,7 +1289,6 @@ def validate_codex_procedure_definition(definition: dict[str, Any]) -> CodexProc
         output_repository == "code"
         and (
             result_kind != GITHUB_PULL_REQUEST_RESULT
-            or repair_policy is not None
             or site_repair_policy is not None
             or definition.get("key") in WEBSITE_WRITERS
         )
@@ -1416,7 +1380,6 @@ def validate_codex_procedure_definition(definition: dict[str, Any]) -> CodexProc
         output_section=output_section,
         output_assets=output_assets,
         workspace_capabilities=workspace_capabilities,
-        repair_policy=repair_policy,
         allow_no_change=allow_no_change,
         site_repair_policy=site_repair_policy,
         services=services,
@@ -1574,7 +1537,6 @@ async def load_pinned_codex_procedure(
         output_section=spec.output_section,
         output_assets=spec.output_assets,
         workspace_capabilities=spec.workspace_capabilities,
-        repair_policy=spec.repair_policy,
         allow_no_change=spec.allow_no_change,
         site_repair_policy=spec.site_repair_policy,
         services=spec.services,
@@ -1618,10 +1580,6 @@ def validate_procedure_artifact(
         ):
             raise ValueError("Draft context does not match its pinned output contract.")
         content_draft.validate_artifact(content, spec.content_draft_context)
-    elif spec.output_validator == PUBLIC_ARTICLE_VALIDATOR:
-        from tin_lite.article_review import validate_article
-
-        validate_article(content)
     elif spec.output_validator == CONTENT_REFRESH_VALIDATOR:
         from tin_lite import content_refresh
 
@@ -2165,12 +2123,7 @@ def validate_procedure_pull_request(
     files = value.get("files")
     checks = value.get("verification")
     outcome = value.get("outcome")
-    no_change = outcome == "no_change" and (spec.repair_policy is not None or spec.allow_no_change)
-    if spec.repair_policy is not None and (
-        outcome not in {"patch", "no_change"}
-        or value.get("reason") != ("no_safe_patch" if no_change else "")
-    ):
-        raise ValueError("Invalid technical repair outcome")
+    no_change = outcome == "no_change" and spec.allow_no_change
     if spec.allow_no_change and value.get("outcome", "patch") not in {"patch", "no_change"}:
         raise ValueError("Invalid pull-request outcome")
     if (

@@ -31,7 +31,7 @@ async def effect(db, key, value):
 async def system_fixture(
     db, monkeypatch, *, github=True, inputs=None, temporal=None, content=None, policy=None
 ):
-    f = await configured(await setup(db, monkeypatch, planned=True))
+    f = await configured(await setup(db, monkeypatch))
     monkeypatch.setattr(
         db,
         "get_integration_connection",
@@ -48,7 +48,7 @@ async def system_fixture(
     definitions = {w.key: w.definition for w in BUILTIN_WORKFLOWS}
     definitions["content.generate"] = f.workflow.definition
     resources = {}
-    for key in (organic_system.KEY, "content.deliver", "website.change"):
+    for key in (organic_system.KEY, "website.change"):
         spec = next(w for w in BUILTIN_WORKFLOWS if w.key == key)
         definition, files = spec.definition_and_resource_files()
         definitions[key] = definition
@@ -125,12 +125,12 @@ async def system_fixture(
         f"traffic:{f.parent.id}:prepare",
         {
             "definition_revision": "e" * 40,
-            # These cases pin v5, whose delivery step is content.deliver.
-            "policy": policy or organic_system.REFRESH_POLICY,
+            # These cases pin v6, the oldest recipe that still runs, unless told otherwise.
+            "policy": policy or organic_system.WEBSITE_POLICY,
             "definitions": {
                 step: definitions[key]
                 for step, key in {
-                    **organic_system.policy_steps(policy or organic_system.REFRESH_POLICY),
+                    **organic_system.policy_steps(policy or organic_system.WEBSITE_POLICY),
                     **(
                         organic_system.MEASURE_STEPS
                         if organic_system.measures_pages(policy)
@@ -315,11 +315,16 @@ async def test_explicit_draft_only_does_not_touch_github():
 
 def test_new_parent_cost_bounds_leave_historical_definition_unchanged():
     definition = next(w.definition for w in BUILTIN_WORKFLOWS if w.key == organic_system.KEY)
-    historical = {**definition, "organic_system_policy": organic_system.LEGACY_POLICY}
-    # Without a saved keyword limit, the schema's $2 default (the fallback was a stale $9),
-    # plus audit $2 and content plan $1. v8 adds its calibrated $12, plus $3 for the delivery
-    # unless drafts stay in Tin.
-    assert service_terms(historical)["maximum_nanos"] == 5_000_000_000
+    historical = {**definition, "organic_system_policy": organic_system.WEBSITE_POLICY}
+    # A run pinned to v6, the oldest recipe that still runs, keeps the bound it shipped with:
+    # its children's ceilings (the delivery's $5 only unless drafts stay in Tin), capped by
+    # the parent's pool of the $2 keyword default, the pool and the first refresh's share.
+    assert service_terms(historical)["maximum_nanos"] == 14_500_000_000
+    assert (
+        service_terms(historical, inputs={"content_delivery": "draft_only"})["maximum_nanos"]
+        == 12_500_000_000
+    )
+    # v8 adds its calibrated $12, plus $3 for the delivery unless drafts stay in Tin.
     assert service_terms(definition)["maximum_nanos"] == 17_000_000_000
     assert (
         service_terms(definition, inputs={"content_delivery": "draft_only"})["maximum_nanos"]

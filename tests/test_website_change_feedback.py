@@ -27,7 +27,7 @@ FB_INPUTS = {"source": "feedback"}
 
 async def feedback_run(f, text=None, *, succeeded=True):
     """A qa.feedback_to_fix run whose PLAN.md is saved in project files."""
-    definition = dict(f.definitions["content.answer_page"], key=feedback_fix_plan.WORKFLOW_KEY)
+    definition = dict(f.definitions["content.generate"], key=feedback_fix_plan.WORKFLOW_KEY)
     if getattr(f, "feedback_workflow", None) is None:
         f.feedback_workflow = await f.db.upsert_registry_workflow(
             workflow_id=uuid4(),

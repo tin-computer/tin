@@ -3,13 +3,11 @@
 Each fixable finding of the latest audit is one change row. Rows the founder approved, on no
 protected page, publish once the required checks pass; the rest open a pull request the
 founder merges. A declined finding never comes back, and a row already in an open pull
-request is not put in a second one. organic.technical_fix stays registered, hidden, for its
-pinned site-fix-v5 runs.
+request is not put in a second one.
 """
 
 from __future__ import annotations
 
-import hashlib
 import json
 from dataclasses import asdict
 from types import SimpleNamespace
@@ -18,10 +16,9 @@ from uuid import uuid4
 
 import httpx
 import pytest
-from test_adapted_page_delivery import ANSWER_PAGE_WORKFLOW_ID, PR_URL, clean
+from test_adapted_page_delivery import PR_URL, clean
 from test_private_workflows import ACTOR, app, mcp, structured
 from test_procedure_publication import publication_db as publication_db
-from test_technical_batch import row
 from test_technical_site_fixes import (
     BASE,
     HOST,
@@ -38,8 +35,8 @@ from test_website_change import save_protected
 
 from tin_lite import content_repository_delivery as delivery
 from tin_lite import technical_batch as batch_rules
-from tin_lite import technical_fix, website_change, website_change_audit
 from tin_lite import technical_repair_plan as repair_plan
+from tin_lite import website_change, website_change_audit
 from tin_lite.catalog import BUILTIN_WORKFLOWS
 from tin_lite.integrations import GitHubPullRequestResult
 from tin_lite.organic_audit import canonical_json
@@ -62,14 +59,35 @@ SITEMAP_URL = f"{BASE}/sitemap.xml"
 # --- Fixtures --------------------------------------------------------------------------------
 
 
+def row(check_id, finding_id=None, *, priority="quick_win", urls=(), **extra):
+    """One audit finding as TechnicalFixSources lists it."""
+    finding_id = finding_id or f"oa_{abs(hash(check_id)) % 10**20:020d}"
+    return {
+        "finding": {
+            "id": finding_id,
+            "check_id": check_id,
+            "issue": check_id,
+            "priority": priority,
+            "urls": list(urls),
+            **extra,
+        },
+        "affected_urls": list(urls),
+        "affected_count": len(urls),
+        "source_eligible": True,
+    }
+
+
 async def audit_run(f, findings, *, revision):
     """A succeeded organic audit run; its findings are what TechnicalFixSources reads."""
+    # Any registered workflow row will do; the update below makes it an organic audit.
+    generate = next(w for w in BUILTIN_WORKFLOWS if w.key == "content.generate")
     run, _ = await f.db.create_run(
         project_id=f.project.id,
-        workflow_id=ANSWER_PAGE_WORKFLOW_ID,
+        workflow_id=generate.id,
         started_by_clerk_user_id=ACTOR,
         definition_commit_sha="d" * 40,
-        pinned_definition=f.definitions["content.answer_page"],
+        pinned_definition=f.definitions["content.generate"],
+        input_payload={"item_id": "audit"},
     )
     await f.db.pool.execute(
         "UPDATE workflow_runs SET executor='organic.audit', status='succeeded', "
@@ -602,34 +620,6 @@ async def test_caps_are_enforced(publication_db, monkeypatch):
         batch_rules.check_bounds(
             [{"path": "app/page.tsx", "content": "y\n" * 801}], {"app/page.tsx": "x\n"}
         )
-
-
-# --- The technical fix is hidden; its pinned runs are unchanged ----------------------------
-
-
-def test_the_technical_fix_is_hidden_but_pinned_v5_runs_are_unchanged():
-    spec = next(w for w in BUILTIN_WORKFLOWS if w.key == technical_fix.KEY)
-    definition, files = spec.definition_and_resource_files()
-    assert spec.version_label == "0.6.1" and definition["public_discovery"] is False
-    assert technical_fix.definition_policy(definition) == "site-fix-v5"
-    # Everything a pinned run reads besides the version label, the catalog flag and the drawing
-    # is main's 0.6.0: inputs, procedure, prompt and skills, byte for byte.
-    pinned = {
-        k: v
-        for k, v in definition.items()
-        if k not in {"version", "public_discovery", "presentation"}
-    }
-    digest = hashlib.sha256(canonical_json(pinned))
-    for path in sorted(files):
-        digest.update(path.encode())
-        digest.update(files[path])
-    assert digest.hexdigest() == (
-        "48a35d53736228bf5f5cf6529521395d20a97187c3b414109060a992d498ae47"
-    )
-    from tin_lite.growth_plan import PROGRAMS
-
-    listed = {w for program in PROGRAMS["programs"] for w in program["tin"]["workflows"]}
-    assert technical_fix.KEY not in listed and website_change.KEY in listed
 
 
 def test_planned_url_changes_fit_the_same_row_contract():

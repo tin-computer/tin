@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import json
 import re
-from dataclasses import asdict, replace
+from dataclasses import asdict
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from types import SimpleNamespace
@@ -13,8 +13,6 @@ from uuid import uuid4
 
 import pytest
 from test_organic_audit_findings import files as audit_files
-from test_organic_system_db import technical_fixture
-from test_procedure_publication import publication_db as publication_db
 from test_technical_site_fixes import (
     BASE,
     HOST,
@@ -28,7 +26,6 @@ from test_technical_site_fixes import (
     served_page,
     site_source,
 )
-from test_technical_title_repair import spec
 
 from tin_lite import technical_batch as rules
 from tin_lite import technical_fix
@@ -684,48 +681,7 @@ async def test_a_read_right_after_the_merge_sees_it():
     assert live._due(record, now + timedelta(minutes=10))
 
 
-# --- The traffic system --------------------------------------------------------------------
-
-
-async def test_the_system_passes_the_whole_audit_under_v5(monkeypatch):
-    from tin_lite.organic_system_activities import OrganicSystemActivities
-
-    audit = {"step": "audit", "status": "succeeded", "run_id": str(uuid4())}
-    audit["canonical_commit_sha"] = "a" * 40
-    monkeypatch.setattr(
-        "tin_lite.organic_system_activities.system_facts",
-        AsyncMock(return_value={"steps": [audit]}),
-    )
-    preview = {
-        "source": {"audit_revision": "a" * 40},
-        "plan": {"repairs": [{"finding_id": FINDING}]},
-    }
-    batch = AsyncMock(return_value=preview)
-    monkeypatch.setattr("tin_lite.organic_system_activities.TechnicalFixSources.batch", batch)
-    activities = OrganicSystemActivities(
-        database=None, storage=None, settings=None, integrations=None
-    )
-    definition = {"procedure": {"output": {"repair_policy": technical_fix.BATCH_POLICY}}}
-    monkeypatch.setattr(
-        activities, "saved", AsyncMock(return_value={"definitions": {"technical": definition}})
-    )
-    run = SimpleNamespace(
-        id=uuid4(),
-        project_id=uuid4(),
-        input={
-            "technical_fix": True,
-            "expected_repository": "owner/site",
-            "repository_serves_site": True,
-        },
-    )
-    inputs, reason = await activities._child_inputs(run, "technical")
-    assert reason is None and inputs["finding_ids"] == [] and inputs["decisions"] == []
-    assert "finding_id" not in inputs and batch.await_args.kwargs["bind"] is False
-    preview["plan"]["repairs"] = []
-    assert await activities._child_inputs(run, "technical") == (None, "no_eligible_findings")
-
-
-# --- The preview on a real audit, and one run on disposable Postgres ------------------------
+# --- The preview on a real audit ----------------------------------------------------------
 
 
 def batch_source(robots=ROBOTS):
@@ -759,173 +715,3 @@ async def test_the_preview_sorts_a_real_audit_and_takes_decisions():
     answered = await source.service.batch(**args, decisions=[f"{decision['id']}=allow"])
     assert "robots_allow_ai_search" in {r["kind"] for r in answered["plan"]["repairs"]}
     assert answered["decisions_needed"] == []
-
-
-async def test_a_v5_batch_with_a_large_data_file_still_prepares_its_fixes(
-    publication_db, monkeypatch
-):
-    source = batch_source()
-    source.selection["finding_id"] = next(
-        row["id"]
-        for row in source.inventory["findings"]
-        if row["check_id"] == "robots.sitemap_reference_missing"
-    )
-    f = await technical_fixture(publication_db, monkeypatch, source=source)
-    preview = await source.service.batch(
-        project_id=source.project.id,
-        audit_run_id=source.run.id,
-        audit_revision=source.run.canonical_commit_sha,
-        expected_repository="owner/site",
-        repository_serves_site=True,
-    )
-    monkeypatch.setattr(
-        "tin_lite.technical_fix_execution.TechnicalFixSources.batch",
-        AsyncMock(return_value=preview),
-    )
-    inputs = {
-        "audit_run_id": str(source.run.id),
-        "audit_revision": source.run.canonical_commit_sha,
-        "finding_ids": [],
-        "decisions": [],
-        "expected_repository": "owner/site",
-        "repository_serves_site": True,
-        "context": "",
-    }
-    await f.db.pool.execute(
-        "UPDATE workflow_runs SET input=$2::jsonb WHERE id=$1", f.run.id, json.dumps(inputs)
-    )
-    f.run = await f.db.get_run(f.run.id)
-    repo = {"public/robots.txt": ROBOTS, "login.html": PAGE, "package.json": NEXT_PACKAGE}
-    f.integrations.github_repository_bundle.return_value = SimpleNamespace(
-        archive=archive(repo), complete=False, skipped=SKIPPED_MEDIA, missing=(LARGE_SOURCE,)
-    )
-    f.integrations.github_open_pull_requests.return_value = SimpleNamespace(
-        truncated=False, changed_paths=(), document=b"{}"
-    )
-    site = {f"{BASE}/robots.txt": ROBOTS, f"{BASE}/sitemap.xml": SITEMAP}
-    f.execution.fetch_file = AsyncMock(side_effect=lambda url, **_: served(url, site[url]))
-    f.execution.fetch = AsyncMock(side_effect=lambda url, **_: served_page(url, PAGE))
-
-    # The run goes on to compute instead of ending failed on the file it couldn't read.
-    assert await f.execution.prepare(f.run, policy=technical_fix.BATCH_POLICY) is False
-    prepared = (await f.db.get_effect(f"technical:{f.run.id}:prepare")).result
-    assert prepared["reason"] is None
-    assert prepared["batch"]["strict_files"]["public/robots.txt"]["target"] == "robots"
-    assert prepared["repository_missing"] == [LARGE_SOURCE]
-    f.integrations.github_open_pull_requests.assert_awaited()
-    run = await f.db.get_run(f.run.id)
-    assert run.status.value != "failed" and run.error_message is None
-
-
-async def test_a_v5_batch_prepares_once_and_delivers_one_checked_pr(publication_db, monkeypatch):
-    source = batch_source()
-    source.selection["finding_id"] = next(
-        row["id"]
-        for row in source.inventory["findings"]
-        if row["check_id"] == "robots.sitemap_reference_missing"
-    )
-    f = await technical_fixture(publication_db, monkeypatch, source=source)
-    preview = await source.service.batch(
-        project_id=source.project.id,
-        audit_run_id=source.run.id,
-        audit_revision=source.run.canonical_commit_sha,
-        expected_repository="owner/site",
-        repository_serves_site=True,
-    )
-    monkeypatch.setattr(
-        "tin_lite.technical_fix_execution.TechnicalFixSources.batch",
-        AsyncMock(return_value=preview),
-    )
-    inputs = {
-        "audit_run_id": str(source.run.id),
-        "audit_revision": source.run.canonical_commit_sha,
-        "finding_ids": [],
-        "decisions": [],
-        "expected_repository": "owner/site",
-        "repository_serves_site": True,
-        "context": "",
-    }
-    await f.db.pool.execute(
-        "UPDATE workflow_runs SET input=$2::jsonb WHERE id=$1", f.run.id, json.dumps(inputs)
-    )
-    f.run = await f.db.get_run(f.run.id)
-    repo = {"public/robots.txt": ROBOTS, "login.html": PAGE, "package.json": NEXT_PACKAGE}
-    f.integrations.github_repository_bundle.return_value = SimpleNamespace(
-        archive=archive(repo), complete=True
-    )
-    f.integrations.github_open_pull_requests.return_value = SimpleNamespace(
-        truncated=False, changed_paths=(), document=b"{}"
-    )
-    site = {f"{BASE}/robots.txt": ROBOTS, f"{BASE}/sitemap.xml": SITEMAP}
-    f.execution.fetch_file = AsyncMock(side_effect=lambda url, **_: served(url, site[url]))
-    f.execution.fetch = AsyncMock(side_effect=lambda url, **_: served_page(url, PAGE))
-
-    assert await f.execution.prepare(f.run, policy=technical_fix.BATCH_POLICY) is False
-    assert await f.execution.prepare(f.run, policy=technical_fix.BATCH_POLICY) is False
-    prepared = (await f.db.get_effect(f"technical:{f.run.id}:prepare")).result
-    assert prepared["batch"]["strict_files"]["public/robots.txt"]["target"] == "robots"
-    reads = f.execution.fetch_file.await_count + f.execution.fetch.await_count
-
-    await f.db.pool.execute("UPDATE workflow_runs SET lease_active=true WHERE id=$1", f.run.id)
-    await f.db.pool.execute(
-        "UPDATE effect_receipts SET result=$2::jsonb WHERE execution_key=$1",
-        f"{f.run.id}:procedure_artifact_persist",
-        json.dumps({"ephemeral_commit_sha": "e" * 40, "summary": "untrusted model summary"}),
-    )
-    contract = replace(
-        spec(technical_fix.BATCH_POLICY),
-        receipt_path_template="reports/technical-fix/{run_id}/RESULT.md",
-        output_max_files=20,
-    )
-    monkeypatch.setattr(
-        f.activities,
-        "_pinned_codex_procedure",
-        AsyncMock(
-            return_value=(
-                SimpleNamespace(key="organic.technical_fix", title="Technical fix"),
-                contract,
-            )
-        ),
-    )
-    noindex = PAGE.replace("<html>", '<html lang="en">').replace(
-        "</head>", '<meta name="robots" content="noindex">\n</head>'
-    )
-    proposed = patch(
-        prepared,
-        [
-            {"path": "public/robots.txt", "content": ROBOTS + f"Sitemap: {BASE}/sitemap.xml\n"},
-            {"path": "login.html", "content": noindex},
-        ],
-        body="Fixes the audit's findings.",
-    )
-    monkeypatch.setattr(
-        f.storage,
-        "read_procedure_checkpoint",
-        AsyncMock(return_value=json.dumps(proposed).encode()),
-    )
-    published = AsyncMock(return_value=("f" * 40, True))
-    monkeypatch.setattr(f.storage, "publish_state_document", published)
-    monkeypatch.setattr(
-        "tin_lite.technical_fix_execution.TechnicalFixExecution", lambda **kwargs: f.execution
-    )
-    create_pr = AsyncMock(
-        return_value=SimpleNamespace(
-            url="https://github.com/owner/site/pull/4",
-            number=4,
-            repository="owner/site",
-            branch="tin/fixture",
-        )
-    )
-    f.integrations.github_create_pull_request = create_pr
-    f.activities._integrations = f.integrations
-    await f.activities.commit_codex_procedure_artifact(str(f.run.id))
-    assert create_pr.await_count == 1
-    assert {item.path for item in create_pr.await_args.kwargs["files"]} == {
-        "public/robots.txt",
-        "login.html",
-    }
-    # Both served files were read again at delivery and still matched.
-    assert f.execution.fetch_file.await_count + f.execution.fetch.await_count == reads + 2
-    report = published.await_args.kwargs["content"].decode()
-    assert "## In this pull request" in report and "Copy, left to the content workflows" in report
-    assert NOTE not in report  # every changed file was proven from the diff

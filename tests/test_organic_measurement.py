@@ -43,12 +43,8 @@ def test_measurement_runs_before_the_refresh_in_order():
 
 def test_only_v7_measures():
     assert organic_system.measures_pages(organic_system.POLICY)
-    for policy in (
-        organic_system.WEBSITE_POLICY,
-        organic_system.REFRESH_POLICY,
-        organic_system.LEGACY_POLICY,
-    ):
-        assert not organic_system.measures_pages(policy)
+    assert organic_system.measures_pages(organic_system.MEASUREMENT_POLICY)
+    assert not organic_system.measures_pages(organic_system.WEBSITE_POLICY)
     assert organic_system.child_executor(SNAPSHOT) == "workflow.code"
     assert organic_system.child_executor(DECISIONS) == "workflow.code"
 

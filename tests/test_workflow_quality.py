@@ -108,16 +108,13 @@ def test_native_instruction_pins_retain_prechange_suites_and_reject_other_workfl
     from tin_lite.catalog import BUILTIN_WORKFLOWS
     from tin_lite.native_skill_pins import pinned_suite, suite_for_workflow
 
-    key = "content.answer_page"
+    key = "visibility.audit"
     definition, _ = next(
         w for w in BUILTIN_WORKFLOWS if w.key == key
     ).definition_and_resource_files()
-    assert "ANSWER_PLAN_V1" in pinned_suite(definition, key)
-    assert "ANSWER_PLAN_V1" not in pinned_suite({"key": key}, key)
+    assert pinned_suite(definition, key) == suite_for_workflow(key)
+    # A definition pinned before the suite was recorded keeps the pre-change instructions.
     assert pinned_suite({"key": key}, key) == suite_for_workflow(key, legacy=True)
+    assert pinned_suite({"key": key}, key) != pinned_suite(definition, key)
     with pytest.raises(ValueError, match="another workflow"):
-        pinned_suite({"key": "visibility.audit"}, key)
-    hidden, _ = next(
-        w for w in BUILTIN_WORKFLOWS if w.key == "content.public_article"
-    ).definition_and_resource_files()
-    assert hidden["public_discovery"] is False
+        pinned_suite({"key": "project.memory"}, key)

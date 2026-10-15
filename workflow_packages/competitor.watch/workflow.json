@@ -6,7 +6,7 @@
     "description": "Each week Tin rereads your known competitors' public pricing and changelog pages and reports only material changes, with a suggested response. It never signs up, contacts anyone or changes your pricing.",
     "executor": "codex.procedure",
     "system": "competitors",
-    "version": "2.0.0",
+    "version": "2.0.1",
     "schedule_modes": ["on_demand", "weekly"],
     "input_schema": {
       "type": "object",

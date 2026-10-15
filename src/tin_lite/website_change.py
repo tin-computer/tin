@@ -5,9 +5,8 @@ the founder approves it: content drafts, page decisions (URL changes), the page 
 index and technical fixes. Each is a change row: a source, a stable ID, a kind, the site
 paths it touches and its approval (ChangeRow). Two sources are implemented:
 
-- `content_draft` (phase 1): an approved content.generate article, answer page or public
-  article, adapted into the site's own format and route with content.deliver's machinery
-  (content_repository_delivery);
+- `content_draft` (phase 1): an approved content.generate article or answer page, adapted
+  into the site's own format and route (content_repository_delivery);
 - `audit` (phase 2, website_change_audit): what the latest organic audit found, repaired
   under site-fix-v5's rules, one change row per fixable finding;
 - `planned` (phase 3, website_change_planned): the redirects and noindex changes page
@@ -21,7 +20,7 @@ Two modes, decided by whether the change is pre-approved to commit to main:
 
 - Pre-approved with the founder's commit-to-main delivery, and touching no protected path: Tin
   opens the pull request and merges it once the repository's required checks pass, under
-  content.deliver's merge rules (`page_only`, `chosen_route`).
+  content_repository_delivery's merge rules (`page_only`, `chosen_route`).
 - Anything else: Tin opens an unmerged pull request, and the founder merges it.
 
 Pre-approved means a recorded approve action in Postgres: who approved it, when, and the exact
@@ -82,7 +81,7 @@ SITE_PATH = re.compile(r"/[A-Za-z0-9._~!$&'()*+,;=:@%/{}-]{0,300}")
 # Tin's own folder for answer-page drafts. A site does not serve it; a page never lands there.
 TIN_DRAFT_FOLDERS = ("content/answers/",)
 # The founder's page type (content/page-routes.json) for each kind of approved page.
-SOURCE_PAGE_TYPES = {"answer_page": "answer_page", "public_article": "article"}
+SOURCE_PAGE_TYPES = {"answer_page": "answer_page"}
 
 
 class WebsiteChangeConflict(ValueError):
@@ -479,10 +478,9 @@ def publish_mode(
 ) -> dict[str, str]:
     """Whether Tin may publish this change (merge its PR) or leaves the PR for the founder.
 
-    `asked` is the page's delivery as content.deliver reads it (`chosen_mode`): the choice
-    recorded with the approval, else the delivery its draft pinned. Only commit to main lets
-    Tin merge, the same rule content.deliver follows; a pull request, keeping the page in Tin
-    or no choice at all leaves the PR for the founder.
+    `asked` is the page's delivery (`chosen_mode`): the choice recorded with the approval,
+    else the delivery its draft pinned. Only commit to main lets Tin merge; a pull request,
+    keeping the page in Tin or no choice at all leaves the PR for the founder.
     """
     hit = next((root for path in change["paths"] if (root := protected(path, roots))), None)
     if approval is None:
@@ -584,13 +582,12 @@ async def select_source(*, database, storage, integrations, project_id, inputs) 
 
         check_destination(system_delivery, binding)
     route = None
-    # The page's type comes from its source: content.answer_page's pages and content.generate
-    # answer pages are answer pages, public articles are articles, and planned articles keep
-    # their own destination.
+    # The page's type comes from its source: content.generate answer pages are answer pages,
+    # and planned articles keep their own destination.
     kind = SOURCE_PAGE_TYPES.get(source["source_kind"])
     if kind is not None:
         # The route pinned at approval, else the one the founder saved since. Never a guess:
-        # an answer page or public article without one asks the founder first.
+        # an answer page without one asks the founder first.
         route = chosen.get("route") or await PageRouteService(
             database=database, storage=storage
         ).route_for(run, page_type=kind)

@@ -91,6 +91,20 @@ async def admit(f, key, inputs=None, *, parent=None, step=None):
     return run
 
 
+async def pin_recipe(f, parent, definitions=None, *, policy=None):
+    """Record the system's prepare receipt: its children draw on the recipe pinned there."""
+    from tin_lite.organic_system import POLICY
+
+    async with f.db.pool.acquire() as conn:
+        key = f"traffic:{parent.id}:prepare"
+        await f.db.start_effect(conn, execution_key=key, operation="organic.traffic_system")
+        await f.db.complete_effect(
+            conn,
+            execution_key=key,
+            result={"policy": policy or POLICY, "definitions": definitions or {}},
+        )
+
+
 def response(*, model="gpt-6-luna", searches=2):
     return {
         "id": "resp-supplier-fixture",
@@ -347,6 +361,7 @@ async def test_pre_enrollment_parent_does_not_acquire_retroactive_child_charges(
         definition_commit_sha=workflow.current_commit_sha,
     )
     await f.db.pool.execute("UPDATE billing_accounts SET run_billing_enabled=true")
+    await pin_recipe(f, parent)
     await admit(f, "organic.audit", SITE, parent=parent, step=f"system:{parent.id}:audit")
     assert await f.db.pool.fetchval("SELECT count(*) FROM billing_run_budgets") == 0
 
@@ -360,6 +375,7 @@ async def test_parallel_children_share_one_reservation_and_settlement(billed):
     f = billed
     await fund(f)
     parent = await admit(f, "organic.traffic_system", PARENT)
+    await pin_recipe(f, parent)
     audit, keywords = await asyncio.gather(
         admit(f, "organic.audit", SITE, parent=parent, step=f"system:{parent.id}:audit"),
         admit(
@@ -391,6 +407,10 @@ async def test_child_identity_and_step_ceiling_are_enforced(billed):
     f = billed
     await fund(f)
     parent = await admit(f, "organic.traffic_system", PARENT)
+    # Before the recipe is pinned, no child has an allocation to draw on.
+    with pytest.raises(BillingError, match="allocation"):
+        await admit(f, "organic.audit", SITE, parent=parent, step=f"system:{parent.id}:audit")
+    await pin_recipe(f, parent)
     with pytest.raises(BillingError, match="allocation"):
         await admit(f, "organic.audit", SITE, parent=parent, step=f"system:{parent.id}:keywords")
     audit = await admit(f, "organic.audit", SITE, parent=parent, step=f"system:{parent.id}:audit")
@@ -408,9 +428,7 @@ def test_new_organic_parent_requires_priced_execution_before_research(billed):
 
 
 async def test_content_children_share_parent_budget_only_for_pinned_recipe(billed):
-    # A recipe pinned to v5 delivers with content.deliver.
-    from tin_lite.organic_system import REFRESH_POLICY as POLICY
-
+    # The pinned recipe delivers with website.change.
     f = billed
     await fund(f)
     parent = await admit(f, "organic.traffic_system", PARENT)
@@ -419,14 +437,9 @@ async def test_content_children_share_parent_budget_only_for_pinned_recipe(bille
         await admit(f, "content.generate", inputs, parent=parent, step=f"system:{parent.id}:draft")
     definitions = {
         "draft": SPECS["content.generate"].definition,
-        "delivery": SPECS["content.deliver"].definition,
+        "delivery": SPECS["website.change"].definition,
     }
-    async with f.db.pool.acquire() as conn:
-        key = f"traffic:{parent.id}:prepare"
-        await f.db.start_effect(conn, execution_key=key, operation="organic.traffic_system")
-        await f.db.complete_effect(
-            conn, execution_key=key, result={"policy": POLICY, "definitions": definitions}
-        )
+    await pin_recipe(f, parent, definitions)
     draft = await admit(
         f, "content.generate", inputs, parent=parent, step=f"system:{parent.id}:draft"
     )
@@ -436,13 +449,20 @@ async def test_content_children_share_parent_budget_only_for_pinned_recipe(bille
             conn,
             {"run_id": parent.id, "executor": "organic.traffic_system"},
             {"start_idempotency_key": f"system:{parent.id}:delivery"},
-            SPECS["content.deliver"].definition,
+            SPECS["website.change"].definition,
         )
         assert not await f.billing.valid_child(
             conn,
             {"run_id": parent.id, "executor": "organic.traffic_system"},
             {"start_idempotency_key": f"system:{parent.id}:delivery"},
-            {**SPECS["content.deliver"].definition, "title": "Different recipe"},
+            {**SPECS["website.change"].definition, "title": "Different recipe"},
+        )
+        # website.change funds only the steps it was pinned for: no technical step here.
+        assert not await f.billing.valid_child(
+            conn,
+            {"run_id": parent.id, "executor": "organic.traffic_system"},
+            {"start_idempotency_key": f"system:{parent.id}:technical"},
+            SPECS["website.change"].definition,
         )
     for child in (draft, audit):
         async with f.db.pool.acquire() as conn:
@@ -464,7 +484,7 @@ async def test_content_children_share_parent_budget_only_for_pinned_recipe(bille
 
 
 async def test_the_systems_page_refresh_shares_its_budget_and_holds_settlement(billed):
-    from tin_lite.organic_system import FALLBACK_POLICY, POLICY
+    from tin_lite.organic_system import POLICY, WEBSITE_POLICY
 
     f = billed
     await fund(f)
@@ -505,16 +525,11 @@ async def test_the_systems_page_refresh_shares_its_budget_and_holds_settlement(b
     assert await f.billing.settle(parent.id) == 80_000_000
     assert (await f.billing.run_charge(child.id, ACTOR))["included_in_parent"]
     assert await f.db.pool.fetchval("SELECT count(*) FROM billing_ledger WHERE kind='charge'") == 1
-    # A recipe pinned before v5 refreshes nothing, so it funds no refresh.
+    # A recipe pinned to a policy this code no longer runs funds no refresh.
     older = await admit(f, "organic.traffic_system", PARENT)
+    retired = {**WEBSITE_POLICY, "version": "organic-traffic-v4"}
+    await pin_recipe(f, older, {"refresh": refresh}, policy=retired)
     async with f.db.pool.acquire() as conn:
-        key = f"traffic:{older.id}:prepare"
-        await f.db.start_effect(conn, execution_key=key, operation="organic.traffic_system")
-        await f.db.complete_effect(
-            conn,
-            execution_key=key,
-            result={"policy": FALLBACK_POLICY, "definitions": {"refresh": refresh}},
-        )
         assert not await f.billing.valid_child(
             conn,
             {"run_id": older.id, "executor": "organic.traffic_system"},
@@ -533,7 +548,7 @@ async def test_free_onboarding_review_holds_no_credit_reservation(billed):
     await f.billing.reconcile()
     assert (await f.billing.overview(f.project.id, ACTOR))["reserved_usd"] == "0.00"
     assert (await f.billing.run_charge(parent.id, ACTOR))["charged_usd"] == "0.00"
-    run = await admit(f, "content.answer_page")
+    run = await admit(f, "project.weekly_brief", {"focus": "Which buyers ask assistants about us?"})
     await f.db.pool.execute("UPDATE workflow_runs SET status='needs_input' WHERE id=$1", run.id)
     assert await f.billing.settle(run.id) == 0
 
@@ -902,6 +917,7 @@ async def test_parallel_paid_calls_cannot_overdraw_parent(billed, monkeypatch):
 
     monkeypatch.setattr(f.billing, "terms", small_parent)
     parent = await admit(f, "organic.traffic_system", PARENT)
+    await pin_recipe(f, parent)
     audit = await admit(f, "organic.audit", SITE, parent=parent, step=f"system:{parent.id}:audit")
     keywords = await admit(
         f, "organic.keyword_plan", KEYWORDS, parent=parent, step=f"system:{parent.id}:keywords"

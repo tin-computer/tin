@@ -63,8 +63,7 @@ Record exactly which deployment and tests passed below before claiming completio
 ## Page bundles
 
 An approved article may carry figures, interactive pieces, diagrams, videos and callouts
-([review](content-review.md)). content.deliver 1.7.0 and website.change 1.6.0 put them on the
-site in its own form:
+([review](content-review.md)). website.change 1.6.0 puts them on the site in its own form:
 
 - The approved source lists each asset's project path and checksum; a delivery run with assets
   checks out the approved revision (`procedure_project_revision`) and copies the files from

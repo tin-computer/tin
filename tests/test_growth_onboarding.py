@@ -272,11 +272,6 @@ def test_report_opens_with_the_handshake_and_names_what_runs() -> None:
             },
         },
         "control": "review_in_tin",
-        "delivery": {
-            "mode": "github_pr",
-            "repository": "example/site",
-            "path_pattern": "content/blog/{slug}.md",
-        },
         "links": ui_links("https://lite.tin.computer", uuid4()),
         "actions": [
             {
@@ -292,7 +287,7 @@ def test_report_opens_with_the_handshake_and_names_what_runs() -> None:
             {
                 "system": "ai-visibility",
                 "system_name": "AI visibility",
-                "key": "content.answer_page",
+                "key": "content.generate",
                 "mode": "weekly",
                 "weekdays": ["tuesday"],
                 "local_time": "09:00",
@@ -329,7 +324,7 @@ def test_report_opens_with_the_handshake_and_names_what_runs() -> None:
     }
     titles = {
         "project.weekly_brief": "Create a weekly project brief",
-        "content.answer_page": "Draft an answer page",
+        "content.generate": "Draft the next planned page",
     }
     message = founder_message(setup, titles=titles)
     # The win first, then each role as a benefit, then what is already there.
@@ -342,8 +337,8 @@ def test_report_opens_with_the_handshake_and_names_what_runs() -> None:
         "- Monday at 09:00: Create a weekly project brief. Lands in Files, and the chat." in message
     )
     assert (
-        "- Tuesday at 09:00: Draft an answer page. Lands in Decisions, as a draft; your yes opens "
-        "a pull request in example/site." in message
+        "- Tuesday at 09:00: Draft the next planned page. Lands in Decisions, as an article or "
+        "editorial assessment." in message
     )
     assert (
         "Already under way: create a weekly project brief (first result in on its scheduled day)."
@@ -388,10 +383,7 @@ def test_report_opens_with_the_handshake_and_names_what_runs() -> None:
 
     text = render_report(setup, titles=titles)
     assert text.startswith("# Tin setup needs attention: AI visibility\n\n" + message)
-    assert "## What runs" in text and "## How drafts ship" in text
-    assert (
-        "Approved drafts open a pull request in example/site under content/blog/{slug}.md" in text
-    )
+    assert "## What runs" in text and "## How drafts ship" not in text
     assert "## Next, for your agent" not in text
     assert f"Plan revision: `{'d' * 40}`." in text
     # The report carries the split in a block Tin reads back for get_run.
@@ -673,7 +665,7 @@ async def test_parent_plans_holds_then_sets_up_the_picks(publication_db, monkeyp
     )
     assert receipt.result["connections"]["workspace.google"]["state"] == "declined"
     assert receipt.result["details"]["names"] == ["AI visibility", "Outreach desk"]
-    assert receipt.result["business"] and receipt.result["delivery"] is None
+    assert receipt.result["business"] and "delivery" not in receipt.result
     assert receipt.result["control"] == "review_in_tin"
     assert outcomes[("ai-visibility", "project.weekly_brief", "weekly")]["status"] == "scheduled"
     assert f.schedules.created and f.schedules.created[0][1:] == ("weekly", "America/Los_Angeles")
@@ -758,7 +750,7 @@ def test_setup_repairs_inputs_the_plan_padded_or_got_wrong() -> None:
         {"target": "this project"},
         [],
     )
-    assert tidy_known_inputs("content.answer_page", {"target": padded}, {}) == (
+    assert tidy_known_inputs("content.generate", {"target": padded}, {}) == (
         {"target": padded},
         [],
     )

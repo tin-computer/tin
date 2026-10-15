@@ -1,5 +1,5 @@
 """Retired for new work: organic.site_architecture, content.blog_index, website.change's blog
-index source and content.deliver. Retries, saved schedules and older organic system runs keep
+index source. Retries, saved schedules and older organic system runs keep
 what they pinned."""
 
 from types import SimpleNamespace
@@ -19,12 +19,6 @@ RETIRED = [
     ("organic.site_architecture", "workflow.code", {}, "page decisions"),
     ("content.blog_index", "codex.procedure", {}, "website.change adds each"),
     ("website.change", "codex.procedure", {"source": "blog_index"}, "source audit or planned"),
-    (
-        "content.deliver",
-        "codex.procedure",
-        {},
-        "website.change: start it with source content_draft",
-    ),
 ]
 
 
@@ -49,7 +43,7 @@ async def test_a_new_run_is_refused_with_where_the_work_goes(key, executor, inpu
         {"retry_of_run_id": uuid4()},
         {"project_workflow_id": uuid4()},
         {"_organic_parent_run_id": uuid4()},
-        # A pinned organic system recipe's own step (v5 starts content.deliver for delivery).
+        # A pinned organic system recipe's own step.
         {"_system_step": True},
     ],
 )
@@ -88,10 +82,17 @@ def test_hidden_from_new_setups_but_still_registered():
         assert all(key not in p["tin"]["workflows"] for p in PROGRAMS["programs"])
 
 
-def test_content_deliver_is_hidden_but_still_registered():
-    from tin_lite.catalog import BUILTIN_WORKFLOWS
+@pytest.mark.parametrize(
+    "key",
+    ["content.answer_page", "content.public_article", "organic.technical_fix", "content.deliver"],
+)
+def test_deleted_workflows_leave_the_catalog_and_keep_their_numbers(key):
+    from tin_lite.catalog import BUILTIN_WORKFLOWS, RETIRED_BUILTIN_WORKFLOW_IDS
+    from tin_lite.public_workflows import PUBLIC_WORKFLOWS
     from tin_lite.workflow_order import WORKFLOW_DISPLAY_ORDER
 
-    spec = next(w for w in BUILTIN_WORKFLOWS if w.key == "content.deliver")
-    assert spec.definition["public_discovery"] is False
-    assert "content.deliver" not in WORKFLOW_DISPLAY_ORDER
+    assert all(w.key != key for w in (*BUILTIN_WORKFLOWS, *PUBLIC_WORKFLOWS))
+    assert key not in WORKFLOW_DISPLAY_ORDER
+    # Their published rows keep their IDs, which no new workflow may take.
+    assert key in RETIRED_BUILTIN_WORKFLOW_IDS.values()
+    assert not {w.id for w in BUILTIN_WORKFLOWS} & set(RETIRED_BUILTIN_WORKFLOW_IDS)

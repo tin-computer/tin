@@ -3,6 +3,7 @@
 import asyncio
 import shutil
 from collections import Counter
+from contextlib import asynccontextmanager
 from datetime import UTC, datetime, timedelta
 from types import SimpleNamespace
 from unittest.mock import AsyncMock
@@ -19,19 +20,29 @@ from temporalio.worker import Replayer, Worker
 from test_procedure_publication import publication_db as publication_db
 
 from tin_lite.activities import TinActivities
+from tin_lite.activity_lanes import ActivityLaneInterceptor, trusted_task_queue, workflow_runner
 from tin_lite.catalog import BUILTIN_WORKFLOWS
+from tin_lite.codex_execution import ProjectCodexExecution
 from tin_lite.domain import RunStatus
 from tin_lite.schedules import ScheduledWorkflowSkip, TemporalScheduleService, WorkflowSchedule
 from tin_lite.workflow_inputs import normalize_workflow_inputs
-from tin_lite.workflows import AnswerPageWorkflow, ScheduledDispatchWorkflow
+from tin_lite.workflows import CodexProcedureWorkflow, ScheduledDispatchWorkflow
 
 SCHEDULE = WorkflowSchedule(cadence="daily", local_time="09:00", timezone="UTC")
+# The procedure's drafting steps, which a review, restart or reset must never repeat.
+DRAFTING = (
+    "prepare_codex_procedure",
+    "create_codex_procedure_sandbox",
+    "persist_codex_procedure_artifact",
+    "commit_codex_procedure_artifact",
+)
 
 
 class ReviewActivities:
     def __init__(self):
         self.run_id = str(uuid4())
-        self.child_id = f"content.answer_page:{self.run_id}"
+        self.project = str(uuid4())
+        self.child_id = f"codex.procedure:{self.run_id}"
         self.ready = asyncio.Event()
         self.calls = Counter()
         self.status = "pending"
@@ -41,7 +52,7 @@ class ReviewActivities:
         self.calls["dispatch"] += 1
         return {
             "run_id": self.run_id,
-            "executor": "content.answer_page",
+            "executor": "codex.procedure",
             "temporal_workflow_id": self.child_id,
         }
 
@@ -50,11 +61,15 @@ class ReviewActivities:
             @activity.defn(name=name)
             async def execute(value):
                 self.calls[name] += 1
-                if name == "request_answer_page_review":
+                if name == "prepare_codex_procedure":
+                    return False
+                if name == "resolve_codex_project":
+                    return self.project
+                if name == "request_codex_procedure_review":
                     self.status = "needs_input"
                     self.ready.set()
                     return True
-                if name == "project_answer_page_result":
+                if name == "project_codex_procedure_result":
                     self.status = "succeeded"
                 return None
 
@@ -63,24 +78,33 @@ class ReviewActivities:
         return [self.dispatch] + [
             stub(name)
             for name in (
-                "draft_answer_page",
-                "request_answer_page_review",
-                "record_answer_page_approval",
-                "project_answer_page_result",
-                "project_answer_page_failure",
+                "resolve_codex_project",
+                *DRAFTING,
+                "request_codex_procedure_review",
+                "record_codex_procedure_approval",
+                "project_codex_procedure_result",
+                "project_codex_procedure_failure",
                 "deliver_content_draft",
             )
         ]
 
 
-def worker(env, queue, activities):
-    return Worker(
-        env.client,
-        task_queue=queue,
-        workflows=[ScheduledDispatchWorkflow, AnswerPageWorkflow],
-        activities=activities.registered(),
-        max_cached_workflows=0,
-    )
+@asynccontextmanager
+async def worker(env, queue, activities):
+    registered = activities.registered()
+    async with (
+        Worker(
+            env.client,
+            task_queue=queue,
+            workflows=[ScheduledDispatchWorkflow, CodexProcedureWorkflow, ProjectCodexExecution],
+            activities=registered,
+            workflow_runner=workflow_runner(),
+            interceptors=[ActivityLaneInterceptor()],
+            max_cached_workflows=0,
+        ),
+        Worker(env.client, task_queue=trusted_task_queue(queue), activities=registered),
+    ):
+        yield
 
 
 async def review_boundary(child):
@@ -118,21 +142,25 @@ async def test_review_survives_25_hours_and_worker_restart_then_approves():
             assert (await parent.describe()).status == WorkflowExecutionStatus.RUNNING
             assert (await child.describe()).status == WorkflowExecutionStatus.RUNNING
             assert activities.status == "needs_input"
-            assert activities.calls["record_answer_page_approval"] == 0
-        await Replayer(workflows=[AnswerPageWorkflow]).replay_workflow(history)
+            assert activities.calls["record_codex_procedure_approval"] == 0
+        await Replayer(
+            workflows=[CodexProcedureWorkflow],
+            workflow_runner=workflow_runner(),
+            interceptors=[ActivityLaneInterceptor()],
+        ).replay_workflow(history)
         async with worker(env, queue, activities):
             await child.signal("approve")
             await asyncio.wait_for(parent.result(), 20)
         assert activities.status == "succeeded"
         for name in (
-            "draft_answer_page",
-            "request_answer_page_review",
-            "record_answer_page_approval",
-            "project_answer_page_result",
+            *DRAFTING,
+            "request_codex_procedure_review",
+            "record_codex_procedure_approval",
+            "project_codex_procedure_result",
             "deliver_content_draft",
         ):
             assert activities.calls[name] == 1
-        assert activities.calls["project_answer_page_failure"] == 0
+        assert activities.calls["project_codex_procedure_failure"] == 0
 
 
 @pytest.fixture
@@ -190,13 +218,13 @@ async def test_terminated_review_can_reset_without_redrafting_or_approving(sched
             str(uuid4()),
             id=f"legacy-{uuid4()}",
             task_queue=queue,
-            execution_timeout=timedelta(seconds=5),
+            execution_timeout=timedelta(seconds=15),
         )
         await asyncio.wait_for(activities.ready.wait(), 20)
         child = env.client.get_workflow_handle(activities.child_id)
         waiting = await review_boundary(child)
         with pytest.raises(WorkflowFailureError):
-            await asyncio.wait_for(parent.result(), 20)
+            await asyncio.wait_for(parent.result(), 30)
         with pytest.raises(WorkflowFailureError):
             await asyncio.wait_for(child.result(), 20)
         assert (await parent.describe()).status == WorkflowExecutionStatus.TIMED_OUT
@@ -221,23 +249,22 @@ async def test_terminated_review_can_reset_without_redrafting_or_approving(sched
         await review_boundary(recovered)
         assert (await recovered.describe()).status == WorkflowExecutionStatus.RUNNING
         assert activities.status == "needs_input"
-        assert activities.calls["draft_answer_page"] == 1
-        assert activities.calls["request_answer_page_review"] == 1
-        assert activities.calls["record_answer_page_approval"] == 0
-        assert activities.calls["project_answer_page_failure"] == 0
+        assert all(activities.calls[name] == 1 for name in DRAFTING)
+        assert activities.calls["request_codex_procedure_review"] == 1
+        assert activities.calls["record_codex_procedure_approval"] == 0
+        assert activities.calls["project_codex_procedure_failure"] == 0
         await recovered.signal("approve")
         await asyncio.wait_for(recovered.result(), 20)
         assert activities.status == "succeeded"
-        assert activities.calls["draft_answer_page"] == 1
-        assert activities.calls["record_answer_page_approval"] == 1
+        assert all(activities.calls[name] == 1 for name in DRAFTING)
+        assert activities.calls["record_codex_procedure_approval"] == 1
 
 
-@pytest.mark.parametrize("executor", ["content.answer_page", "codex.procedure"])
 async def test_scheduled_admission_skips_active_restored_run_and_reuses_occurrence(
-    publication_db, monkeypatch, executor
+    publication_db, monkeypatch
 ):
     db = publication_db
-    key = "content.answer_page" if executor == "content.answer_page" else "content.public_article"
+    key, executor = "research.deep_dive", "codex.procedure"
     builtin = next(item for item in BUILTIN_WORKFLOWS if item.key == key)
     definition = builtin.definition
     workflow = await db.upsert_registry_workflow(
@@ -256,9 +283,7 @@ async def test_scheduled_admission_skips_active_restored_run_and_reuses_occurren
     inputs = normalize_workflow_inputs(
         schema=definition["input_schema"],
         project_id=project.id,
-        inputs={"brief": "Write an article about the fixture product."}
-        if executor == "codex.procedure"
-        else {},
+        inputs={"question": "How do buyers compare the fixture product with its rivals?"},
     )
     configured = await db.create_project_workflow(
         project_id=project.id,

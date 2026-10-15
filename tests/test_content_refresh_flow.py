@@ -1,6 +1,8 @@
 """The refresh run end to end on disposable Postgres: pick, wait, measure, report, deliver."""
 
+import io
 import json
+import tarfile
 from datetime import UTC, datetime, timedelta
 from types import SimpleNamespace
 from unittest.mock import AsyncMock
@@ -10,7 +12,6 @@ import pytest
 from test_content_programs import Storage
 from test_content_refresh import EVIDENCE, GOOD, PAGE, PAGE_TSX, audit, document, finding
 from test_procedure_publication import publication_db as publication_db
-from test_technical_title_repair import archive
 
 from tin_lite import content_refresh as refresh
 from tin_lite.activities import TinActivities
@@ -20,6 +21,18 @@ from tin_lite.content_delivery import OPERATION, ContentDelivery, delivery_key, 
 from tin_lite.content_refresh_sources import ContentRefreshSources
 from tin_lite.integrations import GitHubCommitResult, GitHubPullRequestResult
 from tin_lite.organic_audit import audit_paths, canonical_json
+
+
+def archive(files):
+    buffer = io.BytesIO()
+    with tarfile.open(fileobj=buffer, mode="w:gz") as tar:
+        for path, text in files.items():
+            raw = text.encode()
+            item = tarfile.TarInfo(path)
+            item.size = len(raw)
+            tar.addfile(item, io.BytesIO(raw))
+    return buffer.getvalue()
+
 
 ACTOR = "user_refresh"
 NOW = datetime(2026, 9, 29, 16, tzinfo=UTC)

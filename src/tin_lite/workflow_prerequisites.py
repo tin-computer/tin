@@ -18,7 +18,6 @@ from uuid import UUID
 
 from tin_lite import brand_contract
 from tin_lite.domain import (
-    ANSWER_PAGE_WORKFLOW_NAME,
     CODEX_PROCEDURE_EXECUTOR,
     MEMORY_INDEX_PATH,
     PREREQUISITE_WAIT_MINUTES,
@@ -45,7 +44,7 @@ _IDENTITY_KEYS = frozenset({"kind", "reuse", "host_input", "level", "reason", "p
 _ACTIVE_IDENTITY = ("active", "password")
 # Executors whose Temporal workflow holds a newly admitted run, with no compute, until the
 # prerequisite runs it was admitted behind finish, and which read project state only after.
-WAITING_EXECUTORS = frozenset({ANSWER_PAGE_WORKFLOW_NAME, CODEX_PROCEDURE_EXECUTOR})
+WAITING_EXECUTORS = frozenset({CODEX_PROCEDURE_EXECUTOR})
 # These pin their sources at admission, so a result that lands later could not reach them.
 PINNED_SOURCE_WORKFLOWS = frozenset({"content.generate", "brand.capture"})
 

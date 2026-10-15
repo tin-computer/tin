@@ -1,6 +1,5 @@
 """The organic system saves weekly drafting: disposable Postgres, fixture Temporal client."""
 
-import json
 from datetime import UTC, datetime, timedelta
 from types import SimpleNamespace
 from unittest.mock import AsyncMock
@@ -32,7 +31,7 @@ def definition(key):
     return next(w for w in BUILTIN_WORKFLOWS if w.key == key).definition
 
 
-def test_catalog_offers_weekly_drafting_and_the_v4_recipe():
+def test_catalog_offers_weekly_drafting_and_the_recipe():
     recipe = definition(organic_system.KEY)
     assert recipe["organic_system_policy"] == organic_system.POLICY
     assert recipe["organic_system_policy"]["schedule"] == "weekly_articles"
@@ -191,7 +190,6 @@ async def test_system_saves_one_weekly_schedule_for_its_program(publication_db, 
     [
         ("off", "skipped", "weekly_articles_off"),
         ("no_plan", "skipped", "content_plan_unavailable"),
-        ("v2", "skipped", "not_in_pinned_recipe"),
         ("no_temporal", "blocked", "scheduling_unavailable"),
     ],
 )
@@ -204,20 +202,16 @@ async def test_system_saves_nothing_when_weekly_drafting_does_not_apply(
         monkeypatch,
         temporal=None if case == "no_temporal" else client,
         inputs={"article_weekdays": []} if case == "off" else None,
-        # v4 would fall back to an earlier finished plan; v3 has no fallback.
-        policy=organic_system.WEEKLY_POLICY if case == "no_plan" else None,
     )
     if case == "no_plan":
+        # This run's plan never ran and the project has no finished plan to fall back to.
         await f.db.pool.execute(
             "DELETE FROM effect_receipts WHERE execution_key=$1",
             f"traffic:{f.parent.id}:step:content",
         )
-    if case == "v2":
         await f.db.pool.execute(
-            "UPDATE effect_receipts SET result=jsonb_set(result, '{policy}', $2::jsonb) "
-            "WHERE execution_key=$1",
-            f"traffic:{f.parent.id}:prepare",
-            json.dumps(organic_system.CONTENT_POLICY),
+            "UPDATE workflow_runs SET status='failed' WHERE project_workflow_id=$1",
+            f.initial.project_workflow_id,
         )
     result = await f.system.organic_system_weekly_articles(str(f.parent.id))
     assert result == {"status": status, "reason": reason}
@@ -234,8 +228,7 @@ async def test_system_saves_nothing_when_weekly_drafting_does_not_apply(
     monkeypatch.setattr("tin_lite.organic_system_activities.publish_run_report", publish)
     await f.system.organic_system_finish(str(f.parent.id))
     report = publish.await_args.kwargs["content"].decode()
-    # A v2 parent that reaches the new step does not grow a section it never promised.
-    assert ("## Weekly articles" in report) == (case != "v2")
+    assert "## Weekly articles" in report
     assert "Plan dates do not automatically generate the rest of the roadmap." in report
 
 

@@ -21,14 +21,6 @@ async def deliver_control(handle, signal=None):
             raise
 
 
-async def stop_technical(*, runtime, run_id, actor):
-    from tin_lite.procedure_control import stop_procedure
-
-    return await stop_procedure(
-        runtime=runtime, run_id=run_id, actor=actor, workflow_key="organic.technical_fix"
-    )
-
-
 async def stop_system(*, runtime, run_id, actor):
     db = runtime.database
     run = await db.get_run(run_id)

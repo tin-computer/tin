@@ -1,7 +1,6 @@
 # Content review and revisions
 
-`content.generate` and `content.public_article` share one review service across the
-dashboard and MCP. The same contract applies to a standalone article and a draft
+`content.generate` uses one review service across the dashboard and MCP. The same contract applies to a standalone article and a draft
 inside an organic traffic system. Feedback revises that item; it does not select
 the next roadmap item.
 
@@ -15,12 +14,10 @@ the next roadmap item.
   separate artifact and viewer action, never text or a link embedded in public copy.
 - Approval is bound to the current reviewed revision. An old approval cannot approve
   a newer draft. Only the final approved copy is eligible for configured delivery.
-- An article (content.public_article 1.9.0, content.generate 1.10.0 articles) may carry
-  figures, diagrams, interactive pieces, videos and callouts. From content.public_article 1.10.0
-  and content.generate 1.11.0 they follow the brand guide, and from 1.13.0 and 1.14.0 the site's
-  theming (light and dark, or light only); from 1.11.0
-  and 1.12.0 the drafting agent chooses each diagram's form, and from 1.12.0 and 1.13.0 it looks at
-  each figure in light and dark before finishing. The reader shows them as
+- An article (content.generate 1.10.0 and later) may carry figures, diagrams, interactive
+  pieces, videos and callouts. From 1.11.0 they follow the brand guide, and from 1.14.0 the
+  site's theming (light and dark, or light only); from 1.12.0 the drafting agent chooses each
+  diagram's form, and from 1.13.0 it looks at each figure in light and dark before finishing. The reader shows them as
   they'll ship: SVG figures as images, embeds in a sandboxed frame with no network or
   access to Tin, videos from YouTube, Vimeo, Loom or Mux (a video file loads only on
   play), and a note under the title for any file Tin left out. The Decisions card says

@@ -1,4 +1,5 @@
 import asyncio
+import json
 from types import SimpleNamespace
 from unittest.mock import AsyncMock
 from uuid import UUID, uuid4
@@ -8,59 +9,22 @@ import pytest
 from test_content_draft import fixture as planned_fixture
 from test_content_draft import start
 from test_private_workflows import ACTOR, app, mcp, structured
-from test_private_workflows import fixture as private_fixture
 from test_procedure_publication import publication_db as publication_db
 
 from tin_lite import content_draft
 from tin_lite.activities import TinActivities
-from tin_lite.article_review import change_summary, validate_article, validate_notes
-from tin_lite.catalog import BUILTIN_WORKFLOWS
+from tin_lite.article_review import change_summary
+from tin_lite.billing_contracts import BillingError
 from tin_lite.content_draft_sources import ContentDraftSources
 from tin_lite.mcp_server import _review_summary
-from tin_lite.organic_audit import canonical_json
 from tin_lite.workflow_review_dispatch import dispatch_reviews
 from tin_lite.workflow_review_store import ReviewConflict
 from tin_lite.workflow_reviews import WorkflowReviews, saved_revision_context
 
 
-async def setup(db, monkeypatch, *, planned=False):
-    if planned:
-        f = await planned_fixture(db, monkeypatch, clean=True)
-    else:
-        f = await private_fixture(db)
-        f.settings.codex_api_projects = {f.project.id}
-        f.settings.luna_api_key = "synthetic"
-        spec = next(w for w in BUILTIN_WORKFLOWS if w.key == "content.public_article")
-        definition, resources = spec.definition_and_resource_files()
-        await db.upsert_registry_workflow(
-            workflow_id=spec.id,
-            key=spec.key,
-            title=spec.title,
-            description=spec.description,
-            executor=spec.executor,
-            definition_repo_id="registry/workflows",
-            definition_path=spec.definition_path,
-            current_commit_sha="e" * 40,
-            version_label=spec.version_label,
-            definition=definition,
-        )
-        read = f.storage.read_canonical_artifact
-
-        async def resource(**kw):
-            if kw["repo_id"] == "registry/workflows":
-                return (
-                    canonical_json(definition)
-                    if kw["path"] == spec.definition_path
-                    else resources[kw["path"]]
-                )
-            return await read(**kw)
-
-        f.storage.read_canonical_artifact = resource
-        f.workflow = await db.get_workflow(spec.id)
-        f.inputs = {"brief": "Explain a practical buyer problem using our evidence."}
-        f.storage.repo.edit(
-            {".agents/skills/writing-style/SKILL.md": b"# Style\nDirect and specific.\n"}
-        )
+async def setup(db, monkeypatch):
+    """A content.generate draft from a saved plan, reviewed in Tin."""
+    f = await planned_fixture(db, monkeypatch, clean=True)
     f.reviews = WorkflowReviews(runtime=f.runtime, settings=f.settings)
     return f
 
@@ -110,11 +74,8 @@ async def revise(f, run, *, request_id=None, **kwargs):
     )
 
 
-@pytest.mark.parametrize("planned", [False, True])
-async def test_two_revisions_one_decision_and_only_latest_approval(
-    publication_db, monkeypatch, planned
-):
-    f = await setup(publication_db, monkeypatch, planned=planned)
+async def test_two_revisions_one_decision_and_only_latest_approval(publication_db, monkeypatch):
+    f = await setup(publication_db, monkeypatch)
     first = await save(f, await start(f))
     original = await f.reviews.view(first.id, ACTOR)
     # Older waiting procedures keep their publication lease until finalization.
@@ -141,9 +102,8 @@ async def test_two_revisions_one_decision_and_only_latest_approval(
     comparison = await f.reviews.compare(third.id, ACTOR)
     assert comparison["previous"]["run_id"] == str(second.id)
     assert comparison["revised"]["run_id"] == str(third.id)
-    if planned:
-        sources = ContentDraftSources(database=f.db, storage=f.storage)
-        assert (await sources.saved(first.id))["item"] == (await sources.saved(third.id))["item"]
+    sources = ContentDraftSources(database=f.db, storage=f.storage)
+    assert (await sources.saved(first.id))["item"] == (await sources.saved(third.id))["item"]
 
 
 async def test_revised_draft_gets_its_own_review_summary(publication_db, monkeypatch):
@@ -232,8 +192,11 @@ async def test_duplicate_committed_during_view_replays_before_stale_rejection(
 async def test_admission_failure_keeps_review_and_reference_pin(publication_db, monkeypatch):
     f = await setup(publication_db, monkeypatch)
     source = await save(f, await start(f))
-    f.db.billing = SimpleNamespace(admit=AsyncMock(side_effect=ValueError("Not enough credits")))
-    with pytest.raises(ValueError, match="credits"):
+    refusal = BillingError(
+        "stale_quote", "This quote is unavailable. Start again without a quote.", 402
+    )
+    f.db.billing = SimpleNamespace(admit=AsyncMock(side_effect=refusal))
+    with pytest.raises(BillingError, match="quote is unavailable"):
         await revise(f, source, billing_quote_id=uuid4())
     assert (await f.db.get_run(source.id)).status.value == "needs_input"
     assert await f.db.pool.fetchval("SELECT count(*) FROM workflow_review_commands") == 0
@@ -246,16 +209,15 @@ async def test_admission_failure_keeps_review_and_reference_pin(publication_db, 
     assert context["previous_copy"].startswith("# A useful article")
 
 
-@pytest.mark.parametrize("planned", [False, True])
 async def test_text_feedback_can_read_new_project_files_without_selecting_them(
-    publication_db, monkeypatch, planned
+    publication_db, monkeypatch
 ):
     from tin_lite.writing_style import STYLE_PATH
 
-    f = await setup(publication_db, monkeypatch, planned=planned)
+    f = await setup(publication_db, monkeypatch)
     source = await save(f, await start(f))
     sources = ContentDraftSources(database=f.db, storage=f.storage)
-    original = await sources.saved(source.id) if planned else None
+    original = await sources.saved(source.id)
     reference_sha = f.storage.repo.edit(
         {"notes/product.md": b"New evidence after drafting.", STYLE_PATH: b"A newer guide."}
     )
@@ -275,11 +237,10 @@ async def test_text_feedback_can_read_new_project_files_without_selecting_them(
         )
     assert response.status_code == 202, response.text
     run = await f.db.get_run(UUID(response.json()["id"]))
-    if planned:
-        prepared = await sources.prepare(run, output_validator=content_draft.CLEAN_VALIDATOR)
-        assert prepared["item"] == original["item"]
-        assert prepared["project_revision"] == original["project_revision"]
-        assert prepared["evidence"] == original["evidence"]
+    prepared = await sources.prepare(run, output_validator=content_draft.CLEAN_VALIDATOR)
+    assert prepared["item"] == original["item"]
+    assert prepared["project_revision"] == original["project_revision"]
+    assert prepared["evidence"] == original["evidence"]
     context = await saved_revision_context(f.db, f.storage, run)
     assert context["feedback"] == feedback
     assert context["reference_files"] == []
@@ -315,22 +276,19 @@ async def test_standalone_revisions_keep_original_style_snapshot(publication_db,
     from tin_lite.writing_style import STYLE_PATH
 
     f = await setup(publication_db, monkeypatch)
-    first = await start(f)
-    await f.db.pool.execute(
-        "UPDATE workflow_runs SET expected_head_sha=$2 WHERE id=$1", first.id, f.storage.repo.head
-    )
+    original = f.storage.repo.trees[f.storage.repo.head][STYLE_PATH][1].decode()
+    first = await save(f, await start(f))
     f.storage.repo.edit({STYLE_PATH: b"A later, different writing guide."})
-    first = await save(f, first)
     second = await revise(f, first)
     second = await save(f, second)
     third = await revise(f, second)
     for run in (second, third):
         context = await saved_revision_context(f.db, f.storage, run)
-        assert context["writing_guide"] == "# Style\nDirect and specific.\n"
+        assert context["writing_guide"] == original
 
 
 async def test_assessment_recheck_and_http_mcp_share_contract(publication_db, monkeypatch):
-    f = await setup(publication_db, monkeypatch, planned=True)
+    f = await setup(publication_db, monkeypatch)
     source = await save(f, await start(f), assessment=True)
     server = mcp(f, monkeypatch)
     review = structured(await server.call_tool("get_workflow_review", {"run_id": str(source.id)}))
@@ -365,26 +323,19 @@ async def test_assessment_recheck_and_http_mcp_share_contract(publication_db, mo
         await f.reviews.view(revised.id, "other_user")
 
 
-def test_copy_and_notes_are_different_contracts():
-    article = b"# Clear title\n\n" + b"A useful explanation. " * 20
-    validate_article(article)
-    with pytest.raises(ValueError, match="process notes"):
-        validate_article(article + b"\n## What changed\nWe revised this.\n")
-    # Revision notes are for the founder: a missing, repeated or long section never fails the
-    # paid revision; the review shows what it can.
-    for notes in (
-        b"# Generation notes\n\n## What changed\nShorter opening.\n",
-        b"# Generation notes\n\nRevised as asked.\n",
-        b"# Generation notes\n\n## Feedback not followed\n" + b"x" * 3000 + b"\n",
-    ):
-        validate_notes(notes, revision=True)
+def test_the_review_shows_what_the_revision_notes_say_changed():
+    # Revision notes are for the founder: a missing section never fails the paid revision; the
+    # review shows what it can.
+    assert (
+        change_summary(b"# Generation notes\n\n## What changed\nShorter opening.\n")
+        == "Shorter opening."
+    )
     assert change_summary(b"# Generation notes\n\nRevised as asked.\n") is None
-    with pytest.raises(ValueError, match="bounded Generation notes"):
-        validate_notes(b"Not notes at all", revision=True)
 
 
 async def test_failed_revision_retry_retains_copy_and_can_stop_chain(publication_db, monkeypatch):
     from tin_lite.run_service import start_workflow_run
+    from tin_lite.workflow_inputs import WorkflowInputError
 
     f = await setup(publication_db, monkeypatch)
     source = await save(f, await start(f))
@@ -393,7 +344,9 @@ async def test_failed_revision_retry_retains_copy_and_can_stop_chain(publication
     view = await f.reviews.view(failed.id, ACTOR)
     assert view["can_request_changes"] and not view["can_approve"]
     assert view["artifact"]["run_id"] == str(source.id)
-    with pytest.raises(RuntimeError, match="Retry revision"):
+    # Starting the saved inputs again never buys a second draft of the item; the failed
+    # revision's own retry keeps its feedback.
+    with pytest.raises(WorkflowInputError, match="already has a draft"):
         await start_workflow_run(
             runtime=f.runtime,
             settings=f.settings,
@@ -434,7 +387,7 @@ async def test_failed_or_stopped_revision_keeps_reviewed_draft_in_program_progre
 ):
     from tin_lite.workflow_inputs import WorkflowInputError
 
-    f = await setup(publication_db, monkeypatch, planned=True)
+    f = await setup(publication_db, monkeypatch)
     source = await save(f, await start(f))
     revision = await revise(f, source)
     await f.db.pool.execute("UPDATE workflow_runs SET status='failed' WHERE id=$1", revision.id)
@@ -510,7 +463,7 @@ async def test_revision_keeps_saved_card_not_edited_future_inputs(publication_db
     await f.db.pool.execute(
         "UPDATE project_workflows SET inputs=$2::jsonb WHERE id=$1",
         configured.id,
-        '{"brief":"A different future article"}',
+        json.dumps({**f.inputs, "item_id": "a-different-future-item"}),
     )
     successor = await revise(f, source)
     assert successor.project_workflow_id == configured.id
@@ -519,4 +472,4 @@ async def test_revision_keeps_saved_card_not_edited_future_inputs(publication_db
     await f.db.pool.execute("UPDATE workflow_runs SET status='succeeded' WHERE id=$1", successor.id)
     card = await f.db.get_project_workflow(configured.id)
     assert card.last_run_id == successor.id
-    assert card.inputs["brief"] == "A different future article"
+    assert card.inputs["item_id"] == "a-different-future-item"

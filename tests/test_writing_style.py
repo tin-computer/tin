@@ -71,13 +71,11 @@ async def test_style_guide_http_mcp_parity_and_no_run(publication_db, monkeypatc
         await denied.call_tool("get_writing_style_guide", {"project_id": str(f.project.id)})
 
 
-def test_new_public_article_prompt_reads_optional_project_guide():
-    article = next(w for w in BUILTIN_WORKFLOWS if w.key == "content.public_article")
-    assert article.version_label == "1.15.0"
-    assert article.system == "organic-traffic"
-    assert article.prerequisites[0].producer == "style.capture"
-    assert article.procedure.project_skills[0].path == STYLE_PATH
-    assert article.procedure.project_skills[0].required is False
-    prompt = (article.procedure.root / "PROMPT.md").read_text()
+def test_the_draft_prompt_reads_the_optional_project_guide():
+    draft = next(w for w in BUILTIN_WORKFLOWS if w.key == "content.generate")
+    assert draft.system == "organic-traffic"
+    assert "style.capture" in [p.producer for p in draft.prerequisites]
+    assert draft.procedure.project_skills[0].path == STYLE_PATH
+    assert draft.procedure.project_skills[0].required is False
+    prompt = (draft.procedure.root / "PROMPT.md").read_text()
     assert STYLE_PATH in prompt
-    assert "voice_notes" in prompt and "not factual evidence" in prompt

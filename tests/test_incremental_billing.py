@@ -10,7 +10,7 @@ from test_billing import ACTOR, finish, fund
 from test_billing import billed as billed
 from test_private_workflows import app, mcp, structured
 from test_procedure_publication import publication_db as publication_db
-from test_service_billing import KEYWORDS, PARENT, SITE, SPECS, admit, install
+from test_service_billing import KEYWORDS, PARENT, SITE, SPECS, admit, install, pin_recipe
 
 from tin_lite.billing_contracts import BillingError, ProjectSpendingPolicy
 from tin_lite.service_pricing import service_terms
@@ -385,6 +385,7 @@ async def test_scheduled_parent_rechecks_standing_authority_for_children(billed)
         ),
     )
     parent = await direct(f, "organic.traffic_system", PARENT, configured=saved)
+    await pin_recipe(f, parent)
     child = await admit(f, "organic.audit", SITE, parent=parent, step=f"system:{parent.id}:audit")
     assert (await f.billing.overview(f.project.id, ACTOR))["reserved_usd"] == "0.00"
     await f.billing.update_policy(

@@ -3,8 +3,7 @@
 A website.change run with `source: audit` repairs what the project's latest organic audit
 found, under site-fix-v5's rules (technical_repair_plan, technical_batch): every fixable
 finding, at most 30 per run, 20 files and 800 changed lines, checked on the live site after
-the pull request merges (technical_fix_live). The code is the technical fix's, shared rather
-than copied; organic.technical_fix stays registered for its pinned runs.
+the pull request merges (technical_fix_live), with the site-fix-v5 contract in technical_fix.
 
 Each fixable finding becomes one `website_changes` row, its change ID the audit's stable
 finding ID (`oa_…`). A preview (`preflight_website_change`) or a start records the rows: new

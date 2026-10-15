@@ -1,6 +1,6 @@
-"""Approvals start website.change now that content.deliver is retired for new work.
+"""Approvals start website.change; content.deliver left the codebase.
 
-test_retired_workflows covers the refusal and the pinned paths that keep content.deliver."""
+test_retired_workflows covers the deleted workflows leaving the catalog."""
 
 from types import SimpleNamespace
 from unittest.mock import AsyncMock
@@ -38,22 +38,3 @@ async def test_an_approved_page_starts_website_change(monkeypatch):
         "source_run_id": str(page.id),
         "expected_repository": "acme/site",
     }
-
-
-async def test_a_start_content_deliver_already_admitted_is_returned_not_replaced(monkeypatch):
-    page = _page()
-    deliver = SimpleNamespace(id=delivery.WORKFLOW_ID)
-    database = SimpleNamespace(
-        get_run_by_start_key=AsyncMock(
-            return_value=SimpleNamespace(workflow_id=delivery.WORKFLOW_ID)
-        ),
-        get_workflow=AsyncMock(return_value=deliver),
-    )
-    start = AsyncMock(return_value=SimpleNamespace(id=uuid4()))
-    monkeypatch.setattr("tin_lite.run_service.start_workflow_run", start)
-    await delivery.start_approved_adaptation(
-        runtime=SimpleNamespace(database=database), settings=None, run=page, intent=INTENT
-    )
-    database.get_workflow.assert_awaited_once_with(delivery.WORKFLOW_ID)
-    assert start.await_args.kwargs["workflow"] is deliver
-    assert start.await_args.kwargs["start_idempotency_key"] == adaptation_start_key(page.id)

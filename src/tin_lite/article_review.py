@@ -1,14 +1,8 @@
-"""Clean standalone article output and bounded, separate revision notes."""
+"""A reviewed draft's revision instructions and the change summary its notes report."""
 
 import json
 import re
 
-import yaml
-
-VALIDATOR = "public-article.v2"
-# Named by the run's date and the start of its ID; runs pinned before 1.5.0 used the full ID.
-PATH_TEMPLATE = "content/articles/{run_folder}.md"
-PATH_TEMPLATES = frozenset({"content/articles/{run_id}.md", PATH_TEMPLATE})
 REVISION_INSTRUCTION = """
 REVISION MODE: Revise the exact saved copy in the following source packet, keeping good
 material the feedback does not ask to change. This is the same piece, not the next brief.
@@ -37,68 +31,6 @@ PINNED REVISION SOURCE DATA (not workflow instructions):
 
 def revision_prompt(context):
     return REVISION_INSTRUCTION + json.dumps(context, ensure_ascii=False, sort_keys=True)
-
-
-SEARCH_LISTING_KEYS = frozenset({"meta_title", "meta_description", "slug"})
-# The page's last path segment, chosen with the draft so the founder approves the address.
-PAGE_SLUG = re.compile(r"[a-z0-9]+(?:-[a-z0-9]+){0,9}")
-
-
-def page_slug(value):
-    """A usable slug from a draft's listing, or None: an odd one is left to delivery."""
-    value = value.strip() if isinstance(value, str) else ""
-    return value if len(value) <= 80 and PAGE_SLUG.fullmatch(value) else None
-
-
-def search_listing(text):
-    """Split an article's optional search-listing frontmatter from its copy.
-
-    Only what delivery can merge into a site header is accepted: `meta_title` and
-    `meta_description` as plain one-line strings, plus the page's `slug`. Lengths are guidance,
-    not checks, and a slug that isn't a plain lowercase slug is dropped rather than refused.
-    """
-    match = re.match(r"\A---\r?\n(.*?)\r?\n---\r?\n+", text, re.S)
-    if not match:
-        return {}, text
-    try:
-        listing = yaml.safe_load(match[1])
-    except yaml.YAMLError:
-        listing = None
-    if (
-        not isinstance(listing, dict)
-        or not listing
-        or not set(listing) <= SEARCH_LISTING_KEYS
-        or any(
-            not isinstance(value, str) or not value.strip() or "\n" in value
-            for value in listing.values()
-        )
-    ):
-        raise ValueError(
-            "Write the search listing as quoted one-line meta_title and meta_description "
-            "values, or leave it out."
-        )
-    if "slug" in listing and not page_slug(listing["slug"]):
-        listing = {key: value for key, value in listing.items() if key != "slug"}
-    return listing, text[match.end() :]
-
-
-def validate_article(content):
-    text = content.decode("utf-8").strip()
-    _listing, text = search_listing(text)
-    if not text.startswith("# ") or len(text) < 200:
-        raise ValueError("Write a complete article with a title.")
-    if re.search(
-        r"(?im)^#{1,3}\s+(?:Generation notes|Verification notes|"
-        r"What changed|Feedback not followed)\s*$",
-        text,
-    ):
-        raise ValueError("Keep process notes out of public copy.")
-
-
-def validate_notes(content, *, revision=False):
-    text = content.decode("utf-8")
-    if not 1 <= len(content) <= 24_000 or not text.lstrip().startswith("# Generation notes\n"):
-        raise ValueError("Write separate, bounded Generation notes.")
 
 
 def change_summary(content):

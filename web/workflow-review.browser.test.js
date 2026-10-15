@@ -7,9 +7,9 @@ import test from "node:test";
 import { chromium } from "playwright";
 
 const assets = path.resolve("src/tin_lite/static");
-for (const hidden of [false, true]) for (const theme of ["light", "dark"]) test(`article feedback: ${theme}, ${hidden ? "hidden public article with GitHub" : "discovered content draft"}, clean reader, inline card, replay and comparison`, async () => {
+for (const hidden of [false, true]) for (const theme of ["light", "dark"]) test(`article feedback: ${theme}, ${hidden ? "hidden content draft with GitHub" : "discovered content draft"}, clean reader, inline card, replay and comparison`, async () => {
   const project = {id: "project", name: "ClawMessenger", workspace_id: "workspace", workspace_name: "ClawMessenger", timezone: "Europe/Berlin", member_count: 1};
-  const workflow = {id: "article", key: hidden ? "content.public_article" : "content.generate", title: "Draft planned content", executor: "codex.procedure", status: "active", definition: {public_discovery: !hidden, human_review: {eligible: true}, input_schema: {type: "object", properties: {}}}};
+  const workflow = {id: "article", key: "content.generate", title: "Draft planned content", executor: "codex.procedure", status: "active", definition: {public_discovery: !hidden, human_review: {eligible: true}, input_schema: {type: "object", properties: {}}}};
   const approvalLabel = hidden ? "Publish now" : "Approve draft";
   const first = {id: "first", project_id: "project", workflow_id: "article", workflow_name: "codex.procedure", status: "needs_input", review_required: true, review_version: 1, artifact_path: "content/drafts/first.md", canonical_commit_sha: "a".repeat(40), created_at: "2026-09-14T12:00:00Z"};
   const second = {...first, id: "second", review_source_run_id: "first", review_root_run_id: "first", review_version: 2, artifact_path: "content/drafts/second.md", canonical_commit_sha: "b".repeat(40)};
@@ -159,7 +159,7 @@ for (const hidden of [false, true]) for (const theme of ["light", "dark"]) test(
     await page.getByText("Previous version → Revised version", {exact: true}).waitFor();
     assert.doesNotMatch(await page.locator(".review-comparison").innerText(), /Keep current|Use saved result|would be removed/);
     await page.getByRole("button", {name: "Close comparison", exact: true}).click();
-    if (process.env.TIN_REVIEW_SCREENSHOTS && hidden) await page.screenshot({path: `${process.env.TIN_REVIEW_SCREENSHOTS}/hidden-article-${theme}.png`, fullPage: true});
+    if (process.env.TIN_REVIEW_SCREENSHOTS && hidden) await page.screenshot({path: `${process.env.TIN_REVIEW_SCREENSHOTS}/hidden-draft-${theme}.png`, fullPage: true});
     await page.getByRole("button", {name: hidden ? "Open a pull request" : approvalLabel, exact: true}).click();
     await page.waitForTimeout(100);
     assert.equal(writes.find(w => w.path.endsWith("/approve"))?.body.review_token, "2".repeat(64));

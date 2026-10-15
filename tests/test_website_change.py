@@ -32,7 +32,7 @@ from tin_lite.documents import render_markdown
 from tin_lite.organic_audit import canonical_json
 from tin_lite.page_routes import PATH as ROUTES_PATH
 from tin_lite.procedures import procedure_checkpoint_path
-from tin_lite.run_service import RETIRED, start_workflow_run
+from tin_lite.run_service import start_workflow_run
 from tin_lite.website_change import ChangeRow, WebsiteChangeConflict
 from tin_lite.workflow_inputs import WorkflowInputError
 
@@ -75,7 +75,6 @@ async def fixture(db, monkeypatch):
 
     f.storage.read_canonical_artifact = read_resource
     f.website = await db.get_workflow(spec.id)
-    f.content_deliver = await db.get_workflow(delivery.WORKFLOW_ID)
     monkeypatch.setattr(delivery.asyncio, "sleep", AsyncMock())
     # The site's main branch requires a build check, unless a test says otherwise.
     f.runtime.integrations.github_required_status_checks = AsyncMock(
@@ -94,7 +93,7 @@ def choose_route(f, route=ROUTE, kind="answer_page"):
 async def approved_for_main(f, page=None):
     """An answer page approved with the founder's delivery: commit to main."""
     page = page or await answer_page(f)
-    await f.delivery.choose(run=page, mode="github_commit", actor=ACTOR, adapt=True)
+    await f.delivery.choose(run=page, mode="github_commit", actor=ACTOR)
     return await approve_answer_page(f, page)
 
 
@@ -299,7 +298,7 @@ async def test_a_change_that_was_not_pre_approved_opens_a_pull_request(
     if why == "no_recorded_approver":
         page = await approve_without_approver(f, page)
     elif why == "approval_asked_for_a_pr":
-        await f.delivery.choose(run=page, mode="github_pr", actor=ACTOR, adapt=True)
+        await f.delivery.choose(run=page, mode="github_pr", actor=ACTOR)
         page = await approve_answer_page(f, page)
     else:
         # Approved, but nobody chose commit to main: approval is not website publication.
@@ -658,7 +657,7 @@ async def test_a_static_html_site_gets_its_page_as_html(publication_db, monkeypa
         await start(f, await approved_for_main(f)),
         page_path="client/public/blog/reliable-ai-work-2/index.html",
         public_url="https://example.com/blog/reliable-ai-work-2",
-        content=page.replace("receipts", "logs"),
+        content=page.replace("receipt", "log"),
     )
     merge = await merge_outcome(f, run)
     assert merge["status"] == "left_open"
@@ -669,67 +668,15 @@ async def test_a_static_html_site_gets_its_page_as_html(publication_db, monkeypa
     integrations.github_merge_pull_request.assert_not_called()
 
 
-# content.deliver keeps working as it did; the two never adapt one page twice.
+# One page is never adapted twice.
 
 
-async def test_content_deliver_pinned_runs_are_unchanged(publication_db, monkeypatch):
-    f = await fixture(publication_db, monkeypatch)
-    spec = next(w for w in BUILTIN_WORKFLOWS if w.key == delivery.KEY)
-    definition, files = spec.definition_and_resource_files()
-    # The drawing is display-only; a run never reads it.
-    pinned = {k: v for k, v in definition.items() if k != "presentation"}
-    digest = hashlib.sha256(canonical_json(pinned))
-    for path in sorted(files):
-        digest.update(path.encode())
-        digest.update(files[path])
-    # The definition and procedure files new runs pin: 1.4.0 builds the page in the site's own
-    # format (1.3.0 kept it as Markdown or a JSON string); 1.5.0 matches the site's other pages
-    # and adds no outside fonts; 1.6.0 uses the slug the founder approved with the draft;
-    # 1.7.0 carries the page's figures, embeds, diagrams and videos (30 files, 2 MB); 1.8.0 shows
-    # Mermaid with the site's own support or as a figure Codex draws, not Tin's renderer; 1.9.0
-    # never moves another page to make room and adds no code that enforces the approved copy.
-    # Its retirement for new work only hides it from discovery (public_discovery: false).
-    assert spec.version_label == "1.9.0"
-    assert definition["public_discovery"] is False
-    assert digest.hexdigest() == (
-        "139899f36ea09f0437c399b39151a89399ea594af36a4d8db106fc008ed53849"
-    )
-    # A content.deliver run an approval started before its retirement pins no change row and
-    # keeps its own rules: a pull-request setting never merges, and nothing records a merge.
-    page = await answer_page(f)
-    await f.delivery.choose(run=page, mode="github_pr", actor=ACTOR, adapt=True)
-    page = await approve_answer_page(f, page)
-    monkeypatch.delitem(RETIRED, delivery.KEY)
-    child = (
-        await start_workflow_run(
-            runtime=f.runtime,
-            settings=f.settings,
-            workflow=f.content_deliver,
-            project_id=f.project.id,
-            started_by_clerk_user_id=ACTOR,
-            start_idempotency_key=adaptation_start_key(page.id),
-            input_payload={"source_run_id": str(page.id), "expected_repository": "owner/site"},
-            _approval_delivery=True,
-        )
-    ).id
-    source = await delivery.saved_source(f.db, child)
-    assert "change" not in source and "publish" not in source
-    assert (await f.db.get_effect(delivery.source_key(child))).operation == delivery.OPERATION
-    child = await made(f, await f.db.get_run(child), page_path="content/answers/reliable.md")
-    manifest = await delivery.saved_manifest(f.db, f.storage, child)
-    assert delivery.validate_patch(manifest, source) == delivery.validate_copy(manifest, source)
-    assert await merge_outcome(f, child) is None
-    status = await f.delivery.status(child)
-    assert "change_id" not in status and status["merge"] is None
-
-
-async def test_one_page_is_never_adapted_by_both_workflows(publication_db, monkeypatch):
+async def test_one_page_is_never_adapted_twice(publication_db, monkeypatch):
     f = await fixture(publication_db, monkeypatch)
     choose_route(f)
-    # The approval starts website.change (content.deliver is retired for new work); a second
-    # website.change refuses the same page.
+    # The approval starts website.change; a second website.change refuses the same page.
     page = await answer_page(f)
-    await f.delivery.choose(run=page, mode="github_commit", actor=ACTOR, adapt=True)
+    await f.delivery.choose(run=page, mode="github_commit", actor=ACTOR)
     page = await approve_answer_page(f, page)
     await f.activities.deliver_content_draft(str(page.id))
     started = await f.db.get_run_by_start_key(
@@ -738,17 +685,6 @@ async def test_one_page_is_never_adapted_by_both_workflows(publication_db, monke
     assert started.workflow_id == delivery.WEBSITE_CHANGE_ID
     with pytest.raises(WorkflowInputError, match="still working"):
         await start(f, page)
-    # A content.deliver run admitted before the retirement still holds its page, and a pinned
-    # content.deliver (a retry or v5 system run) refuses a page website.change holds.
-    monkeypatch.delitem(RETIRED, delivery.KEY)
-    pinned = await approved_for_main(f)
-    await start(f, pinned, workflow=f.content_deliver)
-    with pytest.raises(WorkflowInputError, match="still working"):
-        await start(f, pinned)
-    other = await approved_for_main(f)
-    await start(f, other)
-    with pytest.raises(WorkflowInputError, match="still working"):
-        await start(f, other, workflow=f.content_deliver)
 
 
 # The founder decides one change row over HTTP or MCP.
@@ -842,7 +778,7 @@ async def test_mcp_lists_every_open_decision_in_one_call(publication_db, monkeyp
         await server.call_tool("list_open_decisions", {"project_id": str(f.project.id)})
     )
     assert [item["run_id"] for item in listed["reviews"]] == [str(page.id)]
-    assert listed["reviews"][0]["files"][0].startswith("content/answers/")
+    assert listed["reviews"][0]["files"][0].startswith("content/drafts/")
     assert [item["change_id"] for item in listed["website_changes"]] == [rows[0].change_id]
     assert listed["judgment_calls"] == []
     assert listed["paid_ads_proposals"] == []

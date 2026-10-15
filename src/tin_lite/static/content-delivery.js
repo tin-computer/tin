@@ -113,37 +113,5 @@
       if (state?.dirty) draw(); else await load();
     }
   }
-  function fields(inputs = {}) {
-    return `<div class="content-fields" data-article-delivery-picker data-selected-article="${esc(inputs.source_run_id || "")}">
-      <div data-article-delivery-options>Loading approved articles…</div>
-      <input type="hidden" name="input:expected_repository" value="">
-      <input type="hidden" name="input:retry_run_id" value="">
-      ${field("Site instructions", `<textarea class="workflow-inline-input workflow-inline-textarea" name="input:direction" rows="3" placeholder="Optional site root or routing conventions">${esc(inputs.direction || "")}</textarea>`)}
-      <p class="system-config-note" data-article-delivery-repository></p>
-      <p class="system-config-note">Keeps the reviewed Markdown in Tin and prepares an unmerged PR. Does not draft another article or publish your website.</p>
-    </div>`;
-  }
-  function bindPickers(root, {api, projectId}) {
-    root.querySelectorAll("[data-article-delivery-picker]").forEach(async panel => {
-      if (panel.dataset.bound) return;
-      panel.dataset.bound = "true";
-      try {
-        const result = await api(`/api/projects/${projectId}/content-drafts/delivery-sources`);
-        if (!panel.isConnected) return;
-        const selected = panel.dataset.selectedArticle;
-        const options = result.articles.map(row => [row.run_id, row.title]);
-        panel.querySelector("[data-article-delivery-options]").innerHTML = field("Approved article", tinSelectControl("input:source_run_id", selected, [["", "Choose an approved article…"], ...options], "Approved article"));
-        panel.querySelector('[name="input:expected_repository"]').value = result.repository || "";
-        panel.querySelector("[data-article-delivery-repository]").textContent = !options.length ? "Read and approve an article in Decisions first." : result.repository ? `Website repository: ${result.repository}. Change it in Integrations.` : "Connect your website repository in Integrations first.";
-        bindTinControls(panel);
-      } catch (error) {
-        if (panel.isConnected) panel.querySelector("[data-article-delivery-options]").textContent = error.message;
-      }
-    });
-  }
-  function prepare(form) {
-    if (!form.querySelector('[name="input:source_run_id"]')?.value) throw new Error("Choose an approved article first.");
-    if (!form.querySelector('[name="input:expected_repository"]')?.value) throw new Error("Connect your website repository in Integrations first.");
-  }
-  window.TinContentDelivery = {mount, fields, bindPickers, prepare};
+  window.TinContentDelivery = {mount};
 })();

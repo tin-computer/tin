@@ -27,7 +27,6 @@ from tin_lite.activity_lanes import (
     trusted_task_queue,
     workflow_runner,
 )
-from tin_lite.answer_page import AnswerPageDrafter
 from tin_lite.awesome_submit_activities import AwesomeSubmitActivities
 from tin_lite.catalog import sync_builtin_workflows
 from tin_lite.character_design import MODEL_ROUTE as CHARACTER_MODEL_ROUTE
@@ -190,7 +189,6 @@ async def build_runtime(settings: Settings) -> RuntimeServices:
     memory_gardener = None
     scan_reporter = None
     visibility_auditor = None
-    answer_page_drafter = None
     weekly_brief_reporter = None
     site_health_improver = None
     if settings.luna_api_key is not None:
@@ -212,10 +210,6 @@ async def build_runtime(settings: Settings) -> RuntimeServices:
             responses=responses,
             skill_suite=load_skill_suite(ROOT / "workflow_skills" / "visibility-audit"),
         )
-        answer_page_drafter = AnswerPageDrafter(
-            responses=responses,
-            skill_suite=load_skill_suite(ROOT / "workflow_skills" / "answer-page"),
-        )
         weekly_brief_reporter = WeeklyBriefReporter(
             responses=responses,
             skill_suite=load_skill_suite(ROOT / "workflow_skills" / "weekly-brief"),
@@ -232,7 +226,6 @@ async def build_runtime(settings: Settings) -> RuntimeServices:
         memory_gardener=memory_gardener,
         scan_reporter=scan_reporter,
         visibility_auditor=visibility_auditor,
-        answer_page_drafter=answer_page_drafter,
         weekly_brief_reporter=weekly_brief_reporter,
         site_health_improver=site_health_improver,
         integrations=integrations,
@@ -527,11 +520,6 @@ async def build_runtime(settings: Settings) -> RuntimeServices:
         activity_instance.generate_visibility_audit,
         activity_instance.project_visibility_result,
         activity_instance.project_visibility_failure,
-        activity_instance.draft_answer_page,
-        activity_instance.request_answer_page_review,
-        activity_instance.record_answer_page_approval,
-        activity_instance.project_answer_page_result,
-        activity_instance.project_answer_page_failure,
         activity_instance.generate_weekly_brief,
         activity_instance.project_weekly_brief_result,
         activity_instance.project_weekly_brief_failure,

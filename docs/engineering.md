@@ -7,8 +7,8 @@ For the rest of the contributor and operator guides, use the [documentation inde
 
 Tin Lite is a greenfield workflow substrate. The current repository implements Phase 1a and the
 first sequential Phase 1b slices: catalog-backed `content.design_md`, `project.memory`,
-`scan.report`, `visibility.audit`, `content.answer_page`, `project.weekly_brief`,
-`research.deep_dive`, `content.public_article`, `content.diagram`, `qa.signup_walkthrough`,
+`scan.report`, `visibility.audit`, `project.weekly_brief`,
+`research.deep_dive`, `content.diagram`, `qa.signup_walkthrough`,
 `product.code_map`, `product.deep_dive`, `qa.product_audit`, `creative.character`,
 `creative.product_demo`, `growth.onboarding`, and `growth.onboarding_plan` workflows run through Temporal Cloud, persist durable state to code.storage, and project product
 reads into PlanetScale Postgres. The
@@ -216,42 +216,14 @@ atomically publishes the readable `reports/AI_VISIBILITY.md` and its raw evidenc
 activity retry resumes completed calls instead of paying for the whole panel again. It adds no
 table, E2B sandbox, DataForSEO dependency, or parallel execution engine.
 
-`content.answer_page` turns durable project context into one researched, reviewable Markdown page.
-It prefers the latest visibility audit and otherwise works from project memory, so its only input
-is `project_id`; GitHub access is not required. One forced-search Luna call publishes the page
-at `content/answers/{date}-{question-slug}.md`, named from its date and title, with bounded
-evidence under `reports/answer-page/{run_id}/`, atomically through Temporal. The title becomes the
-run's artifact title, which Decisions, the run card and chat show. Pages drafted before per-page
-names keep `reports/ANSWER_PAGE.md`. A later page with the same date and title gets the first
-eight characters of its run ID after the slug, so it never replaces the earlier file; a retry
-reuses the path its own evidence names. Because this is
-customer-facing content, the artifact becomes readable while the run waits in `needs_input`; an
-approval from the draft reader resumes and completes it. The menu's Decisions badge, the Decisions
-list and the project line's "need you" count the same items: runs with something to approve, not a
-task asking a question or a reviewed task that changed nothing. A decision saved before outputs
-carried their heading is named once from its pinned file when Decisions is listed, a few per
-request; an output with no heading is titled by its workflow and day. Completed reviews remain
-historical Activity events rather than permanent stages on finished rows. Report and memory workflows do not
-pause for review. The workflow does not edit or publish the customer's website, create an E2B
-sandbox, or add a provider credential path.
-
-Answer page 1.3.0 pins the `answer-page/10-search-and-answer-engines` skill (`ANSWER_SEO_V1`).
-The model opens the official pages of every product it names, cites inline and aims for five or
-more sources, with up to twelve search calls instead of four. The page carries `meta_title` and
-`meta_description` frontmatter, a `Last updated` date, a 40-60 word opening answer, question
-headings, a comparison table where options are compared, an FAQ and Sources last. Code writes
-the frontmatter and the date line itself, rebuilding a missing or oversized listing from the
-title and the opening answer. It then checks the pieces a model can leave out: the answer's
-length, two question headings, an FAQ with two questions, three listed sources, two inline
-citations and paragraphs under 150 words. The evidence records `structure: answer-seo-v1`, so
-pages drafted under an earlier pin keep the original checks. Answer page 1.4.0 adds the
-`answer-page/20-repair-failed-checks` skill (`ANSWER_REPAIR_V1`): when the researched draft
-misses any of these checks, Tin keeps it and sends the page, the exact failed checks and the
-saved research back to the model once, without web search, then checks again. The repair is its
-own receipted, metered step (`{run_id}:answer_page:repair`, usage step `answer_page_repair`), so
-a retry never buys it twice; the run fails only if the repaired page still misses a check.
-Evidence records the repair's response and the checks it fixed. Delivery merges the page's
-frontmatter with the configured header instead of writing two.
+Customer-facing content becomes readable while its run waits in `needs_input`; an approval from
+the draft reader resumes and completes it. The menu's Decisions badge, the Decisions list and the
+project line's "need you" count the same items: runs with something to approve, not a task asking
+a question or a reviewed task that changed nothing. A decision saved before outputs carried their
+heading is named once from its pinned file when Decisions is listed, a few per request; an output
+with no heading is titled by its workflow and day. Completed reviews remain historical Activity
+events rather than permanent stages on finished rows. Report and memory workflows do not pause
+for review.
 
 `project.weekly_brief` summarizes the previous seven days of durable project runs, artifacts,
 memory, and product Activity into a dated Markdown report under `reports/weekly/`. It is intended
@@ -321,10 +293,7 @@ acquire `project.task` steering, pause/resume, or task-transcript semantics.
 
 `research.deep_dive` uses this executor to test a bounded project question top-down against current,
 source-backed evidence and publishes `reports/RESEARCH_DEEP_DIVE.md`. It remains a report workflow
-and therefore does not pause for review. `content.public_article` turns durable project evidence
-into `content/articles/<date>-<id>.md` (for example `2026-09-29-1a2b3c4d.md`), applies a separate fact-preserving final edit, and enters the
-normal human-review queue because it is public-facing content. Neither procedure publishes,
-contacts anyone, or acquires the steering and arbitrary-diff semantics of `project.task`.
+and therefore does not pause for review. It does not publish, contact anyone, or acquire the steering and arbitrary-diff semantics of `project.task`.
 
 Workflow definitions contain one small `presentation.flow`. It is immutable presentation metadata,
 not an executable graph: the System page draws it top to bottom in the workflow diagram panel
@@ -381,7 +350,7 @@ code-side lint then sends only the offending sentences for one or two short repa
 is receipted by an owning effect, so an activity retry replays completed steps and buys nothing
 twice, an unconfirmed step stops the run, and an unusable result gets exactly one replacement
 under its own step identifier. When the direct fetch is blocked, thin or unreachable, one
-receipted hosted-web-search read stands in for it, the way `content.answer_page` searches. The
+receipted hosted-web-search read stands in for it. The
 saved file passes the same parsers setup reads it with before it is published.
 
 Founder-facing words on an MCP result come in two fields the agent treats apart, built by
@@ -710,9 +679,10 @@ human review. Repository content and live-page evidence remain untrusted inputs,
 credentials remain entirely on the switchboard. The older native site-health executor stays
 registered only for already-recorded Temporal history compatibility.
 
-Site health is now folded into `organic.technical_fix` (policy `site-fix-v5`), which fixes
-every fixable finding of an organic audit in one pull request under the same delivery path; its
-checks run in the audit. Site health leaves discovery but saved configurations keep running.
+Site health is now folded into website.change's audit repair (`source: audit`, policy
+`site-fix-v5`), which fixes every fixable finding of an organic audit in one pull request; its
+checks run in the audit (see [technical repair](technical-fix.md)). Site health leaves
+discovery but saved configurations keep running.
 
 Sandbox profiles are built by `sandbox/template.py`. API execution uses the isolated,
 browser API or Studio API templates. Historical OAuth compute is refused. Select only the template required for a reviewed change with

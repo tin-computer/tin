@@ -162,12 +162,13 @@ async def test_unmarked_procedure_create_receipt_keeps_oauth(publication_db):
     create.assert_not_awaited()
 
 
-def test_only_fixed_tin_verifiers_run_after_freeze_without_grants(monkeypatch):
+def test_every_verification_command_runs_isolated_before_freeze(monkeypatch):
+    # The root-owned technical verifiers left with organic.technical_fix: even their old
+    # command now runs only through the UID-dropping helper, never as a trusted process.
     bridge = load_sandbox_module("procedure_app_server")
     command = "/opt/tin-lite/metadata-venv/bin/python -I /opt/tin-lite/verify-technical-metadata.py"
     context = {"workflow_key": "organic.technical_fix", "verification": {"commands": [command]}}
-    assert bridge.trusted_verifier({"workflow_key": "custom.fake"}, command) is None
-    assert bridge.trusted_verifier(context, command + " && echo bad") is None
+    assert not hasattr(bridge, "trusted_verifier")
     calls = []
     monkeypatch.setattr(bridge, "ISOLATED", True)
     monkeypatch.setattr(bridge, "execute", lambda: 0)
@@ -182,10 +183,9 @@ def test_only_fixed_tin_verifiers_run_after_freeze_without_grants(monkeypatch):
     monkeypatch.setenv("TIN_CODEX_API_GRANT", "private-grant")
     monkeypatch.setenv("TIN_PROCEDURE_CONTEXT_PATH", "/home/user/.tin-lite/context.json")
     assert bridge.main() == 0
-    assert calls[-2][0][-1] == "freeze"
-    assert calls[-1][0] == bridge.trusted_verifier(context, command)
-    assert "TIN_CODEX_API_GRANT" not in calls[-1][1]["env"]
-    assert calls[-1][1]["env"]["TIN_PROCEDURE_CONTEXT_PATH"].endswith("context.json")
+    assert calls[-2][0] == [*bridge.ISOLATION_HELPER, "verify", command]
+    assert calls[-1][0][-1] == "freeze"
+    assert all(args[: len(bridge.ISOLATION_HELPER)] == bridge.ISOLATION_HELPER for args, _ in calls)
 
 
 @pytest.mark.parametrize("contract", [CONTRACT, PROCEDURE_CONTRACT_V2, PROCEDURE_CONTRACT])

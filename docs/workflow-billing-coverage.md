@@ -17,7 +17,7 @@ hosted-default policy does so. Neither enables live Stripe charging.
 ### Covered by this change
 
 - Native model workflows: `content.plan`, `style.capture`, `creative.character`,
-  `content.answer_page`, `project.memory`, `project.weekly_brief`, `scan.report`,
+  `project.memory`, `project.weekly_brief`, `scan.report`,
   `visibility.audit`, `organic.audit`, `organic.keyword_plan` and
   `ads.assessment` (its ceiling is the run's `max_cost_usd` input, default $6,
   operator-gated at $3; DataForSEO calls carry their provider-reported cost and the

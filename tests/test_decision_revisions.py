@@ -13,14 +13,14 @@ import httpx
 import pytest
 from fastapi import FastAPI
 from mcp.server.mcpserver.exceptions import ToolError
-from test_answer_page import activity_fixture as answer_page_fixture
-from test_answer_page import authenticate
 from test_procedure_publication import PATH, activity_fixture
 from test_procedure_publication import publication_db as publication_db
 
 from tin_lite.api import router
-from tin_lite.catalog import ANSWER_PAGE_WORKFLOW_ID
-from tin_lite.domain import RunStatus
+from tin_lite.auth import AuthContext, require_user
+from tin_lite.catalog import VISIBILITY_AUDIT_WORKFLOW_ID
+from tin_lite.content_delivery import DRAFT_WORKFLOW_ID
+from tin_lite.domain import Project, RunStatus, WorkflowRun
 from tin_lite.mcp_server import create_mcp_app
 from tin_lite.review_revisions import approval_conflict
 
@@ -81,10 +81,38 @@ async def revising_task(db, project_id, *, path=PATH, applied=False, applied_bef
     return run_id
 
 
-def as_answer_page(run):
-    # The shared fixture registers a research workflow; approval only publishes answer pages,
-    # articles and planned drafts.
-    return replace(run, workflow_id=ANSWER_PAGE_WORKFLOW_ID)
+def as_draft(run):
+    # The shared fixture registers a research workflow; approval only publishes content.generate
+    # drafts (articles and answer pages) and page refreshes.
+    return replace(run, workflow_id=DRAFT_WORKFLOW_ID)
+
+
+def authenticate(app: FastAPI) -> None:
+    app.dependency_overrides[require_user] = lambda: AuthContext(
+        clerk_user_id="user_test",
+        token_type="session_token",  # noqa: S106
+        session_id="sess_test",
+    )
+
+
+def draft_fixture() -> tuple[Project, WorkflowRun]:
+    """A content.generate draft run waiting for review, without a database."""
+    project = Project(uuid4(), "Tin", "projects/test", "main")
+    run_id = uuid4()
+    run = WorkflowRun(
+        id=run_id,
+        project_id=project.id,
+        workflow_id=DRAFT_WORKFLOW_ID,
+        executor="codex.procedure",
+        definition_commit_sha="d" * 40,
+        temporal_workflow_id=f"codex.procedure:{run_id}",
+        thread_id=str(DRAFT_WORKFLOW_ID),
+        generation=1,
+        fencing_token=1,
+        status=RunStatus.PENDING,
+        review_required=True,
+    )
+    return project, run
 
 
 @pytest.mark.asyncio
@@ -99,7 +127,7 @@ async def test_a_waiting_revision_replaces_the_older_copy_in_decisions(publicati
     assert summary["waiting_count"] == 1
     assert (await db.output_revision(run_id=draft.id))["state"] == "waiting"
     for delivery in (None, "github_commit", "github_pr", "none"):
-        conflict = await approval_conflict(db, as_answer_page(draft), delivery)
+        conflict = await approval_conflict(db, as_draft(draft), delivery)
         assert conflict and "“Revise answer page draft”" in conflict
         assert "Review it first" in conflict
 
@@ -113,10 +141,10 @@ async def test_an_applied_revision_keeps_the_older_copy_out_of_publication(publi
     assert decision["revision"]["state"] == "applied"
     assert decision["revision"]["revision"] == "c" * 40
     for delivery in (None, "github_commit", "github_pr"):
-        conflict = await approval_conflict(db, as_answer_page(draft), delivery)
+        conflict = await approval_conflict(db, as_draft(draft), delivery)
         assert conflict and "would send the older copy" in conflict
     # Keeping the older copy in Tin publishes nothing, and a report never publishes.
-    assert await approval_conflict(db, as_answer_page(draft), "none") is None
+    assert await approval_conflict(db, as_draft(draft), "none") is None
     assert await approval_conflict(db, draft, None) is None
 
 
@@ -128,13 +156,13 @@ async def test_unrelated_or_earlier_task_changes_do_not_block_approval(publicati
     await revising_task(db, draft.project_id, applied=True, applied_before=True)
     decision = await draft_decision(db, draft)
     assert decision["revision"] is None
-    assert await approval_conflict(db, as_answer_page(draft), "github_commit") is None
+    assert await approval_conflict(db, as_draft(draft), "github_commit") is None
 
 
 @pytest.mark.asyncio
 async def test_approval_refuses_before_recording_a_delivery_or_signalling_the_run() -> None:
-    project, run, _ = answer_page_fixture()
-    run = replace(run, status=RunStatus.NEEDS_INPUT, artifact_path="reports/ANSWER_PAGE.md")
+    project, run = draft_fixture()
+    run = replace(run, status=RunStatus.NEEDS_INPUT, artifact_path=f"content/drafts/{run.id}.md")
 
     class Database:
         async def get_run(self, run_id):
@@ -195,3 +223,49 @@ async def test_agents_cannot_approve_a_draft_while_its_revision_waits(publicatio
         await server.call_tool("approve_workflow_run", {"run_id": str(draft.id)})
     handle.signal.assert_not_awaited()
     assert (await db.get_run(draft.id)).status == RunStatus.NEEDS_INPUT
+
+
+@pytest.mark.asyncio
+async def test_report_run_cannot_receive_content_approval() -> None:
+    project, _ = draft_fixture()
+    report_id = uuid4()
+    report = WorkflowRun(
+        id=report_id,
+        project_id=project.id,
+        workflow_id=VISIBILITY_AUDIT_WORKFLOW_ID,
+        executor="visibility.audit",
+        definition_commit_sha="v" * 40,
+        temporal_workflow_id=f"visibility.audit:{report_id}",
+        thread_id=str(VISIBILITY_AUDIT_WORKFLOW_ID),
+        generation=1,
+        fencing_token=1,
+        status=RunStatus.SUCCEEDED,
+        canonical_commit_sha="c" * 40,
+        artifact_path="reports/AI_VISIBILITY.md",
+        artifact_ref="code.storage://projects/test@commit/reports/AI_VISIBILITY.md",
+    )
+
+    class Database:
+        async def get_run(self, run_id):
+            return report if run_id == report.id else None
+
+        async def get_project(self, project_id):
+            return project if project_id == project.id else None
+
+        async def has_project_access(self, *, project_id, clerk_user_id):
+            return project_id == project.id and clerk_user_id == "user_test"
+
+    class TemporalMustNotBeSignaled:
+        def __getattr__(self, name):
+            raise AssertionError(f"report approval touched Temporal: {name}")
+
+    app = FastAPI()
+    app.include_router(router)
+    authenticate(app)
+    app.state.runtime = SimpleNamespace(database=Database(), temporal=TemporalMustNotBeSignaled())
+    transport = httpx.ASGITransport(app=app)
+    async with httpx.AsyncClient(transport=transport, base_url="http://test") as client:
+        response = await client.post(f"/api/workflows/runs/{report.id}/approve")
+
+    assert response.status_code == 409
+    assert response.json()["detail"] == "run does not require human review"

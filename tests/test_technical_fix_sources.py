@@ -140,6 +140,16 @@ async def inspect(f):
     return await f.service.inspect(project_id=f.project.id, audit_run_id=f.run.id)
 
 
+async def preview(f, **changes):
+    """website.change's site-fix-v5 preview of the fixture's audit, as it runs in production."""
+    from tin_lite import technical_fix
+
+    f.service.batch_mode = True
+    f.service.supported_checks = technical_fix.supported_checks(technical_fix.BATCH_POLICY)
+    args = {key: value for key, value in f.selection.items() if key != "finding_id"}
+    return await f.service.batch(**{**args, **changes})
+
+
 @pytest.mark.parametrize("policy", [f"organic-audit-v{version}" for version in range(11, 16)])
 async def test_published_duplicate_metadata_uses_the_pinned_repair_routing(policy):
     f = source_fixture(
@@ -190,12 +200,10 @@ async def test_content_findings_are_recognized_without_authorizing_technical_rep
         assert row["ineligible_reason"] == "content_finding"
         assert row["next_action"] == "content.plan"
         assert "does not establish a technical defect" in row["message"]
-        f.selection["finding_id"] = row["finding"]["id"]
-        with pytest.raises(TechnicalFixError) as error:
-            await f.service.preflight(**f.selection)
-        assert error.value.code == "content_finding"
-        assert error.value.status_code == 409
-        assert str(error.value) == row["message"]
+    # The repair preview turns no content finding into a change, so nothing reaches GitHub.
+    result = await preview(f)
+    assert result["plan"]["repairs"] == []
+    assert result["execution_available"] is False
     f.integrations.github_repository_binding.assert_not_awaited()
 
 
@@ -205,8 +213,12 @@ async def test_mixed_inventory_keeps_supported_technical_finding_selectable():
     assert len(view["excluded_findings"]) == 2
     assert len(view["findings"]) == 2
     assert view["repair_availability"] == {"available": True, "reason": None}
-    result = await f.service.preflight(**f.selection)
-    assert result["selection"]["finding"]["check_id"] == "metadata.title_missing"
+    result = await preview(f)
+    # Only the two technical findings become repairs; the content findings stay copy.
+    assert {row["check_id"] for row in result["plan"]["repairs"]} == {
+        "metadata.title_missing",
+        "links.broken",
+    }
     f.integrations.github_repository_binding.assert_awaited_once()
 
 
@@ -228,9 +240,7 @@ async def test_excluded_findings_require_valid_unambiguous_identifiers(change):
     f.integrations.github_repository_binding.assert_not_awaited()
 
 
-async def test_description_is_eligible_only_for_new_policy():
-    from tin_lite import technical_fix
-
+async def test_a_missing_description_is_a_repairable_finding():
     f = source_fixture(checks={"no_description": True})
     view = await inspect(f)
     description = next(
@@ -239,11 +249,10 @@ async def test_description_is_eligible_only_for_new_policy():
         if row["finding"]["check_id"] == "metadata.description_missing"
     )
     assert description["source_eligible"] is True
-    f.selection["finding_id"] = description["finding"]["id"]
-    await f.service.preflight(**f.selection)
-    f.service.supported_checks = technical_fix.supported_checks(technical_fix.LEGACY_POLICY)
-    with pytest.raises(TechnicalFixError, match="does not support"):
-        await f.service.preflight(**f.selection)
+    result = await preview(f, finding_ids=[description["finding"]["id"]], bind=False)
+    assert [row["finding_id"] for row in result["plan"]["repairs"]] == [
+        description["finding"]["id"]
+    ]
 
 
 @pytest.mark.parametrize("policy", ["organic-audit-v1", "organic-audit-v2"])
@@ -435,11 +444,6 @@ async def test_full_affected_list_is_recovered_not_silently_capped(count, reason
     assert len(row["affected_urls"]) == count
     assert len(row["finding"]["urls"]) == min(10, count)
     assert row["ineligible_reason"] == reason
-    if reason:
-        with pytest.raises(TechnicalFixError) as error:
-            await f.service.preflight(**f.selection)
-        assert error.value.code == reason
-        f.integrations.github_repository_binding.assert_not_awaited()
 
 
 async def test_affected_list_uses_the_pinned_audit_applicability():
@@ -460,7 +464,7 @@ async def test_unknown_checks_and_empty_findings_do_not_invent_a_repair():
     assert view["repair_availability"]["reason"] == "no_technical_findings"
     assert all(row["status"] == "unknown" for row in view["check_coverage"])
     with pytest.raises(TechnicalFixError) as error:
-        await f.service.preflight(**f.selection)
+        await preview(f, finding_ids=[f.selection["finding_id"]])
     assert error.value.code == "finding_not_found"
     f.integrations.github_repository_binding.assert_not_awaited()
 
@@ -478,13 +482,7 @@ async def test_other_technical_findings_are_visible_but_not_supported():
     rows = (await inspect(f))["findings"]
     row = next(row for row in rows if row["finding"]["check_id"] == "links.broken")
     assert row["ineligible_reason"] == "check_not_supported"
-    f.selection["finding_id"] = row["finding"]["id"]
-    with pytest.raises(TechnicalFixError) as error:
-        await f.service.preflight(**f.selection)
-    assert error.value.code == "check_not_supported"
-    assert "does not support" in str(error.value)
-    assert "links.broken" in str(error.value)
-    f.integrations.github_repository_binding.assert_not_awaited()
+    assert row["source_eligible"] is False
 
 
 @pytest.mark.parametrize("flag,check", [(row[0], row[1]) for row in CHECKS])
@@ -495,16 +493,12 @@ async def test_every_audited_technical_check_is_found_and_classified(flag, check
     view = await inspect(f)
     (row,) = view["findings"]
     assert row["finding"]["check_id"] == check
-    f.selection["finding_id"] = row["finding"]["id"]
     if check in SUPPORTED_CHECKS:
         assert view["repair_availability"]["available"] is True
-        assert (await f.service.preflight(**f.selection))["selection"] == row
+        assert row["source_eligible"] is True
     else:
         assert view["repair_availability"]["reason"] == "no_eligible_findings"
-        with pytest.raises(TechnicalFixError) as error:
-            await f.service.preflight(**f.selection)
-        assert error.value.code == "check_not_supported"
-        f.integrations.github_repository_binding.assert_not_awaited()
+        assert row["ineligible_reason"] == "check_not_supported"
 
 
 @pytest.mark.parametrize(
@@ -518,23 +512,24 @@ async def test_every_audited_technical_check_is_found_and_classified(flag, check
 )
 async def test_selection_rejected_before_github(change, code):
     f = source_fixture()
+    changes = {}
     if change == "revision":
-        f.selection["audit_revision"] = "b" * 40
+        changes["audit_revision"] = "b" * 40
     elif change == "finding":
-        f.selection["finding_id"] = "oa_" + "0" * 20
+        changes["finding_ids"] = ["oa_" + "0" * 20]
     elif change == "format":
-        f.selection["finding_id"] = "whatever"
+        changes["audit_revision"] = "whatever"
     else:
-        f.selection["repository_serves_site"] = False
+        changes["repository_serves_site"] = False
     with pytest.raises(TechnicalFixError) as error:
-        await f.service.preflight(**f.selection)
+        await preview(f, **changes)
     assert error.value.code == code
     f.integrations.github_repository_binding.assert_not_awaited()
 
 
-async def test_preflight_is_an_exact_read_only_preview_not_execution_approval():
+async def test_the_preview_is_an_exact_read_only_preview_not_execution_approval():
     f = source_fixture()
-    result = await f.service.preflight(**f.selection)
+    result = await preview(f)
     assert result["source"]["audit_revision"] == "a" * 40
     assert result["repository_binding"]["repository_id"] == 456
     assert result["repository_mapping"] == "member_asserted_not_verified"
@@ -559,7 +554,7 @@ async def test_storage_errors_and_integration_errors_are_safe():
         "Choose GitHub"
     )
     with pytest.raises(TechnicalFixError) as error:
-        await f.service.preflight(**f.selection)
+        await preview(f)
     assert error.value.code == "github_binding_failed"
 
 

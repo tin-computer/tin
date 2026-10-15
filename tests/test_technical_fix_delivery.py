@@ -8,13 +8,15 @@ from uuid import uuid4
 import httpx
 import pytest
 from test_integrations import FakeIntegrationDatabase
-from test_technical_title_repair import AFTER, BEFORE
 
 from tin_lite.integrations import (
     GitHubFileChange,
     IntegrationAuthorizationError,
     IntegrationService,
 )
+
+BEFORE = "<!doctype html><html><head></head><body><h1>Useful page</h1></body></html>"
+AFTER = BEFORE.replace("<head>", "<head><title>Useful page</title>")
 
 
 @pytest.fixture

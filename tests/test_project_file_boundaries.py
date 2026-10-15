@@ -50,7 +50,7 @@ def test_the_same_file_under_two_spellings_is_not_two_changes():
 
 
 def test_paths_tin_writes_itself_stay_valid():
-    from tin_lite import domain, keyword_plan
+    from tin_lite import content_draft, domain, keyword_plan
     from tin_lite.brand_contract import BRAND_PATH, DESIGN_PATH
     from tin_lite.content_delivery import settings_path
     from tin_lite.system_wiki import PROJECT_SCANNING_PATH
@@ -58,7 +58,8 @@ def test_paths_tin_writes_itself_stay_valid():
 
     paths = [
         settings_path(uuid4()),
-        domain.answer_page_path("How do I pick a CRM?", "2026-09-30", "abcd1234"),
+        content_draft.PATH_TEMPLATE.format(run_id=uuid4()),
+        content_draft.notes_path(content_draft.PATH_TEMPLATE.format(run_id=uuid4())),
         domain.SCAN_REPORT_PATH,
         domain.MEMORY_INDEX_PATH,
         domain.GROWTH_ONBOARDING_PLAN_PATH,

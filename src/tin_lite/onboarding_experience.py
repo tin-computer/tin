@@ -14,7 +14,6 @@ from jsonschema.exceptions import ValidationError
 
 from tin_lite.document_handoff import document_handoff, document_url
 from tin_lite.growth_onboarding import (
-    CONTENT_DRAFT_KEYS,
     current_plan_text,
     expectation,
     picked_actions,
@@ -218,11 +217,10 @@ async def access_needs(
         for need in template.definition.get("integration_requirements", []) if template else []:
             if need.get("required", True):
                 required.setdefault(need["provider_key"], []).append(action["key"])
-    keys = {a["key"] for a in actions}
     relevant = set(required) | (set(connections) - {"workspace.google"})
     if initial or inputs.get("product_url"):
         relevant.add("analytics.gsc")
-    if initial or keys & CONTENT_DRAFT_KEYS or inputs.get("system_repository"):
+    if initial or inputs.get("system_repository"):
         relevant.add("infra.github")
     if "stripe" in str(inputs.get("system_payments") or "").lower():
         relevant.add("payments.stripe")
@@ -371,15 +369,6 @@ async def onboarding_experience(
                             if code == "declined"
                             else "Review the blocked work in My system before restarting it."
                         ),
-                    }
-                )
-            if action.get("delivery_error"):
-                view["incomplete_setup"].append(
-                    {
-                        "workflow_key": action["key"],
-                        "code": "delivery_not_configured",
-                        "reason": action["delivery_error"],
-                        "next_action": "Configure delivery; drafts remain in Tin.",
                     }
                 )
     elif run and run.status.value == "needs_input":

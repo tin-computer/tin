@@ -126,11 +126,9 @@ async def test_a_draft_request_carries_the_brand_and_positioning_files(publicati
     assert "Do not narrow, downplay or reframe the product" in flat(sandbox["prompt"])
 
 
-def test_article_and_answer_page_instructions_read_the_projects_positioning():
-    article = next(w for w in BUILTIN_WORKFLOWS if w.key == "content.public_article")
-    prompt = (article.procedure.root / "PROMPT.md").read_text()
-    assert "brand/BRAND.md" in prompt and "Do not narrow, downplay or reframe it" in flat(prompt)
-    answer = next(w for w in BUILTIN_WORKFLOWS if w.key == "content.answer_page")
-    definition, _ = answer.definition_and_resource_files()
-    assert "ANSWER_POSITIONING_V1" in definition["native_skill_suite"]
-    assert "content plan's positioning" not in definition["native_skill_suite"]
+def test_every_draft_kind_reads_the_projects_positioning():
+    # content.generate drafts articles and answer pages from one prompt.
+    draft = next(w for w in BUILTIN_WORKFLOWS if w.key == "content.generate")
+    prompt = (draft.procedure.root / "PROMPT.md").read_text()
+    assert "brand/BRAND.md" in prompt
+    assert "Do not narrow, downplay or reframe the product" in flat(prompt)

@@ -165,13 +165,6 @@ DOCX parsing is bounded and reads main-document text only. Hidden text, comments
 footnotes are excluded; tracked changes require a clean export. PDF and legacy DOC are deferred.
 The UI reuses the existing template card, field, button and agent-connection patterns.
 
-`content.public_article` 1.3.0 declares `style.capture` as the producer of its recommended guide
-and joins the Organic traffic catalog group. The optional skill reader introduced in 1.1.0 is
-unchanged. Explicit run voice notes
-win over its style preferences. Neither can override factual grounding, output ownership or review.
-Existing saved configurations retain their pinned definition; this release does not silently
-upgrade them. The generic article remains a reviewable project draft, not a site publication.
-
 ## Remaining content-generation slice
 
 The dedicated plan-to-draft workflow is not implemented by this handoff. It should select one

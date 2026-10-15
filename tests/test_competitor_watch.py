@@ -400,8 +400,10 @@ def test_skill_layout_and_schema_agree():
         "## Sources",
     ):
         assert heading in layout, heading
-    for workflow in ("content.public_article", "research.deep_dive", "content.plan"):
+    for workflow in ("research.deep_dive", "content.plan"):
         assert f"`{workflow}`" in layout, workflow
+    # Pages go through the content plan; content.generate drafts them.
+    assert "content.public_article" not in layout
     for source in (
         "reports/competitor-watch/",
         "reports/GROWTH_ONBOARDING_PLAN.md",

@@ -16,7 +16,6 @@ from tin_lite.usage_capture import (
 
 EFFECTS = [
     ("_weekly_brief_effect", "weekly_brief:model"),
-    ("_answer_page_effect", "answer_page:model"),
 ]
 
 

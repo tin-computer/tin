@@ -11,7 +11,6 @@ from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 from temporalio import activity
 from temporalio.exceptions import ApplicationError
 
-from tin_lite import technical_fix
 from tin_lite.failures import classify, failure_projection, split_failure_input
 from tin_lite.organic_audit import digest
 from tin_lite.organic_system import (
@@ -21,18 +20,12 @@ from tin_lite.organic_system import (
     STEPS,
     check_inputs,
     child_executor,
-    drafts_articles,
-    falls_back_to_saved_plan,
     measures_pages,
     policy_steps,
-    refreshes_pages,
-    schedules_articles,
     system_facts,
-    writes_with_website_change,
 )
 from tin_lite.run_reports import publish_run_report
 from tin_lite.schedules import WorkflowSchedule, supported_timezone
-from tin_lite.technical_fix_sources import TechnicalFixSources
 from tin_lite.workflow_definitions import ensure_schedule_allowed
 from tin_lite.workflow_inputs import WorkflowInputError, normalize_workflow_inputs
 from tin_lite.workflow_prerequisites import PrerequisiteError
@@ -245,29 +238,6 @@ def weekly_result(configured):
     }
 
 
-def boundaries(scheduled):
-    """The boundaries of a recipe pinned to v5 or earlier, word for word as they shipped."""
-    return [
-        "## Boundaries",
-        "",
-        "One technical finding at most; others remain for review. "
-        "No eligible finding means no technical-fix compute or PR. "
-        "The next planned article is drafted when this recipe includes generation. "
-        "Its final approved copy can become an unmerged PR; without GitHub, "
-        "the Markdown stays readable in Tin for manual export or a later delivery. "
-        "The existing writing guide is used when available; no style samples are invented. "
-        "Backlinks and outreach are not part of this version. "
-        + (
-            "Plan dates alone draft nothing; the weekly schedule drafts one planned "
-            "article at a time and follows the program's delivery settings. "
-            if scheduled
-            else "Plan dates do not automatically generate the rest of the roadmap. "
-        )
-        + "An open PR is not a published website.",
-        "",
-    ]
-
-
 def website_boundaries(scheduled):
     """v6's boundaries: both writer steps go through website.change."""
     return [
@@ -360,22 +330,16 @@ class OrganicSystemActivities:
                         "System child contract is unavailable.", non_retryable=True
                     )
                 definitions[step] = child
-            if refreshes_pages(policy):
-                refresh = json.loads(
-                    await self.storage.read_canonical_artifact(
-                        repo_id="registry/workflows",
-                        commit_sha=run.definition_commit_sha,
-                        path=f"workflows/{REFRESH_KEY}.json",
-                    )
+            refresh = json.loads(
+                await self.storage.read_canonical_artifact(
+                    repo_id="registry/workflows",
+                    commit_sha=run.definition_commit_sha,
+                    path=f"workflows/{REFRESH_KEY}.json",
                 )
-                if (
-                    refresh.get("key") != REFRESH_KEY
-                    or refresh.get("executor") != "codex.procedure"
-                ):
-                    raise ApplicationError(
-                        "System child contract is unavailable.", non_retryable=True
-                    )
-                definitions["refresh"] = refresh
+            )
+            if refresh.get("key") != REFRESH_KEY or refresh.get("executor") != "codex.procedure":
+                raise ApplicationError("System child contract is unavailable.", non_retryable=True)
+            definitions["refresh"] = refresh
             if measures_pages(policy):
                 from tin_lite.workflow_packages import decode_workflow_source
 
@@ -401,11 +365,9 @@ class OrganicSystemActivities:
                             "System child contract is unavailable.", non_retryable=True
                         )
                     definitions[step] = child
-            content_delivery = None
-            if drafts_articles(policy):
-                from tin_lite.organic_content import pin_destination
+            from tin_lite.organic_content import pin_destination
 
-                content_delivery = await pin_destination(self.db, self.integrations, run)
+            content_delivery = await pin_destination(self.db, self.integrations, run)
             await self.db.start_effect(conn, execution_key=key, operation=KEY)
             await self.db.complete_effect(
                 conn,
@@ -430,12 +392,12 @@ class OrganicSystemActivities:
     async def saved_plan(self, run):
         """The earlier content program this run falls back to, chosen once per run.
 
-        Only a pinned v4 recipe falls back, and only when its own content step did not
-        succeed. The choice is saved so a retried step or a later weekly save reads the same
-        program; None means the project has no finished plan to use.
+        A run falls back only when its own content step did not succeed. The choice is saved
+        so a retried step or a later weekly save reads the same program; None means the
+        project has no finished plan to use.
         """
         prepared = await self.saved(run.id, "prepare")
-        if not prepared or not falls_back_to_saved_plan(prepared["policy"]):
+        if not prepared:
             return None
         key = f"traffic:{run.id}:content_fallback"
         async with self.db.effect_lock(key, KEY) as (conn, receipt):
@@ -490,61 +452,7 @@ class OrganicSystemActivities:
                 return None, "not_requested"
             if children["audit"]["status"] != "succeeded":
                 return None, "audit_unavailable"
-            prepared = await self.saved(run.id, "prepare")
-            if writes_with_website_change(prepared.get("policy")):
-                return await self._website_audit_inputs(run)
-            policy = technical_fix.definition_policy(prepared["definitions"]["technical"])
-            if technical_fix.batches(policy):
-                # site-fix-v5 takes the whole audit. Judgment calls stay out of this run and
-                # are listed in its report; a later fix run can take the coding agent's answers.
-                from tin_lite.technical_fix_sources import TechnicalFixError
-
-                try:
-                    preview = await TechnicalFixSources(
-                        database=self.db,
-                        storage=self.storage,
-                        supported_checks=technical_fix.supported_checks(policy),
-                        batch=True,
-                    ).batch(
-                        project_id=run.project_id,
-                        audit_run_id=UUID(children["audit"]["run_id"]),
-                        audit_revision=children["audit"]["canonical_commit_sha"] or "",
-                        expected_repository=inputs["expected_repository"],
-                        repository_serves_site=inputs["repository_serves_site"],
-                        bind=False,
-                    )
-                except TechnicalFixError:
-                    return None, "audit_unavailable"
-                if not preview["plan"]["repairs"]:
-                    return None, "no_eligible_findings"
-                return {
-                    "audit_run_id": children["audit"]["run_id"],
-                    "audit_revision": preview["source"]["audit_revision"],
-                    "finding_ids": [],
-                    "decisions": [],
-                    "expected_repository": inputs["expected_repository"],
-                    "repository_serves_site": inputs["repository_serves_site"],
-                    "context": "Every fixable finding from this system run's audit.",
-                }, None
-            source = await TechnicalFixSources(
-                database=self.db,
-                storage=self.storage,
-                supported_checks=technical_fix.supported_checks(policy),
-            ).inspect(
-                project_id=run.project_id,
-                audit_run_id=UUID(children["audit"]["run_id"]),
-            )
-            candidates = [row for row in source["findings"] if row["source_eligible"]]
-            if not candidates:
-                return None, "no_eligible_findings"
-            return {
-                "audit_run_id": children["audit"]["run_id"],
-                "audit_revision": source["source"]["audit_revision"],
-                "finding_id": candidates[0]["finding"]["id"],
-                "expected_repository": inputs["expected_repository"],
-                "repository_serves_site": inputs["repository_serves_site"],
-                "context": "One finding selected from this system run's audit. No unrelated edits.",
-            }, None
+            return await self._website_audit_inputs(run)
         if step == "content":
             if any(children[key]["status"] != "succeeded" for key in ("audit", "keywords")):
                 return None, "research_unavailable"
@@ -604,13 +512,9 @@ class OrganicSystemActivities:
             if draft.review_decision != "approved":
                 return None, "draft_not_approved"
             return {
-                # v6 puts the approved page on the site with website.change (phase 1); its
-                # approval's delivery pick decides whether Tin merges or leaves a PR.
-                **(
-                    {"source": "content_draft"}
-                    if writes_with_website_change(prepared.get("policy"))
-                    else {}
-                ),
+                # website.change puts the approved page on the site; its approval's delivery
+                # pick decides whether Tin merges or leaves a PR.
+                "source": "content_draft",
                 "source_run_id": str(draft.id),
                 "expected_repository": intent["binding"]["repository"],
             }, None
@@ -674,7 +578,7 @@ class OrganicSystemActivities:
             raise ApplicationError("System preparation is unavailable.", non_retryable=True)
         if step not in prepared["definitions"] and step != "technical":
             return {"status": "skipped", "reason": "not_in_pinned_recipe"}
-        if step == "draft" and refreshes_pages(prepared["policy"]):
+        if step == "draft":
             # Refreshes come before new pages: the first refresh starts before the draft.
             await self.first_refresh(run, prepared)
         key = f"traffic:{run_id}:step:{step}"
@@ -810,8 +714,6 @@ class OrganicSystemActivities:
         prepared = await self.saved(run_id, "prepare")
         if not prepared or prepared["input_sha256"] != digest(run.input):
             raise ApplicationError("System preparation is unavailable.", non_retryable=True)
-        if not refreshes_pages(prepared["policy"]):
-            return {"status": "skipped", "reason": "not_in_pinned_recipe"}
         return await self.first_refresh(run, prepared, dispatch_by_parent=True)
 
     async def first_refresh(self, run, prepared, *, dispatch_by_parent=False):
@@ -1159,8 +1061,6 @@ class OrganicSystemActivities:
             return result
 
     async def _weekly_articles(self, run, prepared, *, conn=None):
-        if not schedules_articles(prepared["policy"]):
-            return {"status": "skipped", "reason": "not_in_pinned_recipe"}
         weekdays = list(run.input.get("article_weekdays") or [])
         if not weekdays:
             return {"status": "skipped", "reason": "weekly_articles_off"}
@@ -1292,8 +1192,6 @@ class OrganicSystemActivities:
         run = await self.db.get_run(UUID(run_id))
         facts = await system_facts(database=self.db, project_id=run.project_id, run_id=run.id)
         failed = any(row["status"] not in {"succeeded", "skipped"} for row in facts["steps"])
-        prepared = await self.saved(run.id, "prepare") or {}
-        website = writes_with_website_change(prepared.get("policy"))
         lines = [
             "# Organic traffic system",
             "",
@@ -1302,12 +1200,8 @@ class OrganicSystemActivities:
             "Some steps could not finish. Completed outputs are preserved."
             if failed
             else "The requested organic traffic steps are complete. "
-            + (
-                "Changes to the website went through website.change: what you approved "
-                "publishes, and the rest waits in a pull request for you."
-                if website
-                else "Nothing was merged or published to the website."
-            ),
+            + "Changes to the website went through website.change: what you approved "
+            "publishes, and the rest waits in a pull request for you.",
             "",
             f"Website: {run.input['site_url']}",
             "",
@@ -1345,7 +1239,7 @@ class OrganicSystemActivities:
         if weekly and weekly.get("reason") != "not_in_pinned_recipe":
             lines.extend(weekly_section(weekly))
         scheduled = bool(weekly and weekly.get("status") == "succeeded")
-        lines.extend(website_boundaries(scheduled) if website else boundaries(scheduled))
+        lines.extend(website_boundaries(scheduled))
         await publish_run_report(
             database=self.db,
             storage=self.storage,

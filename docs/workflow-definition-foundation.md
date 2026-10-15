@@ -88,7 +88,7 @@ artifact or identity) has a pending or running run in the same project that woul
 (same `via_input` run, same `match` scope, same identity host), admission attaches that run as
 `running_run_id`. What happens next depends on whether the executor can wait:
 
-- `content.answer_page` and Codex procedures read project state only after admission, so the
+- Codex procedures read project state only after admission, so the
   run is admitted, required or recommended, and waits. The start response and evidence list it
   under `waiting`, and the Temporal start carries the `tin_prerequisite_wait` memo with the
   awaited run ids. Behind `workflow.patched("prerequisite-wait-v1")` the workflow polls the

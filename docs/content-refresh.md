@@ -94,8 +94,7 @@ roughly $0.45 at list price, so the ceiling is about five times the estimate
 - Procedure: `codex_procedures/content.refresh/`.
 - Traffic system: `organic_system_refresh` and `first_refresh` in
   `src/tin_lite/organic_system_activities.py`, the refresh child budget in `valid_child` in
-  `src/tin_lite/billing.py`, policy
-  `organic-traffic-v5` (see [content continuation](organic-content-continuation.md)).
+  `src/tin_lite/billing.py` (see [content continuation](organic-content-continuation.md)).
 
 ## Verification boundary
 
