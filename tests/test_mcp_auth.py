@@ -149,10 +149,11 @@ async def test_mcp_exposes_personal_project_bootstrap_explicitly() -> None:
     assert "get_writing_style_guide" in {tool.name for tool in tools}
     assert "get_content_draft_sources" in {tool.name for tool in tools}
     assert "send_project_task_message" in {tool.name for tool in tools}
+    # A page's address comes from its plan; nobody saves a route for a kind of page.
+    assert "save_page_route" not in {tool.name for tool in tools}
     assert {
         "get_content_delivery_settings",
         "save_content_delivery_settings",
-        "save_page_route",
         "retry_content_delivery",
     } <= {tool.name for tool in tools}
     assert {"get_workflow_review", "request_workflow_changes"} <= {tool.name for tool in tools}
@@ -211,7 +212,7 @@ async def test_mcp_exposes_personal_project_bootstrap_explicitly() -> None:
     forget = next(tool for tool in tools if tool.name == "forget_person")
     assert forget.annotations.destructive_hint is True
     assert "confirm_name" in forget.input_schema["required"]
-    assert len(tools) == 113
+    assert len(tools) == 112
     assert "refund_billing_payment" not in {tool.name for tool in tools}
     start = next(tool for tool in tools if tool.name == "start_workflow")
     assert "instruction and title are only for project.task" in start.description

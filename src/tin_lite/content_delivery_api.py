@@ -1,6 +1,5 @@
 """HTTP and MCP share these delivery settings and durable retry operations."""
 
-from urllib.parse import urlsplit
 from uuid import UUID
 
 from fastapi import APIRouter, Depends, HTTPException, Request
@@ -115,11 +114,6 @@ async def publish_preview(*, runtime, settings, run, actor):
     generated = run.workflow_id == DRAFT_WORKFLOW_ID and kind != "refresh"
     if not repository or not generated:
         return {"adapt": False}
-    from tin_lite.page_routes import PageRouteService, ask_the_founder
-
-    # Answer pages live at a route the founder chooses; a planned article names its own
-    # address in the plan.
-    page = "answer_page" if kind == "answer" else None
     mode = await delivery_service(runtime).saved_mode(run)
     cost = await delivery_cost(
         runtime=runtime,
@@ -128,30 +122,20 @@ async def publish_preview(*, runtime, settings, run, actor):
         actor=actor,
         repository=repository,
     )
-    route = (
-        await PageRouteService(database=runtime.database, storage=runtime.storage).route_for(
-            run, page_type=page
-        )
-        if page
-        else None
-    )
-    sentence = publish_sentence(mode, route_missing=page is not None and route is None)
+    sentence = publish_sentence(mode)
     about = cost_about(cost)
+    # The address the plan gave the page; website.change publishes it there.
+    address = await page_url_service(runtime, settings).view(run, None)
     preview = {
         "adapt": True,
         "label": "Publish",
         "mode": mode,
         "repository": repository,
-        "route": route,
+        "url": address["url"] if address else None,
         "sentence": sentence,
         "cost": cost,
         "footer": f"{sentence} · {about}" if about else sentence,
     }
-    if page and route is None:
-        # Before the first page of this type publishes, the coding agent asks the founder.
-        address = await page_url_service(runtime, settings).view(run, None)
-        host = urlsplit(address["url"]).hostname if address and address.get("url") else None
-        preview["ask_the_founder"] = ask_the_founder(page, host)
     return preview
 
 

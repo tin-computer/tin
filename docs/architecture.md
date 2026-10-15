@@ -66,7 +66,7 @@ Managed dependencies today: Temporal Cloud, E2B, PlanetScale Postgres, code.stor
 
 You start `visibility.audit` for a project, optionally naming a target. Tin resolves the target's name, domain, and aliases, writes five buyer questions that do not name the target, asks each one to a model twice (web search on, then no tools), and scores every answer: found, mentioned, evaluated, shortlisted, picked first. One commit publishes `reports/AI_VISIBILITY.md` and the raw evidence. No review.
 
-Next, `content.plan` schedules an answer page for a question you were absent from, beside planned articles and refreshes of existing pages, and `content.generate` drafts it when it comes up: a direct answer, cited sources and a search listing. The draft lands in Files and shows up in Decisions, where feedback revises it. When you approve it with a repository delivery, `website.change` adapts it into your site at the route you chose for answer pages, as a pull request, merged only when your setting commits to main.
+Next, `content.plan` schedules an answer page for a question you were absent from, beside planned articles and refreshes of existing pages, and `content.generate` drafts it when it comes up: a direct answer, cited sources and a search listing. The draft lands in Files and shows up in Decisions, where feedback revises it. When you approve it with a repository delivery, `website.change` adapts it into your site at the address the plan gave it, as a pull request, merged only when your setting commits to main.
 
 ### Site health as a pull request
 

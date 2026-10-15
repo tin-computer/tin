@@ -201,3 +201,23 @@ prompts and the plan were files, and no view said which keyword or question each
   edits were kept; if the revision run fails, the review says so and the plan they read stays
   approvable. A plan decided meanwhile leaves the revision as an ordinary preview.
 
+
+## Every new page has its address (content.plan 1.2.0)
+
+A new page's `destination` used to stay empty until delivery, so each website.change run chose
+a folder itself and two runs for the same site picked different ones. Now the plan gives every
+new page the address it will have:
+
+- The planning agent proposes it in the portfolio: the section where the site keeps that kind
+  of page, ending in three to six words from the target search. `check_portfolio.py` rejects a
+  missing one, an existing page's path and one another item uses, and notes a section the site
+  does not have yet.
+- `content_plan_agent.normalize` keeps a proposal on the site's host that is neither an existing
+  page nor another item's address. Otherwise Tin proposes one beside the plan's other new pages
+  of the same format, else at the site root (`content_plan.page_address`), so a plan never
+  reaches the founder without addresses.
+- The plan file rejects two items with the same new-page address.
+
+The founder approves the addresses with the plan. content.generate pins each one in its
+selection and shows it on the draft's review, and website.change publishes the page there (see
+[repository-aware delivery](repository-aware-content-delivery.md#where-adapted-pages-live)).

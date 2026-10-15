@@ -29,6 +29,8 @@ comparison bounded: up to 12 relevant pages, not a new site-wide audit. Use it t
 draft, not to decide whether to write one: what will this page give its reader that those
 pages do not? Judge reader intent, audience, format and actual coverage, not matching keywords.
 A page that could not be read is no reason to stop; note it and write from what you have.
+A new page's destination (`content_draft.page_url`) is the address it will have once
+published, not a page to inspect: it is not live yet.
 
 The outcome is always `draft`. Existing coverage, a brief that seems mis-scoped, or pages you
 could not read do not stop the run. When current pages already cover the reader need, write
@@ -143,7 +145,7 @@ The primary file is the public page, in exactly this order:
 7. `## Sources` last, linking at least three distinct public sources the page cites inline.
 Keep paragraphs under 150 words. Tin checks every rule above before the page reaches review.
 Write no route, file path or site code: website.change puts the approved page on the site at
-the route the founder chose for answer pages (`content_draft.answer.route`).
+its address (`content_draft.page_url`).
 
 ## Page refreshes
 

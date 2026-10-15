@@ -1,6 +1,6 @@
 ---
 name: site-change
-description: Make one approved change to a founder's website repository, starting with an approved page placed at its chosen route in the site's own format, keeping its wording.
+description: Make one approved change to a founder's website repository, starting with an approved page placed at its approved address in the site's own format, keeping its wording.
 ---
 
 When `workspace.website_change.source` is `audit` or `planned`, follow the site-repair skill
@@ -18,16 +18,18 @@ instead: the change is the audit's technical fixes or planned URL changes, not a
    the repository holds an older style beside the current one, the pages to match are the
    current ones, and a repository design document that disagrees with the approved files
    describes the older style. Without brand files, match the pages the home page links to.
-3. Resolve the public address. A planned article (`source_kind: article`) names its route
-   in `item`; for an update, match the specified existing public route uniquely, and treat
-   ambiguity as a prerequisite failure. For an answer page or public article, `route` is
-   the route the founder chose (for example `/blog/{slug}`). Use the slug the founder
-   approved, `page_metadata.slug`, when it is given. Otherwise make `{slug}` three to five
-   lowercase, hyphenated words from the title that name its main search term, without
-   filler words. Publish at exactly that route. A new page must not overwrite an
-   existing one: when that address already holds a different page, add a short suffix to
-   the new page's slug and say so in the PR body. Never move, rename or remove an existing
-   page to make room for it.
+3. Resolve the public address. `route` is the page's address, the path the founder approved
+   with the page (for example `/alternatives/zapier`). Publish the page at exactly that path:
+   never choose another folder or slug, even when the site keeps similar pages elsewhere. For
+   an update it is the existing page to change; match its source uniquely, and treat
+   ambiguity as a prerequisite failure. A new page must not overwrite an existing one: when
+   that address already holds a different page, add a short suffix to the new page's last
+   segment, give that address on the Public URL line and say why in the PR body; Tin leaves
+   such a PR for the founder. Never move, rename or remove an existing page to make room for
+   it. Only an older approval carries a route pattern instead (`/blog/{slug}`): then make
+   `{slug}` three to five lowercase, hyphenated words from the title that name its main
+   search term, without filler words. Without any `route`, choose the address the way the
+   site names pages of that kind and say so in the PR body.
 4. Put the page where the site keeps pages of that kind, never under `content/answers/`,
    which is Tin's draft folder and not a page on the site. Build it the way the site builds
    such pages: a Markdown or MDX file, a component, a typed page registry, plain HTML or
@@ -42,9 +44,9 @@ instead: the change is the audit's technical fixes or planned URL changes, not a
    Match the site's other pages of that kind: the same header, footer, links back into the
    site, byline and dates, and structured data (such as JSON-LD). Use only the fonts and files
    the site already loads; never add web fonts or other outside resources.
-5. If the site does not serve the chosen path yet, add the smallest route that fits how its
+5. If the site does not serve that path yet, add the smallest route that fits how its
    other pages are served (a static file in its public folder, a route file, a registry
-   entry), keeping its files inside the route's own folder where the framework allows, so
+   entry), keeping its files inside the address's own folder where the framework allows, so
    Tin can merge it as part of the page. Stay within the 20-file limit. Place the page's
    figures, embeds, diagrams and videos as the prompt describes.
 6. Stay clear of protected paths: never change a file that serves a path in
@@ -61,6 +63,6 @@ instead: the change is the audit's technical fixes or planned URL changes, not a
    source, how the page keeps the approved wording, changed paths (and any route you
    added), checks run and checks skipped, and give the page's address on its own line as
    `Public URL: https://<site host>/<route>`, or `Public URL: unknown` when the repository
-   does not show the route. Tin checks this address against the chosen route before it
+   does not show the route. Tin checks this address against the approved one before it
    merges, so never guess a host. The trusted gateway opens the PR; you do not use
    provider credentials or push it.

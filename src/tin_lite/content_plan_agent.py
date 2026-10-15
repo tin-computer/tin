@@ -658,6 +658,20 @@ def normalize(context, pages, portfolio, *, file_sizes=None):
             if path not in site_paths and path not in inspected:
                 leave(raw, f"{path} is not a page Tin knows on the site")
                 continue
+        address = ""
+        if action == "new_page":
+            # The address the planner proposes for the new page. One that names a page the
+            # site already has, or another item's page, is dropped and Tin proposes one below.
+            address = _destination(raw.get("destination"), host) or ""
+            path = page_path(address) if address else ""
+            if (
+                path in {"", "/"}
+                or not legacy.NEW_PAGE_PATH.fullmatch(urlsplit(address).path)
+                or path in site_paths
+                or path in inspected
+                or (address.rstrip("/") in seen_destinations)
+            ):
+                address = ""
         if legacy_title(title) in seen_titles:
             leave(raw, "repeats another item's title")
             continue
@@ -740,7 +754,7 @@ def normalize(context, pages, portfolio, *, file_sizes=None):
             "brief": brief,
             "intent": _text(raw.get("intent") or raw.get("target_query") or title, 500),
             "action": action,
-            "destination": destination,
+            "destination": destination or address,
             "source_ids": sources,
             "verification": (
                 ([nearby_check(nearby)] if nearby else [])
@@ -764,8 +778,8 @@ def normalize(context, pages, portfolio, *, file_sizes=None):
         else:
             taken.add(item["id"])
         seen_titles.add(legacy_title(title))
-        if destination:
-            seen_destinations.add(destination.rstrip("/"))
+        if item["destination"]:
+            seen_destinations.add(item["destination"].rstrip("/"))
         kept.append(
             {
                 "item": item,
@@ -786,6 +800,14 @@ def normalize(context, pages, portfolio, *, file_sizes=None):
                 },
             }
         )
+    # A new page the planner gave no usable address gets one next to its kind of page.
+    items = fixed + [entry["item"] for entry in kept]
+    for entry in kept:
+        item = entry["item"]
+        if item["action"] == "new_page" and not item["destination"]:
+            item["destination"] = legacy.page_address(
+                host, item, items, existing=site_paths | set(inspected)
+            )
     return kept, left_out
 
 

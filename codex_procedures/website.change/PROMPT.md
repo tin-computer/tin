@@ -15,12 +15,12 @@ trusted context first:
 
 The context holds the change row (`change`: its source, stable ID, kind and site paths),
 the approved copy (`article`, in Markdown), its source identity, the destination repository,
-the page's route (`route`), the protected paths (`protected_paths`) and whether Tin may
-publish it (`publish`). Today every change is an approved page (`change.source` is
-`content_draft`): `source_kind` says what it is, `article` (a planned article, with its
-plan `item`), `answer_page` or `public_article`. Answer pages and public articles carry
-their search listing apart from the copy in `page_metadata` (`meta_title`,
-`meta_description`, and the approved `slug` when the draft chose one). Keep the Markdown in Tin unchanged. Inspect this repository's
+the page's address (`route`, the path the founder approved with the page), the protected
+paths (`protected_paths`) and whether Tin may publish it (`publish`). Today every change is an
+approved page (`change.source` is `content_draft`): `source_kind` says what it is, `article`
+(a planned article, with its plan `item`) or `answer_page`. Answer pages carry their search
+listing apart from the copy in `page_metadata` (`meta_title` and `meta_description`). Keep the
+Markdown in Tin unchanged. Inspect this repository's
 instructions and existing pages, routes, components and page registries, and prepare one
 coherent site change (at most 20 files) as a PR.
 
@@ -58,14 +58,15 @@ code, linking a video file rather than copying it, and each `> [!NOTE]`-style ca
 the site's own note style, or a plain aside. Every approved asset, diagram and video has to
 appear on the page.
 
-When `route` is set, the founder chose where these pages live: publish the page at exactly
-that route, wherever the site keeps such pages. Never put a
-page under `content/answers/`, which is Tin's draft folder and not a page on the site.
+Publish the page at exactly `route`, the address the founder approved, even when the site
+keeps similar pages elsewhere; the site-change skill says what to do when that address is
+taken or `route` is absent. Never put a page under `content/answers/`, which is Tin's draft
+folder and not a page on the site.
 Never change a file that serves a path in `protected_paths` (such as /sign-in). Leave
 root layouts, middleware and host or build settings alone unless the page cannot be served
 without a change there, and then say why in the PR body.
 
-If the site does not serve the page's route yet, add the smallest route that fits how its
+If the site does not serve the page's address yet, add the smallest route that fits how its
 other pages are served. The page must actually be served, not left in a folder nothing
 reads.
 

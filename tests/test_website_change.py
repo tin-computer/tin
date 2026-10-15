@@ -15,10 +15,13 @@ import httpx
 import pytest
 from mcp.server.mcpserver.exceptions import ToolError
 from test_adapted_page_delivery import (
+    PAGE_PATH,
+    PAGE_URL,
     PR_URL,
     answer_page,
     approve_answer_page,
     clean,
+    draft,
 )
 from test_adapted_page_delivery import fixture as page_fixture
 from test_private_workflows import ACTOR, app, mcp, structured
@@ -30,15 +33,10 @@ from tin_lite.catalog import BUILTIN_WORKFLOWS
 from tin_lite.content_delivery import adaptation_start_key
 from tin_lite.documents import render_markdown
 from tin_lite.organic_audit import canonical_json
-from tin_lite.page_routes import PATH as ROUTES_PATH
 from tin_lite.procedures import procedure_checkpoint_path
 from tin_lite.run_service import start_workflow_run
 from tin_lite.website_change import ChangeRow, WebsiteChangeConflict
 from tin_lite.workflow_inputs import WorkflowInputError
-
-ROUTE = "/blog/{slug}"
-PAGE_URL = "https://example.com/blog/reliable-ai-work"
-
 
 PREVIEW_PASSED = {
     "readable": True,
@@ -83,11 +81,6 @@ async def fixture(db, monkeypatch):
     # The site's own build: its Vercel preview passed, unless a test says otherwise.
     f.runtime.integrations.github_commit_checks = AsyncMock(return_value=PREVIEW_PASSED)
     return f
-
-
-def choose_route(f, route=ROUTE, kind="answer_page"):
-    """The founder's saved choice, as save_page_route writes it."""
-    f.storage.repo.edit({ROUTES_PATH: canonical_json({"routes": {kind: route}})})
 
 
 async def approved_for_main(f, page=None):
@@ -202,20 +195,23 @@ async def test_an_approved_page_is_one_change_row_approved_by_its_reviewer(
     publication_db, monkeypatch
 ):
     f = await fixture(publication_db, monkeypatch)
-    choose_route(f)
     page = await approved_for_main(f)
     run = await start(f, page)
     source = await delivery.saved_source(f.db, run.id)
     change = source["change"]
     assert change["change_id"] == website_change.page_change_id(page.id)
     assert change["change_id"].startswith("pg_") and len(change["change_id"]) == 23
-    assert (change["source"], change["kind"], change["paths"]) == ("content_draft", "page", [ROUTE])
+    assert (change["source"], change["kind"], change["paths"]) == (
+        "content_draft",
+        "page",
+        [PAGE_PATH],
+    )
     assert change["content_revision"] == page.canonical_commit_sha
     assert change["content_sha256"] == source["source_sha256"]
     approval = change["approval"]
     assert approval["by"] == ACTOR and approval["via"] == "review" and approval["at"]
     assert approval["revision"] == page.canonical_commit_sha
-    assert source["publish"]["mode"] == "direct" and source["route"] == ROUTE
+    assert source["publish"]["mode"] == "direct" and source["route"] == PAGE_PATH
     assert source["protected_paths"] == ["/sign-in", "/sign-up", "/auth-complete"]
     receipt = await f.db.get_effect(delivery.source_key(run.id))
     assert receipt.operation == website_change.OPERATION
@@ -260,7 +256,6 @@ def test_a_change_row_is_defined_once_for_every_source():
 
 async def test_a_pre_approved_page_publishes_directly(publication_db, monkeypatch):
     f = await fixture(publication_db, monkeypatch)
-    choose_route(f)
     page = await approved_for_main(f)
     run = await made(f, await start(f, page))
     integrations = mergeable(f)
@@ -293,7 +288,6 @@ async def test_a_change_that_was_not_pre_approved_opens_a_pull_request(
     publication_db, monkeypatch, why
 ):
     f = await fixture(publication_db, monkeypatch)
-    choose_route(f)
     page = await answer_page(f)
     if why == "no_recorded_approver":
         page = await approve_without_approver(f, page)
@@ -330,7 +324,6 @@ async def test_a_change_that_was_not_pre_approved_opens_a_pull_request(
 
 async def test_protected_paths_open_a_pull_request_even_when_approved(publication_db, monkeypatch):
     f = await fixture(publication_db, monkeypatch)
-    choose_route(f)
     # The founder lists /blog as shared with another app: the approved page still waits.
     shared = await approved_for_main(f)
     run = await start(f, shared, protected_paths=["/blog"])
@@ -369,7 +362,6 @@ def test_protected_paths_cover_the_shared_auth_pages_and_what_serves_them():
 
 async def test_a_file_edit_cannot_fake_approval(publication_db, monkeypatch):
     f = await fixture(publication_db, monkeypatch)
-    choose_route(f)
     page = await approve_without_approver(f, await answer_page(f))
     change_id = website_change.page_change_id(page.id)
     # Someone hand-edits project files to claim approval; no file is read as approval.
@@ -541,38 +533,32 @@ async def test_decided_rows_stay_decided(publication_db, monkeypatch):
         await website_change.propose(f.db, project_id=project, rows=[page_row])
 
 
-# Answer pages land at the founder's chosen route in the site's own page registry.
+# Pages land at the address their plan gave them, in the site's own page registry.
 
 
-async def test_an_answer_page_without_a_chosen_route_asks_the_founder(publication_db, monkeypatch):
+async def test_an_answer_page_starts_at_its_planned_address(publication_db, monkeypatch):
     f = await fixture(publication_db, monkeypatch)
     page = await approved_for_main(f)
-    with pytest.raises(WorkflowInputError) as refused:
-        await start(f, page)
-    message = str(refused.value)
-    assert "Where on your site should pages that answer buyer questions go?" in message
-    assert "save_page_route(page_type=answer_page)" in message and "will not guess" in message
-    assert not await f.db.pool.fetchval(
-        "SELECT count(*) FROM workflow_runs WHERE workflow_id=$1", website_change.WORKFLOW_ID
-    )
     shown = structured(
         await mcp(f, monkeypatch).call_tool(
             "get_workflow", {"project_id": str(f.project.id), "workflow_key": "website.change"}
         )
     )
+    # Nobody is asked where pages live: each page has the address its plan gave it.
     preparation = shown["preparation"]
-    assert preparation["page_routes"] == {}
-    assert preparation["ask_the_founder"]["then"]["name"] == "save_page_route"
+    assert "page_routes" not in preparation and "ask_the_founder" not in preparation
     assert {"run_id": str(page.id), "title": "How to keep recurring AI work reliable"} in (
         preparation["articles"]
     )
+    run = await start(f, page)
+    source = await delivery.saved_source(f.db, run.id)
+    assert source["route"] == PAGE_PATH and source["change"]["paths"] == [PAGE_PATH]
 
 
 async def test_answer_pages_go_to_the_registry_route_never_content_answers(
     publication_db, monkeypatch
 ):
     f = await fixture(publication_db, monkeypatch)
-    choose_route(f)
     integrations = mergeable(f)
     # Tin's own draft folder is never a page on the site: the PR opens, the merge waits.
     run = await made(
@@ -591,7 +577,7 @@ async def test_answer_pages_go_to_the_registry_route_never_content_answers(
     integrations.github_merge_pull_request.assert_not_called()
     run = await start(f, await approved_for_main(f))
     source = await delivery.saved_source(f.db, run.id)
-    # A typed page registry keeps the copy as one JSON string, served at the chosen route.
+    # A typed page registry keeps the copy as one JSON string, served at the page's address.
     registry = (
         "export const blogPages = [\n  {\n    slug: 'reliable-ai-work',\n"
         f"    body: {json.dumps(source['article'])},\n  }},\n];\n"
@@ -616,7 +602,7 @@ async def test_answer_pages_go_to_the_registry_route_never_content_answers(
         "src/content/blog-pages.ts",
         "src/app/blog/[slug]/page.tsx",
     ]
-    # A page placed anywhere else than the chosen route waits for the founder.
+    # A page placed anywhere else than its approved address waits for the founder.
     other = await approved_for_main(f)
     run = await made(
         f, await start(f, other), public_url="https://example.com/answers/reliable-ai-work"
@@ -624,15 +610,57 @@ async def test_answer_pages_go_to_the_registry_route_never_content_answers(
     merge = await merge_outcome(f, run)
     assert merge["status"] == "left_open"
     assert merge["reason"] == (
-        "It does not put the page at your chosen route /blog/{slug}, so it waits for your review."
+        "It does not put the page at its approved address /blog/reliable-ai-work, so it waits "
+        "for your review."
     )
+
+
+def test_only_a_plain_page_path_becomes_the_pinned_address():
+    assert website_change.page_address_path(PAGE_URL) == PAGE_PATH
+    assert website_change.page_address_path("https://example.com/Docs/Setup_v2/") == (
+        "/Docs/Setup_v2/"
+    )
+    for address in (
+        "https://example.com/blog/{slug}",
+        "https://example.com/blog/a%2Fb",
+        "https://example.com/blog/../admin",
+        "https://example.com/blog/a;b",
+        None,
+    ):
+        assert website_change.page_address_path(address) is None
+
+
+async def test_site_code_beside_the_page_merges_only_for_a_new_page(publication_db, monkeypatch):
+    f = await fixture(publication_db, monkeypatch)
+    route_file = {"path": "src/app/blog/[slug]/page.tsx", "content": "export default 1;\n"}
+    mergeable(f)
+    # A new page at its approved address may bring the route that serves it.
+    run = await made(f, await start(f, await approved_for_main(f)), extra_files=(route_file,))
+    merge = await merge_outcome(f, run)
+    assert merge["status"] == "merged" and merge["merge_rule"] == "chosen_route"
+    # So may only a plain lowercase address; any other shape merges the page alone.
+    odd = await answer_page(f, page_url="https://example.com/blog/Reliable_AI")
+    run = await made(
+        f,
+        await start(f, await approved_for_main(f, odd)),
+        public_url="https://example.com/blog/Reliable_AI",
+        extra_files=(route_file,),
+    )
+    assert (await merge_outcome(f, run))["status"] == "left_open"
+    # An update of an existing page merges nothing but the page, even inside its folder.
+    update = await draft(f, kind="article", action="update_page")
+    run = await made(
+        f, await start(f, await approved_for_main(f, update)), extra_files=(route_file,)
+    )
+    merge = await merge_outcome(f, run)
+    assert merge["status"] == "left_open"
+    assert merge["reason"].startswith("It changes site files besides the page")
 
 
 async def test_a_static_html_site_gets_its_page_as_html(publication_db, monkeypatch):
     # website.change a5828bd7 on sheepdogs.io: a static site in client/public/ that renders no
     # Markdown. The page is HTML in the site's own layout, and the wording decides the merge.
     f = await fixture(publication_db, monkeypatch)
-    choose_route(f)
     integrations = mergeable(f)
     run = await start(f, await approved_for_main(f))
     source = await delivery.saved_source(f.db, run.id)
@@ -656,7 +684,6 @@ async def test_a_static_html_site_gets_its_page_as_html(publication_db, monkeypa
         f,
         await start(f, await approved_for_main(f)),
         page_path="client/public/blog/reliable-ai-work-2/index.html",
-        public_url="https://example.com/blog/reliable-ai-work-2",
         content=page.replace("receipt", "log"),
     )
     merge = await merge_outcome(f, run)
@@ -673,7 +700,6 @@ async def test_a_static_html_site_gets_its_page_as_html(publication_db, monkeypa
 
 async def test_one_page_is_never_adapted_twice(publication_db, monkeypatch):
     f = await fixture(publication_db, monkeypatch)
-    choose_route(f)
     # The approval starts website.change; a second website.change refuses the same page.
     page = await answer_page(f)
     await f.delivery.choose(run=page, mode="github_commit", actor=ACTOR)
@@ -940,7 +966,6 @@ async def test_protected_path_changes_are_audited(publication_db, monkeypatch):
 
 async def test_protected_paths_from_the_setting_force_a_pull_request(publication_db, monkeypatch):
     f = await fixture(publication_db, monkeypatch)
-    choose_route(f)
     # The founder protects /blog in the project's settings: an approved page under it waits.
     await save_protected(f, ["/blog"], 0)
     page = await approved_for_main(f)
@@ -974,7 +999,6 @@ async def test_protected_paths_from_the_setting_force_a_pull_request(publication
 
 async def test_an_unstable_pull_request_merges_when_pre_approved(publication_db, monkeypatch):
     f = await fixture(publication_db, monkeypatch)
-    choose_route(f)
     page = await approved_for_main(f)
     run = await made(f, await start(f, page))
     integrations = mergeable(f)
@@ -1001,7 +1025,6 @@ async def test_without_required_checks_an_unstable_pull_request_waits_for_every_
     publication_db, monkeypatch, required
 ):
     f = await fixture(publication_db, monkeypatch)
-    choose_route(f)
     monkeypatch.setattr(delivery, "MERGE_WAIT_SECONDS", 0)
     monkeypatch.setattr(delivery, "BUILD_WAIT_SECONDS", 0)
     integrations = f.runtime.integrations
@@ -1041,7 +1064,6 @@ NEVER_MERGE = {
 @pytest.mark.parametrize("verdict", list(NEVER_MERGE))
 async def test_blocked_or_dirty_pull_requests_never_merge(publication_db, monkeypatch, verdict):
     f = await fixture(publication_db, monkeypatch)
-    choose_route(f)
     monkeypatch.setattr(delivery, "MERGE_WAIT_SECONDS", 0)
     monkeypatch.setattr(delivery, "BUILD_WAIT_SECONDS", 0)
     page = await approved_for_main(f)
@@ -1068,7 +1090,6 @@ def checks(*items, readable=True):
 
 
 async def approved_change(f, monkeypatch):
-    choose_route(f)
     run = await made(f, await start(f, await approved_for_main(f)))
     return run, mergeable(f)
 
@@ -1181,3 +1202,22 @@ async def test_checks_beyond_one_page_never_merge(publication_db, monkeypatch):
     merge = await merge_outcome(f, run)
     integrations.github_merge_pull_request.assert_not_called()
     assert merge["reason"].startswith("It has more checks than Tin reads at once")
+
+
+def test_site_code_merges_only_under_a_folder_the_site_serves_pages_from():
+    proof = {"article_path": "content/blog/reliable-ai-work.md"}
+    paths = [
+        "src/app/blog/[slug]/page.tsx",
+        "app/(marketing)/blog/[slug]/page.tsx",
+        "public/blog/reliable-ai-work/hero.svg",
+        # A section named like the page's, but code the site runs rather than serves.
+        "scripts/blog/deploy.sh",
+        "config/blog/settings.ts",
+        "blog/index.ts",
+    ]
+    manifest = {"files": [{"path": path} for path in [proof["article_path"], *paths]]}
+    assert delivery.outside_route(manifest, proof, PAGE_PATH) == [
+        "scripts/blog/deploy.sh",
+        "config/blog/settings.ts",
+        "blog/index.ts",
+    ]

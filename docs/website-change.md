@@ -57,9 +57,9 @@ opens, `hold_reason` checks again, from Postgres and the saved patch, before any
 - no file in the patch serves a protected path, and the page's `Public URL:` is not under one.
   The protected paths are the pinned ones plus the project's setting as it stands now, so a
   page the founder protects after the run started still holds the merge;
-- the page sits at the founder's chosen route, when the page type has one;
+- the page sits at its approved address, when it has one;
 - then the page merge rules apply: `page_only` (the page as one Markdown file) or
-  `chosen_route` (the page plus site code inside the route's own folder), the pinned branch
+  `chosen_route` (the page at its address plus site code inside that address's folder), the pinned branch
   and head, and GitHub's verdict that the required checks passed, within about three and a
   half minutes.
 
@@ -211,19 +211,19 @@ save appends one revision: the paths, `changed_by_clerk_user_id`, `changed_at` a
   (`protected_paths_revision`) in the run's source receipt. Before any merge, Tin reads the
   setting again and adds it to the pinned list.
 
-## Pages land at the founder's route
+## Pages land at the address their plan gave them
 
 website.change adapts the page into the site's own format: in the site's page registry or
 content folder, with the copy kept byte for byte.
 
-- A `content.generate` answer page needs a chosen route (#244's `content/page-routes.json`):
-  its approval starts website.change at the route its selection pinned (see
-  [one content.generate](one-content-generate.md)). website.change never guesses one: without it, admission refuses with #244's question
-  (`ask_the_founder`) and the `save_page_route` call to make, and MCP `get_workflow` shows the
-  same question in its preparation. The route pinned at approval wins over one saved later.
+- Every `content.generate` page carries the address its plan gave it (`page_url`, see
+  [repository-aware delivery](repository-aware-content-delivery.md#where-adapted-pages-live)),
+  which its review showed. Admission pins it as the change row's path and the source's `route`,
+  and the adaptation publishes the page at exactly that path. Nobody is asked where a kind of
+  page lives.
 - A patch that puts the page under `content/answers/` fails: that is Tin's draft folder, not a
   page on the site.
-- A page whose `Public URL:` does not follow the chosen route is never merged.
+- A page whose `Public URL:` is not its approved address is never merged.
 
 The page guards: the exact-copy proof, five files and 400 KB, and no dependency files
 (`content_repository_delivery.DEPENDENCY_FILES`: package manifests, lockfiles and
@@ -446,13 +446,11 @@ and detail card:
 ## Approved pages reach the site through website.change
 
 - The approval of a `content.generate` answer page or article (`approval-delivery:{run}`)
-  starts website.change (`source: content_draft`). website.change never guesses a route: an
-  approved answer page without one records a failed delivery that asks the founder, and
-  `retry_content_delivery` starts it once `save_page_route` has saved one.
+  starts website.change (`source: content_draft`), which publishes the page at the address its
+  plan gave it.
 - A draft selected for a repository program pins website.change (`adapter`,
   `via: website.change`, no Markdown path), and an approval that picks a pull request or
-  commit to main adapts it. A planned article needs no chosen route; its plan item names its
-  address. A page refresh still changes exactly its approved lines itself (`deliver_refresh`),
+  commit to main adapts it. A page refresh still changes exactly its approved lines itself (`deliver_refresh`),
   not through website.change.
 - The content program card's **Prepare PR** and **Retry** start website.change, and the card
   shows the latest adaptation (`delivery_history`).

@@ -148,9 +148,14 @@ def test_the_address_comes_from_the_plan_or_a_labelled_slug():
     assert updated["url"] == "https://example.com/docs/setup" and updated["final"]
     assert updated["source"] == "plan_destination"
 
+    # A new page's planned address is where website.change publishes it.
     selection["item"] = {**selection["item"], "action": "new_page"}
-    proposed = pages.base_for(draft, selection=selection)
-    assert proposed["source"] == "plan_destination" and not proposed["final"]
+    planned = pages.base_for(draft, selection=selection)
+    assert planned["source"] == "plan_destination" and planned["final"]
+    selection["page_url"] = "https://example.com/guides/cli-setup"
+    pinned = pages.base_for(draft, selection=selection)
+    assert pinned["url"] == "https://example.com/guides/cli-setup" and pinned["final"]
+    del selection["page_url"]
 
     selection["item"] = {**selection["item"], "destination": ""}
     slug = pages.base_for(draft, selection=selection)

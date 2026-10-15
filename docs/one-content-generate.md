@@ -13,7 +13,7 @@ A plan item (`content.plan`'s `ContentItem`) has an optional `kind`:
 | Kind | What it is | Shape |
 | --- | --- | --- |
 | `article` (or no kind) | A planned article, as before | `new_page` or `update_page` |
-| `answer` | An AI-visibility gap: a buyer question the latest organic audit asked AI assistants, whose sampled answers did not cite the site (a `content.buyer_answer_coverage` finding) | `new_page`, no destination: it lands at the founder's answer-page route |
+| `answer` | An AI-visibility gap: a buyer question the latest organic audit asked AI assistants, whose sampled answers did not cite the site (a `content.buyer_answer_coverage` finding) | `new_page`, with the address the plan gave it |
 | `refresh` | An existing page that searchers see but rarely click, that ranks just below the top results, or that Page decisions marked | `update_page` at the page's URL |
 
 The field is hidden from the v1 model schema and left out of the plan file when absent, so
@@ -48,7 +48,7 @@ article. A founder can also add an `answer` or `refresh` item by editing the pla
 | Kind | Selected when | Drafted as | Checked by | Approval sends it to |
 | --- | --- | --- | --- | --- |
 | article | next in plan order | today's article | `content-draft.v3` | the delivery setting, unchanged |
-| answer | next in plan order, and the founder chose where answer pages live | a page with a search listing, a 40 to 60 word direct answer, question headings, an FAQ and at least three cited sources | `content-draft.v3` plus `answer_page.py`'s checks | `website.change`, at the saved route |
+| answer | next in plan order | a page with a search listing, a 40 to 60 word direct answer, question headings, an FAQ and at least three cited sources | `content-draft.v3` plus `answer_page.py`'s checks | `website.change`, at its planned address |
 | refresh | next in plan order, unless its page still waits | `content.refresh`'s `tin-refresh.v1` proposal of exact old to new lines | `content-draft.v3` plus `content_refresh.validate_document` | the existing refresh applier (`deliver_refresh`) |
 
 - **Kinds per pin.** The 1.9.0 definition lists `content_kinds`. A definition pinned before it
@@ -61,12 +61,13 @@ article. A founder can also add an `answer` or `refresh` item by editing the pla
   is byte for byte what 1.8.0 prepared. From 1.17.0 every kind is drafted even when the site
   already answers the question or the page already meets its searches; see
   [editorial judgment](content-editorial-judgment.md).
-- **Answers need a route.** Admission refuses an answer until `content/page-routes.json` has an
-  `answer_page` route, with #244's question and the `save_page_route` call to make; a weekly
-  schedule pauses with the same question. The selection pins the route. On approval with a
-  repository, Tin starts `website.change` (`source: content_draft`), which adapts the page into
-  the site's page registry at that route, keeps the search listing beside the copy, and refuses
-  any patch under `content/answers/`.
+- **Every page has its address.** The selection pins the address the plan gave the item
+  (`page_url`; a new page from an older plan gets one the same way, see
+  [repository-aware delivery](repository-aware-content-delivery.md#where-adapted-pages-live)),
+  and the review shows it. On approval with a repository, Tin starts `website.change`
+  (`source: content_draft`), which adapts the page into the site's page registry at that
+  address, keeps an answer's search listing beside the copy, and refuses any patch under
+  `content/answers/`.
 - **Refreshes share one wait.** Preparation pins `content.refresh`'s evidence for the item's
   page (latest audit checks, Search Console rows, the page's current text, positioning and
   style) under the refresh receipt `{run}:content_refresh_prepare`. Both workflows' history reads

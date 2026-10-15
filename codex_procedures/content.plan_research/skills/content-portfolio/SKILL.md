@@ -201,7 +201,7 @@ the first month and why), then exactly one JSON block between these two marker l
       "target_query": "",
       "intent": "",
       "action": "new_page",
-      "destination": "",
+      "destination": "/alternatives/competitor-name",
       "brief": "",
       "sources": [""],
       "evidence_strength": "measured",
@@ -219,9 +219,22 @@ the first month and why), then exactly one JSON block between these two marker l
 }
 ```
 
-`opportunities` is in priority order; Tin fills the weeks in that order. New pages have an empty
-`destination`; Tin chooses their address later. In a revision, keep the `id` of every existing
-item you keep.
+`opportunities` is in priority order; Tin fills the weeks in that order. In a revision, keep the
+`id` of every existing item you keep.
+
+Every new page names its address in `destination`: the path it will have on the site, such as
+`/alternatives/zapier`. The founder approves it with the plan, and Tin publishes the page at
+exactly that path, so choose it the way the site already names its pages:
+
+- Put it in the section where the site keeps that kind of page. `site_pages` shows the sections:
+  its comparison or alternatives pages, guides, docs or blog. A site that serves some pages at
+  short paths (`/self-host`) rather than in a folder keeps that pattern for the same kind of page.
+- When the site has no section for this kind of page, use the plainest one a reader would
+  expect: `/blog` for articles and answers, `/alternatives` for alternatives, `/compare` for
+  comparisons. Use the reader's words, never a Tin term such as answers.
+- End it with three to six lowercase, hyphenated words from the target search, without filler
+  words such as the, a, of or how.
+- Never reuse the path of a page the site already has or of another item.
 
 Finally run `python3 check_portfolio.py <output path> <brief folder>` from this skill's folder
 and fix every problem it reports.

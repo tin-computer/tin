@@ -163,6 +163,7 @@ class ContentPlan(Strict):
         if not 14 <= (self.end_date - self.start_date).days <= 184:
             raise ValueError("A program must last two weeks to six months.")
         ids, titles = set(), set()
+        destinations = {"new_page": set(), "update_page": set()}
         expected = self.start_date
         for index, batch in enumerate(self.batches, 1):
             if batch.id != f"week_{index:02d}" or batch.due_date != expected:
@@ -180,11 +181,8 @@ class ContentPlan(Strict):
                     raise ValueError("Source and verification fields must be bounded text.")
                 if item.action == "update_page" and not item.destination:
                     raise ValueError("An existing-page update needs its destination URL.")
-                if item.kind == ANSWER and (item.action != "new_page" or item.destination):
-                    raise ValueError(
-                        "An answer page is a new page; it lands at the route the founder "
-                        "chose for answer pages, so it has no destination."
-                    )
+                if item.kind == ANSWER and item.action != "new_page":
+                    raise ValueError("An answer page is a new page.")
                 if item.kind == REFRESH and item.action != "update_page":
                     raise ValueError("A page refresh updates an existing page at its URL.")
                 if (item.source is None) != (item.evidence is None) or (
@@ -196,6 +194,16 @@ class ContentPlan(Strict):
                         "public HTTPS page that backs it."
                     )
                 if item.destination:
+                    # A new page's destination is the address it will have, so no other item
+                    # may use it. Several updates of one existing page stay allowed.
+                    address = item.destination.rstrip("/")
+                    if address in destinations["new_page"] or (
+                        item.action == "new_page" and address in destinations["update_page"]
+                    ):
+                        raise ValueError(
+                            f"A new page's address {address} is used by another plan item."
+                        )
+                    destinations[item.action].add(address)
                     url = urlsplit(item.destination)
                     if (
                         url.scheme != "https"
@@ -213,6 +221,65 @@ class ContentPlan(Strict):
         if len(canonical_json(self.model_dump(mode="json"))) > 240_000:
             raise ValueError("The plan exceeds its file bound.")
         return self
+
+
+# A new page's address as the planner proposes it: one to four lowercase, hyphenated path
+# segments. Nothing in it can be read as a route pattern ({slug}), an escape (%2F) or a
+# relative step (..). website.change merges site code beside a new page only at such a path.
+NEW_PAGE_PATH = re.compile(r"(?:/[a-z0-9][a-z0-9-]{0,79}){1,4}/?")
+
+
+# Words a page address leaves out: they make it longer, not clearer.
+ADDRESS_FILLER = frozenset(
+    "a an and are as at be best by can do does for from how in is it of on or the to what "
+    "when where which why with you your".split()
+)
+
+
+def address_slug(text: str) -> str:
+    """Three to six lowercase, hyphenated words that name a page, from its search or title."""
+    words = re.findall(r"[a-z0-9]+", text.casefold())
+    kept = [word for word in words if word not in ADDRESS_FILLER] or words
+    return "-".join(kept[:6])[:80].strip("-")
+
+
+def page_address(
+    host: str, item: dict, items: list[dict], *, existing: set[str] = frozenset()
+) -> str | None:
+    """Where a plan item's page will be published, as a full URL on the site.
+
+    The item's own destination when it has one: the page an update changes, or the address
+    the planner proposed for a new page and the founder approved with the plan. A new page
+    from an older plan, which has none, gets one next to the plan's other new pages of the
+    same format (else at the site root), named from its target search or title. Either way the
+    draft's review shows it, and website.change publishes the page there and nowhere else.
+    """
+    if item.get("destination"):
+        return item["destination"]
+    if item.get("action") != "new_page":
+        return None
+    slug = address_slug(item.get("target_query") or item["title"]) or item["id"].lower()
+    folders: dict[str, int] = {}
+    # The site's own pages, as paths without a trailing slash.
+    taken = {path.rstrip("/") or "/" for path in existing}
+    for other in items:
+        if not other.get("destination"):
+            continue
+        path = urlsplit(other["destination"]).path.rstrip("/")
+        taken.add(path)
+        folder = path.rsplit("/", 1)[0]
+        if (
+            other is not item
+            and other.get("action") == "new_page"
+            and folder
+            and other.get("format") == item.get("format")
+        ):
+            folders[folder] = folders.get(folder, 0) + 1
+    folder = max(sorted(folders), key=lambda name: folders[name]) if folders else ""
+    path, n = f"{folder}/{slug}", 2
+    while path in taken:
+        path, n = f"{folder}/{slug}-{n}", n + 1
+    return f"https://{host}{path}"
 
 
 def end_date(start: date, duration: str) -> date:

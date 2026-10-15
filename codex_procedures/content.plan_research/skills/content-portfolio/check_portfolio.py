@@ -120,8 +120,34 @@ def main(portfolio_path, brief_dir):
             if path in seen_pages:
                 problems.append(f"{path} is already changed by {seen_pages[path]}")
             seen_pages[path] = label
-        elif item.get("id") not in editable:
-            if norm(item.get("title")) in titles or slug(item.get("title")) in slugs:
+        else:
+            path = destination
+            if destination.startswith("http"):
+                parsed = urlsplit(destination)
+                if (parsed.hostname or "").removeprefix("www.") != host.removeprefix("www."):
+                    problems.append(f"destination must be on {host}")
+                path = parsed.path
+            path = path.rstrip("/")
+            if not re.fullmatch(r"(/[a-z0-9][a-z0-9-]{0,79}){1,4}", path):
+                problems.append(
+                    "a new page needs its address in destination: a path such as "
+                    "/alternatives/zapier, in lowercase words and hyphens"
+                )
+            elif path in site:
+                problems.append(f"{path} is already a page on the site; choose a new address")
+            elif path in seen_pages:
+                problems.append(f"{path} is already the address of {seen_pages[path]}")
+            else:
+                section = path.rsplit("/", 1)[0]
+                if section and not any(page.startswith(section + "/") for page in site):
+                    notes.append(
+                        f"{label}: the site has no pages under {section}/ yet; use a section it "
+                        "already has when one fits"
+                    )
+                seen_pages[path] = label
+            if item.get("id") not in editable and (
+                norm(item.get("title")) in titles or slug(item.get("title")) in slugs
+            ):
                 problems.append("the site already has a page with this title or address")
         key = norm(item.get("title"))
         if key in seen_titles:

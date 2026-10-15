@@ -707,8 +707,8 @@ BUILTIN_WORKFLOWS = (
         key=website_change.KEY,
         title="Change the website",
         description="Put approved changes on your website repository: an approved article or "
-        "answer page, adapted to the site's own format at the route you chose with its "
-        "wording kept; the technical fixes the latest audit found; the "
+        "answer page, adapted to the site's own format at the address its plan gave it, with "
+        "its wording kept; the technical fixes the latest audit found; the "
         "redirects and noindex changes your page decisions and site plan made; the copy fix "
         "planned from what people said about your product; or the blog index plan. Each fix, "
         "planned change or plan is a change you approve or decline once in Tin. What you "
@@ -718,7 +718,7 @@ BUILTIN_WORKFLOWS = (
         "to the project's protected pages, opens a pull request for you to merge. Deleting a "
         "page stays with you.",
         executor=CODEX_PROCEDURE_EXECUTOR,
-        version_label="1.10.0",
+        version_label="1.11.0",
         system=ORGANIC_TRAFFIC_SYSTEM,
         schedule_modes=("on_demand",),
         # Agents start it for an approved change; the catalog has no picker for change rows.
@@ -904,12 +904,12 @@ BUILTIN_WORKFLOWS = (
         description="Draft the next item in your content plan, in your style, after reading "
         "the pages that already cover it: a new article, an answer page for a buyer question AI "
         "assistants miss you on, or a refresh of an existing page's title, snippet and opening. "
-        "Every item gets a draft for review. After approval an article follows "
-        "your delivery setting, an answer page goes to your site through website.change at the "
-        "route you chose, and a refresh changes exactly the approved lines. The roadmap stays "
+        "Every item gets a draft for review, which shows the address the page will have. After "
+        "approval an article or answer page goes to your site through website.change at that "
+        "address, and a refresh changes exactly the approved lines. The roadmap stays "
         "unchanged.",
         executor=CODEX_PROCEDURE_EXECUTOR,
-        version_label="1.17.0",
+        version_label="1.18.0",
         system=ORGANIC_TRAFFIC_SYSTEM,
         # A weekly occurrence drafts the next article in plan order and holds while an
         # earlier draft from the same program still waits for review.
@@ -1613,13 +1613,14 @@ BUILTIN_WORKFLOWS = (
             "to six-month roadmap that ships every week: alternatives and comparison pages for "
             "your real competitors, answer pages for the questions buyers ask search and AI "
             "assistants, pages for each workflow, integration or use case your product has, "
-            "guides, and refreshes of existing pages. A planning agent researches and proposes; "
-            "Tin checks each piece against your site and fills every week. The plan opens with "
+            "guides, and refreshes of existing pages, each new page with the address it will have. "
+            "A planning agent researches and proposes; Tin checks each piece against your site "
+            "and fills every week. The plan opens with "
             "which page serves each keyword group, page and competitor, and you approve it in "
             "Decisions before anything is drafted. Does not write or publish anything."
         ),
         executor=content_plan.KEY,
-        version_label="1.1.0",
+        version_label="1.2.0",
         review_policy=CONTENT_PLAN_REVIEW_POLICY,
         presentation=WorkflowDiagram(
             direction="TD",
@@ -1716,7 +1717,7 @@ BUILTIN_WORKFLOWS = (
         "searches where a choice depends on what ranks, and proposes a prioritized portfolio "
         "of pages for every week. Started by Plan upcoming content, never on its own.",
         executor=CODEX_PROCEDURE_EXECUTOR,
-        version_label="1.1.0",
+        version_label="1.2.0",
         presentation=WorkflowDiagram(
             direction="TD",
             nodes=(

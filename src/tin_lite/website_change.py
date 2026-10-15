@@ -6,7 +6,7 @@ index and technical fixes. Each is a change row: a source, a stable ID, a kind, 
 paths it touches and its approval (ChangeRow). Two sources are implemented:
 
 - `content_draft` (phase 1): an approved content.generate article or answer page, adapted
-  into the site's own format and route (content_repository_delivery);
+  into the site's own format at the address its plan gave it (content_repository_delivery);
 - `audit` (phase 2, website_change_audit): what the latest organic audit found, repaired
   under site-fix-v5's rules, one change row per fixable finding;
 - `planned` (phase 3, website_change_planned): the redirects and noindex changes page
@@ -80,26 +80,10 @@ REVISION = re.compile(r"[0-9a-f]{40}")
 SITE_PATH = re.compile(r"/[A-Za-z0-9._~!$&'()*+,;=:@%/{}-]{0,300}")
 # Tin's own folder for answer-page drafts. A site does not serve it; a page never lands there.
 TIN_DRAFT_FOLDERS = ("content/answers/",)
-# The founder's page type (content/page-routes.json) for each kind of approved page.
-SOURCE_PAGE_TYPES = {"answer_page": "answer_page"}
 
 
 class WebsiteChangeConflict(ValueError):
     """The change row is not in the state the caller read; nothing was recorded."""
-
-
-class RouteNotChosen(ValueError):
-    """No one has chosen where this type of page lives on the site; ask the founder once."""
-
-    def __init__(self, question: dict[str, Any]) -> None:
-        self.question = question
-        then = question["then"]["arguments"]
-        super().__init__(
-            f"{question['question']} Nobody has chosen yet, so Tin will not guess. Ask the "
-            f"founder (suggest {question['suggestion']} or the folder the site's articles "
-            f"already use), save the answer with save_page_route(page_type="
-            f"{then['page_type']}), then start website.change again."
-        )
 
 
 # The change-row contract.
@@ -116,6 +100,26 @@ def site_path(value: Any) -> str | None:
     if re.sub(r"\{slug\}", "", value).count("{") or re.sub(r"\{slug\}", "", value).count("}"):
         return None
     return value
+
+
+# An existing page's path as the site serves it: plain segments, no pattern, escape or step.
+PAGE_ADDRESS = re.compile(r"(?:/[A-Za-z0-9._~-]{1,120}){1,8}/?|/")
+
+
+def page_address_path(address: Any) -> str | None:
+    """The path of a page's approved address, or None when it isn't a plain page path.
+
+    None leaves the page with no pinned address: its PR names one, and Tin merges nothing but
+    the page itself, so an address that could be read two ways never widens what merges.
+    """
+    path = site_path(address)
+    if (
+        not path
+        or not PAGE_ADDRESS.fullmatch(path)
+        or any(part in {".", ".."} for part in path.split("/"))
+    ):
+        return None
+    return path
 
 
 @dataclass(frozen=True)
@@ -176,20 +180,14 @@ def page_change_id(run_id: Any) -> str:
 
 
 def page_change(source: dict[str, Any], route: str | None) -> ChangeRow:
-    """The change row of an approved page, from its pinned source (page_source)."""
-    paths: list[str] = []
-    if route:
-        paths.append(route)
-    else:
-        destination = site_path((source.get("item") or {}).get("destination"))
-        if destination:
-            paths.append(destination)
+    """The change row of an approved page, from its pinned source (page_source). `route` is
+    the page's address on the site."""
     return ChangeRow(
         change_id=page_change_id(source["source_run_id"]),
         source="content_draft",
         kind="page",
         title=source["title"],
-        paths=tuple(paths),
+        paths=(route,) if route else (),
         content_sha256=source["source_sha256"],
         content_revision=source["source_revision"],
         detail={"source_run_id": source["source_run_id"], "page_type": source["source_kind"]},
@@ -529,7 +527,6 @@ def patch_module(source_kind: str):
 async def select_source(*, database, storage, integrations, project_id, inputs) -> dict:
     """Pin the change, the approved page, the repository and the publish mode for one run."""
     from tin_lite.content_delivery import ContentDelivery, adapted, choice_key, chosen_mode
-    from tin_lite.page_routes import PageRouteService, ask_the_founder
 
     source_kind = inputs.get("source", "content_draft")
     if source_kind not in IMPLEMENTED_SOURCES:
@@ -581,18 +578,11 @@ async def select_source(*, database, storage, integrations, project_id, inputs) 
         from tin_lite.organic_content import check_destination
 
         check_destination(system_delivery, binding)
-    route = None
-    # The page's type comes from its source: content.generate answer pages are answer pages,
-    # and planned articles keep their own destination.
-    kind = SOURCE_PAGE_TYPES.get(source["source_kind"])
-    if kind is not None:
-        # The route pinned at approval, else the one the founder saved since. Never a guess:
-        # an answer page without one asks the founder first.
-        route = chosen.get("route") or await PageRouteService(
-            database=database, storage=storage
-        ).route_for(run, page_type=kind)
-        if not route:
-            raise RouteNotChosen(ask_the_founder(kind, None))
+    # The page's address: the one its plan gave it and its review showed, or for an update,
+    # the page it changes. A draft from before addresses were planned may carry the route
+    # pattern its approval pinned (/blog/{slug}), or nothing, and then the PR names one.
+    address = source.get("page_url") or (source.get("item") or {}).get("destination")
+    route = page_address_path(address) if address else chosen.get("route")
     change = page_change(source, route).as_dict()
     approval = await approval_for(database.pool, project_id=project_id, change=change)
     # The defaults, the project's protected pages and this run's input, in that order.
@@ -657,11 +647,11 @@ async def hold_reason(database, run, source, manifest, proof) -> str | None:
 
     Checked again after the pull request opens, from Postgres and the saved patch: the
     publish mode pinned at admission, the approval as it stands now, the protected paths
-    against the files and the page's address, and the founder's chosen route. The protected
+    against the files and the page's address, and the page's approved address. The protected
     paths are the pinned ones plus the project's protected pages as they stand now, so a page
     the founder protects after the run started still holds the merge.
     """
-    from tin_lite.page_routes import matches
+    from tin_lite.content_repository_delivery import at_address
 
     publish = source.get("publish") or {}
     if publish.get("mode") != "direct":
@@ -688,9 +678,10 @@ async def hold_reason(database, run, source, manifest, proof) -> str | None:
             "the site, so it waits for your review."
         )
     route = source.get("route")
-    if route and not matches(route, address):
+    if route and not at_address(route, address):
         return (
-            f"It does not put the page at your chosen route {route}, so it waits for your review."
+            f"It does not put the page at its approved address {route}, so it waits for your "
+            "review."
         )
     return None
 

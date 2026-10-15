@@ -3,11 +3,20 @@
 from __future__ import annotations
 
 import hashlib
+from urllib.parse import urlsplit
 from uuid import UUID
 
 from tin_lite import content_draft
 from tin_lite.content_draft_progress import check_existing, history, next_item
-from tin_lite.content_plan import ANSWER, ARTICLE, KINDS, REFRESH, item_kind, plan_path
+from tin_lite.content_plan import (
+    ANSWER,
+    ARTICLE,
+    KINDS,
+    REFRESH,
+    item_kind,
+    page_address,
+    plan_path,
+)
 from tin_lite.content_plan_sources import positioning_files
 from tin_lite.content_programs import ContentPrograms
 from tin_lite.content_refresh import url_key
@@ -17,13 +26,11 @@ from tin_lite.writing_style import STYLE_PATH
 
 # What a reader calls each kind in a refusal.
 KIND_NOUNS = {ARTICLE: "an article", ANSWER: "an answer page", REFRESH: "a page refresh"}
-# How a refusal names the workflow to start again once the founder answers.
-KEY_START = content_draft.KEY
 
 
-def answer_brief(selection, evidence, *, route=None, today=None):
+def answer_brief(selection, evidence, *, today=None):
     """What an answer draft answers: the item's buyer question, the audit's gap questions it
-    cites, and where approved answer pages go."""
+    cites, and the address the page will have."""
     from tin_lite.content_plan_editorial import ANSWER_CHECK
 
     questions = [
@@ -36,8 +43,19 @@ def answer_brief(selection, evidence, *, route=None, today=None):
     return {
         "question": selection["item"]["title"],
         "gap_questions": list(dict.fromkeys(questions))[:12],
-        "route": route,
+        # Named route for content.generate versions that read it; it is the page's path.
+        "route": urlsplit(selection["page_url"]).path if selection.get("page_url") else None,
         "today": today,
+    }
+
+
+def site_paths(context):
+    """The site's own pages from a plan's pinned research, so a new page never takes one."""
+    site = ((context or {}).get("research") or {}).get("site_pages") or {}
+    return {
+        page["path"]
+        for page in site.get("pages") or []
+        if isinstance(page, dict) and isinstance(page.get("path"), str)
     }
 
 
@@ -223,9 +241,9 @@ class ContentDraftSources:
             },
             "instruction": "Start content.generate with only program_id to assess and, if useful, "
             "draft the next item "
-            "in plan order: an article, an answer page or a page refresh (each item's kind). An "
-            "answer page needs the route the founder chose for such pages: when the start asks, "
-            "ask the founder once and call save_page_route. A refresh waits while its page's last "
+            "in plan order: an article, an answer page or a page refresh (each item's kind). Each "
+            "item's destination is the address its page will have. A refresh waits while its "
+            "page's last "
             "refresh is in review or live for less than six weeks (passed_over). "
             "Use item_id only when the user explicitly chooses another item; "
             "rewrite=true additionally requires that explicit item_id. Reuse the request ID for "
@@ -240,7 +258,7 @@ class ContentDraftSources:
 
     async def choose(self, *, project_id, inputs, retry_of_run_id=None, kinds=None):
         """Select one item for a draft run. `kinds` are the kinds the pinned definition drafts
-        (content_draft.supported_kinds); an answer also needs the founder's chosen route."""
+        (content_draft.supported_kinds)."""
         kinds = tuple(kinds or KINDS)
         selected_inputs = dict(inputs)
         mode = "selected" if inputs.get("item_id") else "next"
@@ -286,20 +304,18 @@ class ContentDraftSources:
             rewrite=inputs.get("rewrite", False),
             item=selected["item"],
         )
-        route = await self.check_kind(project_id, selected, kinds)
+        await self.check_kind(project_id, selected, kinds)
         return {
             **selected,
-            **({"page_route": route} if route else {}),
             "mode": mode,
             "input_sha256": digest(inputs),
         }
 
     async def check_kind(self, project_id, selected, kinds):
-        """Refuse an item this definition cannot draft yet; return an answer's chosen route.
+        """Refuse an item this definition cannot draft yet.
 
         An older content.generate drafts articles only. A refresh waits while its page's last
-        refresh is in review or not yet six weeks live. An answer page goes to the site at the
-        route the founder chose for such pages (#244), so Tin asks for it before drafting.
+        refresh is in review or not yet six weeks live.
         """
         item = selected["item"]
         kind = item_kind(item)
@@ -313,16 +329,6 @@ class ContentDraftSources:
                 f"{item['destination']} has a refresh in review, waiting to go live, or live for "
                 "less than six weeks. Tin waits so each refresh can show whether it worked."
             )
-        if kind != ANSWER:
-            return None
-        from tin_lite.page_routes import PageRouteService, route_question
-
-        routes = (await PageRouteService(database=self.db, storage=self.storage).read(project_id))[
-            "routes"
-        ]
-        if not routes.get("answer_page"):
-            raise ValueError(route_question("answer_page", selected["host"], KEY_START))
-        return routes["answer_page"]
 
     async def selection(self, run_id):
         receipt = await self.db.get_effect(content_draft.selection_key(run_id))
@@ -399,6 +405,14 @@ class ContentDraftSources:
             "host": plan["host"],
             "market": plan["market"],
             "item": item,
+            # Where the page will be published: shown on the draft's review and delivered
+            # exactly by website.change.
+            "page_url": page_address(
+                plan["host"],
+                item,
+                [i for b in plan["batches"] for i in b["items"]],
+                existing=site_paths(initial_context.result),
+            ),
         }
 
     async def saved(self, run_id):
@@ -595,7 +609,6 @@ class ContentDraftSources:
                 context["answer"] = answer_brief(
                     selection,
                     context["evidence"],
-                    route=(chosen or {}).get("page_route"),
                     today=(run.created_at.date().isoformat() if run.created_at else None),
                 )
             elif kind == REFRESH:

@@ -98,4 +98,4 @@ def test_site_change_models_new_pages_on_the_approved_design():
     assert "never on the older set" in prompt
     assert "the pages to match are the\n   current ones" in skill
     spec = next(w for w in BUILTIN_WORKFLOWS if w.key == "website.change")
-    assert spec.version_label == "1.10.0"
+    assert spec.version_label == "1.11.0"

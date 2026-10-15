@@ -204,31 +204,24 @@ the one `Proposed URL` line, since no file path exists until the adaptation pick
 
 ## Where adapted pages live
 
-Answer pages have no route until an adaptation gives them one. Tin
-asks the founder once per page type instead of letting each adaptation pick a folder.
+Every page has one address, chosen before it is written. Nobody picks a folder at delivery.
 
-- **The question.** While `content/page-routes.json` has no route for the page's type,
-  the publish preview (MCP `get_run` `delivery_preview`) and the MCP approval response carry
-  `ask_the_founder`: the question in the founder's words ("Where on your site should pages
-  that answer buyer questions go?"), how to suggest a route, and the `save_page_route` call
-  to make with the answer. The coding agent reads the codebase, so it suggests the folder
-  the site's articles already use (`/blog`, `/guides`, `/learn`, `/resources`), and
-  `/blog/{slug}` when there is none. Google's URL guidance asks for words in the audience's
-  language, so the agent never suggests a Tin term such as "answers".
-- **The answer.** `save_page_route(project_id, page_type, route, request_id)` commits the
-  route to `content/page-routes.json` (`page_routes.py`). A route is a lowercase site path
-  that ends in one `{slug}`, with at most three folders, such as `/blog/{slug}`. Types
-  are `answer_page` and `article`.
-- **At approval.** The choice receipt pins the saved route, and the adaptation's
-  `direction` input tells it to publish at exactly that route, with a slug of three to five
-  words naming the page's main search term, adding one minimal route
-  once if the site does not serve it yet. Without a saved route, website.change asks the
-  founder instead of starting.
+- **In the plan.** content.plan gives every new page a `destination`: the full URL it will
+  have, in the section where the site keeps that kind of page (`/alternatives/zapier`). The
+  planning agent proposes it from the site's own pages; Tin drops one that is already a page on
+  the site or another item's address and proposes one beside the plan's other pages of the same
+  format instead (`content_plan.page_address`). The founder approves it with the plan and can
+  change it with `edit_content_plan`. An update's destination is the page it changes.
+- **On the draft.** content.generate pins the address in its selection (`page_url`); a new page
+  from an older plan, which has none, gets one the same way. The draft's review shows it as
+  "Will be published at", so approving the draft approves where it goes.
+- **At delivery.** website.change pins the address as the page's change row path and its
+  `route`, and the adaptation publishes the page at exactly that path, adding the smallest route
+  the site needs to serve it. A draft from before addresses were planned has none; its PR names
+  one, and Tin merges only the page itself.
 - **Merging.** With a commit-to-main setting, Tin merges the adaptation's PR when it adds
-  only the page (`merge_rule: page_only`), or when the founder chose a route and the PR's
-  `Public URL:` line follows it (`merge_rule: chosen_route`), so the first PR that adds that
-  route can merge too. The exact-copy proof, the five-file limit, the dependency ban, the
-  pinned branch and the required-checks rule still apply; a PR that adds site code for any
-  other route stays open and says so. Until a route is chosen, the preview sentence says a
-  commit-to-main setting still opens a pull request for these pages.
-
+  only the page (`merge_rule: page_only`), or when the PR's `Public URL:` line is the page's
+  address and its other files sit in that address's folder (`merge_rule: chosen_route`), so the
+  first PR that adds a section's route can merge too. The exact-copy proof, the five-file limit,
+  the dependency ban, the pinned branch and the required-checks rule still apply; a PR that puts
+  the page anywhere else stays open and says so.

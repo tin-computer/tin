@@ -2,8 +2,8 @@
 
 Emre's v2 organic map. content.generate 1.9.0 absorbs content.answer_page and content.refresh:
 an answer keeps the answer-page quality rules and reaches the site through website.change at
-the founder's route; a refresh proposes content.refresh's exact replacements, which the refresh
-applier changes in the site's source after approval. Articles draft exactly as before.
+the address its plan gave it; a refresh proposes content.refresh's exact replacements, which the
+refresh applier changes in the site's source after approval. Articles draft exactly as before.
 """
 
 import hashlib
@@ -34,7 +34,7 @@ from tin_lite.catalog import BUILTIN_WORKFLOWS
 from tin_lite.content_delivery import ContentDelivery, delivery_key
 from tin_lite.content_draft_sources import ContentDraftSources
 from tin_lite.content_editorial_judgment import assessment_document, validate_pair
-from tin_lite.content_plan import KINDS, plan_path
+from tin_lite.content_plan import KINDS, page_address, plan_path
 from tin_lite.content_refresh_sources import ContentRefreshSources
 from tin_lite.integrations import (
     GitHubCommitResult,
@@ -42,7 +42,6 @@ from tin_lite.integrations import (
     GitHubRepositoryBinding,
 )
 from tin_lite.organic_audit import audit_paths, canonical_json
-from tin_lite.page_routes import PATH as ROUTES_PATH
 from tin_lite.run_service import start_workflow_run
 from tin_lite.workflow_inputs import WorkflowInputError
 
@@ -60,7 +59,9 @@ def archive(files):
 
 ACTOR = "user_test"
 NOW = datetime(2026, 9, 29, 16, tzinfo=UTC)
-ROUTE = "/blog/{slug}"
+# The address the plan gave the answer page.
+ANSWER_PATH = "/learn/reliable-ai-work"
+ANSWER_URL = f"https://example.com{ANSWER_PATH}"
 PAGE_URL = "https://example.com/pricing"
 QUESTION = "Which API sends iMessages from an app?"
 DESCRIPTION = (
@@ -127,7 +128,7 @@ class Reader:
         return {"status": "observed", "status_code": 200, "body": PAGE.encode(), "charset": "utf-8"}
 
 
-async def fixture(db, monkeypatch, *, route=True, findings=None, first="answer"):
+async def fixture(db, monkeypatch, *, findings=None, first="answer"):
     """A content program whose plan holds an answer, a refresh and an article, beside a
     finished audit. content.generate is the current 1.9.0 definition."""
     f = await draft_fixture(db, monkeypatch, judgment=True)
@@ -166,7 +167,12 @@ async def fixture(db, monkeypatch, *, route=True, findings=None, first="answer")
         "plan"
     ]
     article = plan["batches"][0]["items"][0]
-    answer = {**item("answer_gap"), "title": QUESTION, "kind": "answer"}
+    answer = {
+        **item("answer_gap"),
+        "title": QUESTION,
+        "kind": "answer",
+        "destination": ANSWER_URL,
+    }
     page = {
         **item("refresh_pricing"),
         "kind": "refresh",
@@ -176,10 +182,7 @@ async def fixture(db, monkeypatch, *, route=True, findings=None, first="answer")
     plan["batches"][0]["items"] = (
         [answer, page, article] if first == "answer" else [page, answer, article]
     )
-    edits = {plan_path(f.configured.id): canonical_json(plan)}
-    if route:
-        edits[ROUTES_PATH] = canonical_json({"routes": {"answer_page": ROUTE}})
-    f.storage.repo.edit(edits)
+    f.storage.repo.edit({plan_path(f.configured.id): canonical_json(plan)})
     f.console = AsyncMock(return_value={"rows": []})
     f.integrations = SimpleNamespace(
         search_console_analytics=f.console,
@@ -281,7 +284,7 @@ def connected(f, monkeypatch):
 
 def test_the_definition_drafts_three_kinds_with_a_review_policy_each():
     definition = spec(content_draft.KEY).definition
-    assert definition["version"] == "1.17.0"
+    assert definition["version"] == "1.18.0"
     assert content_draft.supported_kinds(definition) == ("article", "answer", "refresh")
     assert definition["human_review"]["review_label"] == "Review article"
     kinds = definition["human_review_kinds"]
@@ -305,9 +308,9 @@ async def test_each_kind_is_selected_and_prepared_with_its_own_sources(publicati
 
     answer_run, answer = await prepared(f, "answer")
     selection = await f.sources.selection(answer_run.id)
-    assert selection["page_route"] == ROUTE
+    assert selection["page_url"] == answer["page_url"] == ANSWER_URL
     assert answer["kind"] == "answer" and answer["answer"]["question"] == QUESTION
-    assert answer["answer"]["route"] == ROUTE
+    assert answer["answer"]["route"] == ANSWER_PATH
 
     page_run, page = await prepared(f, "refresh")
     assert page["kind"] == "refresh"
@@ -416,24 +419,30 @@ async def test_an_older_definition_drafts_only_articles_and_passes_the_rest_over
         )
 
 
-# Answer pages need the founder's route, and reach the site only through website.change.
+# Every page has the address its plan gave it, and reaches the site through website.change.
 
 
-async def test_an_answer_draft_is_refused_without_a_route(publication_db, monkeypatch):
-    f = await fixture(publication_db, monkeypatch, route=False)
-    with pytest.raises(WorkflowInputError, match=r"save_page_route\(page_type=answer_page\)"):
-        await start(f, inputs=inputs(f, "answer"))
-    with pytest.raises(WorkflowInputError, match="Where on your site should pages that answer"):
-        await start(f, inputs=inputs(f))  # The next item is the answer.
-    assert not await f.db.pool.fetchval(
-        "SELECT count(*) FROM workflow_runs WHERE workflow_id=$1", f.workflow.id
-    )
-    f.storage.repo.edit({ROUTES_PATH: canonical_json({"routes": {"answer_page": ROUTE}})})
+async def test_every_draft_pins_the_address_its_plan_gave_it(publication_db, monkeypatch):
+    f = await fixture(publication_db, monkeypatch)
+    # An answer starts without anyone choosing where answer pages live.
     run = await start(f, inputs=inputs(f, "answer"))
-    assert (await f.sources.selection(run.id))["page_route"] == ROUTE
+    assert (await f.sources.selection(run.id))["page_url"] == ANSWER_URL
+    # A new page from an older plan, which named no address, gets one before its review.
+    article_run = await start(f, inputs=inputs(f, "article"))
+    selection = await f.sources.selection(article_run.id)
+    plan = (await f.service.programs.read(project_id=f.project.id, program_id=f.configured.id))[
+        "plan"
+    ]
+    items = [i for b in plan["batches"] for i in b["items"]]
+    assert not selection["item"]["destination"]
+    assert selection["page_url"] == page_address(plan["host"], selection["item"], items)
+    assert selection["page_url"].startswith(f"https://{plan['host']}/")
+    # A refresh's address is the page it changes.
+    refresh_run = await start(f, inputs=inputs(f, "refresh"))
+    assert (await f.sources.selection(refresh_run.id))["page_url"] == PAGE_URL
 
 
-async def test_an_approved_answer_goes_through_website_change_at_its_route(
+async def test_an_approved_answer_goes_through_website_change_at_its_address(
     publication_db, monkeypatch
 ):
     f = await fixture(publication_db, monkeypatch)
@@ -443,7 +452,7 @@ async def test_an_approved_answer_goes_through_website_change_at_its_route(
     delivery = ContentDelivery(database=f.db, storage=f.storage, integrations=f.integrations)
     chosen = await delivery.choose(run=run, mode="github_commit", actor=ACTOR)
     assert chosen["adapter"] == "repository" and chosen["via"] == "website.change"
-    assert chosen["route"] == ROUTE and chosen["path"] is None
+    assert "route" not in chosen and chosen["path"] is None
     run = await approve(f, run)
     # The page travels without its search listing, which goes beside it, never into content/answers.
     source = await repository_delivery.page_source(
@@ -459,7 +468,7 @@ async def test_an_approved_answer_goes_through_website_change_at_its_route(
         project_id=f.project.id,
         inputs={"source_run_id": str(run.id), "expected_repository": "acme/site"},
     )
-    assert pinned["route"] == ROUTE and pinned["change"]["paths"] == [ROUTE]
+    assert pinned["route"] == ANSWER_PATH and pinned["change"]["paths"] == [ANSWER_PATH]
     assert pinned["change"]["detail"]["page_type"] == "answer_page"
     assert pinned["change"]["approval"]["by"] == ACTOR
     assert pinned["publish"]["mode"] == "direct"
@@ -476,21 +485,7 @@ async def test_an_approved_answer_goes_through_website_change_at_its_route(
         "source_run_id": str(run.id),
         "expected_repository": "acme/site",
     }
-    # Without a chosen route, website.change asks the founder instead of guessing.
-    await f.db.pool.execute(
-        "UPDATE effect_receipts SET result = result - 'route' WHERE execution_key=$1",
-        f"content-draft:{run.id}:delivery:choice",
-    )
-    f.storage.repo.edit({ROUTES_PATH: canonical_json({"routes": {}})})
-    with pytest.raises(website_change.RouteNotChosen):
-        await website_change.select_source(
-            database=f.db,
-            storage=f.storage,
-            integrations=f.integrations,
-            project_id=f.project.id,
-            inputs={"source_run_id": str(run.id), "expected_repository": "acme/site"},
-        )
-    assert context["answer"]["route"] == ROUTE
+    assert context["answer"]["route"] == ANSWER_PATH
 
 
 # Refreshes wait six weeks per page, whichever workflow made them, and apply exact lines.
@@ -668,8 +663,10 @@ def test_versions_on_main_are_unchanged():
 # diagram's form; 1.13.0 looks at each figure in light and dark before finishing; 1.14.0
 # follows the site's theming, keeping figures light on a light-only site; 1.15.0 makes each
 # draft's figures fresh and checks every mark and label in both themes; 1.16.0 sizes figures
-# for the article column and checks them on a phone; 1.17.0 always drafts the planned item.
-RELEASED = {"content.generate": "1.17.0", "content.plan": "1.1.0", "content.refresh": "1.1.0"}
+# for the article column and checks them on a phone; 1.17.0 always drafts the planned item;
+# 1.18.0 writes each page for the address its plan gave it. content.plan 1.2.0 gives every new
+# page that address.
+RELEASED = {"content.generate": "1.18.0", "content.plan": "1.2.0", "content.refresh": "1.1.0"}
 
 
 async def test_retired_workflows_are_hidden_but_saved_configurations_still_run(

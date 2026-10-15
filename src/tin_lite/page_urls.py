@@ -1,8 +1,9 @@
 """Where a proposed website page appears, and whether it is live yet.
 
-Tin never presents a guess as the final address. A delivery PR's recorded public URL, an
-existing page that an update targets, or a folder route Tin confirmed on the live site is
-where the page will be published; anything else is a proposed URL. After a merge or a direct
+Tin never presents a guess as the final address. The address the page's plan gave it (the
+page an update changes, or the new page's planned address, which website.change publishes
+exactly), a delivery PR's recorded public URL, or a folder route Tin confirmed on the live site
+is where the page will be published; anything else is a proposed URL. After a merge or a direct
 commit, a bounded public fetch must find the page, with its title, before Tin calls it live.
 
 Reads for cards come from one Postgres projection per run. Provider reads (GitHub state and
@@ -125,21 +126,21 @@ def safe_pull_request(value):
 
 
 def base_for(run, *, selection=None):
-    """The draft's address before delivery: the plan's destination, else a slug from its
-    title."""
+    """The draft's address before delivery: the address its plan gave it, else (a draft
+    selected before pages had planned addresses) a slug from its title."""
     if not selection:
         return None
     item = selection.get("item") or {}
     host = site_host(selection.get("host"))
     title = run.artifact_title or item.get("title")
-    destination = page_url(item.get("destination"), host)
+    destination = page_url(selection.get("page_url") or item.get("destination"), host)
     if destination and host:
         return {
             "url": destination,
             "host": host,
             "title": title,
             "source": "plan_destination",
-            "final": item.get("action") == "update_page",
+            "final": True,
         }
     if not host or not title:
         return None
@@ -392,9 +393,8 @@ class PageUrls:
         service = ContentDelivery(
             database=self.db, storage=self.storage, integrations=self.integrations
         )
-        answer = await service.plan_kind(run) == "answer"
-        if answer:
-            # Publish adapts the page into the site's own folder; no file path is known yet.
+        if await service.plan_kind(run) != "refresh":
+            # Publish adapts the page to the site at its address; there is no file path.
             connection = await self.db.get_integration_connection(
                 project_id=run.project_id, provider_key="infra.github"
             )

@@ -139,17 +139,11 @@ def adaptation_refusal(exc):
     return None
 
 
-def publish_sentence(mode, *, route_missing=False):
+def publish_sentence(mode):
     """What Publish does for an adapted page, in the founder's words.
 
-    website.change puts the page on the site at the route the founder chose for these pages,
-    and never guesses one: until a route is chosen, the adaptation waits for it.
+    website.change puts the page on the site at the address its plan gave it.
     """
-    if route_missing:
-        return (
-            "Tin adapts it to your site once you choose where these pages live; "
-            "your coding agent can save that route"
-        )
     if mode == "github_commit":
         return "Tin adapts it to your site and commits it to main"
     return "Tin adapts it to your site and opens a pull request"
@@ -442,7 +436,7 @@ def delivery_projection(run, intent, receipt):
 
 
 # A content.generate answer page reaches the site through website.change (a metered adaptation
-# at the founder's chosen route), never as Markdown in content/answers/.
+# at the address its plan gave it), never as Markdown in content/answers/.
 WEBSITE_CHANGE = "website.change"
 
 
@@ -542,7 +536,6 @@ class ContentDelivery:
             "settings": settings.model_dump(),
             "settings_revision": configured["revision"],
             "path": None,
-            **({"route": selected.get("page_route")} if kind == content_draft.ANSWER else {}),
             "repository_id": binding.repository_id,
             "connection_id": str(binding.connection_id),
             "installation_id": binding.installation_id,
@@ -604,7 +597,7 @@ class ContentDelivery:
             # A page refresh, from content.refresh or a content.generate refresh item.
             return await self.choose_refresh(run=run, mode=mode, remember=remember, actor=actor)
         if kind == content_draft.ANSWER and mode in REPOSITORY_MODES:
-            # An answer page always goes to the site through website.change at its route.
+            # An answer page always goes to the site through website.change at its address.
             return await self.choose_adaptation(
                 run=run,
                 mode=mode,
@@ -706,9 +699,9 @@ class ContentDelivery:
     async def choose_adaptation(self, *, run, mode, remember, actor, trigger_source):
         """Pin the repository and the founder's delivery for a page Tin adapts to the site.
 
-        The page is not copied as-is, so no Markdown destination is computed here: the
-        adaptation picks the site's own folder. A page outside a saved workflow still
-        adapts; only remembering the pick needs one.
+        The page is not copied as-is, so no Markdown destination is computed here: website.change
+        publishes it at the address its plan gave it, in the site's own format. A page outside a
+        saved workflow still adapts; only remembering the pick needs one.
         """
         try:
             program_id, _ = await self.program_for(run)
@@ -736,19 +729,12 @@ class ContentDelivery:
         binding = await self.integrations.github_repository_binding(
             project_id=run.project_id, expected_repository=chosen.repository
         )
-        from tin_lite.page_routes import PageRouteService
-
-        answer = await self.plan_kind(run) == content_draft.ANSWER
         record = {
             "adapter": ADAPTER,
             "via": WEBSITE_CHANGE,
             "settings": chosen.model_dump(),
             "settings_revision": configured["revision"] if configured else None,
             "path": None,
-            # Where the founder chose these pages live, pinned at approval; None when unset.
-            "route": await PageRouteService(database=self.db, storage=self.storage).route_for(
-                run, page_type="answer_page" if answer else None
-            ),
             "repository_id": binding.repository_id,
             "connection_id": str(binding.connection_id),
             "installation_id": binding.installation_id,

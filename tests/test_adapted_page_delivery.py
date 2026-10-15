@@ -33,7 +33,6 @@ from tin_lite.content_delivery import (
 from tin_lite.content_delivery_api import publish_preview, retry_delivery
 from tin_lite.integrations import GitHubPullRequestResult, GitHubRepositoryBinding
 from tin_lite.organic_audit import canonical_json
-from tin_lite.page_routes import PATH as ROUTES_PATH
 from tin_lite.page_urls import PageUrls
 from tin_lite.procedures import procedure_checkpoint_path
 from tin_lite.publication import OutputCheckpoint
@@ -85,12 +84,9 @@ ARTICLE_BODY = (
     + "\n"
 )
 PR_URL = "https://github.com/owner/site/pull/42"
-
-
-def choose_routes(f, **routes):
-    """The founder's saved choices, as save_page_route writes them."""
-    routes = routes or {"answer_page": "/answers/{slug}"}
-    f.storage.repo.edit({ROUTES_PATH: canonical_json({"routes": routes})})
+# The address the page's plan gave it, which its review shows.
+PAGE_URL = "https://example.com/blog/reliable-ai-work"
+PAGE_PATH = "/blog/reliable-ai-work"
 
 
 async def fixture(db, monkeypatch):
@@ -185,11 +181,16 @@ async def save(db, key, operation, result):
         await db.complete_effect(conn, execution_key=key, result=result)
 
 
-async def draft(f, *, kind="answer", body=None, project=None, title=TITLE):
+async def draft(
+    f, *, kind="answer", body=None, project=None, title=TITLE, page_url=PAGE_URL, action=None
+):
     """A content.generate draft waiting for review, saved the way the procedure saves it: its
-    plan selection, its prepared context and its published page."""
+    plan selection, its prepared context and its published page. `page_url` is the address
+    its plan gave it; None is a draft selected before pages had planned addresses."""
     project = project or f.project
     item = {"id": f"item-{uuid4().hex[:8]}", "title": title, "kind": kind}
+    if action:
+        item["action"] = action
     program_id = str(uuid4())
     run, _ = await f.db.create_run(
         project_id=project.id,
@@ -203,7 +204,13 @@ async def draft(f, *, kind="answer", body=None, project=None, title=TITLE):
         f.db,
         content_draft.selection_key(run.id),
         content_draft.SELECTION_OPERATION,
-        {"program_id": program_id, "item": item, "mode": "selected"},
+        {
+            "program_id": program_id,
+            "item": item,
+            "host": "example.com",
+            "mode": "selected",
+            **({"page_url": page_url} if page_url else {}),
+        },
     )
     await save(
         f.db,
@@ -216,6 +223,7 @@ async def draft(f, *, kind="answer", body=None, project=None, title=TITLE):
             "due_date": "2026-09-28",
             "style": {"path": None, "revision": None, "sha256": None},
             **({"kind": content_draft.ANSWER} if kind == "answer" else {}),
+            **({"page_url": page_url} if page_url else {}),
         },
     )
     if body is None:
@@ -249,9 +257,9 @@ async def draft(f, *, kind="answer", body=None, project=None, title=TITLE):
     return await f.db.get_run(run.id)
 
 
-async def answer_page(f, *, body=None, project=None):
+async def answer_page(f, *, body=None, project=None, page_url=PAGE_URL):
     """A content.generate answer page waiting for review."""
-    return await draft(f, kind="answer", body=body, project=project)
+    return await draft(f, kind="answer", body=body, project=project, page_url=page_url)
 
 
 async def approve_answer_page(f, run):
@@ -298,7 +306,6 @@ async def select(f, run, **inputs):
 
 async def test_answer_page_source_splits_listing_from_the_exact_copy(publication_db, monkeypatch):
     f = await fixture(publication_db, monkeypatch)
-    choose_routes(f)
     run = await approve_answer_page(f, await answer_page(f))
     source = await select(f, run)
     assert source["source_kind"] == "answer_page"
@@ -312,12 +319,12 @@ async def test_answer_page_source_splits_listing_from_the_exact_copy(publication
     assert source["title"] == TITLE
     assert source["source_revision"] == run.canonical_commit_sha
     assert source["binding"]["repository"] == "owner/site"
-    assert source["route"] == "/answers/{slug}"
+    assert source["page_url"] == PAGE_URL and source["route"] == PAGE_PATH
+    assert source["change"]["paths"] == [PAGE_PATH]
 
 
 async def test_changed_bytes_or_revision_drift_refuse_the_page(publication_db, monkeypatch):
     f = await fixture(publication_db, monkeypatch)
-    choose_routes(f)
     run = await approve_answer_page(f, await draft(f, kind="article"))
     read = f.storage.read_canonical_artifact
 
@@ -365,7 +372,6 @@ async def test_approval_starts_one_adaptation_on_both_transports(
     publication_db, monkeypatch, surface
 ):
     f = await fixture(publication_db, monkeypatch)
-    choose_routes(f)
     run = await answer_page(f)
     if surface == "http":
         async with httpx.AsyncClient(
@@ -389,7 +395,8 @@ async def test_approval_starts_one_adaptation_on_both_transports(
     choice = (await f.db.get_effect(choice_key(run.id))).result
     assert choice["adapter"] == "repository" and choice["path"] is None
     assert choice["settings"]["mode"] == "github_commit"
-    assert choice["route"] == "/answers/{slug}"
+    # Approval pins no route: the page's address is the one its plan gave it.
+    assert "route" not in choice
     assert choice["trigger_source"] == ("mcp" if surface == "mcp" else "manual")
     run = await approve_answer_page(f, run)
     for _ in range(2):
@@ -403,7 +410,7 @@ async def test_approval_starts_one_adaptation_on_both_transports(
     assert await f.db.run_start_idempotency_key(child.id) == adaptation_start_key(run.id)
     source = await delivery.saved_source(f.db, child.id)
     assert source["change"]["approval"]["by"] == ACTOR
-    assert source["route"] == "/answers/{slug}" and source["publish"]["mode"] == "direct"
+    assert source["route"] == PAGE_PATH and source["publish"]["mode"] == "direct"
     # The Markdown publisher never ran, and its receipt key belongs to the adaptation.
     f.runtime.integrations.github_commit_files.assert_not_called()
     f.runtime.integrations.github_create_pull_request.assert_not_called()
@@ -415,26 +422,32 @@ async def test_approval_starts_one_adaptation_on_both_transports(
     assert (await f.delivery.statuses([run]))[run.id] == status
 
 
-async def test_an_approved_article_adapts_without_a_route(publication_db, monkeypatch):
+async def test_an_approved_article_goes_to_its_planned_address(publication_db, monkeypatch):
     f = await fixture(publication_db, monkeypatch)
-    choose_routes(f)
-    run = await draft(f, kind="article")
+    run = await draft(f, kind="article", page_url="https://example.com/guides/useful-article")
     await f.delivery.choose(run=run, mode="github_pr", actor=ACTOR)
     run = await approve_answer_page(f, run)
     await f.activities.deliver_content_draft(str(run.id))
     started = await children(f, run)
     assert len(started) == 1 and started[0]["workflow_id"] == delivery.WEBSITE_CHANGE_ID
     source = await delivery.saved_source(f.db, started[0]["id"])
-    # A planned article names its own address; only answer pages wait for a chosen route.
-    assert source["source_kind"] == "article" and source["route"] is None
+    # Every page goes to the address its plan gave it, whatever kind of page it is.
+    assert source["source_kind"] == "article" and source["route"] == "/guides/useful-article"
     assert source["article"] == ARTICLE_BODY
     assert source["publish"]["mode"] == "pull_request"
     f.runtime.integrations.github_create_pull_request.assert_not_called()
 
 
+async def test_a_draft_from_before_planned_addresses_names_none(publication_db, monkeypatch):
+    f = await fixture(publication_db, monkeypatch)
+    run = await approve_answer_page(f, await draft(f, kind="article", page_url=None))
+    source = await select(f, run)
+    # Its pull request names the address, and Tin merges nothing but the page itself.
+    assert source["route"] is None and source["change"]["paths"] == []
+
+
 async def test_a_page_already_committed_as_markdown_is_not_adapted(publication_db, monkeypatch):
     f = await fixture(publication_db, monkeypatch)
-    choose_routes(f)
     run = await answer_page(f)
     await f.delivery.record_choice(
         run, {"settings": {"mode": "github_commit", "repository": "owner/site"}, "path": "x.md"}
@@ -486,7 +499,6 @@ async def test_adaptation_is_one_metered_session_with_a_cost_preview(publication
     from tin_lite.billing_contracts import object_value
 
     f = await fixture(publication_db, monkeypatch)
-    choose_routes(f)
     await billed(f, 20_000_000_000)
     run = await answer_page(f)
     preview = await publish_preview(runtime=f.runtime, settings=f.settings, run=run, actor=ACTOR)
@@ -509,7 +521,6 @@ async def test_adaptation_is_one_metered_session_with_a_cost_preview(publication
 
 async def test_insufficient_credits_record_a_failed_delivery_to_retry(publication_db, monkeypatch):
     f = await fixture(publication_db, monkeypatch)
-    choose_routes(f)
     run = await answer_page(f)
     await billed(f, 0)
     await f.delivery.choose(run=run, mode="github_commit", actor=ACTOR)
@@ -544,12 +555,9 @@ async def test_insufficient_credits_record_a_failed_delivery_to_retry(publicatio
 # After the approval: the website.change run that opened the page's pull request.
 
 
-async def adapted_pull_request(
-    f, *, mode="github_commit", extra_files=(), route=None, chosen_route="/answers/{slug}"
-):
+async def adapted_pull_request(f, *, mode="github_commit", extra_files=(), route=None):
     """An approved answer page adapted by the website.change run its approval started, up to
     the opened pull request. `route` is the public URL the pull request names."""
-    choose_routes(f, answer_page=chosen_route)
     run = await answer_page(f)
     await f.delivery.choose(run=run, mode=mode, actor=ACTOR)
     run = await approve_answer_page(f, run)
@@ -611,7 +619,7 @@ def clean(**extra):
 
 async def test_retargeted_page_stays_open(publication_db, monkeypatch):
     f = await fixture(publication_db, monkeypatch)
-    _, child = await adapted_pull_request(f, route="https://example.com/answers/reliable-ai-work")
+    _, child = await adapted_pull_request(f, route=PAGE_URL)
     f.runtime.integrations.github_pull_request_merge_state.return_value = clean(
         base_ref="release/elsewhere"
     )
@@ -625,34 +633,28 @@ async def test_retargeted_page_stays_open(publication_db, monkeypatch):
 # Page URLs and the card line.
 
 
-async def test_page_url_uses_the_adaptation_route_and_says_what_approval_does(
+async def test_page_url_is_the_planned_address_and_says_what_approval_does(
     publication_db, monkeypatch
 ):
     f = await fixture(publication_db, monkeypatch)
     run = await answer_page(f)
     pages = PageUrls(database=f.db, storage=f.storage, settings=f.settings)
-    base = {
-        "url": "https://example.com/how-to-keep-recurring-ai-work-reliable",
-        "host": "example.com",
-        "title": TITLE,
-        "source": "title_slug",
-        "final": False,
-    }
-    await pages._save(run.id, {"base": base})
     before = await pages.view(run, None)
-    assert before["label"] == "Proposed URL" and before["file_path"] is None
+    # The review shows where the page will be published: the address its plan gave it.
+    assert before["url"] == PAGE_URL and before["source"] == "plan_destination"
+    assert before["label"] == "Will be published at" and before["file_path"] is None
     assert before["note"] == (
         "After you approve, Tin adapts the page to your site and opens a pull request."
     )
     assert (await pages.views([run], {}))[run.id]["note"] == before["note"]
-    run, child = await adapted_pull_request(
-        f, mode="github_pr", route="https://example.com/answers/reliable-ai-work"
-    )
-    await pages._save(run.id, {"base": base})
+    legacy = await draft(f, kind="article", page_url=None)
+    proposed = await pages.view(legacy, None)
+    assert proposed["source"] == "title_slug" and proposed["label"] == "Proposed URL"
+    run, child = await adapted_pull_request(f, mode="github_pr", route=PAGE_URL)
     status = await f.delivery.status(run)
     after = await pages.view(run, status)
     assert after["source"] == "delivery_route" and after["final"] is True
-    assert after["url"] == "https://example.com/answers/reliable-ai-work"
+    assert after["url"] == PAGE_URL
     assert after["pull_request"]["number"] == 42
     assert after["note"].startswith("Pull request #42 is open.")
 
@@ -666,33 +668,24 @@ async def test_publish_preview_follows_the_saved_delivery_setting(publication_db
     f = await fixture(publication_db, monkeypatch)
     run = await answer_page(f)
     preview = await publish_preview(runtime=f.runtime, settings=f.settings, run=run, actor=ACTOR)
-    ask = preview.pop("ask_the_founder")
-    assert ask["question"] == "Where on your site should pages that answer buyer questions go?"
-    # website.change never guesses where these pages live, so Publish waits for the route.
-    waits = (
-        "Tin adapts it to your site once you choose where these pages live; "
-        "your coding agent can save that route"
-    )
+    sentence = "Tin adapts it to your site and opens a pull request"
     assert preview == {
         "adapt": True,
         "label": "Publish",
         "mode": "github_pr",
         "repository": "owner/site",
-        "route": None,
-        "sentence": waits,
+        # The address the page's plan gave it, where website.change publishes it.
+        "url": PAGE_URL,
+        "sentence": sentence,
         "cost": None,
-        "footer": waits,
+        "footer": sentence,
     }
     monkeypatch.setattr(
         "tin_lite.content_delivery.ContentDelivery.saved_mode",
         AsyncMock(return_value="github_commit"),
     )
     committed = await publish_preview(runtime=f.runtime, settings=f.settings, run=run, actor=ACTOR)
-    assert committed["footer"] == waits
-    choose_routes(f)
-    routed = await publish_preview(runtime=f.runtime, settings=f.settings, run=run, actor=ACTOR)
-    assert routed["footer"] == "Tin adapts it to your site and commits it to main"
-    assert routed["route"] == "/answers/{slug}" and "ask_the_founder" not in routed
+    assert committed["footer"] == "Tin adapts it to your site and commits it to main"
     async with httpx.AsyncClient(
         transport=httpx.ASGITransport(app=app(f)), base_url="https://tin.test"
     ) as client:
@@ -709,16 +702,8 @@ async def test_publish_preview_follows_the_saved_delivery_setting(publication_db
     assert denied.status_code == 404
 
 
-def test_publish_waits_for_the_founder_to_choose_a_route():
+def test_publish_says_what_the_delivery_setting_does():
     from tin_lite.content_delivery import publish_sentence
 
-    # website.change never guesses where these pages live, so Publish says so until the founder
-    # chooses, whatever the delivery setting.
     assert publish_sentence("github_commit") == "Tin adapts it to your site and commits it to main"
     assert publish_sentence("github_pr") == "Tin adapts it to your site and opens a pull request"
-    waits = (
-        "Tin adapts it to your site once you choose where these pages live; "
-        "your coding agent can save that route"
-    )
-    assert publish_sentence("github_commit", route_missing=True) == waits
-    assert publish_sentence("github_pr", route_missing=True) == waits

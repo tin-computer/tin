@@ -28,7 +28,7 @@ def test_delivery_merges_a_search_listing_into_one_site_header():
 def test_planned_drafts_pin_the_search_structure_guidance():
     skill = "search-and-answer-engines"
     spec = workflow("content.generate")
-    assert spec.version_label == "1.17.0"
+    assert spec.version_label == "1.18.0"
     _, files = spec.definition_and_resource_files()
     text = next(
         content.decode()

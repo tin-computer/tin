@@ -97,7 +97,7 @@ def document(value):
 
 def test_the_catalog_pins_the_agent_contract_and_its_hidden_planner():
     plan = next(w for w in BUILTIN_WORKFLOWS if w.key == legacy.KEY)
-    assert plan.version_label == "1.1.0"
+    assert plan.version_label == "1.2.0"
     pinned = editorial.contract(plan.definition)
     assert pinned.AGENT and pinned.TYPED
     assert pinned.POLICY["version"] == "content-editorial-v10"
@@ -190,7 +190,9 @@ def test_items_keep_their_format_strength_and_kind():
     assert not left_out
     items = {entry["item"]["id"]: entry["item"] for entry in kept}
     assert items["op001"]["format"] == "alternative" and "kind" not in items["op001"]
-    assert items["op002"]["kind"] == "answer" and items["op002"]["destination"] == ""
+    assert items["op002"]["kind"] == "answer"
+    # A new page the planner gave no address gets one from its search words.
+    assert items["op002"]["destination"] == "https://example.com/query-2"
     assert items["op003"]["kind"] == "refresh"
     assert items["op003"]["destination"] == "https://example.com/pricing"
     # Measured needs a measured source; a competitor page is inferred evidence.
@@ -212,6 +214,62 @@ def test_items_keep_their_format_strength_and_kind():
     assert "Format: alternatives page · evidence measured" in report
     assert "Why it can win: The top results are thin directory listings" in report
     assert "## Coverage" in report and "Capacity is not a quota" not in report
+
+
+def test_new_pages_keep_the_address_the_planner_proposed():
+    data = context()
+    value = portfolio(0)
+    value["opportunities"] = [
+        opportunity(1, destination="/alternatives/linear"),
+        opportunity(2, destination="https://www.example.com/alternatives/jira/"),
+        # The site already has this page, and the next address is taken by op001.
+        opportunity(3, destination="/pricing"),
+        opportunity(4, destination="/alternatives/linear"),
+        # An answer with no address goes at the root, named from its target search.
+        opportunity(5, format="answer", title="How do I approve invoices in Slack?"),
+        # A pattern, an escape or a relative step is never an address.
+        opportunity(6, format="guide", destination="/guides/{slug}"),
+        opportunity(7, format="guide", destination="/guides/a%2Fb"),
+        opportunity(8, format="guide", destination="/guides/../admin"),
+    ]
+    kept, left_out = agent.normalize(data, pages(), value)
+    assert not left_out
+    addresses = {entry["item"]["id"]: entry["item"]["destination"] for entry in kept}
+    assert addresses == {
+        "op001": "https://example.com/alternatives/linear",
+        "op002": "https://example.com/alternatives/jira/",
+        # Tin proposes one beside the planner's other alternatives pages instead.
+        "op003": "https://example.com/alternatives/query-3",
+        "op004": "https://example.com/alternatives/query-4",
+        "op005": "https://example.com/query-5",
+        "op006": "https://example.com/query-6",
+        "op007": "https://example.com/query-7",
+        "op008": "https://example.com/query-8",
+    }
+    plan, _ = agent.fill(data, kept)
+    plan = legacy.validate_change(data["plan"], plan, editable=set(data["editable"]))
+    shown = legacy.render_plan(plan, label="Content roadmap")
+    assert "alternatives/linear" in shown and "To be decided" not in shown
+
+
+def test_a_proposed_address_never_takes_a_page_the_site_has():
+    from tin_lite.content_draft_sources import site_paths
+
+    pinned = {"research": {"site_pages": {"pages": [{"path": "/query-1"}, {"path": "/x"}]}}}
+    item = {"id": "a", "action": "new_page", "title": "t", "target_query": "query 1"}
+    address = legacy.page_address("example.com", item, [item], existing=site_paths(pinned))
+    assert address == "https://example.com/query-1-2"
+    assert site_paths(None) == set()
+
+
+def test_two_items_cannot_share_a_new_page_address():
+    data = context()
+    kept, _ = agent.normalize(data, pages(), portfolio(2))
+    plan, _ = agent.fill(data, kept)
+    items = [item for batch in plan["batches"] for item in batch["items"]]
+    items[1]["destination"] = items[0]["destination"]
+    with pytest.raises(ValueError, match="used by another plan item"):
+        legacy.validate_change(data["plan"], plan, editable=set(data["editable"]))
 
 
 def test_unusable_proposals_are_left_out_with_a_reason_not_a_failure():

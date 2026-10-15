@@ -7,7 +7,6 @@ from pathlib import Path
 import pytest
 
 from tin_lite import blog_index_plan as plan
-from tin_lite.page_routes import ask_the_founder
 from tin_lite.procedures import (
     PinnedCodexProcedure,
     validate_codex_procedure_definition,
@@ -205,16 +204,6 @@ def test_a_plan_without_its_blocks_or_report_is_refused():
         plan.parse(document().replace("## Outcome", "## Result"))
     with pytest.raises(ValueError, match="not JSON"):
         plan.parse(document().replace('"schema"', "schema"))
-
-
-def test_the_founder_question_matches_the_page_route_question():
-    text = (PACKAGE / "skills/blog-index/PLAN.md").read_text()
-    block = json.loads(re.search(r"```json ask-the-founder\n(.*?)\n```", text, re.S).group(1))
-    expected = ask_the_founder("article", None)
-    assert block["question"] == expected["question"]
-    assert block["suggestion"] == expected["suggestion"]
-    assert block["then"] == expected["then"]
-    assert "answers" not in block["how_to_suggest"].replace("never a Tin term", "")
 
 
 def test_the_skill_reads_the_saved_route_and_never_types_a_post_list():

@@ -135,6 +135,8 @@ async def select(*, database, storage, project_id, source_run_id, include_style=
         "article_sha256": hashlib.sha256(article.encode()).hexdigest(),
         "title": title,
         "item": prepared.result["item"],
+        # The address the page will have (content_plan.page_address), absent on older drafts.
+        **({"page_url": prepared.result["page_url"]} if prepared.result.get("page_url") else {}),
         "program_id": prepared.result["program_id"],
         "due_date": prepared.result["due_date"],
         # An answer page carries its search listing beside the page.

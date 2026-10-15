@@ -18,6 +18,7 @@ import json
 import re
 from dataclasses import asdict
 from datetime import UTC, datetime
+from urllib.parse import urlsplit
 from uuid import UUID
 
 from tin_lite import approved_article
@@ -590,7 +591,7 @@ FRAMEWORK_ENTRY_STEMS = frozenset(
         "root",
     }
 )
-# Source folders frameworks route from. A chosen route named after one (`/app/{slug}`,
+# Source folders frameworks route from. An address in a folder named after one (`/app/{slug}`,
 # `/pages/{slug}`) can't tell the route's folder from the framework's, so it merges nothing
 # but the page itself.
 FRAMEWORK_ROOT_FOLDERS = frozenset(
@@ -598,16 +599,66 @@ FRAMEWORK_ROOT_FOLDERS = frozenset(
 )
 
 
-def outside_route(manifest, proof, route):
-    """The patch's files besides the page that don't sit in the chosen route's own folder.
+# A slug in an older run's route pattern (/blog/{slug}).
+ROUTE_SLUG = r"[a-z0-9][a-z0-9-]{0,119}"
 
-    For `/guides/{slug}` a file serves the route only when its directories include `guides`
-    (`src/app/guides/[slug]/page.tsx`, `content/guides/...`). Root layouts, middleware, host and
-    build settings, shared components and dotfiles reach other pages, so they stay a PR, as do
-    framework entry files (a layout or _document) anywhere. A route named after a framework's
-    own source folder (`/app/{slug}`) can't be told apart from it, so only the page merges.
+
+def at_address(route, address):
+    """Whether a page's public address (a path or full URL) is its approved one.
+
+    `route` is the page's path (/alternatives/zapier). A run approved before pages had planned
+    addresses may pin a route pattern instead (/blog/{slug}), which any one slug satisfies.
     """
-    folders = [part for part in route.split("{slug}", 1)[0].strip("/").split("/") if part]
+    if not route or not isinstance(address, str):
+        return False
+    path = urlsplit(address).path if "://" in address else address
+    path = path.rstrip("/") or "/"
+    if "{slug}" in route:
+        prefix, _, suffix = route.partition("{slug}")
+        return bool(re.fullmatch(re.escape(prefix) + ROUTE_SLUG + re.escape(suffix), path))
+    return path == (route.rstrip("/") or "/")
+
+
+def route_folders(route):
+    """The folders a page's address sits in: /guides/setup and /guides/{slug} give [guides]."""
+    if "{slug}" in route:
+        parent = route.split("{slug}", 1)[0]
+    else:
+        parent = route.rstrip("/").rsplit("/", 1)[0]
+    return [part for part in parent.strip("/").split("/") if part]
+
+
+# Folders sites build pages from: framework route folders, content folders and static roots.
+PAGE_ROOTS = frozenset({"app", "pages", "routes", "content", "public", "static", "posts"})
+
+
+def served_from(parents):
+    """Whether a folder under these parent directories is one the site serves pages from: its
+    parent is a page root, or a route group or dynamic segment ((marketing), [lang]) that sits
+    under one."""
+    for parent in reversed(parents):
+        if parent in PAGE_ROOTS:
+            return True
+        if not (parent.startswith("(") and parent.endswith(")")) and not (
+            parent.startswith("[") and parent.endswith("]")
+        ):
+            return False
+    return False
+
+
+def outside_route(manifest, proof, route):
+    """The patch's files besides the page that don't sit in its address's own folder.
+
+    For `/guides/setup` a file serves the page only when its directories include `guides`
+    right under a folder the site builds pages from (`src/app/guides/[slug]/page.tsx`,
+    `content/guides/...`), so `scripts/guides/` or `config/guides/` never merge with a page.
+    Root layouts, middleware, host and build settings, shared components and dotfiles reach
+    other pages, so they stay a PR, as do
+    framework entry files (a layout or _document) anywhere. A route named after a framework's
+    own source folder (`/app/setup`) can't be told apart from it, so only the page merges. A
+    page at the site root has no folder of its own, so only the page merges there too.
+    """
+    folders = route_folders(route)
     if FRAMEWORK_ROOT_FOLDERS.intersection(folders):
         folders = []
     outside = []
@@ -620,7 +671,8 @@ def outside_route(manifest, proof, route):
         directories = parts[:-1]
         inside = bool(folders) and any(
             directories[index : index + len(folders)] == folders
-            for index in range(len(directories) - len(folders) + 1)
+            and served_from(directories[:index])
+            for index in range(1, len(directories) - len(folders) + 1)
         )
         if (
             not inside
@@ -637,20 +689,18 @@ def merge_rule(manifest, proof, route):
     """Which rule lets Tin merge this patch under a commit-to-main setting, else None.
 
     `page_only`: the approved page alone, the change the Markdown publisher commits today.
-    `chosen_route`: the page plus the site code that serves it, when the founder chose where
-    these pages live, the PR puts the page at that route and every other file sits in that
-    route's own folder. Neither applies when Tin can't confirm the page keeps the approved
-    wording; any other site change stays a PR.
+    `chosen_route`: the page plus the site code that serves it, when the PR puts the page at
+    its approved address and every other file sits in that address's own folder. Neither
+    applies when Tin can't confirm the page keeps the approved wording; any other site change
+    stays a PR.
     """
-    from tin_lite.page_routes import matches
-
     if "not_confirmed" in {proof.get("copy_check"), proof.get("figure_check")}:
         return None
     if page_only(manifest, proof):
         return "page_only"
     if (
         route
-        and matches(route, proof.get("public_route"))
+        and at_address(route, proof.get("public_route"))
         and not outside_route(manifest, proof, route)
     ):
         return "chosen_route"
@@ -714,16 +764,21 @@ async def publish_after_pull_request(
             if website:
                 from tin_lite import website_change
 
-                route = source.get("route")
                 hold = await website_change.hold_reason(database, run, source, manifest, proof)
+                # Site code beside the page merges only for a new page at the address the
+                # founder approved; an update to an existing page merges nothing but the page.
+                from tin_lite.content_plan import NEW_PAGE_PATH
+
+                new_page = (source.get("item") or {}).get("action") != "update_page"
+                route = source.get("route")
+                if not new_page or not (route and NEW_PAGE_PATH.fullmatch(route)):
+                    route = None
             else:
                 route = (source.get("approval") or {}).get("route")
             rule = merge_rule(manifest, proof, route)
-            from tin_lite.page_routes import matches
-
             outside = (
                 outside_route(manifest, proof, route)
-                if route and matches(route, proof.get("public_route"))
+                if route and at_address(route, proof.get("public_route"))
                 else []
             )
             if hold:
@@ -747,11 +802,11 @@ async def publish_after_pull_request(
                     **base,
                     "status": "left_open",
                     "reason": (
-                        f"It also changes {', '.join(outside[:3])}, outside your chosen route "
-                        f"{route}, so it waits for your review."
+                        f"It also changes {', '.join(outside[:3])}, outside the folder of its "
+                        f"address {route}, so it waits for your review."
                         if outside
                         else f"It changes site files besides the page and does not put the page "
-                        f"at your chosen route {route}, so it waits for your review."
+                        f"at its approved address {route}, so it waits for your review."
                         if route
                         else "It changes site files besides the page, so it waits for your review."
                     ),
