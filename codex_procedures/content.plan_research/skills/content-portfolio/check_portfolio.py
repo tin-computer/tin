@@ -28,6 +28,59 @@ FORMATS = {
 UPDATES = {"refresh", "update"}
 STRENGTHS = {"measured", "inferred", "bet"}
 PREFIXES = ("keyword:", "group:", "audit:", "refresh:", "efficacy:", "competitor:", "page:")
+LABELS = {"direct", "adjacent", "diy", "drift"}
+CHANNELS = {"roundups", "job_and_stack", "launches", "comparison_pages"}
+
+
+def key(text):
+    return re.sub(r"[^a-z0-9]+", "", str(text or "").casefold())
+
+
+def check_competitors(data, items, errors, notes):
+    """The competitive set: every competitor labelled and checked on its own site, no
+    alternatives or comparison page for one labelled drift, all four channels searched."""
+    labels = {}
+    for row in data.get("competitors") or []:
+        if not isinstance(row, dict) or not str(row.get("name") or "").strip():
+            continue
+        name = str(row["name"])
+        label = row.get("label")
+        if label not in LABELS:
+            errors.append(f"competitor {name!r}: label must be one of {sorted(LABELS)}")
+            continue
+        labels[key(name)] = (name, label)
+        if label != "drift" and not str(row.get("evidence_url") or "").startswith("https://"):
+            errors.append(
+                f"competitor {name!r}: evidence_url must be the https page you opened on its site"
+            )
+        if not str(row.get("does") or "").strip():
+            notes.append(f"competitor {name!r}: say in does what its own site says it does")
+    for index, item in enumerate(items, 1):
+        if item.get("format") not in {"alternative", "comparison"}:
+            continue
+        rival = key(item.get("competitor"))
+        if not rival:
+            notes.append(f"#{index}: name the competitor in competitor")
+        elif rival in labels and labels[rival][1] == "drift":
+            errors.append(
+                f"#{index}: {labels[rival][0]} is labelled drift; it gets no alternatives or "
+                "comparison page (Tin leaves it out)"
+            )
+        elif rival not in labels:
+            notes.append(f"#{index}: {item.get('competitor')!r} is not in competitors")
+    research = data.get("competitor_research")
+    searched = {
+        row.get("channel")
+        for row in ((research or {}).get("channels") or [] if isinstance(research, dict) else [])
+        if isinstance(row, dict) and row.get("queries")
+    }
+    missing = sorted(CHANNELS - searched)
+    if missing:
+        notes.append(
+            "competitor_research has no queries for "
+            + ", ".join(missing)
+            + "; run every channel (COMPETITORS.md) or say in its notes why not"
+        )
 
 
 def norm(text):
@@ -154,6 +207,8 @@ def main(portfolio_path, brief_dir):
             errors += [f"{label}: {p}" for p in problems]
         else:
             usable += 1
+    if context.get("competitor_research"):
+        check_competitors(data, items, errors, notes)
     excluded = " ".join(str(x) for x in data.get("excluded") or [])
     for path in [*(decisions.get("refresh") or {}), *(decisions.get("rewrite") or {})]:
         if (path.rstrip("/") or "/") not in seen_pages and path not in excluded:

@@ -91,10 +91,10 @@ TRAFFIC_SYSTEM_POOL_USD = 10
 # rates, under $0.10. Standalone one-call plans have a $0.25 ceiling (NATIVE_MAXIMUMS_USD).
 CONTENT_PLAN_SHARE_USD = 1
 # content.plan 1.0.0 (content-editorial-v9) buys no model call itself: its planning agent,
-# content.plan_research, is a Codex procedure child with its own $6 ceiling
-# (codex_api_pricing.PROCEDURE_MAXIMUMS), so the plan is a spending parent of that size, and
-# organic-traffic-v8's ceiling holds it (TRAFFIC_SYSTEM_V8_USD).
-CONTENT_PLAN_AGENT_USD = 6
+# content.plan_research, is a Codex procedure child with its own $12 ceiling
+# (codex_api_pricing.PROCEDURE_MAXIMUMS; $6 before its subagents), so the plan is a spending
+# parent of that size, and organic-traffic-v8's ceiling holds it (TRAFFIC_SYSTEM_V8_USD).
+CONTENT_PLAN_AGENT_USD = 12
 
 
 def agent_planner(definition) -> bool:
@@ -123,7 +123,7 @@ NATIVE_MAXIMUMS_USD = {
 }
 # organic-traffic-v8's ceiling beyond the founder's keyword limit: its children's p90s
 # (workflow_estimates) come to about $3 without delivery or fixes, and the $12 also holds any
-# one child's own ceiling (audit $6, planning agent $6, draft $6, refresh $3). Delivery and
+# one child's own ceiling (audit $6, planning agent $12, draft $6, refresh $3). Delivery and
 # technical fixes are website.change runs with a $4 ceiling and a p90 under $1, so each adds
 # $3; a run that needs more stops its later paid steps.
 TRAFFIC_SYSTEM_V8_USD = 12

@@ -488,6 +488,33 @@ def _run_id_policy(value: str) -> tuple[str, ...]:
     return (f"shell_environment_policy.set.TIN_RUN_ID={json.dumps(run_id)}",)
 
 
+def _subagent_policy(env) -> tuple[str, ...]:
+    """Codex subagents only where the run's model contract admits parallel requests.
+
+    Each subagent is another thread on this controller, using the same run-bound relay grant;
+    the relay reserves every request and keeps at most `parallel_requests` in flight. One
+    level deep: a subagent cannot spawn its own.
+    """
+    try:
+        contract = json.loads(env.get("TIN_CODEX_API_CONTRACT", "{}"))
+    except ValueError:
+        contract = {}
+    parallel = contract.get("parallel_requests") if isinstance(contract, dict) else None
+    if not env.get("TIN_CODEX_API_URL") or type(parallel) is not int or not 2 <= parallel <= 8:
+        return ("features.multi_agent=false", "agents.enabled=false")
+    return (
+        "features.multi_agent=true",
+        f"agents.max_concurrent_threads_per_session={parallel - 1}",
+        "agents.max_depth=1",
+    )
+
+
+def _own_thread(params, thread_id) -> bool:
+    """Whether an event belongs to the lead thread; subagents report on their own threads."""
+    owner = params.get("threadId") if isinstance(params, dict) else None
+    return owner is None or owner == thread_id
+
+
 def execute() -> int:
     context = _decode_context()
     workflow_key = str(context.get("workflow_key", "")).strip()
@@ -630,8 +657,7 @@ def execute() -> int:
             'shell_environment_policy.inherit="none"',
             "features.hooks=false",
             "features.remote_plugin=false",
-            "features.multi_agent=false",
-            "agents.enabled=false",
+            *_subagent_policy(os.environ),
             "features.apps=false",
             *_run_id_policy(os.environ.get("TIN_RUN_ID", "")),
         ):
@@ -847,6 +873,10 @@ def execute() -> int:
                     )
                     turn_status = "token_limit"
                     raise RuntimeError("Codex procedure reached its observed token limit")
+            if method in {"item/completed", "turn/completed"} and not _own_thread(
+                params, thread_id
+            ):
+                continue
             if method == "item/completed" and isinstance(params, dict):
                 item = params.get("item", {})
                 if isinstance(item, dict) and item.get("type") == "agentMessage":

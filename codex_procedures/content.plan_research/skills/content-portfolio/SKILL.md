@@ -43,18 +43,26 @@ reasons this product wins, taken from the project's files.
 
 ## 2. Settle the competitive set
 
-`context.json` → `competitors` merges the audit's buyer panel, the domains AI answers cite, the
-keyword plan's search competitors and competitor.watch, with the sources for each.
-`corroborated` means two sources agree.
+Do this before you plan, following `COMPETITORS.md` in this skill's folder. In short:
 
-- Check each candidate on the web: is it a real alternative for the same buyer and job? A site
-  that only ranks for the same words (a publisher, a directory, a namesake) is not a competitor;
-  it may still be a page to beat for a search.
-- Add a competitor the project's files or search results show buyers compare, even if no source
-  listed it, and say where you saw it.
-- For each real competitor decide its use: an alternatives page, a head-to-head comparison, a
-  place in a best-tools page, or nothing (say why). Lead with the competitors buyers name most
-  and that the AI answers recommend.
+- Frame the search from the project's files: the buyer, the job in their words, two or three
+  category phrases (one narrow, one broad) and the stack the product plugs into.
+- Search four channels: category roundups, the job with the stack attached (and the stack's own
+  ecosystems), recent launches (Hacker News, GitHub, Product Hunt), and the comparison pages of
+  competitors you have confirmed are direct. If your tools include `spawn_agent`, run the four
+  channels as subagents in parallel and read the project while they search.
+- The brief's leads are where you start, not a checked list. `context.json` → `competitors`
+  merges the site's own comparison pages, the earlier research, competitor.watch, the audit's
+  buyer panel and the keyword plan's search competitors, with the sources for each. Sites that
+  rank for the same searches and domains AI answers cite are usually publishers, directories or
+  tools for another job.
+- Open every candidate's own site and label it direct, adjacent, diy or drift. A candidate you
+  did not open stays out. When `earlier_competitor_research` is in `context.json`, start from it
+  as the brief says.
+- For each direct, adjacent or diy competitor decide its use: an alternatives page, a head-to-head
+  comparison, a place in a best-tools page, or nothing (say why). Lead with the competitors
+  buyers name most and that the AI answers recommend. A drift product gets no alternatives or
+  comparison page.
 - The manual way is a competitor too: "{product} vs spreadsheets", "vs hiring an agency".
 
 ## 3. Find the page families the product really has
@@ -178,8 +186,9 @@ row), `inferred` (buyer questions, AI answers, competitor presence, results you 
 
 ## 8. Write the portfolio
 
-Write the output file as Markdown: a short human summary (buyer, competitive set, families,
-the first month and why), then exactly one JSON block between these two marker lines:
+Write the output file as Markdown: a short human summary (buyer, competitive set and how you
+found it, families, the first month and why), then exactly one JSON block between these two
+marker lines:
 
 ```
 <!-- content-portfolio.json:start -->
@@ -191,7 +200,8 @@ the first month and why), then exactly one JSON block between these two marker l
 {
   "schema": "content-portfolio/1",
   "strategy": "The buyer, their decision, the alternatives, why the product wins (from the files), and how the order serves the founder's goal. At most 4,200 characters.",
-  "competitors": [{"name": "", "host": "", "use": "alternative | comparison | roundup | none", "why": ""}],
+  "competitors": [{"name": "", "host": "", "label": "direct | adjacent | diy | drift", "does": "what its own site says it does", "buyer": "", "evidence_url": "https://the page you opened", "channels": ["roundups | job_and_stack | launches | comparison_pages"], "use": "alternative | comparison | roundup | none", "why": ""}],
+  "competitor_research": {"started_from": "earlier research of <date> | none", "channels": [{"channel": "roundups", "queries": [""], "found": [""], "notes": ""}]},
   "families": [{"id": "", "name": "", "why": "", "members": [""]}],
   "opportunities": [
     {

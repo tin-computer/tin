@@ -97,10 +97,24 @@ def document(value):
 
 def test_the_catalog_pins_the_agent_contract_and_its_hidden_planner():
     plan = next(w for w in BUILTIN_WORKFLOWS if w.key == legacy.KEY)
-    assert plan.version_label == "1.1.0"
+    assert plan.version_label == "1.2.0"
     pinned = editorial.contract(plan.definition)
     assert pinned.AGENT and pinned.TYPED
-    assert pinned.POLICY["version"] == "content-editorial-v10"
+    assert pinned.POLICY["version"] == "content-editorial-v11"
+    assert pinned.MODEL_SCHEMA == agent.PORTFOLIO_JSON_SCHEMA_V2
+    # A definition saved at 1.1.0 keeps v10 and the portfolio schema without labels.
+    v10 = {
+        **deepcopy(plan.definition),
+        "content_policy": editorial.V10_POLICY,
+        "content_instructions": editorial.V10_INSTRUCTIONS,
+        "content_schema": editorial.V10_SCHEMA,
+    }
+    assert editorial.contract(v10).POLICY["version"] == "content-editorial-v10"
+    assert editorial.V10_SCHEMA == agent.PORTFOLIO_JSON_SCHEMA
+    assert (
+        "label"
+        not in agent.PORTFOLIO_JSON_SCHEMA["properties"]["competitors"]["items"]["properties"]
+    )
     assert pinned.POLICY["planner"] == agent.RESEARCH_KEY
     # A definition saved at 1.0.0 keeps v9: no outline reads, no nearby pages.
     v9 = {
@@ -111,9 +125,16 @@ def test_the_catalog_pins_the_agent_contract_and_its_hidden_planner():
     }
     assert editorial.contract(v9).AGENT and editorial.contract(v9).POLICY is editorial.V9_POLICY
     assert "known_page_reads" not in editorial.V9_POLICY
+    # Later versions add to v9's policy; only how competitors are found changed (v11).
     assert {
-        k: v for k, v in editorial.POLICY.items() if k in editorial.V9_POLICY and k != "version"
-    } == {k: v for k, v in editorial.V9_POLICY.items() if k != "version"}
+        k: v
+        for k, v in editorial.POLICY.items()
+        if k in editorial.V9_POLICY and k not in {"version", "competitors"}
+    } == {k: v for k, v in editorial.V9_POLICY.items() if k not in {"version", "competitors"}}
+    assert (editorial.V9_POLICY["competitors"], editorial.POLICY["competitors"]) == (
+        "merged-v1",
+        "researched-v1",
+    )
     research = next(w for w in BUILTIN_WORKFLOWS if w.key == agent.RESEARCH_KEY)
     assert research.id not in RETIRED_BUILTIN_WORKFLOW_IDS
     definition, files = research.definition_and_resource_files()
@@ -121,6 +142,8 @@ def test_the_catalog_pins_the_agent_contract_and_its_hidden_planner():
     assert definition["procedure"]["output"]["validator"] == agent.VALIDATOR
     assert definition["procedure"]["output"]["path_template"] == agent.PATH_TEMPLATE
     assert any(path.endswith("check_portfolio.py") for path in files)
+    assert any(path.endswith("COMPETITORS.md") for path in files)
+    assert definition["portfolio_schema"] == agent.PORTFOLIO_JSON_SCHEMA_V2
 
 
 def test_the_portfolio_check_needs_only_the_shape_tin_reads():
@@ -399,7 +422,8 @@ def test_the_agent_plan_is_a_spending_parent_of_its_ceiling():
     plan = next(w for w in BUILTIN_WORKFLOWS if w.key == legacy.KEY).definition
     terms = service_terms(plan)
     assert terms["kind"] == "parent" and terms["operations"] == []
-    assert terms["maximum_nanos"] == 6_000_000_000
+    # $12 from 1.2.0: the agent's competitor subagents hold up to five reservations at once.
+    assert terms["maximum_nanos"] == 12_000_000_000
     v8 = {**deepcopy(plan), "content_policy": editorial.V8_POLICY}
     assert service_terms(v8)["kind"] == "metered_workflow"
     # One call of at most $0.088 (2026-10-08 calibration: $0.25 rather than the $2 default).
@@ -466,6 +490,21 @@ async def test_a_plan_starts_its_agent_then_fills_the_weeks_from_its_portfolio(
         )
 
     monkeypatch.setattr("tin_lite.run_service.start_workflow_run", start)
+    # v11: an earlier plan's checked competitor set is the research's starting point.
+    agent_storage.repo.edit(
+        {
+            agent.COMPETITORS_PATH: canonical_json(
+                {
+                    "schema": agent.COMPETITORS_SCHEMA,
+                    "updated_at": "2026-10-01",
+                    "competitors": [
+                        {"name": "Linear", "host": "linear.app", "label": "direct"},
+                        {"name": "Zapier", "host": "zapier.com", "label": "drift"},
+                    ],
+                }
+            )
+        }
+    )
     run = await create()
     child = await activities.content_plan_research(str(run.id))
     assert child["executor"] == "codex.procedure" and model.calls == 0
@@ -476,9 +515,24 @@ async def test_a_plan_starts_its_agent_then_fills_the_weeks_from_its_portfolio(
     head = agent_storage.repo.head
     brief = agent.brief_paths(run.id)
     assert all(path in agent_storage.repo.trees[head] for path in brief.values())
+    shown = (
+        await agent_storage.read_canonical_artifact(
+            repo_id=project.state_repo_id, commit_sha=head, path=brief["BRIEF.md"]
+        )
+    ).decode()
+    assert "## Competitor research" in shown and "2 competitors with labels" in shown
+    assert "Linear (linear.app): in the earlier competitor research, labelled direct" in shown
     # The agent writes its portfolio; content_plan_execute turns it into the plan.
     output = agent.path_template(child["run_id"])
-    revision = agent_storage.repo.edit({output: document(portfolio(8)).encode()})
+    value = portfolio(8)
+    value["competitors"] = [
+        {"name": "Linear", "host": "linear.app", "label": "direct", "use": "alternative"},
+        {"name": "Zapier", "host": "zapier.com", "label": "drift", "use": "none"},
+    ]
+    value["opportunities"].append(
+        opportunity(9, title="Zapier alternatives", format="alternative", competitor="Zapier")
+    )
+    revision = agent_storage.repo.edit({output: document(value).encode()})
     await db.pool.execute(
         "UPDATE workflow_runs SET status='succeeded', canonical_commit_sha=$2, artifact_path=$3, "
         "finished_at=now(), lease_active=false WHERE id=$1",
@@ -505,7 +559,23 @@ async def test_a_plan_starts_its_agent_then_fills_the_weeks_from_its_portfolio(
         )
     )
     assert evidence["editorial"]["portfolio"]["run_id"] == child["run_id"]
-    assert evidence["policy_version"] == "content-editorial-v10"
+    assert evidence["policy_version"] == "content-editorial-v11"
+    assert any(
+        entry["title"] == "Zapier alternatives" and "labelled drift" in entry["reason"]
+        for entry in evidence["editorial"]["left_out"]
+    )
+    kept = json.loads(
+        await agent_storage.read_canonical_artifact(
+            repo_id=project.state_repo_id,
+            commit_sha=saved.canonical_commit_sha,
+            path=agent.COMPETITORS_PATH,
+        )
+    )
+    assert kept["plan_run_id"] == str(run.id) and kept["portfolio"] == output
+    assert [(row["name"], row["label"]) for row in kept["competitors"]] == [
+        ("Linear", "direct"),
+        ("Zapier", "drift"),
+    ]
     # v10 keeps each page's outline with its text.
     home = evidence["page_inventory"]["pages"][0]
     assert (

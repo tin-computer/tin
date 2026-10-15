@@ -30,6 +30,7 @@ from tin_lite.codex_api import (
     is_api_contract,
     is_procedure_contract,
     is_session_contract,
+    parallel_requests,
     record_relay_rejection,
     token_hash,
 )
@@ -61,6 +62,21 @@ class RelayRejected(HTTPException):
 
 
 CONTRACT_REJECTION = "This API request exceeds its reserved execution contract"
+# Refusals of one parallel request while others hold the run's room; never a run's cause.
+PARALLEL_REJECTIONS = frozenset({"parallel_limit", "parallel_reservation"})
+# Spending refusals that requests in flight can cause by holding their reservations.
+HELD_ROOM_CODES = frozenset({"run_limit", "project_limit", "insufficient_funds"})
+
+
+def reservation_refusal(exc, in_flight, stopped):
+    """What a refused reservation does. With other requests in flight, a refusal for room they
+    hold is temporary (it returns when they settle), so only this request is refused; with none
+    in flight it is the run's real spending stop."""
+    if in_flight and exc.code in HELD_ROOM_CODES:
+        return RelayRejected(409, exc.diagnostic(), reason="parallel_reservation")
+    return stopped(exc)
+
+
 # Historical v1/v2 observations count every web_search_call as one search.
 MULTI_TOOL_PROTOCOLS = frozenset(contract["protocol"] for contract in MULTI_TOOL_CONTRACTS)
 
@@ -399,8 +415,19 @@ class CodexAPIRelay:
                     str(run_id),
                     contract["max_requests"] + 1,
                 )
-                if any(item["status"] != "completed" for item in rows):
+                # One request at a time, unless the contract lets subagents run beside the
+                # lead; each in-flight request already holds its own reservation.
+                if sum(item["status"] != "completed" for item in rows) >= parallel_requests(
+                    contract
+                ):
+                    if parallel_requests(contract) > 1:
+                        raise RelayRejected(
+                            409,
+                            "Too many API requests are active at once",
+                            reason="parallel_limit",
+                        )
                     raise HTTPException(409, "A prior API request is active or unconfirmed")
+                in_flight = sum(item["status"] != "completed" for item in rows)
                 if len(rows) >= contract["max_requests"]:
                     raise stopped(
                         BillingError("request_limit", "Codex API request limit reached", 429)
@@ -413,6 +440,8 @@ class CodexAPIRelay:
                     raise stopped(BillingError("token_limit", "Codex API token limit reached", 429))
                 if enrolled:
                     for item in rows:
+                        if item["status"] != "completed":
+                            continue  # In flight beside this one (parallel contracts only).
                         previous = decode_record(item["result"])
                         priced = price_response(budget["pricing"], previous)
                         if priced is None or priced[0] > budget["request_maximum_nanos"]:
@@ -428,7 +457,7 @@ class CodexAPIRelay:
                             maximum=lambda terms: terms["request_maximum_nanos"],
                         )
                     except BillingError as exc:
-                        raise stopped(exc) from None
+                        raise reservation_refusal(exc, in_flight, stopped) from None
                 request_number = len(rows) + 1
             observation = {
                 "version": 1,
@@ -697,6 +726,8 @@ async def relay_codex_api(run_id: UUID, operation: str, request: Request):
     except HTTPException as exc:
         reason = getattr(exc, "reason", None)
         _log_rejection(run_id, operation, exc.status_code, exc.detail, reason)
+        if reason in PARALLEL_REJECTIONS:
+            raise  # A subagent's request waits on the others; not the run's cause.
         await relay.note_rejection(
             run_id,
             grant,

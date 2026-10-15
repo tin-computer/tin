@@ -147,7 +147,8 @@ def targets(context, plan, questions=(), competitors=()):
         )
     for competitor in competitors:
         name = " ".join(str(competitor.get("name") or "").split())
-        if not name or competitor.get("use") == "none":
+        # A competitor the research labelled drift does another job: no page targets it.
+        if not name or competitor.get("use") == "none" or competitor.get("label") == "drift":
             continue
         pattern = re.compile(rf"(?<![\w.-]){re.escape(name.casefold())}(?![\w-])")
         matched = [
