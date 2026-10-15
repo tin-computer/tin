@@ -12,6 +12,10 @@ CONTEXT_PATHS = (
     "wiki/INDEX.md",
 )
 STYLE_PATH = ".agents/skills/writing-style/SKILL.md"
+# The project's ICP and go-to-market strategy: who the plan is for. Guidance, never facts.
+ICP_PATH = "strategy/ICP.md"
+ICP_BYTES = 8_192
+ICP_LABEL = "ICP and go-to-market strategy"
 MAX_CONTEXT_CHARS = 14_000
 MAX_INPUT_BYTES = 32_000
 MAX_OUTPUT_BYTES = 12_000
@@ -88,6 +92,13 @@ INSTRUCTIONS = (
     "connections, workflow setup or publication behavior there. Finish every sentence; "
     "never stop in the middle of a word or thought. Return only declared fields."
 )
+# Added only when strategy/ICP.md is read, so a project without it sends the same request.
+ICP_INSTRUCTIONS = (
+    " The icp field is the project's ICP and go-to-market strategy: the buyers this plan is "
+    "for, their problems, triggers and objections, and the messages that reach them. Choose the "
+    "audience, pillars and post ideas for those buyers. It is guidance about who the plan is "
+    "for, not a source of product facts, numbers or customer claims."
+)
 
 
 def _first_part(value):
@@ -127,6 +138,30 @@ def _read_context(ctx, inputs):
     return "Supplied product context", supplied.strip()
 
 
+def _read_icp(ctx):
+    """The ICP strategy and a note for the plan: ("", None) when absent, ("", note) when it
+    cannot be used. A missing or oversized file never fails the run."""
+    try:
+        value = ctx.files.read_text(ICP_PATH)
+    except FileNotFoundError:
+        return "", None
+    except (ValueError, OSError):
+        return "", f"`{ICP_PATH}` could not be read, so it was skipped."
+    if not isinstance(value, str) or not value.strip():
+        return "", None
+    if len(value.encode("utf-8")) > ICP_BYTES:
+        return "", f"`{ICP_PATH}` is over 8 KB, so it was skipped. Shorten it to use it."
+    return value.strip(), None
+
+
+def _fits(data, instructions):
+    rough = json.dumps(
+        {"system": instructions, "user": json.dumps(data, allow_nan=False), "schema": SCHEMA},
+        ensure_ascii=False,
+    )
+    return len(rough.encode("utf-8")) + 2048 <= MAX_INPUT_BYTES
+
+
 def _read_style(ctx):
     try:
         style = ctx.files.read_text(STYLE_PATH)
@@ -152,14 +187,10 @@ def _inputs(inputs):
     return goal.strip(), hours, platforms
 
 
-def _request_fits(data):
+def _request_fits(data, instructions=INSTRUCTIONS):
     # The gateway serializes data inside an outer model envelope. Leave space
     # for that envelope and JSON escaping without truncating project context.
-    rough = json.dumps(
-        {"system": INSTRUCTIONS, "user": json.dumps(data, allow_nan=False), "schema": SCHEMA},
-        ensure_ascii=False,
-    )
-    if len(rough.encode("utf-8")) + 2048 > MAX_INPUT_BYTES:
+    if not _fits(data, instructions):
         raise ValueError("Product context and writing style exceed one model request")
 
 
@@ -245,11 +276,12 @@ def _validate(result, slots, platforms):
     return checked
 
 
-def _render(plan, source, hours, platforms):
+def _render(plan, source, hours, platforms, icp_line=None):
     lines = [
         "# Social content plan",
         "",
         f"Product context: {source}",
+        *([f"{ICP_LABEL}: {icp_line}"] if icp_line else []),
         f"Weekly capacity: {hours} hour{'s' if hours != 1 else ''}",
         f"Platform preference: {platforms}",
         "",
@@ -339,12 +371,22 @@ async def run(ctx, inputs):
         "slot_count": slots,
     }
     _request_fits(data)
+    instructions = INSTRUCTIONS
+    icp, icp_line = _read_icp(ctx)
+    if icp:
+        # The ICP fills room the product context leaves; it never pushes that context out.
+        if _fits({**data, "icp": icp}, INSTRUCTIONS + ICP_INSTRUCTIONS):
+            data = {**data, "icp": icp}
+            instructions = INSTRUCTIONS + ICP_INSTRUCTIONS
+            icp_line = f"`{ICP_PATH}`"
+        else:
+            icp_line = f"`{ICP_PATH}` did not fit beside the product context, so it was skipped."
     response = await ctx.models.generate(
         route="plan",
         step="draft_social_content_plan",
-        instructions=INSTRUCTIONS,
+        instructions=instructions,
         data=data,
         output_schema=SCHEMA,
     )
     plan = _validate(response.get("parsed"), slots, platforms)
-    return {"path": OUTPUT_PATH, "content": _render(plan, source, hours, platforms)}
+    return {"path": OUTPUT_PATH, "content": _render(plan, source, hours, platforms, icp_line)}

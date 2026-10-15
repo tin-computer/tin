@@ -53,7 +53,7 @@
       "flow": {
         "direction": "TD",
         "nodes": [
-          {"id": "context", "kind": "store", "label": "Product context in Files", "fact": "first of 5 files, plus the style guide"},
+          {"id": "context", "kind": "store", "label": "Product context in Files", "fact": "first of 5 files, style guide, ICP"},
           {"id": "draft", "kind": "step", "label": "Draft pillars and a week", "fact": "one model call, a slot per hour, up to 6"},
           {"id": "validate", "kind": "step", "label": "Check the plan in code", "fact": "shares total 100, distinct days"},
           {"id": "plan", "kind": "store", "label": "Plan in project Files", "fact": "social/PLAN.md, under 12 KB"},

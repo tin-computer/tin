@@ -33,7 +33,9 @@ new pages.
    Tin reads the page's live title, meta description, H1, opening answer and paragraphs
    with the audit's bounded site reader. It also lists the project's positioning files
    (`brand/BRAND.md`, founder notes under `context/`, `wiki/INDEX.md` and the Start here plan)
-   and the writing style guide. Everything is saved once per run, so a retry works from the
+   and the writing style guide. When `strategy/ICP.md` is present and under 8 KB it is named
+   apart as `icp_source`: it says who the page is for and never supports a claim (a larger
+   file leaves an `icp_note` instead). Everything is saved once per run, so a retry works from the
    same page and text. When no page is due, Tin writes a short report and finishes with no
    compute and no review.
 2. **Write (Codex procedure).** The `page-refresh` skill proposes the fewest replacements that

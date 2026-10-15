@@ -163,7 +163,9 @@ def check_inputs(inputs: dict) -> None:
     _, target = public_site(inputs["site_url"])
     if inputs["market"] not in MARKETS:
         raise ValueError("Unsupported English-language buyer market.")
-    if not inputs["buyer_context"].strip():
+    # Optional: when empty, the run takes it from strategy/ICP.md or the brand guide.
+    buyer_context = inputs.get("buyer_context")
+    if buyer_context is not None and not isinstance(buyer_context, str):
         raise ValueError("Describe the product and its actual buyers.")
     if inputs.get("seed_phrases"):
         phrases(inputs["seed_phrases"])

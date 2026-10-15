@@ -17,6 +17,12 @@ search result suggests a smaller angle; the brief chooses the reader question, n
 positioning. When the brief conflicts with those files, follow the files and say so in the notes.
 When none is listed, stay within documented facts and name the gap in the notes.
 
+When `content_draft.positioning` lists `strategy/ICP.md`, it is the project's ICP and
+go-to-market strategy: the buyers the work is for, their problems, triggers and objections, and
+the messages that reach them. Write for the buyer it names. It is guidance about who the piece is
+for, not evidence: never cite it, link it or take product facts, numbers or customer claims from
+it. When `content_draft.positioning_notes` says a file was skipped, repeat that in the notes.
+
 Use the `planned-content` skill. Read the optional `.agents/skills/writing-style/SKILL.md`
 from the pinned project checkout. Apply its expression preferences, with run `direction`
 taking precedence on style only. A missing or provisional guide does not establish an approved
@@ -151,7 +157,8 @@ When `content_draft.kind` is `refresh`, the item is an existing page that search
 rarely click, that ranks just below the top results, or that a page decision marked.
 `content_draft.refresh` pins the page (`page`: URL, path, audit checks, metrics, upside,
 searches), the text it shows today (`current`), `limits`, `max_paragraphs`,
-`results_markdown`, `positioning_sources` and `style_guide`. Use the `page-refresh` skill.
+`results_markdown`, `positioning_sources`, `style_guide` and, when present, `icp_source` or
+`icp_note`. Use the `page-refresh` skill.
 Inspect the page itself (`content_draft.item.destination`) before writing. Even when its title,
 meta description, H1 and opening answer already meet its main searches, propose the change
 most likely to earn more clicks from them, at least the title or meta description.

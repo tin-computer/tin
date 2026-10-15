@@ -36,7 +36,9 @@ description: Compare current coverage, then draft useful, fact-grounded planned 
 Before broad research, inspect the exact destination and nearest competing page, so the draft
 adds to them rather than repeating them. Save an argument outline in the declared
 generation-notes file before writing: buyer decision, direct answer, the project's positioning (from the files in
-`content_draft.positioning`, never the plan's), proof, objection, next step.
+`content_draft.positioning`, never the plan's), proof, objection, next step. When those files
+include `strategy/ICP.md`, take the buyer, their problem and their objection from it; it says
+who the piece is for and is never a source to cite.
 Use that outline to remove tangents. Reuse verified project evidence and read focused excerpts
 before whole files. Record dated official competitor facts in the notes. Compare total costs on
 like-for-like usage and distinguish customer-owned from provider-operated hardware. Never infer

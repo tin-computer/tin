@@ -393,6 +393,12 @@ def brief_documents(
             {k: f[k] for k in ("path", "sha256", "truncated")}
             for f in context.get("positioning") or []
         ],
+        # Why a positioning file was left out (strategy/ICP.md over 8 KB); absent otherwise.
+        **(
+            {"positioning_notes": context["positioning_notes"]}
+            if context.get("positioning_notes")
+            else {}
+        ),
         "context_files": [f["path"] for f in context.get("files") or []],
         "output": {
             "path": None,  # The procedure's output path is in its own run brief.

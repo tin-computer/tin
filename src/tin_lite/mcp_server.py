@@ -619,6 +619,7 @@ its access_needs now, each named with its benefit. Neither blocks anything. For 
 context: read it yourself, refuse anything holding a credential (keys, tokens, passwords, .env;
 Tin refuses the commit too), never open files they did not name, then commit it as
 `context/<slug>.md` with a source line at the top and one line for it in `wiki/INDEX.md`
+(an ICP or go-to-market strategy goes to `strategy/ICP.md` instead, under 8 KB)
 (commit_project_changes; list_project_files first for the revision and the current index). Say
 that every run from now on reads it and the plan revision after the picks will; the plan already
 running does not, so offer a restart only when it changes the picture. For connections they

@@ -22,6 +22,12 @@ Take positioning from the project's files: who the product is for, what it does 
 Never invent product capabilities, prices, integrations, customers or numbers. A page about a
 capability the files do not show is excluded, not hedged.
 
+When the brief lists the ICP and go-to-market strategy (`strategy/ICP.md`), read it whole. It
+says which buyers the work is for: their problems, jobs, triggers, objections and the messages
+that reach them. Plan for those buyers and their questions first. It is guidance about who the
+pages are for, not evidence: never cite it as a source or take product facts from it. When
+`context.json` has `positioning_notes`, name what they say in `gaps`.
+
 Write one file: the portfolio Markdown at the output path, with the JSON block between the
 markers. Run the skill's check script on it and fix what it reports before you finish. Do not
 draft articles, change any other project file or publish anything.

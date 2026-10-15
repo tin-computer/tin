@@ -15,6 +15,7 @@ from uuid import UUID
 from tin_lite import content_refresh as refresh
 from tin_lite.content_delivery import DRAFT_WORKFLOW_ID, delivery_key
 from tin_lite.organic_audit import audit_hosts, audit_paths
+from tin_lite.project_strategy import STRATEGY_FILE_BYTES, STRATEGY_PATH, strategy_skipped_note
 
 LATEST_AUDIT_SQL = """
     SELECT run.id, run.canonical_commit_sha
@@ -85,6 +86,7 @@ class ContentRefreshSources:
             "results": results,
             "results_markdown": refresh.results_markdown(results),
             "positioning_sources": await self.positioning_sources(project, revision),
+            **await self.icp_source(project, revision),
             "style_guide": refresh.STYLE_PATH
             if await self._exists(project, revision, refresh.STYLE_PATH)
             else None,
@@ -175,6 +177,7 @@ class ContentRefreshSources:
             "results": results,
             "results_markdown": refresh.results_markdown(results),
             "positioning_sources": await self.positioning_sources(project, revision),
+            **await self.icp_source(project, revision),
             "style_guide": refresh.STYLE_PATH
             if await self._exists(project, revision, refresh.STYLE_PATH)
             else None,
@@ -276,6 +279,18 @@ class ContentRefreshSources:
                 )[: refresh.MAX_CONTEXT_FILES]
             )
         return found
+
+    async def icp_source(self, project, revision) -> dict:
+        """The ICP and go-to-market strategy, kept apart from the positioning sources: it says
+        who the page is for and never supports a claim. Absent: no key, as before."""
+        raw = await self.storage.read_canonical_artifact_if_exists(
+            repo_id=project.state_repo_id, commit_sha=revision, path=STRATEGY_PATH
+        )
+        if not raw:
+            return {}
+        if len(raw) > STRATEGY_FILE_BYTES:
+            return {"icp_note": strategy_skipped_note(len(raw))}
+        return {"icp_source": STRATEGY_PATH}
 
     async def _exists(self, project, revision, path) -> bool:
         raw = await self.storage.read_canonical_artifact_if_exists(

@@ -74,6 +74,12 @@ check, Tin removes any brief sentence that sets positioning ("Position the produ
 positions such as "average position 8" are left alone. Plans pinned to v5 and older keep their
 instructions and their briefs as written.
 
+The plan and its drafts also read the project's ICP and go-to-market strategy at
+`strategy/ICP.md` when it is present and under 8 KB, on its own cap outside the 30 KB above.
+It says who the pieces are for and is never evidence: the planner never cites it, and a brief
+that cites it does not bring it into a draft's evidence. A larger file is skipped with a note
+(`positioning_notes`). See [project files](code-project-files.md#the-icp-and-go-to-market-strategy).
+
 The drafts read the same files: `content.generate` 1.8.0 lists them in its pinned
 `content_draft.positioning` context, `content.public_article` 1.6.0 reads them from the
 checkout, `content.answer_page` 1.6.0 receives them as sources (`ANSWER_POSITIONING_V1`) and

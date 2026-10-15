@@ -62,6 +62,7 @@ from tin_lite.model_providers import (
 from tin_lite.model_usage import model_usage_scope
 from tin_lite.organic_audit import ARTIFACT_LIMITS, audit_hosts, audit_paths, canonical_json, digest
 from tin_lite.organic_audit_publication import publish_artifacts
+from tin_lite.project_strategy import BRAND_PATH, STRATEGY_PATH, derive_buyer_context
 from tin_lite.usage_capture import external_usage_scope
 from tin_lite.workflow_evidence import integration_inventory
 
@@ -552,6 +553,31 @@ class KeywordPlanActivities:
             "note": "Bounded report excerpt, not the full audit; treat as reference data.",
         }
 
+    async def _buyer_context(self, run) -> tuple[str, str | None]:
+        """The supplied buyer context, or one taken from strategy/ICP.md, else the brand guide's
+        direction, at the project's head. Pinned in the scope, so retries reuse it."""
+        supplied = run.input.get("buyer_context") or ""
+        if supplied.strip():
+            return supplied, None  # As typed, exactly as before the ICP existed.
+        project = await self.db.get_project(run.project_id)
+        repo = await self.storage.get_repo(project.state_repo_id)
+        head = await self.storage.head_sha(repo, project.canonical_branch)
+        files = {}
+        for path in (STRATEGY_PATH, BRAND_PATH):
+            files[path] = (
+                await self.storage.read_canonical_artifact_if_exists(
+                    repo_id=project.state_repo_id, commit_sha=head, path=path
+                )
+                if head
+                else None
+            )
+        try:
+            return derive_buyer_context(files[STRATEGY_PATH], files[BRAND_PATH])
+        except ValueError as exc:
+            raise ApplicationError(
+                str(exc), type="WorkflowInputError", non_retryable=True
+            ) from None
+
     @activity.defn
     async def keyword_prepare(self, run_id: str) -> None:
         if scope := await self._result(run_id, "scope"):
@@ -616,12 +642,14 @@ class KeywordPlanActivities:
                 non_retryable=True,
             )
         url, target = await self.provider.validate_target(run.input["site_url"])
+        buyer_context, buyer_source = await self._buyer_context(run)
         scope = {
             "url": url,
             "host": target,
             "market": run.input["market"],
             "language": "en",
-            "buyer_context": run.input["buyer_context"],
+            "buyer_context": buyer_context,
+            **({"buyer_context_source": buyer_source} if buyer_source else {}),
             "started_at": run.created_at.isoformat(),
             "max_cost_usd": str(maximum),
             "policy_version": policy["version"],

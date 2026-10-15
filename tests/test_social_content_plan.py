@@ -145,7 +145,7 @@ async def test_prioritized_file_produces_editable_calendar_without_blending_othe
     )
     result = await module.run(ctx, inputs(context_text="Another old product"))
     assert result["path"] == "social/PLAN.md"
-    assert ctx.files.reads == ["context/product-marketing.md", module.STYLE_PATH]
+    assert ctx.files.reads == ["context/product-marketing.md", module.STYLE_PATH, module.ICP_PATH]
     assert ctx.calls[0]["data"]["product_context"] == CONTEXT
     assert len(ctx.calls[0]["data"]["writing_style"]) > 6_000
     assert ctx.calls[0]["step"] == "draft_social_content_plan"
@@ -186,6 +186,7 @@ async def test_onboarding_plan_precedes_brand_and_wiki_when_curated_context_is_a
         "context/product-marketing.md",
         "reports/GROWTH_ONBOARDING_PLAN.md",
         module.STYLE_PATH,
+        module.ICP_PATH,
     ]
     assert ctx.calls[0]["data"]["product_context"] == CONTEXT
     assert ctx.calls[0]["data"]["context_source"] == "reports/GROWTH_ONBOARDING_PLAN.md"

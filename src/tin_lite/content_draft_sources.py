@@ -13,6 +13,7 @@ from tin_lite.content_programs import ContentPrograms
 from tin_lite.content_refresh import url_key
 from tin_lite.organic_audit import digest
 from tin_lite.project_files import safe_project_file_path
+from tin_lite.project_strategy import STRATEGY_PATH
 from tin_lite.writing_style import STYLE_PATH
 
 # What a reader calls each kind in a refusal.
@@ -517,6 +518,9 @@ class ContentDraftSources:
             )
             run_ids = [str(row["run_id"]) for row in applied] + [selection["initial_run_id"]]
             wanted, evidence = set(selection["item"]["source_ids"]), {}
+            # The ICP and go-to-market strategy says who a piece is for, never what is true,
+            # so a brief that cites it does not make it evidence.
+            wanted.discard(f"file:{STRATEGY_PATH}")
             research = {}
             for source_run_id in run_ids:
                 context_receipt = await self.db.get_effect(f"content:{source_run_id}:context")
@@ -578,14 +582,19 @@ class ContentDraftSources:
             )
             if positioning:
                 # Paths and digests only; the writer reads the files from the pinned checkout.
+                notes = []
                 context["positioning"] = [
                     {key: item[key] for key in ("path", "revision", "sha256")}
                     for item in await positioning_files(
                         storage=self.storage,
                         project=project,
                         revision=selection["project_revision"],
+                        include_strategy=True,
+                        notes=notes,
                     )
                 ]
+                if notes:
+                    context["positioning_notes"] = notes
             context["frontmatter"] = content_draft.provenance(context)
             if output_validator in content_draft.CLEAN_VALIDATORS:
                 context["output_validator"] = output_validator

@@ -1,8 +1,9 @@
 """Choose the buyer prompts AI visibility is measured on: families in code, prompts by a model.
 
-Code reads the positioning (brand/BRAND.md, wiki/INDEX.md, the onboarding plan and up to two
-context files) and 90 days of Search Console queries. It groups the non-branded queries by
-their strongest head word into up to four candidate families with their impressions. One
+Code reads the positioning (brand/BRAND.md, wiki/INDEX.md, the onboarding plan, up to two
+context files and, when present, the ICP and go-to-market strategy in strategy/ICP.md) and 90
+days of Search Console queries. It groups the non-branded queries by their strongest head word
+into up to four candidate families with their impressions. One
 model call names the category the positioning sells in (the core family, F1), says whether a
 candidate group is that same category, and writes 8 prompts per family plus 4 branded ones.
 Code then keeps F1 and the three adjacent families with the most impressions, sets the weights
@@ -30,6 +31,11 @@ OUT = "reports/research/prompt-panel/PROMPT_PANEL.md"
 SCHEMA = "tin.prompt_panel/1"
 HOST = re.compile(r"[a-z0-9](?:[a-z0-9-]*[a-z0-9])?(?:\.[a-z0-9](?:[a-z0-9-]*[a-z0-9])?)+")
 POSITIONING = ("brand/BRAND.md", "wiki/INDEX.md", "reports/GROWTH_ONBOARDING_PLAN.md")
+# The project's ICP and go-to-market strategy: who buys and why. It shapes the buyers' words and
+# jobs, never a branded fact check. Read on its own 8 KB cap; absent changes nothing.
+ICP_PATH = "strategy/ICP.md"
+ICP_KEY = "strategy/ICP.md (ICP and go-to-market strategy)"
+ICP_BYTES = 8_192
 MODEL_DATA_BYTES = 22_000
 MODEL_DEADLINE = 25  # seconds; a corrective call starts only before this
 STOP = set(
@@ -139,6 +145,14 @@ later answer is checked against (fact_check).
 5. aliases: other names people use for the product. competitors: products the positioning or
 the queries name; leave out the product itself."""
 
+# Added only when strategy/ICP.md is read, so a project without it sends the same request.
+ICP_INSTRUCTIONS = """
+
+The positioning entry for strategy/ICP.md is the project's ICP and go-to-market strategy: the
+buyers, their problems, jobs, triggers and objections. Write the prompts in those buyers' words
+and about their jobs. It states who the product is for, not what it does: never quote it as the
+core category line or use it as a fact_check."""
+
 FIX = """The panel below failed these checks. Return the whole panel again in the same shape,
 changing only what the failures name. Keep every rule from before: 8 prompts per family, 2 per
 stage, 5 to 15 words, no forcing clauses, the product named only in branded prompts."""
@@ -153,6 +167,24 @@ def read(ctx, path, notes, limit=None):
         notes.append(f"{path} could not be read (over 64 KB or not text).")
         return None
     return text[:limit] if limit else text
+
+
+def read_icp(ctx, notes):
+    """The ICP strategy when present and within 8 KB; otherwise "" and, when it exists but cannot
+    be used, a note. Never stops the run."""
+    try:
+        text = ctx.files.read_text(ICP_PATH)
+    except FileNotFoundError:
+        return ""
+    except (ValueError, OSError):
+        notes.append(f"{ICP_PATH} could not be read (over 64 KB or not text); it was skipped.")
+        return ""
+    if not isinstance(text, str) or not text.strip():
+        return ""
+    if len(text.encode("utf-8")) > ICP_BYTES:
+        notes.append(f"{ICP_PATH} is over 8 KB, so it was skipped. Shorten it to use it.")
+        return ""
+    return text.strip()
 
 
 def section(text, heading, limit):
@@ -549,6 +581,9 @@ async def run(ctx, inputs):
     }
     for path in context_files:
         positioning[path] = read(ctx, path, notes, 1500) or ""
+    icp = read_icp(ctx, notes)
+    if icp:
+        positioning[ICP_KEY] = icp
     positioning = {k: v for k, v in positioning.items() if v}
     data = {
         "product": {"name": name, "site": host},
@@ -560,7 +595,14 @@ async def run(ctx, inputs):
         "competitors": competitors,
     }
     while len(json.dumps(data, ensure_ascii=False).encode()) > MODEL_DATA_BYTES:
-        longest = max(data["positioning"], key=lambda k: len(data["positioning"][k]))
+        # The other files give way first: a cut ICP reads as a different strategy.
+        others = [k for k in data["positioning"] if k != ICP_KEY and data["positioning"][k]]
+        if icp and not any(len(data["positioning"][k]) > 400 for k in others):
+            del data["positioning"][ICP_KEY]
+            icp = ""
+            notes.append(f"{ICP_PATH} did not fit beside the positioning, so it was skipped.")
+            continue
+        longest = max(others or data["positioning"], key=lambda k: len(data["positioning"][k]))
         data["positioning"][longest] = data["positioning"][longest][
             : len(data["positioning"][longest]) * 3 // 4
         ]
@@ -569,7 +611,7 @@ async def run(ctx, inputs):
     answer = await ctx.models.generate(
         route="prompts",
         step="prompts",
-        instructions=INSTRUCTIONS,
+        instructions=INSTRUCTIONS + ICP_INSTRUCTIONS if icp else INSTRUCTIONS,
         data=data,
         output_schema=OUTPUT,
     )
@@ -609,7 +651,8 @@ async def run(ctx, inputs):
         )
     panel["low_confidence"] = usable < 20
     sources = {
-        "positioning": [p for p in (*POSITIONING, *context_files) if p not in missing],
+        "positioning": [p for p in (*POSITIONING, *context_files) if p not in missing]
+        + ([ICP_PATH] if icp else []),
         "search_console": (
             f"{window[0]} to {window[1]}, {len(queries)} queries, {usable} without the product's "
             f"name, {dropped} fit none of the four candidate groups"

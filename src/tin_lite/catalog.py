@@ -2131,7 +2131,9 @@ BUILTIN_WORKFLOWS = (
                     "maxLength": 2000,
                     "title": "Product and buyers",
                     "description": (
-                        "What the product does, who needs it, and the problems they search for."
+                        "What the product does, who needs it, and the problems they search for. "
+                        "Leave empty to take it from strategy/ICP.md, or from the brand "
+                        "guide's direction."
                     ),
                     "x-tin-ui": {"control": "textarea", "order": 30},
                 },
@@ -2188,7 +2190,7 @@ BUILTIN_WORKFLOWS = (
                     "x-tin-ui": {"control": "number", "order": 80},
                 },
             },
-            "required": ["project_id", "site_url", "market", "buyer_context"],
+            "required": ["project_id", "site_url", "market"],
         },
     ),
     BuiltinWorkflow(
