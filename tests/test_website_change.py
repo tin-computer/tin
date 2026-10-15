@@ -278,6 +278,9 @@ async def test_a_pre_approved_page_publishes_directly(publication_db, monkeypatc
     feed = await f.db.list_product_activity(project_id=f.project.id)
     merged = [event for event in feed if event.event_type == "website_change_merged"]
     assert [event.run_id for event in merged] == [run.id]
+    # Named by the workflow, not by the executor that ran it (codex.procedure).
+    assert merged[0].workflow_key == "website.change"
+    assert merged[0].workflow_title == "Change the website"
     status = await f.delivery.status(run)
     assert status["merged"] is True and status["pull_request"]["url"] == PR_URL
     assert status["change_id"] == website_change.page_change_id(page.id)

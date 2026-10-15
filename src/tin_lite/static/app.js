@@ -5685,6 +5685,14 @@ function activityKind(event) {
   return "runs";
 }
 
+// Events no workflow wrote are named by where they came from.
+function activitySource(event) {
+  const type = String(event.event_type || "");
+  if (type.startsWith("integration_")) return "Integrations";
+  if (type.startsWith("project_files_")) return "Files";
+  return "Project";
+}
+
 function activityStatus(event) {
   const type = String(event.event_type || "").toLowerCase();
   const status = String(event.details?.status || "").toLowerCase();
@@ -5763,7 +5771,10 @@ function safeHttpsUrl(value) {
 
 function activityItem(event) {
   const status = activityStatus(event);
-  const workflow = event.workflow_key || "project";
+  const workflow = event.workflow_title || event.workflow_key || activitySource(event);
+  const workflowHint = event.workflow_key && event.workflow_key !== workflow
+    ? `${workflow} (${event.workflow_key})`
+    : workflow;
   const runRef = event.run_id ? shortRunId(event.run_id) : String(event.details?.ref || "record");
   const plainSummary = event.summary || humanize(event.event_type);
   const startedBy = event.run_id ? systemStartedBy({
@@ -5779,7 +5790,7 @@ function activityItem(event) {
     <article class="activity-ledger-row is-${status}">
       <time datetime="${escapeHtml(event.created_at)}">${escapeHtml(ledgerTime(event.created_at))}</time>
       <span class="activity-marker is-${status}" aria-label="${escapeHtml(status.replaceAll("-", " "))}">${status === "failed" ? "×" : ""}</span>
-      <code class="activity-workflow" title="${escapeHtml(workflow)}">${escapeHtml(workflow)}</code>
+      <span class="activity-workflow" title="${escapeHtml(workflowHint)}">${escapeHtml(workflow)}</span>
       <p>${escapeHtml(summary)}</p>
       <span class="activity-action">${activityAction(event)}</span>
       ${run

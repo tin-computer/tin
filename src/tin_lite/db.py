@@ -3619,7 +3619,8 @@ class Database:
                            'trigger_client', runs.trigger_client
                        )
                    ) AS details,
-                   COALESCE(runs.executor, events.details->>'workflow_key') AS workflow_key,
+                   COALESCE(workflows.key, runs.executor, events.details->>'workflow_key')
+                       AS workflow_key,
                    COALESCE(workflows.title, events.details->>'workflow_title') AS workflow_title
             FROM activity_events AS events
             LEFT JOIN workflow_runs AS runs ON runs.id = events.run_id
@@ -4042,7 +4043,8 @@ class Database:
                                'trigger_client', runs.trigger_client
                            )
                        ) AS details,
-                       COALESCE(runs.executor, events.details->>'workflow_key') AS workflow_key,
+                       COALESCE(workflows.key, runs.executor, events.details->>'workflow_key')
+                       AS workflow_key,
                        COALESCE(workflows.title, events.details->>'workflow_title')
                            AS workflow_title
                 FROM activity_events AS events
