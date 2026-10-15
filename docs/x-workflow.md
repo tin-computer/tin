@@ -93,6 +93,9 @@ matters.” It reads current project context and the X guide, plus any selected 
 existing assets or optional social plan. A plan is not required. Choose one to six drafts;
 each needs its own useful point. Technical claims, quotes, numbers and links must have
 support in the supplied material. Missing facts or demo assets are called out for editing.
+If a number, quotation or link cannot be matched to its cited sources, Tin keeps the
+draft with `needs_evidence` and a review note instead of losing the whole batch.
+It cannot be published until the evidence issue is resolved. Other valid drafts remain ready.
 
 The result is `social/x-drafts/{date}-{slug}.json`. It contains post text, supporting
 excerpts, editorial notes and media paths. Creating a draft sends nothing to X. Each new
