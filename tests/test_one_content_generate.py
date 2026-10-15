@@ -661,7 +661,7 @@ def test_versions_on_main_are_unchanged():
 # follows the site's theming, keeping figures light on a light-only site; 1.15.0 makes each
 # draft's figures fresh and checks every mark and label in both themes; 1.16.0 sizes figures
 # for the article column and checks them on a phone; 1.17.0 always drafts the planned item.
-RELEASED = {"content.generate": "1.17.0", "content.plan": "1.1.0", "content.refresh": "1.1.0"}
+RELEASED = {"content.generate": "1.17.0", "content.plan": "1.2.0", "content.refresh": "1.1.0"}
 
 
 async def test_retired_workflows_are_hidden_but_saved_configurations_still_run(
