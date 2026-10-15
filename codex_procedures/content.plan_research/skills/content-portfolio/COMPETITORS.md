@@ -32,9 +32,10 @@ four. Budget per channel: about 10 searches and 6 opened pages.
    look inside the stack's own ecosystems: integration and plugin directories, MCP server lists,
    skill and template marketplaces, and the framework's docs pages that list channels or
    providers. This channel finds framework-native rivals and do-it-yourself substitutes.
-3. **launches**: recent launches that search engines rank poorly. Search Hacker News: open
-   `https://hn.algolia.com/api/v1/search_by_date?query=<job terms>&tags=story`, or search
-   `site:news.ycombinator.com "Show HN" <job terms>`. Search GitHub sorted by stars:
+3. **launches**: recent launches that search engines rank poorly. Search Hacker News with
+   `site:news.ycombinator.com "Show HN" <job terms>` (and "Launch HN"); if you can open pages,
+   `https://hn.algolia.com/api/v1/search_by_date?query=<job terms>&tags=story` lists the newest
+   first. Search GitHub sorted by stars:
    `https://github.com/search?q=<job terms>&type=repositories&s=stars`. Also check Product Hunt
    launches for the job. Prefer the last 18 months.
 4. **comparison_pages**: once you have a competitor you are sure is direct, open its own
