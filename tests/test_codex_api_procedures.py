@@ -806,16 +806,22 @@ async def in_flight(db, run, count, *, first=0):
             await db.save_effect_progress(conn, execution_key=key, result={"run_id": str(run.id)})
 
 
-async def test_a_parallel_contract_admits_requests_beside_those_in_flight(publication_db):
+async def test_a_parallel_contract_admits_requests_beside_those_in_flight(
+    publication_db, monkeypatch
+):
+    from tin_lite import codex_api_relay
     from tin_lite.codex_api import PARALLEL_PROCEDURE_CONTRACT
 
+    monkeypatch.setattr(codex_api_relay, "PARALLEL_WAIT_SECONDS", 0.2)
+    monkeypatch.setattr(codex_api_relay, "PARALLEL_WAIT_STEP_SECONDS", 0.1)
     run, relay, client, sent = await setup_relay(publication_db)
     try:
         await upgrade_attempt(publication_db, run, PARALLEL_PROCEDURE_CONTRACT)
         await in_flight(publication_db, run, 3)
         assert (await post(client, run)).status_code == 200
         assert (await post(client, run, {**BODY, "instructions": "second"})).status_code == 200
-        # Both settled; with five unsettled the contract is full and a sixth waits.
+        # Both settled; with five unsettled the contract is full: a sixth waits, then is
+        # refused when no slot frees within the wait.
         await in_flight(publication_db, run, 2, first=3)
         response = await post(client, run, {**BODY, "instructions": "too many"})
         assert response.status_code == 409
@@ -824,6 +830,33 @@ async def test_a_parallel_contract_admits_requests_beside_those_in_flight(public
         # Waiting on the others is not the run's failure cause.
         attempt = await publication_db.get_effect(attempt_key(run.id))
         assert "relay_rejection" not in attempt.result
+    finally:
+        await client.aclose()
+        await relay.close()
+
+
+async def test_a_waiting_parallel_request_goes_once_a_slot_frees(publication_db, monkeypatch):
+    import asyncio
+
+    from tin_lite import codex_api_relay
+    from tin_lite.codex_api import PARALLEL_PROCEDURE_CONTRACT
+
+    monkeypatch.setattr(codex_api_relay, "PARALLEL_WAIT_STEP_SECONDS", 0.05)
+    run, relay, client, sent = await setup_relay(publication_db)
+    try:
+        await upgrade_attempt(publication_db, run, PARALLEL_PROCEDURE_CONTRACT)
+        await in_flight(publication_db, run, 5)
+        waiting = asyncio.create_task(post(client, run))
+        await asyncio.sleep(0.3)
+        assert not waiting.done() and not sent
+        async with publication_db.pool.acquire() as conn:
+            await publication_db.complete_effect(
+                conn,
+                execution_key=f"{run.id}:codex-api:in-flight-0",
+                result={"run_id": str(run.id), "usage": {"total_tokens": 10}},
+            )
+        assert (await asyncio.wait_for(waiting, 5)).status_code == 200
+        assert len(sent) == 1
     finally:
         await client.aclose()
         await relay.close()
