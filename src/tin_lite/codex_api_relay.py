@@ -64,6 +64,10 @@ CONTRACT_REJECTION = "This API request exceeds its reserved execution contract"
 # Refusals of one parallel request while others hold the run's room; never a run's cause.
 PARALLEL_REJECTIONS = frozenset({"parallel_limit", "parallel_reservation"})
 TERMINAL_EVENTS = frozenset({"response.completed", "response.incomplete", "response.failed"})
+# Runaway guards for one provider stream, whether or not its client stays: how long it may be
+# read, and how many bytes may wait for a slow client.
+STREAM_SECONDS = 1200
+MAX_STREAM_BYTES = 64 * 1024 * 1024
 
 
 # How long a parallel request waits for a slot before it is refused: a subagent's response with
@@ -654,65 +658,91 @@ class CodexAPIRelay:
         # unconfirmed. The response is already being generated; reading it buys nothing more.
         events: asyncio.Queue = asyncio.Queue()
         failed = object()
+        forwarding = {"open": True, "queued": 0}
+
+        def forward(item, size=0):
+            # Nothing piles up for a client that left; a slow one is bounded in total bytes.
+            if not forwarding["open"]:
+                return
+            forwarding["queued"] += size
+            if forwarding["queued"] > MAX_STREAM_BYTES:
+                raise RuntimeError("Codex API stream exceeds its bound")
+            events.put_nowait(item)
 
         async def read():
-            buffer = b""
-            observed = False
+            ended = False
             try:
-                async for chunk in upstream.aiter_bytes():
-                    buffer += chunk
-                    if len(buffer) > MAX_EVENT_BYTES:
-                        raise RuntimeError("Codex API event exceeds its bound")
-                    while boundary := re.search(rb"\r?\n\r?\n", buffer):
-                        event, buffer = buffer[: boundary.start()], buffer[boundary.end() :]
-                        data = b"\n".join(
-                            line[5:].lstrip()
-                            for line in event.splitlines()
-                            if line.startswith(b"data:")
-                        )
-                        message = None
-                        if data and data != b"[DONE]":
-                            message = json.loads(data)
-                            if not isinstance(message, dict):
-                                raise ValueError("Invalid Codex stream event")
-                            if message.get("type") in TERMINAL_EVENTS:
-                                response = message.get("response")
-                                if isinstance(response, dict) and not observed:
-                                    await self.observe(
-                                        key,
-                                        record,
-                                        response,
-                                        request_id=upstream.headers.get("x-request-id"),
-                                    )
-                                    observed = True
-                                    if response.get("status") == "failed":
-                                        # OpenAI can fail a response inside a 200 stream; name
-                                        # the cause by code only, never the provider's text.
-                                        await self.note_rejection(
-                                            run_id,
-                                            grant,
-                                            **failed_response_cause(response),
-                                            operation=operation,
-                                        )
-                        # Final usage is persisted BEFORE the completed event reaches Codex.
-                        events.put_nowait((event, message))
-                if buffer.strip() or not observed:
-                    raise RuntimeError("Codex API stream ended without a terminal response")
-                events.put_nowait(None)
-            except (httpx.HTTPError, ValueError, RuntimeError, RecursionError):
+                async with asyncio.timeout(STREAM_SECONDS):
+                    await read_events()
+                ended = True
+            except (TimeoutError, httpx.HTTPError, ValueError, RuntimeError, RecursionError):
                 # Never expose provider exception text, partial private body, or credentials.
                 await self.note_rejection(
                     run_id, grant, status=502, reason="stream_unconfirmed", operation=operation
                 )
-                events.put_nowait(failed)
+            except Exception:  # noqa: BLE001 — e.g. settling failed; the receipt stays unconfirmed
+                logger.warning("Codex API stream was not settled run=%s", run_id)
             finally:
+                # The response always learns how the stream ended, even if this task is
+                # cancelled or settling raised, so it never waits on the queue forever.
+                events.put_nowait(None if ended else failed)
                 await upstream.aclose()
+
+        async def read_events():
+            buffer = b""
+            observed = False
+            async for chunk in upstream.aiter_bytes():
+                buffer += chunk
+                if len(buffer) > MAX_EVENT_BYTES:
+                    raise RuntimeError("Codex API event exceeds its bound")
+                while boundary := re.search(rb"\r?\n\r?\n", buffer):
+                    event, buffer = buffer[: boundary.start()], buffer[boundary.end() :]
+                    data = b"\n".join(
+                        line[5:].lstrip()
+                        for line in event.splitlines()
+                        if line.startswith(b"data:")
+                    )
+                    message = None
+                    if data and data != b"[DONE]":
+                        message = json.loads(data)
+                        if not isinstance(message, dict):
+                            raise ValueError("Invalid Codex stream event")
+                        if message.get("type") in TERMINAL_EVENTS:
+                            response = message.get("response")
+                            if isinstance(response, dict) and not observed:
+                                await self.observe(
+                                    key,
+                                    record,
+                                    response,
+                                    request_id=upstream.headers.get("x-request-id"),
+                                )
+                                observed = True
+                                if response.get("status") == "failed":
+                                    # OpenAI can fail a response inside a 200 stream; name
+                                    # the cause by code only, never the provider's text.
+                                    await self.note_rejection(
+                                        run_id,
+                                        grant,
+                                        **failed_response_cause(response),
+                                        operation=operation,
+                                    )
+                    # Final usage is persisted BEFORE the completed event reaches Codex.
+                    forward((event, message), len(event))
+            if buffer.strip() or not observed:
+                raise RuntimeError("Codex API stream ended without a terminal response")
 
         reader = asyncio.create_task(read())
         self._readers.add(reader)
         reader.add_done_callback(self._readers.discard)
 
         async def stream():
+            try:
+                async for chunk in forward_events():
+                    yield chunk
+            finally:
+                forwarding["open"] = False  # The client left or the stream ended.
+
+        async def forward_events():
             evidence = WebEvidence() if contract in MULTI_TOOL_CONTRACTS else None
             inserted = 0
             sequence = 0
