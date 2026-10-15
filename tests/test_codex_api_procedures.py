@@ -890,3 +890,58 @@ def test_the_controller_enables_subagents_only_under_a_parallel_contract():
     assert module._own_thread({"threadId": "lead"}, "lead")
     assert not module._own_thread({"threadId": "sub"}, "lead")
     assert module._own_thread({}, "lead")
+
+
+async def test_requests_in_flight_cannot_carry_a_run_past_its_token_stop(publication_db):
+    from tin_lite.codex_api import PARALLEL_PROCEDURE_CONTRACT
+
+    run, relay, client, sent = await setup_relay(publication_db)
+    try:
+        await upgrade_attempt(publication_db, run, PARALLEL_PROCEDURE_CONTRACT)
+        # Settled usage close to the stop: one full request in flight could pass it.
+        async with publication_db.pool.acquire() as conn:
+            key = f"{run.id}:codex-api:settled"
+            await publication_db.start_effect(conn, execution_key=key, operation=USAGE)
+            await publication_db.complete_effect(
+                conn,
+                execution_key=key,
+                result={"run_id": str(run.id), "usage": {"total_tokens": 7_700_000}},
+            )
+        await in_flight(publication_db, run, 1)
+        response = await post(client, run)
+        assert response.status_code == 409 and not sent
+        attempt = await publication_db.get_effect(attempt_key(run.id))
+        assert "relay_rejection" not in attempt.result and "stop_reason" not in attempt.result
+    finally:
+        await client.aclose()
+        await relay.close()
+
+
+def test_subagent_tokens_count_toward_the_controllers_stop():
+    module = load_sandbox_module("codex_usage")
+    usage = module.CodexUsage(thread_id="lead", turn_id="turn", limit=1_000)
+
+    def update(thread, total, turn="turn"):
+        return {
+            "method": "thread/tokenUsage/updated",
+            "params": {
+                "threadId": thread,
+                "turnId": turn,
+                "tokenUsage": {
+                    "total": {
+                        "totalTokens": total,
+                        "inputTokens": total - 10,
+                        "cachedInputTokens": 0,
+                        "outputTokens": 10,
+                        "reasoningOutputTokens": 0,
+                    }
+                },
+            },
+        }
+
+    assert usage.observe(update("lead", 400)) and not usage.limit_reached
+    assert not usage.observe_subagent(update("lead", 500))  # The lead counts once.
+    assert usage.observe_subagent(update("sub-1", 300)) and not usage.limit_reached
+    assert not usage.observe_subagent(update("sub-1", 200))  # Totals only grow.
+    assert usage.observe_subagent(update("sub-2", 350, turn="other")) and usage.limit_reached
+    assert usage.record()["subagent_tokens"] == 650

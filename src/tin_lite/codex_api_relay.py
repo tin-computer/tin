@@ -68,6 +68,11 @@ PARALLEL_REJECTIONS = frozenset({"parallel_limit", "parallel_reservation"})
 HELD_ROOM_CODES = frozenset({"run_limit", "project_limit", "insufficient_funds"})
 
 
+def request_tokens(contract):
+    """The most tokens one request can add: a full context and a maximum response."""
+    return contract.get("context_window", 0) + contract.get("max_output_tokens", 0)
+
+
 def reservation_refusal(exc, in_flight, stopped):
     """What a refused reservation does. With other requests in flight, a refusal for room they
     hold is temporary (it returns when they settle), so only this request is refused; with none
@@ -438,6 +443,16 @@ class CodexAPIRelay:
                 )
                 if tokens >= contract["max_observed_tokens"]:
                     raise stopped(BillingError("token_limit", "Codex API token limit reached", 429))
+                if (
+                    in_flight
+                    and tokens + in_flight * request_tokens(contract)
+                    >= (contract["max_observed_tokens"])
+                ):
+                    # Requests in flight could carry the run past its token stop; wait for
+                    # them to settle rather than admit one more beside them.
+                    raise RelayRejected(
+                        409, "Too many API requests are active at once", reason="parallel_limit"
+                    )
                 if enrolled:
                     for item in rows:
                         if item["status"] != "completed":

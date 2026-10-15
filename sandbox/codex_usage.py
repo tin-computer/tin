@@ -29,7 +29,40 @@ class CodexUsage:
     rejected: bool = False
     limit: int | None = MAX_OBSERVED_TOKENS
     limit_reached: bool = False
+    # Subagent threads' latest cumulative tokens: they count toward the same stop.
+    subagents: dict[str, int] = field(default_factory=dict)
     _seen: set[tuple[int, ...]] = field(default_factory=set)
+
+    def _combined(self) -> int:
+        own = self.total["totalTokens"] if self.total else 0
+        return own + sum(self.subagents.values())
+
+    def observe_subagent(self, message: dict[str, Any]) -> bool:
+        """Count another thread's tokens (a subagent's) toward the stop; True when they grew."""
+        if message.get("method") != "thread/tokenUsage/updated":
+            return False
+        params = message.get("params")
+        if not isinstance(params, dict):
+            return False
+        thread = params.get("threadId")
+        usage = params.get("tokenUsage")
+        total = usage.get("total") if isinstance(usage, dict) else None
+        value = total.get("totalTokens") if isinstance(total, dict) else None
+        if (
+            not isinstance(thread, str)
+            or not thread
+            or thread == self.thread_id
+            or type(value) is not int
+            or not 0 <= value <= 10**12
+        ):
+            return False
+        if value <= self.subagents.get(thread, -1) or (
+            thread not in self.subagents and len(self.subagents) >= 64
+        ):
+            return False
+        self.subagents[thread] = value
+        self.limit_reached = self.limit is not None and self._combined() >= self.limit
+        return True
 
     def observe(self, message: dict[str, Any]) -> bool:
         if message.get("method") != "thread/tokenUsage/updated":
@@ -68,7 +101,7 @@ class CodexUsage:
         self._seen.add(key)
         self.total = counts
         self.updates += 1
-        self.limit_reached = self.limit is not None and counts["totalTokens"] >= self.limit
+        self.limit_reached = self.limit is not None and self._combined() >= self.limit
         return True
 
     def record(self) -> dict[str, Any]:
@@ -82,4 +115,12 @@ class CodexUsage:
             "invalid_observation": self.rejected,
             "limit_reached": self.limit_reached,
             "observed_token_limit": self.limit,
+            **(
+                {
+                    "subagent_threads": len(self.subagents),
+                    "subagent_tokens": sum(self.subagents.values()),
+                }
+                if self.subagents
+                else {}
+            ),
         }
