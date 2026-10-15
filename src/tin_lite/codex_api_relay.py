@@ -64,6 +64,10 @@ class RelayRejected(HTTPException):
 CONTRACT_REJECTION = "This API request exceeds its reserved execution contract"
 # Refusals of one parallel request while others hold the run's room; never a run's cause.
 PARALLEL_REJECTIONS = frozenset({"parallel_limit", "parallel_reservation"})
+# How long a parallel request waits for a slot before it is refused. The whole admission and
+# upstream connect must finish inside relay_codex_api's 200-second bound; streaming follows.
+PARALLEL_WAIT_SECONDS = 120
+PARALLEL_WAIT_STEP_SECONDS = 1.0
 # Spending refusals that requests in flight can cause by holding their reservations.
 HELD_ROOM_CODES = frozenset({"run_limit", "project_limit", "insufficient_funds"})
 
@@ -276,6 +280,23 @@ class CodexAPIRelay:
             logger.warning("Codex API rejection cause was not recorded run=%s", run_id)
 
     async def admit(self, run_id, grant, fingerprint, operation, *, request_bytes=0, raw=None):
+        waited = 0.0
+        while True:
+            try:
+                return await self._admit_once(
+                    run_id, grant, fingerprint, operation, request_bytes=request_bytes, raw=raw
+                )
+            except RelayRejected as exc:
+                # A parallel request waits here for one in flight to settle, instead of
+                # failing the Codex turn that sent it (the controller does not retry).
+                if exc.reason not in PARALLEL_REJECTIONS or waited >= PARALLEL_WAIT_SECONDS:
+                    raise
+                await asyncio.sleep(PARALLEL_WAIT_STEP_SECONDS)
+                waited += PARALLEL_WAIT_STEP_SECONDS
+
+    async def _admit_once(
+        self, run_id, grant, fingerprint, operation, *, request_bytes=0, raw=None
+    ):
         try:
             return await self._admit(
                 run_id, grant, fingerprint, operation, request_bytes=request_bytes, raw=raw
