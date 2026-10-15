@@ -854,7 +854,7 @@ def execute() -> int:
                 continue
             method = message.get("method")
             params = message.get("params", {})
-            if usage is not None and usage.observe(message):
+            if usage is not None and (usage.observe(message) or usage.observe_subagent(message)):
                 print(
                     "TIN_CODEX_USAGE=" + json.dumps(usage.record(), separators=(",", ":")),
                     flush=True,
