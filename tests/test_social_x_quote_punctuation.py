@@ -23,15 +23,18 @@ def test_quote_accepts_editorial_comma_or_period(text):
     units = [{"id": "s1", "source_path": "notes", "excerpt": source}]
     result = module._validate_model({"posts": [post]}, 1, units, {"notes": source}, {})
     assert result[0]["text"] == text
+    assert result[0]["readiness"] == "ready"
 
 
 @pytest.mark.parametrize(
     "quote", ["Already launched,", "Coming very soon.", "coming soon,", "...."]
 )
-def test_quote_still_rejects_changed_words_and_empty_punctuation(quote):
+def test_quote_with_changed_words_or_only_punctuation_needs_review(quote):
     module, _ = package()
     source = "The page says “Coming soon”; no launch date is confirmed."
     post = {**deepcopy(POST), "text": f"The page says “{quote}”"}
     units = [{"id": "s1", "source_path": "notes", "excerpt": source}]
-    with pytest.raises(ValueError, match="unsupported quotation"):
-        module._validate_model({"posts": [post]}, 1, units, {"notes": source}, {})
+    result = module._validate_model({"posts": [post]}, 1, units, {"notes": source}, {})
+    assert result[0]["text"] == post["text"]
+    assert result[0]["readiness"] == "needs_evidence"
+    assert "Check the quotation" in result[0]["editor_notes"]
