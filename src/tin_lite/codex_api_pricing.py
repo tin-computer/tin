@@ -93,8 +93,11 @@ CHILD_MAXIMUM = 5 * NANOS_PER_DOLLAR
 PROCEDURE_MAXIMUMS = {
     "content-refresh.v1": 3_000_000_000,
     # content.plan_research reads the program's research and the project's files and searches
-    # before it plans up to 81 pages; a runaway guard, not an estimate.
-    "content-plan-portfolio.v1": 6_000_000_000,
+    # before it plans up to 81 pages; a runaway guard, not an estimate. From content.plan
+    # 1.2.0 its competitor research runs four subagents beside the lead, up to five requests
+    # in flight (codex_api.PARALLEL_PROCEDURE_CONTRACT), each reserving $1.93 before dispatch:
+    # $9.65 held at once, so $12 leaves room for what the run spent before it fanned out.
+    "content-plan-portfolio.v1": 12_000_000_000,
 }
 # Session ceilings by workflow key, for procedures whose output has no validator entry above.
 # A validator entry wins; a workflow with neither keeps the default. Like a validator entry, a

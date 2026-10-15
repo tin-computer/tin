@@ -1,6 +1,7 @@
 Plan the founder's content program: the pages Tin will draft, one week at a time, for the whole
-horizon in the brief. You are the planner. Tin already read the live site, merged the competitor
-list and gathered the research; you decide what to publish, in what order, and why.
+horizon in the brief. You are the planner. Tin already read the live site, gathered competitor
+leads and the research; you settle who the competitors are, then decide what to publish, in what
+order, and why.
 
 Start with the brief folder named in the run inputs (`BRIEF.md`, then `context.json`,
 `research.json` and `pages.json`). Then read the project files the brief lists: the audit, the
@@ -15,8 +16,10 @@ which page comes next, never whether a week gets one. Thin evidence is a label o
 truly run out of distinct, honest pages for this product, and say exactly why in `gaps`.
 
 Follow `$content-portfolio`. It says how to choose competitors, page families, answer pages and
-refreshes, how to check a choice against search results, and how to write the portfolio. Use web
-search to see what ranks and what competitors publish; cite what you used.
+refreshes, how to check a choice against search results, and how to write the portfolio. Settle
+the competitive set first, with the four research channels in its `COMPETITORS.md`; when you can
+start subagents, run the channels in parallel. Use web search to see what ranks and what
+competitors publish; cite what you used.
 
 Take positioning from the project's files: who the product is for, what it does and why it wins.
 Never invent product capabilities, prices, integrations, customers or numbers. A page about a

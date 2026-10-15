@@ -300,6 +300,9 @@ class ContentPlanActivities:
             if legacy.site_pages_path(str(run.id)) in documents:
                 output_paths[legacy.SITE_PAGES_FILE] = legacy.site_pages_path(str(run.id))
                 limits[legacy.SITE_PAGES_FILE] = legacy.SITE_PAGES_FILE_BYTES
+            if agent.COMPETITORS_PATH in documents:
+                output_paths["competitors"] = agent.COMPETITORS_PATH
+                limits["competitors"] = agent.COMPETITORS_MAX_BYTES
             async with self.db.project_state_lock(conn, project.id):
                 revision = await publish_artifacts(
                     storage=self.storage,
@@ -308,6 +311,8 @@ class ContentPlanActivities:
                     documents=documents,
                     paths=output_paths,
                     limits=limits,
+                    # v11's competitor set is one stable file each plan replaces.
+                    replaceable=frozenset({agent.COMPETITORS_PATH}),
                     message=f"content.plan {run.id} [{key}]",
                     intent=(receipt.result or {}).get("publication") if receipt else None,
                     save_intent=save_intent,
@@ -370,17 +375,32 @@ class ContentPlanActivities:
             )
             if raw and len(raw) <= WATCH_MAX_BYTES:
                 watch_path, watch_text = row["artifact_path"], raw.decode("utf-8", "replace")
+        listed = set(
+            await self.storage.list_canonical_files_at(
+                repo_id=project.state_repo_id, revision=revision
+            )
+        )
+        earlier = site_pages = None
+        if context.get("competitor_research"):
+            # v11: the set an earlier plan checked, and the comparison pages the site has.
+            if agent.COMPETITORS_PATH in listed:
+                earlier = agent.read_competitors(
+                    await self.storage.read_canonical_artifact_if_exists(
+                        repo_id=project.state_repo_id,
+                        commit_sha=revision,
+                        path=agent.COMPETITORS_PATH,
+                    ),
+                    today=datetime.now(UTC).date(),
+                )
+            site_pages = ((context["research"] or {}).get("site_pages") or {}).get("pages") or []
         competitors, cited = agent.merge_competitors(
             host=context["plan"]["host"],
             audit=loaded["audit"],
             keyword_evidence=loaded["keyword"],
             watch=context.get("competitor_watch"),
             watch_report=watch_text,
-        )
-        listed = set(
-            await self.storage.list_canonical_files_at(
-                repo_id=project.state_repo_id, revision=revision
-            )
+            site_pages=site_pages,
+            earlier=earlier,
         )
         named = {
             "Audit report": (sources.get("audit") or {}).get("paths", {}).get("AUDIT.md"),
@@ -413,7 +433,9 @@ class ContentPlanActivities:
         )[:20]
         for path in notes:
             files[f"Founder note {path.removeprefix(POSITIONING_CONTEXT_PREFIX)}"] = path
-        return competitors, cited, files
+        if earlier:
+            files["Earlier competitor research"] = agent.COMPETITORS_PATH
+        return competitors, cited, files, earlier
 
     async def publish_brief(self, run, project, documents):
         key = f"content:{run.id}:brief_publish"
@@ -461,7 +483,7 @@ class ContentPlanActivities:
             return saved
         brief = await self.saved(run.id, "brief")
         if not brief:
-            competitors, cited, files = await self.research_inputs(project, context)
+            competitors, cited, files, earlier = await self.research_inputs(project, context)
             documents = agent.brief_documents(
                 context,
                 pages,
@@ -469,6 +491,7 @@ class ContentPlanActivities:
                 sources=files,
                 run_id=run.id,
                 cited_sites=cited,
+                earlier=earlier,
             )
             brief = await self.save(
                 run.id,
@@ -924,6 +947,17 @@ class ContentPlanActivities:
                         "page_text_limit": contract.POLICY.get("expanded_page_text_bytes", 2200),
                         **(
                             {
+                                "competitor_research": {
+                                    "file": contract.POLICY["competitor_file"],
+                                    "channels": contract.POLICY["competitor_channels"],
+                                    "fresh_days": contract.POLICY["competitor_fresh_days"],
+                                }
+                            }
+                            if contract.POLICY.get("competitor_file")
+                            else {}
+                        ),
+                        **(
+                            {
                                 "page_coverage": {
                                     "reads": contract.POLICY["known_page_reads"],
                                     "text_bytes": contract.POLICY["known_page_text_bytes"],
@@ -1158,6 +1192,22 @@ class ContentPlanActivities:
             }
             if mode == "initial":
                 documents[plan_path(program_id)] = canonical_json(plan)
+            if planner and context.get("competitor_research"):
+                # v11: the set the research settled, for the next plan to start from.
+                portfolio = await self.saved(run.id, "portfolio")
+                competitors = (
+                    agent.competitors_document(
+                        portfolio["data"],
+                        run_id=run_id,
+                        host=context["plan"]["host"],
+                        today=datetime.now(UTC).date(),
+                        portfolio_path=portfolio["path"],
+                    )
+                    if portfolio
+                    else None
+                )
+                if competitors is not None:
+                    documents[agent.COMPETITORS_PATH] = competitors
             if quality and quality.get("site_inventory"):
                 site = context["research"]["site_pages"]
                 documents[legacy.site_pages_path(run_id)] = canonical_json(

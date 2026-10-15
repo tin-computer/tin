@@ -200,6 +200,12 @@ PROCEDURE_CONTRACT_V5 = {
     "max_requests": 256,
     "max_observed_tokens": 8_000_000,
 }
+# A procedure whose research fans out to subagents (content.plan_research's competitor
+# channels) may keep this many model requests in flight at once. Every request still reserves
+# its own maximum before dispatch, so the run's ceiling, request and token stops hold; only the
+# one-request-at-a-time rule is relaxed. The controller enables Codex subagents only under it.
+PARALLEL_PROCEDURE_CONTRACT = {**PROCEDURE_CONTRACT_V5, "parallel_requests": 5}
+PARALLEL_VALIDATORS = frozenset({"content-plan-portfolio.v1"})
 DIAGRAM_VALIDATORS = frozenset(
     {
         "tin-diagram.reviewed.v1",
@@ -215,6 +221,7 @@ MULTI_TOOL_CONTRACTS = (
     DIAGRAM_CONTRACT,
     *SESSION_CONTRACTS,
     PROCEDURE_CONTRACT_V5,
+    PARALLEL_PROCEDURE_CONTRACT,
 )
 
 
@@ -222,10 +229,18 @@ def procedure_contract(validator=None):
     """The contract a new admission without session funding pins.
 
     Diagrams used to need DIAGRAM_CONTRACT's larger image allowance; v5 requests all
-    carry 8 MiB. Already pinned v1-v4 contracts are never upgraded by this function.
+    carry 8 MiB. Already pinned v1-v4 contracts are never upgraded by this function. A
+    procedure that fans out to subagents pins the parallel variant.
     """
-    del validator
+    if validator in PARALLEL_VALIDATORS:
+        return PARALLEL_PROCEDURE_CONTRACT
     return PROCEDURE_CONTRACT_V5
+
+
+def parallel_requests(contract):
+    """How many model requests a run's contract lets it keep in flight at once."""
+    value = (contract or {}).get("parallel_requests", 1)
+    return value if type(value) is int and 1 <= value <= 8 else 1
 
 
 def is_session_contract(value):

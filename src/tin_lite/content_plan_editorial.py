@@ -302,6 +302,35 @@ and a check, so drafting reads them before deciding.
 """
 )
 
+# v11 (content.plan 1.2.0): competitor research the plan can stand on. Two production plans on
+# 10/14 took their competitors from sites that rank for the same searches (directories,
+# publishers) and the domains AI answers cite; one wrote alternatives pages for general
+# automation tools while the product's direct rivals went unnamed. The agent now settles the
+# competitive set in its own phase: four search channels (category roundups, job and stack
+# queries, recent launches, competitors' comparison pages), run by subagents in parallel where
+# the contract allows, with every candidate checked on its own site and labelled. Tin adds the
+# site's own comparison pages and the previous checked set as leads, leaves out an alternatives
+# or comparison page for a competitor labelled drift, and keeps the settled set in
+# research/competitors.json for the next plan.
+V10_POLICY, V10_INSTRUCTIONS, V10_SCHEMA = POLICY, INSTRUCTIONS, MODEL_SCHEMA
+POLICY = {
+    **V10_POLICY,
+    "version": "content-editorial-v11",
+    "competitors": "researched-v1",
+    "competitor_channels": list(agent.CHANNELS),
+    "competitor_file": agent.COMPETITORS_PATH,
+    "competitor_fresh_days": agent.COMPETITORS_FRESH_DAYS,
+}
+INSTRUCTIONS = (
+    V10_INSTRUCTIONS
+    + """The agent settles the competitive set before it plans and labels each competitor direct,
+adjacent, diy or drift. Tin leaves out an alternatives or comparison page for a competitor
+labelled drift, and keeps the labelled set in research/competitors.json, where the next plan
+starts from it.
+"""
+)
+MODEL_SCHEMA = agent.PORTFOLIO_JSON_SCHEMA_V2
+
 
 # A brief that tells the writer how to position the product ("Position Tin narrowly as ...",
 # "frame it as ...", "Positioning: ..."). Search positions ("average position 8") do not match.
@@ -341,6 +370,7 @@ def contract(definition):
         )
 
     current = pinned(POLICY, INSTRUCTIONS, MODEL_SCHEMA, typed=True, agent_planner=True)
+    v10 = pinned(V10_POLICY, V10_INSTRUCTIONS, V10_SCHEMA, typed=True, agent_planner=True)
     v9 = pinned(V9_POLICY, V9_INSTRUCTIONS, V9_SCHEMA, typed=True, agent_planner=True)
     v8 = pinned(V8_POLICY, V8_INSTRUCTIONS, V8_SCHEMA, typed=True)
     v7 = pinned(V7_POLICY, V7_INSTRUCTIONS, V8_SCHEMA, typed=True)
@@ -349,7 +379,7 @@ def contract(definition):
     v4 = pinned(V4_POLICY, V4_INSTRUCTIONS, PORTFOLIO_SCHEMA)
     v5 = pinned(V5_POLICY, V5_INSTRUCTIONS, PORTFOLIO_SCHEMA)
     v6 = pinned(V6_POLICY, V6_INSTRUCTIONS, PORTFOLIO_SCHEMA)
-    for module in (legacy, v2, v3, v4, v5, v6, v7, v8, v9, current):
+    for module in (legacy, v2, v3, v4, v5, v6, v7, v8, v9, v10, current):
         if (
             definition.get("key") == legacy.KEY
             and definition.get("executor") == legacy.KEY

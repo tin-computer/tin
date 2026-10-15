@@ -29,6 +29,7 @@ import math
 import re
 from collections import Counter
 from copy import deepcopy
+from datetime import date
 from urllib.parse import urlsplit
 
 from tin_lite import content_plan as legacy
@@ -180,6 +181,59 @@ PORTFOLIO_JSON_SCHEMA = {
 }
 
 
+# content.plan 1.2.0 (content-editorial-v11): the agent runs a competitor research phase
+# before planning (four channels, every candidate checked on its own site), labels each
+# competitor and records what it searched. Earlier contracts keep PORTFOLIO_JSON_SCHEMA.
+COMPETITOR_LABELS = ("direct", "adjacent", "diy", "drift")
+# Labels that may get an alternatives or comparison page; drift is a tool for another job.
+PAGE_LABELS = frozenset({"direct", "adjacent", "diy"})
+CHANNELS = ("roundups", "job_and_stack", "launches", "comparison_pages")
+MAX_COMPETITORS = 40
+PORTFOLIO_JSON_SCHEMA_V2 = deepcopy(PORTFOLIO_JSON_SCHEMA)
+PORTFOLIO_JSON_SCHEMA_V2["properties"]["competitors"] = {
+    "type": "array",
+    "maxItems": MAX_COMPETITORS,
+    "items": {
+        "type": "object",
+        "properties": {
+            "name": _TEXT,
+            "host": _TEXT,
+            "label": {"enum": list(COMPETITOR_LABELS)},
+            "use": _TEXT,
+            "why": _TEXT,
+            "does": _TEXT,
+            "buyer": _TEXT,
+            "evidence_url": _TEXT,
+            "channels": {"type": "array", "items": {"enum": list(CHANNELS)}},
+        },
+    },
+}
+PORTFOLIO_JSON_SCHEMA_V2["properties"]["competitor_research"] = {
+    "type": "object",
+    "properties": {
+        "started_from": _TEXT,
+        "channels": {
+            "type": "array",
+            "items": {
+                "type": "object",
+                "properties": {
+                    "channel": {"enum": list(CHANNELS)},
+                    "queries": {"type": "array", "items": _TEXT},
+                    "found": {"type": "array", "items": _TEXT},
+                    "notes": _TEXT,
+                },
+            },
+        },
+    },
+}
+# Tin keeps the set the agent settled here, so the next plan starts from it.
+COMPETITORS_PATH = "research/competitors.json"
+COMPETITORS_SCHEMA = "competitors/1"
+COMPETITORS_MAX_BYTES = 200_000
+# A set checked this recently is a starting point: check new leads, search launches again.
+COMPETITORS_FRESH_DAYS = 30
+
+
 def path_template(run_id) -> str:
     return PATH_TEMPLATE.replace("{run_id}", str(run_id))
 
@@ -234,7 +288,75 @@ def watch_competitors(text):
         return []
 
 
-def merge_competitors(*, host, audit=None, keyword_evidence=None, watch=None, watch_report=None):
+# Path segments a comparison page lives under, and the words that join two names in one.
+COMPARISON_SECTIONS = frozenset(
+    "alternative alternatives vs versus compare comparison comparisons".split()
+)
+COMPARISON_JOIN = re.compile(r"-(?:vs|versus)-")
+COMPARISON_SUFFIX = re.compile(r"-alternatives?$")
+NOT_A_NAME = frozenset("best top all index page list more other others".split())
+MAX_SITE_COMPARISONS = 30
+
+
+def site_comparisons(site_pages, host):
+    """The competitors the site already compares itself to, from its own page addresses:
+    /alternatives/<name>, /vs/<name>, /compare/<a>-vs-<b>, /<a>-vs-<b>, /<name>-alternatives.
+    Each comes back once with the first path that names it."""
+    own = _name_key(_host(host).split(".")[0])
+    found: dict[str, dict] = {}
+    for page in site_pages or []:
+        path = str((page or {}).get("path") or "").strip("/").casefold()
+        segments = [segment for segment in path.split("/") if segment]
+        if not segments:
+            continue
+        last = segments[-1]
+        slugs = []
+        if len(segments) > 1 and segments[-2] in COMPARISON_SECTIONS:
+            slugs = COMPARISON_JOIN.split(last)
+        elif COMPARISON_JOIN.search(last):
+            slugs = COMPARISON_JOIN.split(last)
+        elif COMPARISON_SUFFIX.search(last):
+            slugs = [COMPARISON_SUFFIX.sub("", last)]
+        for slug in slugs:
+            slug = COMPARISON_SUFFIX.sub("", slug).strip("-")
+            key = _name_key(slug)
+            if (
+                len(key) < 2
+                or not re.fullmatch(r"[a-z0-9-]{2,60}", slug)
+                or key == own
+                or slug in NOT_A_NAME
+                or key in found
+            ):
+                continue
+            name = " ".join(word.capitalize() for word in slug.split("-"))
+            found[key] = {"name": name, "path": "/" + path}
+        if len(found) >= MAX_SITE_COMPARISONS:
+            break
+    return list(found.values())
+
+
+# How much a lead's source says it is a real competitor: the site's own comparison pages and an
+# earlier checked set come first; sites that only rank for the same searches come last.
+SOURCE_WEIGHTS = {
+    "site_comparison_page": 3,
+    "earlier_research": 3,
+    "competitor_watch": 2,
+    "audit_buyer_panel": 2,
+    "audit_cited_in_ai_answers": 1,
+    "keyword_search_competitor": 0.5,
+}
+
+
+def merge_competitors(
+    *,
+    host,
+    audit=None,
+    keyword_evidence=None,
+    watch=None,
+    watch_report=None,
+    site_pages=None,
+    earlier=None,
+):
     """The competitors earlier steps found, with where each came from, and the other sites AI
     answers cite.
 
@@ -244,6 +366,11 @@ def merge_competitors(*, host, audit=None, keyword_evidence=None, watch=None, wa
     gains that source. One two sources agree on is `corroborated`. Channels and marketplaces
     are never competitors. The cited sites that are not competitors (documentation, publishers,
     directories) come back separately: they show where answers come from.
+
+    From content-editorial-v11 two more sources lead: the comparison pages the site already has
+    (`site_pages`, its page list) and the set an earlier plan checked (`earlier`, the parsed
+    research/competitors.json), whose label travels with each row. Leads are then ranked by
+    how much their sources say, not only by how many there are.
     """
     own = _host(host)
     rows: list[dict] = []
@@ -280,6 +407,18 @@ def merge_competitors(*, host, audit=None, keyword_evidence=None, watch=None, wa
         if detail is not None:
             row.setdefault("detail", {})[source] = detail
 
+    for row in (earlier or {}).get("competitors") or []:
+        if isinstance(row, dict) and isinstance(row.get("name"), str) and row["name"].strip():
+            add(
+                name=" ".join(row["name"].split())[:120],
+                domain=row.get("host") if isinstance(row.get("host"), str) else None,
+                source="earlier_research",
+                detail={
+                    k: row[k] for k in ("label", "use") if isinstance(row.get(k), str) and row[k]
+                },
+            )
+    for found in site_comparisons(site_pages, host) if site_pages else []:
+        add(name=found["name"], source="site_comparison_page", detail={"path": found["path"]})
     ai = (audit or {}).get("ai_visibility") or {}
     panel = ai.get("panel") or {}
     for name in panel.get("competitor_names") or []:
@@ -311,10 +450,19 @@ def merge_competitors(*, host, audit=None, keyword_evidence=None, watch=None, wa
                 match["sources"].append("audit_cited_in_ai_answers")
             continue
         cited[domain] = cited.get(domain, 0) + (row.get("answers") or 0)
+
+    def weight(row):
+        score = sum(SOURCE_WEIGHTS.get(source, 1) for source in row["sources"])
+        if (row.get("detail") or {}).get("earlier_research", {}).get("label") == "drift":
+            score -= SOURCE_WEIGHTS["earlier_research"]
+        return score
+
     ranked = sorted(
         rows,
         key=lambda row: (-len(row["sources"]), "audit_buyer_panel" not in row["sources"]),
     )
+    if earlier is not None or site_pages is not None:
+        ranked = sorted(rows, key=lambda row: -weight(row))
     competitors = [
         {
             "name": row["name"],
@@ -332,6 +480,120 @@ def merge_competitors(*, host, audit=None, keyword_evidence=None, watch=None, wa
     return competitors, cited_sites
 
 
+# --- the competitor set Tin keeps -------------------------------------------------------
+
+
+def _https(value):
+    text = _text(value, 500)
+    try:
+        parsed = urlsplit(text)
+    except ValueError:
+        return ""
+    return text if parsed.scheme == "https" and parsed.hostname else ""
+
+
+def competitor_rows(portfolio):
+    """The competitors the agent settled, cleaned to what Tin keeps; rows without a name or a
+    known label are left out."""
+    rows, seen = [], set()
+    for raw in portfolio.get("competitors") or []:
+        if not isinstance(raw, dict):
+            continue
+        name, label = _text(raw.get("name"), 120), raw.get("label")
+        key = _name_key(name)
+        if not name or label not in COMPETITOR_LABELS or key in seen:
+            continue
+        seen.add(key)
+        channels = raw.get("channels") if isinstance(raw.get("channels"), list) else []
+        row = {
+            "name": name,
+            "host": _host(raw.get("host")),
+            "label": label,
+            "use": _text(raw.get("use"), 40),
+            "why": _text(raw.get("why"), 500),
+            "does": _text(raw.get("does"), 300),
+            "buyer": _text(raw.get("buyer"), 200),
+            "evidence_url": _https(raw.get("evidence_url")),
+            "channels": [c for c in CHANNELS if c in channels],
+        }
+        rows.append({k: v for k, v in row.items() if v})
+        if len(rows) >= MAX_COMPETITORS:
+            break
+    return rows
+
+
+def research_channels(portfolio):
+    """What the agent searched in each channel: query and find counts, a few names each."""
+    research = portfolio.get("competitor_research")
+    out = []
+    for raw in (research.get("channels") if isinstance(research, dict) else None) or []:
+        if not isinstance(raw, dict) or raw.get("channel") not in CHANNELS:
+            continue
+        queries = _texts(raw.get("queries"), 200, 40)
+        found = _texts(raw.get("found"), 120, 60)
+        out.append(
+            {
+                "channel": raw["channel"],
+                "queries": len(queries),
+                "found": found[:30],
+                **({"notes": _text(raw.get("notes"), 500)} if raw.get("notes") else {}),
+            }
+        )
+    return out
+
+
+def competitors_document(portfolio, *, run_id, host, today, portfolio_path):
+    """research/competitors.json for the next plan, or None when the agent labelled nothing
+    (an earlier set then stays as it was)."""
+    rows = competitor_rows(portfolio)
+    if not rows:
+        return None
+    document = {
+        "schema": COMPETITORS_SCHEMA,
+        "host": _host(host),
+        "updated_at": str(today),
+        "plan_run_id": str(run_id),
+        "portfolio": portfolio_path,
+        "note": "The competitive set the content plan's research settled: each competitor's "
+        "label (direct, adjacent, diy, or drift for a tool that does another job), what its "
+        "own site says and where it was found. The next plan starts from this file; change a "
+        "label or use here and it keeps your change unless the competitor's site shows "
+        "otherwise.",
+        "competitors": rows,
+        "channels": research_channels(portfolio),
+    }
+    encoded = canonical_json(document)
+    while len(encoded) > COMPETITORS_MAX_BYTES and document["competitors"]:
+        document["competitors"].pop()
+        encoded = canonical_json(document)
+    return encoded
+
+
+def read_competitors(raw, *, today):
+    """The earlier set from research/competitors.json for the brief, or None when the file is
+    missing or unreadable. `age_days` counts from its `updated_at`."""
+    try:
+        value = json.loads(raw) if raw else None
+    except ValueError:
+        return None
+    if not isinstance(value, dict) or value.get("schema") != COMPETITORS_SCHEMA:
+        return None
+    rows = competitor_rows({"competitors": value.get("competitors")})
+    if not rows:
+        return None
+    age = None
+    try:
+        age = (today - date.fromisoformat(str(value.get("updated_at")))).days
+    except (TypeError, ValueError):
+        pass
+    return {
+        "path": COMPETITORS_PATH,
+        "updated_at": str(value.get("updated_at") or ""),
+        "age_days": age if isinstance(age, int) and age >= 0 else None,
+        "competitors": rows,
+    }
+
+
 # --- the brief the agent reads ----------------------------------------------------------
 
 
@@ -340,7 +602,7 @@ def slots(context) -> int:
 
 
 def brief_documents(
-    context, pages, *, competitors, sources, run_id, cited_sites=()
+    context, pages, *, competitors, sources, run_id, cited_sites=(), earlier=None
 ) -> dict[str, bytes]:
     """The files Tin publishes for the planning agent, keyed by project path.
 
@@ -385,6 +647,16 @@ def brief_documents(
         "program": program,
         "existing_items": existing,
         "competitors": competitors,
+        **(
+            {"competitor_research": context["competitor_research"]}
+            if context.get("competitor_research")
+            else {}
+        ),
+        **(
+            {"earlier_competitor_research": earlier}
+            if context.get("competitor_research") and earlier
+            else {}
+        ),
         "ai_cited_sites": list(cited_sites),
         "sources": sources,
         "formats": FORMATS,
@@ -435,8 +707,10 @@ def brief_documents(
         folder["research.json"]: canonical_json(research_view),
         folder["pages.json"]: canonical_json(pages_view),
     }
-    documents[folder["BRIEF.md"]] = render_brief(
-        program, competitors, sources, folder, cited_sites
+    documents[folder["BRIEF.md"]] = (
+        render_research_brief(program, competitors, sources, folder, cited_sites, earlier)
+        if context.get("competitor_research")
+        else render_brief(program, competitors, sources, folder, cited_sites)
     ).encode()
     for name, limit in BRIEF_FILES.items():
         if len(documents[folder[name]]) > limit:
@@ -457,7 +731,33 @@ PAGE_VIEW_FIELDS = (
 )
 
 
-def render_brief(program, competitors, sources, folder, cited_sites=()):
+SOURCE_LABELS = {
+    "site_comparison_page": "the site already has a comparison page for it",
+    "earlier_research": "in the earlier competitor research",
+    "competitor_watch": "watched by competitor.watch",
+    "audit_buyer_panel": "named in the audit's buyer panel",
+    "audit_cited_in_ai_answers": "cited in the audit's AI answers",
+    "keyword_search_competitor": "ranks for the same searches (often a publisher, directory "
+    "or a tool for another job)",
+}
+
+
+def _lead_line(row):
+    detail = row.get("detail") or {}
+    parts = []
+    for source in row["sources"]:
+        text = SOURCE_LABELS.get(source, source)
+        if source == "site_comparison_page" and detail.get(source, {}).get("path"):
+            text += f" ({detail[source]['path']})"
+        if source == "earlier_research" and detail.get(source, {}).get("label"):
+            text += f", labelled {detail[source]['label']}"
+        parts.append(text)
+    return (
+        f"- {row['name']}" + (f" ({row['host']})" if row["host"] else "") + ": " + "; ".join(parts)
+    )
+
+
+def _brief_head(program, sources, folder):
     lines = [
         f"# Content program brief: {program['host']}",
         "",
@@ -477,6 +777,19 @@ def render_brief(program, competitors, sources, folder, cited_sites=()):
     for label, path in sources.items():
         if path:
             lines.append(f"- {label}: `{path}`")
+    return lines
+
+
+def _cited_lines(cited_sites, heading):
+    if not cited_sites:
+        return []
+    return ["", heading, ""] + [
+        f"- {row['domain']} ({row['answers']} answers)" for row in cited_sites
+    ]
+
+
+def render_brief(program, competitors, sources, folder, cited_sites=()):
+    lines = _brief_head(program, sources, folder)
     lines += ["", "## Competitors earlier steps found", ""]
     if not competitors:
         lines.append(
@@ -490,9 +803,47 @@ def render_brief(program, competitors, sources, folder, cited_sites=()):
             + f": {', '.join(row['sources'])}"
             + (" · corroborated" if row["corroborated"] else "")
         )
-    if cited_sites:
-        lines += ["", "## Other sites AI answers cite for the buyer questions", ""]
-        lines += [f"- {row['domain']} ({row['answers']} answers)" for row in cited_sites]
+    lines += _cited_lines(cited_sites, "## Other sites AI answers cite for the buyer questions")
+    return "\n".join(lines) + "\n"
+
+
+def render_research_brief(program, competitors, sources, folder, cited_sites=(), earlier=None):
+    """content-editorial-v11's brief: the merged list is leads for the competitor research
+    phase, each with what its sources say, and the earlier checked set when there is one."""
+    lines = _brief_head(program, sources, folder)
+    lines += [
+        "",
+        "## Competitor research",
+        "",
+        "Settle the competitive set before planning, with the research channels in "
+        "`$content-portfolio` section 2. The leads below are where to start, not a checked "
+        "list: sites that rank for the same searches or that AI answers cite are usually "
+        "publishers, directories or tools for another job.",
+    ]
+    if earlier:
+        age = earlier.get("age_days")
+        fresh = isinstance(age, int) and age <= COMPETITORS_FRESH_DAYS
+        lines += [
+            "",
+            f"Earlier research: `{earlier['path']}`, checked {earlier.get('updated_at')}"
+            + (f" ({age} days ago)" if isinstance(age, int) else "")
+            + f", {len(earlier.get('competitors') or [])} competitors with labels. "
+            + (
+                "It is recent: start from it, check the new leads and run the launches channel "
+                "for anything new; run every channel again only if the product or its buyer "
+                "changed."
+                if fresh
+                else f"It is older than {COMPETITORS_FRESH_DAYS} days: run every channel again "
+                "and update it."
+            ),
+        ]
+    lines += ["", "### Leads", ""]
+    if not competitors:
+        lines.append("None. Find them with the research channels.")
+    lines += [_lead_line(row) for row in competitors]
+    lines += _cited_lines(
+        cited_sites, "### Other sites AI answers cite (where answers come from, not competitors)"
+    )
     return "\n".join(lines) + "\n"
 
 
@@ -624,6 +975,18 @@ def normalize(context, pages, portfolio, *, file_sizes=None):
     def leave(raw, reason):
         left_out.append({"title": _text(raw.get("title"), 180) or "(untitled)", "reason": reason})
 
+    # v11: an alternatives or comparison page is for a competitor the research checked; one it
+    # labelled drift does another job, so a page "vs" it answers a search nobody makes.
+    drift = (
+        {
+            _name_key(row["name"]): row["name"]
+            for row in competitor_rows(portfolio)
+            if row["label"] not in PAGE_LABELS
+        }
+        if context.get("competitor_research")
+        else {}
+    )
+
     for index, raw in enumerate(portfolio.get("opportunities") or [], 1):
         if not isinstance(raw, dict):
             continue
@@ -648,6 +1011,14 @@ def normalize(context, pages, portfolio, *, file_sizes=None):
                 "Planned as an update: the brief changes a table, section or FAQ, which a "
                 "refresh cannot."
             )
+        rival = _name_key(raw.get("competitor"))
+        if fmt in {"alternative", "comparison"} and rival and rival in drift:
+            leave(
+                raw,
+                f"{drift[rival]} is labelled drift in the competitor research: it does another "
+                "job, so it gets no alternatives or comparison page",
+            )
+            continue
         destination = ""
         if action == "update_page":
             destination = _destination(raw.get("destination"), host)
@@ -985,15 +1356,24 @@ def coverage(context, kept, left_out, backlog, portfolio, plan):
             for entry in kept
             if entry["item"]["id"] in {i["id"] for i in items}
         ],
-        "competitors": [
-            {
-                k: c.get(k)
-                for k in ("name", "host", "use", "why")
-                if isinstance(c, dict) and c.get(k)
-            }
-            for c in (portfolio.get("competitors") or [])[:30]
-            if isinstance(c, dict)
-        ],
+        "competitors": (
+            competitor_rows(portfolio)
+            if context.get("competitor_research")
+            else [
+                {
+                    k: c.get(k)
+                    for k in ("name", "host", "use", "why")
+                    if isinstance(c, dict) and c.get(k)
+                }
+                for c in (portfolio.get("competitors") or [])[:30]
+                if isinstance(c, dict)
+            ]
+        ),
+        **(
+            {"competitor_channels": research_channels(portfolio)}
+            if context.get("competitor_research")
+            else {}
+        ),
         "families": [
             {k: f.get(k) for k in ("id", "name", "why", "members") if f.get(k)}
             for f in (portfolio.get("families") or [])[:10]

@@ -221,3 +221,58 @@ new page the address it will have:
 The founder approves the addresses with the plan. content.generate pins each one in its
 selection and shows it on the draft's review, and website.change publishes the page there (see
 [repository-aware delivery](repository-aware-content-delivery.md#where-adapted-pages-live)).
+
+## Competitor research the plan can stand on (content-editorial-v11)
+
+`content.plan` 1.3.0 pins `content-editorial-v11`, and its planning agent is
+`content.plan_research` 1.3.0. Two production plans on 2026-10-14 took their competitors from
+the merged list alone. For one project the list held three directories and publishers that rank
+for the same searches. The audit adds no competitors because its research reads only the
+target's own site, and the keyword plan's overlap domains were the site's search neighbours
+(airdroid and digitaltrends for an iMessage API). The agent seeded its searches from the domains
+AI answers cite, and the plan wrote alternatives pages for general automation tools while the
+product's direct rivals went unnamed. An offline comparison of six discovery methods on two
+products found that no single method finds most rivals. Category roundups work for a crisp
+category, job-and-stack queries and recent launches (Hacker News, GitHub) find new and
+framework-native rivals, and a competitor's own comparison page lists the field only when that
+competitor is checked first. Seeding from a cited domain or a search neighbour pulls in another
+category.
+
+- **A competitor research phase.** The skill's `COMPETITORS.md` frames the search from the
+  project's files (buyer, job, two or three category phrases, the stack), searches four channels
+  (`roundups`, `job_and_stack`, `launches`, `comparison_pages`), and opens every candidate's own
+  site to label it `direct`, `adjacent`, `diy` or `drift`. The portfolio records each competitor's
+  label, what its site says it does, the page opened (`evidence_url`) and the channels that found
+  it. `competitor_research` records the queries per channel. The procedure's check script asks
+  for labels and evidence and notes a channel with no queries.
+- **The channels run as subagents.** `content.plan_research` pins
+  `codex_api.PARALLEL_PROCEDURE_CONTRACT`: v5 with `parallel_requests: 5`. Under it the relay
+  admits up to five unsettled requests instead of one, and the controller enables Codex
+  multi-agent (`agents.max_concurrent_threads_per_session=4`, `agents.max_depth=1`). Only the
+  lead thread's messages and turn end count as the procedure's result. Every request still
+  reserves its own $1.93 maximum before dispatch. If a reservation is refused while other
+  requests hold the room, only that request is refused (`parallel_reservation`), not recorded as
+  the run's cause and not a spending stop; with nothing in flight the ceiling stops the run as
+  before. The planning agent's ceiling is $12 (five reservations are $9.65), and so is the
+  standalone plan's. An image without the controller change ignores the field, and the agent
+  runs the channels itself.
+- **Leads, not a list.** Tin adds two sources to the merged leads: the comparison pages the site
+  already has (`/alternatives/<name>`, `/vs/<name>`, `/compare/<a>-vs-<b>`, `/<a>-vs-<b>`,
+  `/<name>-alternatives`, from the site's page list) and the set an earlier plan checked. Leads
+  rank by what their sources say: the site's comparison pages and the checked set first, search
+  neighbours last, and a rival checked as drift is ranked down. The brief presents them as
+  leads to check, in plain words ("ranks for the same searches (often a publisher, directory or a
+  tool for another job)"), and lists the sites AI answers cite as where answers come from, not
+  competitors.
+- **The checked set is kept.** Tin writes the labelled set to `research/competitors.json` with
+  the plan's files (a replaceable file: the newest plan wins). It is not written when the agent
+  labelled nothing. The next plan's brief starts from it: within 30 days the agent checks new
+  leads and searches launches again; older, it runs every channel.
+- **No page against a tool for another job.** `normalize` leaves out an alternatives or
+  comparison item whose competitor is labelled drift, with the reason. A roundup may still
+  include it. The plan's target table skips drift competitors.
+
+Plans pinned to v9 or v10 keep their briefs, schema and normalization. The contract and ceiling
+follow the planning agent's output validator, so a new admission of a pinned plan's agent also
+gets the parallel contract and the $12 ceiling. Its older prompt never starts subagents, and a
+ceiling is a runaway guard, not what a run buys.
