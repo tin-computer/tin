@@ -1,5 +1,6 @@
 """The ordinary-procedure extension must not upgrade historical pilot contracts."""
 
+import asyncio
 import json
 from decimal import Decimal
 from types import SimpleNamespace
@@ -978,3 +979,44 @@ def test_subagent_tokens_count_toward_the_controllers_stop():
     assert not usage.observe_subagent(update("sub-1", 200))  # Totals only grow.
     assert usage.observe_subagent(update("sub-2", 350, turn="other")) and usage.limit_reached
     assert usage.record()["subagent_tokens"] == 650
+
+
+async def test_a_stream_its_client_left_is_read_on_and_settled(publication_db):
+    """Codex drops a lead's in-flight stream when a subagent reports back. The relay reads
+    the rest and settles the request with its verified usage instead of holding it."""
+    from starlette.datastructures import Headers
+    from test_codex_api import HEADERS
+
+    from tin_lite.codex_api import PARALLEL_PROCEDURE_CONTRACT
+
+    created = (
+        b"data: "
+        + json.dumps({"type": "response.created", "response": {"id": "resp_test"}}).encode()
+        + b"\n\n"
+    )
+
+    async def upstream(request):
+        return httpx.Response(200, content=created + created + result_event())
+
+    run, relay, client, sent = await setup_relay(publication_db, upstream)
+    try:
+        await upgrade_attempt(publication_db, run, PARALLEL_PROCEDURE_CONTRACT)
+        response = await relay.relay(
+            run.id,
+            "synthetic-run-bound-grant-only-for-tests",
+            json.dumps(BODY).encode(),
+            "responses",
+            Headers(HEADERS),
+        )
+        body = response.body_iterator
+        assert (await body.__anext__()).startswith(b"data: ")
+        await body.aclose()  # The client left before the terminal event.
+        await asyncio.gather(*relay._drains)
+        [row] = await publication_db.pool.fetch(
+            "SELECT status, result FROM effect_receipts WHERE operation=$1", USAGE
+        )
+        assert row["status"] == "completed"
+        assert json.loads(row["result"])["usage"]["total_tokens"] == 110
+    finally:
+        await client.aclose()
+        await relay.close()

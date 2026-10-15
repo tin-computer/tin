@@ -64,6 +64,26 @@ class RelayRejected(HTTPException):
 CONTRACT_REJECTION = "This API request exceeds its reserved execution contract"
 # Refusals of one parallel request while others hold the run's room; never a run's cause.
 PARALLEL_REJECTIONS = frozenset({"parallel_limit", "parallel_reservation"})
+# How long the relay keeps reading a stream its client left, to settle its usage.
+DRAIN_SECONDS = 300
+TERMINAL_EVENTS = frozenset({"response.completed", "response.incomplete", "response.failed"})
+
+
+def terminal_response(event):
+    """The response in a terminal stream event, or None for any other event."""
+    data = b"\n".join(line[5:].lstrip() for line in event.splitlines() if line.startswith(b"data:"))
+    if not data or data == b"[DONE]":
+        return None
+    try:
+        message = json.loads(data)
+    except ValueError:
+        return None
+    if not isinstance(message, dict) or message.get("type") not in TERMINAL_EVENTS:
+        return None
+    response = message.get("response")
+    return response if isinstance(response, dict) else None
+
+
 # How long a parallel request waits for a slot before it is refused: a subagent's response with
 # several searches can stream for minutes. Admission and the upstream connect must finish
 # inside relay_codex_api's 200-second bound; streaming follows.
@@ -267,9 +287,37 @@ class CodexAPIRelay:
         self.client = client or httpx.AsyncClient(
             timeout=httpx.Timeout(180, connect=15), follow_redirects=False, trust_env=False
         )
+        # Streams whose client left before the terminal event, read on to settle them.
+        self._drains: set[asyncio.Task] = set()
 
     async def close(self):
+        for task in list(self._drains):
+            task.cancel()
+        await asyncio.gather(*self._drains, return_exceptions=True)
         await self.client.aclose()
+
+    async def drain(self, upstream, buffer, settle):
+        """Read a stream its client left (Codex preempts a request when a subagent reports
+        back) to its terminal event and settle it with the verified usage, instead of
+        holding its reservation as unconfirmed. The response is already being generated;
+        reading it buys nothing more. Anything short of a terminal event leaves it unconfirmed,
+        as before."""
+        try:
+            async with asyncio.timeout(DRAIN_SECONDS):
+                async for chunk in upstream.aiter_bytes():
+                    buffer += chunk
+                    if len(buffer) > MAX_EVENT_BYTES:
+                        return
+                    while boundary := re.search(rb"\r?\n\r?\n", buffer):
+                        event, buffer = buffer[: boundary.start()], buffer[boundary.end() :]
+                        response = terminal_response(event)
+                        if response is not None:
+                            await settle(response)
+                            return
+        except Exception:  # noqa: BLE001 — the receipt stays unconfirmed, as before
+            logger.warning("Codex API stream left by its client was not settled")
+        finally:
+            await upstream.aclose()
 
     async def note_rejection(self, run_id, grant, **facts):
         """Persist the rejection's cause on the attempt; never mask the rejection itself."""
@@ -640,9 +688,15 @@ class CodexAPIRelay:
             finally:
                 await upstream.aclose()
 
+        async def settle(response):
+            await self.observe(
+                key, record, response, request_id=upstream.headers.get("x-request-id")
+            )
+
         async def stream():
             buffer = b""
             observed = False
+            handed_off = False
             evidence = WebEvidence() if contract in MULTI_TOOL_CONTRACTS else None
             inserted = 0
             sequence = 0
@@ -714,8 +768,17 @@ class CodexAPIRelay:
                     b'data: {"type":"error",'
                     b'"message":"Codex API stream outcome is unconfirmed"}\n\n'
                 )
+            except (GeneratorExit, asyncio.CancelledError):
+                # The client left before the terminal event: settle it in the background.
+                if not observed:
+                    handed_off = True
+                    task = asyncio.create_task(self.drain(upstream, buffer, settle))
+                    self._drains.add(task)
+                    task.add_done_callback(self._drains.discard)
+                raise
             finally:
-                await upstream.aclose()
+                if not handed_off:
+                    await upstream.aclose()
 
         return StreamingResponse(
             stream(),

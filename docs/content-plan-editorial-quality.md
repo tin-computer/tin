@@ -244,6 +244,10 @@ category.
   budget). With less, the subagents would starve each other for credits, so the agent gets
   the one-request contract and runs the channels itself. On staging a $4 wallet held two
   reservations, and long multi-search responses kept the rest waiting past the old 120 seconds.
+  Codex drops the lead's in-flight stream when a subagent reports back. The relay then reads
+  that stream on in the background to its terminal event and settles it with its verified usage
+  (`CodexAPIRelay.drain`, at most 300 seconds), instead of leaving a $1.93 reservation
+  unconfirmed for 24 hours. Two funded staging runs each left three or four such requests.
 - **Leads, not a list.** Tin adds two sources to the merged leads: the comparison pages the site
   already has (`/alternatives/<name>`, `/vs/<name>`, `/compare/<a>-vs-<b>`, `/<a>-vs-<b>`,
   `/<name>-alternatives`, from the site's page list) and the set an earlier plan checked. Leads
