@@ -982,8 +982,8 @@ def test_subagent_tokens_count_toward_the_controllers_stop():
 
 
 async def test_a_stream_its_client_left_is_read_on_and_settled(publication_db):
-    """Codex drops a lead's in-flight stream when a subagent reports back. The relay reads
-    the rest and settles the request with its verified usage instead of holding it."""
+    """Codex drops a lead's in-flight stream when a subagent reports back, while the relay
+    waits on the provider. The reader settles the request with its verified usage."""
     from starlette.datastructures import Headers
     from test_codex_api import HEADERS
 
@@ -994,9 +994,15 @@ async def test_a_stream_its_client_left_is_read_on_and_settled(publication_db):
         + json.dumps({"type": "response.created", "response": {"id": "resp_test"}}).encode()
         + b"\n\n"
     )
+    gate = asyncio.Event()
+
+    async def body():
+        yield created
+        await gate.wait()  # The provider is still generating when the client leaves.
+        yield result_event()
 
     async def upstream(request):
-        return httpx.Response(200, content=created + created + result_event())
+        return httpx.Response(200, content=body())
 
     run, relay, client, sent = await setup_relay(publication_db, upstream)
     try:
@@ -1008,10 +1014,14 @@ async def test_a_stream_its_client_left_is_read_on_and_settled(publication_db):
             "responses",
             Headers(HEADERS),
         )
-        body = response.body_iterator
-        assert (await body.__anext__()).startswith(b"data: ")
-        await body.aclose()  # The client left before the terminal event.
-        await asyncio.gather(*relay._drains)
+        forwarding = response.body_iterator
+        assert (await forwarding.__anext__()).startswith(b"data: ")
+        waiting = asyncio.ensure_future(forwarding.__anext__())
+        await asyncio.sleep(0.05)
+        waiting.cancel()  # Starlette cancels the response when the client goes away.
+        await asyncio.gather(waiting, return_exceptions=True)
+        gate.set()
+        await asyncio.gather(*relay._readers)
         [row] = await publication_db.pool.fetch(
             "SELECT status, result FROM effect_receipts WHERE operation=$1", USAGE
         )
