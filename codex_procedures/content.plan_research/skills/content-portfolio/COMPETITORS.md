@@ -48,11 +48,19 @@ no coverage, and generic names collide with unrelated things.
 
 ### With subagents
 
-If your tools include `spawn_agent`, start one subagent per channel, all four at once, then
-`wait_agent` for them. A subagent cannot read the project, so give each one a self-contained
-brief: the frame from step 1, its channel's method from above, the budget, and the reply
-format below. Read the project files while they search. If spawning fails, a subagent errors or
-returns nothing, run that channel yourself. Never wait on a subagent that is not running.
+When `spawn_agent` is among your tools, the channels run as subagents. This is not optional:
+one agent searching four channels in turn runs out of patience after a few queries each.
+
+1. Right after you have framed the search (step 1), start four subagents, one per channel, in a
+   single step. Call `spawn_agent` directly, never from inside `exec`: collaboration tools are
+   not in the `exec` namespace.
+2. A subagent cannot read the project, so give each one a self-contained brief: the frame from
+   step 1, its channel's method from above, the budget (about 10 searches and 6 opened pages),
+   the leads, and the reply format below.
+3. While they search, read the rest of the project files and draft page families.
+4. Then call `wait_agent` for all four and merge their candidates. If spawning fails, or a
+   subagent errors or returns nothing, run that channel yourself. Never wait on a subagent that
+   is not running.
 
 Reply format for a subagent:
 

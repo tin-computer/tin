@@ -76,7 +76,11 @@ def test_site_comparison_pages_name_the_rivals_the_site_already_answers():
         {"path": "/compare/claw-messenger-vs-sendblue"},
         {"path": "/blog/loopmessage-alternatives"},
         {"path": "/vs/bluebubbles/"},
-        {"path": "/sendblue-vs-linq"},
+        {"path": "/blog/airmessage-vs-claw-messenger"},
+        {"path": "/compare/sendblue-vs-linq"},
+        # Not rivals: two of the site's own plans, a topic page, a section index.
+        {"path": "/blog/pro-vs-agency"},
+        {"path": "/compare/imessage-api"},
         {"path": "/alternatives/best"},
         {"path": "/alternatives"},
         {"path": "/pricing"},
@@ -88,7 +92,8 @@ def test_site_comparison_pages_name_the_rivals_the_site_already_answers():
         ("Sendblue", "/compare/claw-messenger-vs-sendblue"),
         ("Loopmessage", "/blog/loopmessage-alternatives"),
         ("Bluebubbles", "/vs/bluebubbles"),
-        ("Linq", "/sendblue-vs-linq"),
+        ("Airmessage", "/blog/airmessage-vs-claw-messenger"),
+        ("Linq", "/compare/sendblue-vs-linq"),
     ]
 
 
@@ -102,7 +107,7 @@ def test_leads_rank_the_sites_own_comparisons_and_checked_rivals_above_search_ne
     competitors, _ = agent.merge_competitors(
         host="clawmessenger.com",
         keyword_evidence={"competitors": ["digitaltrends.com", "airdroid.com", "zapier.com"]},
-        site_pages=[{"path": "/compare/sendblue"}],
+        site_pages=[{"path": "/compare/claw-messenger-vs-sendblue"}],
         earlier=earlier,
     )
     names = [row["name"] for row in competitors]
@@ -110,7 +115,9 @@ def test_leads_rank_the_sites_own_comparisons_and_checked_rivals_above_search_ne
     # A rival the earlier research labelled drift ranks with the search neighbours.
     assert names.index("Zapier") > names.index("Sendblue")
     rows = {row["name"]: row for row in competitors}
-    assert rows["Sendblue"]["detail"]["site_comparison_page"] == {"path": "/compare/sendblue"}
+    assert rows["Sendblue"]["detail"]["site_comparison_page"] == {
+        "path": "/compare/claw-messenger-vs-sendblue"
+    }
     assert rows["Zapier"]["detail"]["earlier_research"]["label"] == "drift"
     # Without the v11 inputs the ranking is v9's, by how many sources agree.
     plain, _ = agent.merge_competitors(

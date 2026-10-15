@@ -298,10 +298,17 @@ NOT_A_NAME = frozenset("best top all index page list more other others".split())
 MAX_SITE_COMPARISONS = 30
 
 
+# Sections whose single-slug pages each name one rival: /alternatives/<name>, /vs/<name>.
+NAMED_SECTIONS = frozenset("alternative alternatives vs versus".split())
+
+
 def site_comparisons(site_pages, host):
     """The competitors the site already compares itself to, from its own page addresses:
-    /alternatives/<name>, /vs/<name>, /compare/<a>-vs-<b>, /<a>-vs-<b>, /<name>-alternatives.
-    Each comes back once with the first path that names it."""
+    /alternatives/<name>, /vs/<name>, /compare/<a>-vs-<b>, /<name>-vs-<site>, and
+    /<name>-alternatives. Outside a comparison section a "vs" page counts only when the site
+    is one side, so /blog/pro-vs-agency (two of its own plans) names nobody; a /compare/<slug>
+    without "vs" is usually a topic page and is skipped. Each name comes back once, with the
+    first path that names it."""
     own = _name_key(_host(host).split(".")[0])
     found: dict[str, dict] = {}
     for page in site_pages or []:
@@ -310,13 +317,17 @@ def site_comparisons(site_pages, host):
         if not segments:
             continue
         last = segments[-1]
-        slugs = []
-        if len(segments) > 1 and segments[-2] in COMPARISON_SECTIONS:
-            slugs = COMPARISON_JOIN.split(last)
-        elif COMPARISON_JOIN.search(last):
-            slugs = COMPARISON_JOIN.split(last)
+        section = segments[-2] if len(segments) > 1 else ""
+        pair = COMPARISON_JOIN.split(last) if COMPARISON_JOIN.search(last) else []
+        if pair:
+            sides = {_name_key(COMPARISON_SUFFIX.sub("", side)) for side in pair}
+            slugs = pair if own in sides or section in COMPARISON_SECTIONS else []
+        elif section in NAMED_SECTIONS:
+            slugs = [last]
         elif COMPARISON_SUFFIX.search(last):
             slugs = [COMPARISON_SUFFIX.sub("", last)]
+        else:
+            slugs = []
         for slug in slugs:
             slug = COMPARISON_SUFFIX.sub("", slug).strip("-")
             key = _name_key(slug)

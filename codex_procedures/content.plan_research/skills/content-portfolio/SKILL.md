@@ -49,8 +49,9 @@ Do this before you plan, following `COMPETITORS.md` in this skill's folder. In s
   category phrases (one narrow, one broad) and the stack the product plugs into.
 - Search four channels: category roundups, the job with the stack attached (and the stack's own
   ecosystems), recent launches (Hacker News, GitHub, Product Hunt), and the comparison pages of
-  competitors you have confirmed are direct. If your tools include `spawn_agent`, run the four
-  channels as subagents in parallel and read the project while they search.
+  competitors you have confirmed are direct. If your tools include `spawn_agent`, you must run
+  the four channels as subagents in parallel (direct `spawn_agent` calls, not from `exec`) and
+  read the project while they search.
 - The brief's leads are where you start, not a checked list. `context.json` → `competitors`
   merges the site's own comparison pages, the earlier research, competitor.watch, the audit's
   buyer panel and the keyword plan's search competitors, with the sources for each. Sites that
