@@ -181,7 +181,7 @@ PORTFOLIO_JSON_SCHEMA = {
 }
 
 
-# content.plan 1.2.0 (content-editorial-v11): the agent runs a competitor research phase
+# content.plan 1.3.0 (content-editorial-v11): the agent runs a competitor research phase
 # before planning (four channels, every candidate checked on its own site), labels each
 # competitor and records what it searched. Earlier contracts keep PORTFOLIO_JSON_SCHEMA.
 COMPETITOR_LABELS = ("direct", "adjacent", "diy", "drift")

@@ -1,4 +1,4 @@
-"""content.plan 1.2.0 (content-editorial-v11): competitor research the plan can stand on.
+"""content.plan 1.3.0 (content-editorial-v11): competitor research the plan can stand on.
 
 Offline: the planning agent's portfolio is a fixture, including a plausible but unusable
 competitor set (no labels, a drift rival given a comparison page, an evidence link that is not

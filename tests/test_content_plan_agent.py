@@ -97,7 +97,7 @@ def document(value):
 
 def test_the_catalog_pins_the_agent_contract_and_its_hidden_planner():
     plan = next(w for w in BUILTIN_WORKFLOWS if w.key == legacy.KEY)
-    assert plan.version_label == "1.2.0"
+    assert plan.version_label == "1.3.0"
     pinned = editorial.contract(plan.definition)
     assert pinned.AGENT and pinned.TYPED
     assert pinned.POLICY["version"] == "content-editorial-v11"
@@ -480,7 +480,7 @@ def test_the_agent_plan_is_a_spending_parent_of_its_ceiling():
     plan = next(w for w in BUILTIN_WORKFLOWS if w.key == legacy.KEY).definition
     terms = service_terms(plan)
     assert terms["kind"] == "parent" and terms["operations"] == []
-    # $12 from 1.2.0: the agent's competitor subagents hold up to five reservations at once.
+    # $12 from 1.3.0: the agent's competitor subagents hold up to five reservations at once.
     assert terms["maximum_nanos"] == 12_000_000_000
     v8 = {**deepcopy(plan), "content_policy": editorial.V8_POLICY}
     assert service_terms(v8)["kind"] == "metered_workflow"

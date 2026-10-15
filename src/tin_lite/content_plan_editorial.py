@@ -302,7 +302,7 @@ and a check, so drafting reads them before deciding.
 """
 )
 
-# v11 (content.plan 1.2.0): competitor research the plan can stand on. Two production plans on
+# v11 (content.plan 1.3.0): competitor research the plan can stand on. Two production plans on
 # 10/14 took their competitors from sites that rank for the same searches (directories,
 # publishers) and the domains AI answers cite; one wrote alternatives pages for general
 # automation tools while the product's direct rivals went unnamed. The agent now settles the

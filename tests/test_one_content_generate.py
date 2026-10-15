@@ -665,8 +665,8 @@ def test_versions_on_main_are_unchanged():
 # draft's figures fresh and checks every mark and label in both themes; 1.16.0 sizes figures
 # for the article column and checks them on a phone; 1.17.0 always drafts the planned item;
 # 1.18.0 writes each page for the address its plan gave it. content.plan 1.2.0 gives every new
-# page that address.
-RELEASED = {"content.generate": "1.18.0", "content.plan": "1.2.0", "content.refresh": "1.1.0"}
+# page that address; 1.3.0 researches competitors before planning.
+RELEASED = {"content.generate": "1.18.0", "content.plan": "1.3.0", "content.refresh": "1.1.0"}
 
 
 async def test_retired_workflows_are_hidden_but_saved_configurations_still_run(

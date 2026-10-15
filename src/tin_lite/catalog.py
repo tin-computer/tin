@@ -1620,7 +1620,7 @@ BUILTIN_WORKFLOWS = (
             "Decisions before anything is drafted. Does not write or publish anything."
         ),
         executor=content_plan.KEY,
-        version_label="1.2.0",
+        version_label="1.3.0",
         review_policy=CONTENT_PLAN_REVIEW_POLICY,
         presentation=WorkflowDiagram(
             direction="TD",
@@ -1719,7 +1719,7 @@ BUILTIN_WORKFLOWS = (
         "prioritized portfolio of pages for every week. Started by Plan upcoming content, "
         "never on its own.",
         executor=CODEX_PROCEDURE_EXECUTOR,
-        version_label="1.2.0",
+        version_label="1.3.0",
         presentation=WorkflowDiagram(
             direction="TD",
             nodes=(
