@@ -14,7 +14,6 @@ from uuid import UUID
 import httpx
 from fastapi import APIRouter, HTTPException, Request
 from fastapi.responses import Response, StreamingResponse
-from starlette.background import BackgroundTask
 
 from tin_lite.billing_contracts import BillingError
 from tin_lite.codex_api import (
@@ -64,24 +63,7 @@ class RelayRejected(HTTPException):
 CONTRACT_REJECTION = "This API request exceeds its reserved execution contract"
 # Refusals of one parallel request while others hold the run's room; never a run's cause.
 PARALLEL_REJECTIONS = frozenset({"parallel_limit", "parallel_reservation"})
-# How long the relay keeps reading a stream its client left, to settle its usage.
-DRAIN_SECONDS = 300
 TERMINAL_EVENTS = frozenset({"response.completed", "response.incomplete", "response.failed"})
-
-
-def terminal_response(event):
-    """The response in a terminal stream event, or None for any other event."""
-    data = b"\n".join(line[5:].lstrip() for line in event.splitlines() if line.startswith(b"data:"))
-    if not data or data == b"[DONE]":
-        return None
-    try:
-        message = json.loads(data)
-    except ValueError:
-        return None
-    if not isinstance(message, dict) or message.get("type") not in TERMINAL_EVENTS:
-        return None
-    response = message.get("response")
-    return response if isinstance(response, dict) else None
 
 
 # How long a parallel request waits for a slot before it is refused: a subagent's response with
@@ -287,37 +269,14 @@ class CodexAPIRelay:
         self.client = client or httpx.AsyncClient(
             timeout=httpx.Timeout(180, connect=15), follow_redirects=False, trust_env=False
         )
-        # Streams whose client left before the terminal event, read on to settle them.
-        self._drains: set[asyncio.Task] = set()
+        # Provider streams being read and settled, whether or not their client is still there.
+        self._readers: set[asyncio.Task] = set()
 
     async def close(self):
-        for task in list(self._drains):
+        for task in list(self._readers):
             task.cancel()
-        await asyncio.gather(*self._drains, return_exceptions=True)
+        await asyncio.gather(*self._readers, return_exceptions=True)
         await self.client.aclose()
-
-    async def drain(self, upstream, buffer, settle):
-        """Read a stream its client left (Codex preempts a request when a subagent reports
-        back) to its terminal event and settle it with the verified usage, instead of
-        holding its reservation as unconfirmed. The response is already being generated;
-        reading it buys nothing more. Anything short of a terminal event leaves it unconfirmed,
-        as before."""
-        try:
-            async with asyncio.timeout(DRAIN_SECONDS):
-                async for chunk in upstream.aiter_bytes():
-                    buffer += chunk
-                    if len(buffer) > MAX_EVENT_BYTES:
-                        return
-                    while boundary := re.search(rb"\r?\n\r?\n", buffer):
-                        event, buffer = buffer[: boundary.start()], buffer[boundary.end() :]
-                        response = terminal_response(event)
-                        if response is not None:
-                            await settle(response)
-                            return
-        except Exception:  # noqa: BLE001 — the receipt stays unconfirmed, as before
-            logger.warning("Codex API stream left by its client was not settled")
-        finally:
-            await upstream.aclose()
 
     async def note_rejection(self, run_id, grant, **facts):
         """Persist the rejection's cause on the attempt; never mask the rejection itself."""
@@ -688,18 +647,17 @@ class CodexAPIRelay:
             finally:
                 await upstream.aclose()
 
-        async def settle(response):
-            await self.observe(
-                key, record, response, request_id=upstream.headers.get("x-request-id")
-            )
+        # One task reads the provider stream and settles the request; the response only
+        # forwards its events. With subagents, Codex drops the lead's in-flight stream when a
+        # subagent reports back; cancelling the response then stops only the forwarding, and
+        # the reader still settles the request with its verified usage instead of leaving it
+        # unconfirmed. The response is already being generated; reading it buys nothing more.
+        events: asyncio.Queue = asyncio.Queue()
+        failed = object()
 
-        async def stream():
+        async def read():
             buffer = b""
             observed = False
-            handed_off = False
-            evidence = WebEvidence() if contract in MULTI_TOOL_CONTRACTS else None
-            inserted = 0
-            sequence = 0
             try:
                 async for chunk in upstream.aiter_bytes():
                     buffer += chunk
@@ -712,15 +670,12 @@ class CodexAPIRelay:
                             for line in event.splitlines()
                             if line.startswith(b"data:")
                         )
+                        message = None
                         if data and data != b"[DONE]":
                             message = json.loads(data)
                             if not isinstance(message, dict):
                                 raise ValueError("Invalid Codex stream event")
-                            if message.get("type") in {
-                                "response.completed",
-                                "response.incomplete",
-                                "response.failed",
-                            }:
+                            if message.get("type") in TERMINAL_EVENTS:
                                 response = message.get("response")
                                 if isinstance(response, dict) and not observed:
                                     await self.observe(
@@ -739,52 +694,56 @@ class CodexAPIRelay:
                                             **failed_response_cause(response),
                                             operation=operation,
                                         )
-                            if evidence is not None:
-                                original_index = message.get("output_index")
-                                if type(original_index) is int:
-                                    message["output_index"] = original_index + inserted
-                                for adapted in evidence.events(message):
-                                    if (
-                                        adapted is not message
-                                        and adapted.get("type") == "response.output_item.done"
-                                        and "output_index" not in adapted
-                                    ):
-                                        inserted += 1
-                                        adapted["output_index"] = (original_index or 0) + inserted
-                                    adapted["sequence_number"] = sequence
-                                    sequence += 1
-                                    yield b"data: " + json.dumps(adapted).encode() + b"\n\n"
-                                continue
-                        # Persist final usage BEFORE returning the completed event to Codex.
-                        yield event + b"\n\n"
+                        # Final usage is persisted BEFORE the completed event reaches Codex.
+                        events.put_nowait((event, message))
                 if buffer.strip() or not observed:
                     raise RuntimeError("Codex API stream ended without a terminal response")
+                events.put_nowait(None)
             except (httpx.HTTPError, ValueError, RuntimeError, RecursionError):
                 # Never expose provider exception text, partial private body, or credentials.
                 await self.note_rejection(
                     run_id, grant, status=502, reason="stream_unconfirmed", operation=operation
                 )
-                yield (
-                    b'data: {"type":"error",'
-                    b'"message":"Codex API stream outcome is unconfirmed"}\n\n'
-                )
-            except (GeneratorExit, asyncio.CancelledError):
-                # The client left before the terminal event: settle it in the background.
-                if not observed:
-                    handed_off = True
-                    task = asyncio.create_task(self.drain(upstream, buffer, settle))
-                    self._drains.add(task)
-                    task.add_done_callback(self._drains.discard)
-                raise
+                events.put_nowait(failed)
             finally:
-                if not handed_off:
-                    await upstream.aclose()
+                await upstream.aclose()
+
+        reader = asyncio.create_task(read())
+        self._readers.add(reader)
+        reader.add_done_callback(self._readers.discard)
+
+        async def stream():
+            evidence = WebEvidence() if contract in MULTI_TOOL_CONTRACTS else None
+            inserted = 0
+            sequence = 0
+            while (item := await events.get()) is not None:
+                if item is failed:
+                    yield (
+                        b'data: {"type":"error",'
+                        b'"message":"Codex API stream outcome is unconfirmed"}\n\n'
+                    )
+                    return
+                event, message = item
+                if evidence is not None and message is not None:
+                    original_index = message.get("output_index")
+                    if type(original_index) is int:
+                        message["output_index"] = original_index + inserted
+                    for adapted in evidence.events(message):
+                        if (
+                            adapted is not message
+                            and adapted.get("type") == "response.output_item.done"
+                            and "output_index" not in adapted
+                        ):
+                            inserted += 1
+                            adapted["output_index"] = (original_index or 0) + inserted
+                        adapted["sequence_number"] = sequence
+                        sequence += 1
+                        yield b"data: " + json.dumps(adapted).encode() + b"\n\n"
+                    continue
+                yield event + b"\n\n"
 
         return StreamingResponse(
-            stream(),
-            media_type="text/event-stream",
-            headers={"Cache-Control": "no-store"},
-            background=BackgroundTask(upstream.aclose),
+            stream(), media_type="text/event-stream", headers={"Cache-Control": "no-store"}
         )
 
 
