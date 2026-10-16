@@ -225,8 +225,8 @@ async def start_workflow_run(
         from tin_lite.connection_collection import enabled
 
         if not _linkedin_requests:
-            # Approving requests in Decisions, or choosing people in People, starts it, for
-            # exactly that batch.
+            # Approving requests in Decisions, or choosing people in People, starts it when no
+            # run of the member's still has requests waiting.
             raise WorkflowInputError("Approve connection requests in Decisions to send them.")
         if not enabled(settings, project_id):
             raise WorkflowExecutorUnavailableError(
