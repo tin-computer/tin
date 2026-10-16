@@ -21,7 +21,7 @@ from tin_lite.integrations import (
     IntegrationUpstreamError,
     registered_integrations,
 )
-from tin_lite.linkedin_posting import may_post_as, owners
+from tin_lite.linkedin_posting import may_post_as, member_view, owners
 from tin_lite.settings import Settings
 from tin_lite.zernio import Zernio, linkedin_account
 
@@ -226,6 +226,12 @@ async def test_each_profile_belongs_to_the_member_who_signed_in_as_it() -> None:
     # Check again keeps who owns what.
     checked = await posting.check(PROJECT_ID)
     assert owners(checked) == owners(second)
+    # Each member is shown what they may post as, and no member IDs.
+    for member, expected in ((USER_ID, [True, True, False]), (TEAMMATE, [False, True, True])):
+        shown = member_view(second, member)
+        assert "owners" not in shown
+        assert [a["can_post"] for a in shown["accounts"]] == expected
+        assert USER_ID not in json.dumps(shown) and TEAMMATE not in json.dumps(shown)
 
 
 @pytest.mark.asyncio

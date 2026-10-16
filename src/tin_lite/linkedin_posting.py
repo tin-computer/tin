@@ -88,6 +88,27 @@ def may_post_as(connection: Any, account: dict[str, Any], member: str) -> bool:
     return account["kind"] == "organization" or owners(connection).get(account["urn"]) == member
 
 
+def member_view(connection: Any, member: str | None) -> dict[str, Any]:
+    """The connection's configuration as one member sees it: each account says whether they may
+    post as it (`can_post`; None when no member is known), and no member IDs leave Tin."""
+
+    configuration = dict(connection.configuration or {})
+    configuration.pop("owners", None)
+    configuration["accounts"] = [
+        {
+            **account,
+            "can_post": (
+                may_post_as(connection, account, member)
+                if member and account.get("urn") and account.get("kind")
+                else None
+            ),
+        }
+        for account in configuration.get("accounts") or []
+        if isinstance(account, dict)
+    ]
+    return configuration
+
+
 def _label(accounts: list[dict[str, Any]]) -> str:
     names = [account["name"] for account in accounts if account["active"]]
     return ", ".join(names)[:200] or "No account connected"

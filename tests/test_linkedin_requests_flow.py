@@ -1125,3 +1125,55 @@ async def test_a_long_line_carries_on_as_the_same_run(monkeypatch, new_history):
         assert calls[-1] == "linkedin_requests_finish"
     assert calls.count("linkedin_requests_next") == LINKEDIN_REQUESTS_STEPS
     assert "linkedin_requests_failure" not in calls
+
+
+async def test_people_name_whose_post_and_whose_request(collection_db):
+    f = await fixture(collection_db)
+    await add_teammate(f)
+    await ran(f, [person(1)])
+    await ran(f, [person(2)], by=TEAMMATE, n=2)
+    known = await ids(f)
+    async with f.db.pool.acquire() as conn:
+        await records.add_note(
+            conn, f.project.id, known[member(2)], "Met at a meetup.", author=TEAMMATE
+        )
+    path = f"/api/projects/{f.project.id}/people"
+    looked_up = []
+
+    class Profiles:
+        async def member_profile(self, member):
+            looked_up.append(member)
+            return {"display_name": "Mira Jones", "email": "mira@example.com"}
+
+    async def read(profiles):
+        http = client(f)
+        http._transport.app.state.auth = profiles
+        async with http:
+            listed = {p["name"]: p for p in (await http.get(path)).json()["people"]}
+            one = (await http.get(f"{path}/{known[member(2)]}")).json()
+        return listed, one
+
+    listed, one = await read(Profiles())
+    # Your own posts read as yours; a teammate's by their first name. Only teammates are
+    # looked up, and no member ID leaves Tin.
+    assert listed["Person 1"]["last_touch"]["who"] == "you"
+    assert listed["Person 2"]["last_touch"] == {
+        "kind": "reacted",
+        "at": listed["Person 2"]["last_touch"]["at"],
+        "who": "Mira",
+    }
+    assert [event["who"] for event in one["events"]] == ["Mira"]
+    # Notes say whose too.
+    assert listed["Person 2"]["note"]["who"] == "Mira"
+    assert [(note["by"], note["who"]) for note in one["notes"]] == [("a teammate", "Mira")]
+    assert set(looked_up) == {TEAMMATE}
+    assert TEAMMATE not in json.dumps([listed, one])
+
+    # Without a name to read, they stay "a teammate".
+    class Unnamed:
+        async def member_profile(self, member):
+            raise httpx.ConnectError("no Clerk")
+
+    listed, one = await read(Unnamed())
+    assert listed["Person 2"]["last_touch"]["who"] == "a teammate"
+    assert one["events"][0]["who"] == "a teammate"

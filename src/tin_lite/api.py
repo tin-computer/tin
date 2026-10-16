@@ -82,6 +82,7 @@ from tin_lite.integrations import (
     registered_integrations,
 )
 from tin_lite.keyword_plan_control import stop_keyword_plan as stop_keyword_plan_service
+from tin_lite.linkedin_posting import member_view as linkedin_member_view
 from tin_lite.linkedin_posting import visible as linkedin_visible
 from tin_lite.linkedin_posts import LinkedInPosts
 from tin_lite.linkedin_requests_api import router as linkedin_requests_router
@@ -1867,6 +1868,7 @@ async def list_project_integrations(
             definition,
             connections.get(definition.key),
             configured=service.is_configured(definition.key),
+            viewer=user.clerk_user_id,
         )
         for definition in service.definitions(connections.values(), project_id=project_id)
     ]
@@ -1988,7 +1990,10 @@ async def complete_linkedin_posting_integration(
     except IntegrationError as exc:
         raise _integration_http_error(exc) from None
     return _integration_view(
-        service._definition(LINKEDIN_POSTING_PROVIDER), connection, configured=True
+        service._definition(LINKEDIN_POSTING_PROVIDER),
+        connection,
+        configured=True,
+        viewer=user.clerk_user_id,
     )
 
 
@@ -2272,7 +2277,10 @@ async def refresh_linkedin_posting(
     except IntegrationError as exc:
         raise _integration_http_error(exc) from exc
     return _integration_view(
-        service._definition(LINKEDIN_POSTING_PROVIDER), connection, configured=True
+        service._definition(LINKEDIN_POSTING_PROVIDER),
+        connection,
+        configured=True,
+        viewer=user.clerk_user_id,
     )
 
 
@@ -5265,7 +5273,11 @@ def _integration_view(
     connection: IntegrationConnection | None,
     *,
     configured: bool,
+    viewer: str | None = None,
 ) -> IntegrationView:
+    configuration = getattr(connection, "configuration", {})
+    if connection is not None and definition.key == LINKEDIN_POSTING_PROVIDER:
+        configuration = linkedin_member_view(connection, viewer)
     return IntegrationView(
         key=definition.key,
         name=definition.name,
@@ -5280,7 +5292,7 @@ def _integration_view(
         project_id=getattr(connection, "project_id", None),
         status=getattr(connection, "status", "available"),
         external_account_label=getattr(connection, "external_account_label", None),
-        configuration=getattr(connection, "configuration", {}),
+        configuration=configuration,
         connected_at=getattr(connection, "created_at", None),
         last_checked_at=getattr(connection, "last_checked_at", None),
         last_error_code=getattr(connection, "last_error_code", None),

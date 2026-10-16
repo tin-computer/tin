@@ -101,6 +101,10 @@ test("a person opens beside a narrower grid, and the address keeps them", {timeo
     const {page, context, errors} = await openApp(browser, base, {url: "/people"});
     await page.locator(".people-table").waitFor();
     assert.equal(await page.locator(".people-table th.is-headline").isVisible(), true);
+    // Last touch says who was behind it: you, or the teammate by name (TEAM-A).
+    const touch = (name) => page.getByRole("row", {name}).locator("td.is-touch").innerText();
+    assert.equal(await touch("Maya Lindqvist"), "oct 13 · reacted to you");
+    assert.equal(await touch("Daniel Okafor"), "oct 16 · invited by Mira");
     await page.getByRole("row", {name: "Maya Lindqvist"}).click();
     const panel = page.locator("#person-panel");
     await panel.getByRole("link", {name: "Open on LinkedIn"}).waitFor();
@@ -110,7 +114,9 @@ test("a person opens beside a narrower grid, and the address keeps them", {timeo
     assert.equal(new URL(page.url()).searchParams.get("person"), "p-maya");
     assert.match(await panel.locator(".person-section").first().innerText(), /Fields\s*4[\s\S]*ICP fit\s*0\.84\s*engagers · oct 15[\s\S]*Customer\s*No/);
     await panel.getByText("Reacted to your post with Insightful").waitFor();
-    assert.equal(await panel.getByText("Reacted to a teammate’s post with Like").count(), 1);
+    // The timeline names the teammate too (TEAM-C).
+    assert.equal(await panel.getByText("Reacted to Mira’s post with Like").count(), 1);
+    assert.equal(await panel.getByText("Mira sent a connection request").count(), 1);
     assert.equal(await panel.locator("a.person-event").first().getAttribute("target"), "_blank");
     assert.equal(await panel.locator("footer code").textContent(), "added oct 15 by engagers");
     assert.equal(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth), true);
@@ -312,7 +318,7 @@ test("notes show in the grid and the panel, and a new one makes the score old", 
     await notes.nth(1).waitFor();
     assert.equal(await notes.nth(0).getByRole("button", {name: "Delete"}).count(), 1);
     assert.equal(await notes.nth(1).getByRole("button", {name: "Delete"}).count(), 0);
-    assert.match(await notes.nth(1).innerText(), /Met at a founder dinner in Berlin\.\s*a teammate · oct 14/);
+    assert.match(await notes.nth(1).innerText(), /Met at a founder dinner in Berlin\.\s*Mira · oct 14/);
     assert.deepEqual(errors, []);
     await context.close();
   } finally {

@@ -40,7 +40,7 @@ class NoteText(BaseModel):
 
 def _people(request: Request) -> People:
     runtime = request.app.state.runtime
-    return People(runtime.database, runtime.storage)
+    return People(runtime.database, runtime.storage, getattr(request.app.state, "auth", None))
 
 
 async def _answer(call):

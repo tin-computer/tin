@@ -95,8 +95,9 @@ tools share `people_service.People`.
     the panel it reads in full.
   - Notes shows the start of the newest note; hovering shows it whole, with who wrote it and
     how many notes there are. Search covers every note.
-  - Last touch is the latest event. LinkedIn gives no time for a reaction, so a reaction counts
-    on the post's date.
+  - Last touch is the latest event and who was behind it (Paper TEAM-A): "reacted to you",
+    "reacted to Mira", "invited by Mira", "connected with you". LinkedIn gives no time for a
+    reaction, so a reaction counts on the post's date.
   - The segments are all people, ICP fit (0.6 or more) and not connected yet, plus Invited
     once a [connection request](linkedin-requests.md) went out. The LinkedIn column reads
     "Queued" for the viewer's request waiting to go out and "Invited oct 16" for one Tin sent.
@@ -119,6 +120,10 @@ tools share `people_service.People`.
   - Each field says who set it: the workflow's short name ("engagers"), or "you" and
     "a teammate" for a member's value.
   - A reaction says whose post it was: the run read the LinkedIn of the member who started it.
+  - The timeline and notes name teammates too (Paper TEAM-C): "Reacted to Mira's post", "Mira
+    sent a connection request". Names are each teammate's first name from their Tin account
+    (Clerk), read when the view is built; without one, "a teammate". The service turns member
+    IDs into `who` ("you", a first name or "a teammate") before anything leaves Tin.
 - **Correcting a person:** `PATCH …/people/{person_id}`.
   - `{"fit": {"icp": "<profile>"}}` picks an ICP from the ICP file and sets the fit to 1;
     `{"fit": {"icp": null}}` is not a fit (0); `{"fit": null}` uses Tin's score again.

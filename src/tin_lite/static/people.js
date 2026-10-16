@@ -84,7 +84,8 @@ window.TinPeople = (() => {
   function staleNote(value, person) {
     if (value.stale_reason === "note") {
       const newest = person?.notes?.[0] || person?.note;
-      const whose = newest?.by === "a teammate" ? "A teammate’s note" : "Your note";
+      const author = newest?.who || newest?.by;
+      const whose = newest?.by === "a teammate" ? `${author[0].toUpperCase()}${author.slice(1)}’s note` : "Your note";
       return `${whose} came after this score. The next run reads it and rescores.`;
     }
     return `Scored before ${value.definition || "the ICP file"} or Tin’s scoring changed. The next run rescores it.`;
@@ -334,7 +335,7 @@ window.TinPeople = (() => {
       <td class="is-fit ${fitClass}" ${fit ? `data-fit="${escape(person.id)}"` : ""}>${mark ? `<small>${mark}</small>` : ""}<span>${fitValue === null ? "—" : fitValue.toFixed(2)}</span></td>
       <td class="is-notes" ${note ? `data-note="${escape(person.id)}"` : ""}><span>${note ? escape(note.body.split("\n")[0]) : ""}</span></td>
       <td class="is-linkedin"><span>${escape(relationshipLabel(person, relationship))}</span></td>
-      <td class="is-touch"><span>${touch ? `${escape(day(touch.at))} · ${escape(touch.kind)}` : "—"}</span></td>
+      <td class="is-touch"><span>${touch ? `${escape(day(touch.at))} · ${escape(touchText(touch))}` : "—"}</span></td>
     </tr>`;
   }
 
@@ -410,7 +411,7 @@ window.TinPeople = (() => {
   function noteHover(id) {
     const note = view.people?.find((item) => item.id === id)?.note;
     if (!note) return "";
-    const line = [note.by, day(note.at), note.count > 1 ? `latest of ${note.count} notes` : ""].filter(Boolean).join(" · ");
+    const line = [note.who || note.by, day(note.at), note.count > 1 ? `latest of ${note.count} notes` : ""].filter(Boolean).join(" · ");
     return `<p class="is-note">${escape(note.body)}</p><code>${escape(line)}</code>`;
   }
 
@@ -587,7 +588,7 @@ window.TinPeople = (() => {
           </div>
         </div>`;
       }
-      const meta = [note.by, day(note.at), note.edited ? "edited" : ""].filter(Boolean).join(" · ");
+      const meta = [note.who || note.by, day(note.at), note.edited ? "edited" : ""].filter(Boolean).join(" · ");
       return `<div class="person-note" data-note-id="${escape(note.id)}">
         <p>${escape(note.body)}</p>
         <div class="person-note-meta"><code>${escape(meta)}</code>${note.mine ? `<span>
@@ -600,16 +601,33 @@ window.TinPeople = (() => {
     return `<section class="person-section person-notes"><h3>Notes ${person.notes.length ? `<span>${person.notes.length}</span>` : ""}</h3>${composer}${error}${notes}</section>`;
   }
 
+  // Who was behind an event, for the viewer: "you", a teammate's first name, or "a teammate"
+  // (TEAM-A, TEAM-C). Older answers only say whether it was yours.
+  const whoOf = (item) => item.who || (item.yours === true ? "you" : item.yours === false ? "a teammate" : null);
+  const possessive = (who) => (who === "you" ? "your" : `${who}’s`);
+
+  // The grid's Last touch: "reacted to you", "invited by Mira".
+  function touchText(touch) {
+    const who = whoOf(touch);
+    if (!who) return touch.kind;
+    if (touch.kind === "reacted") return `reacted to ${who}`;
+    if (touch.kind === "commented") return `replied to ${who}`;
+    if (touch.kind === "invited") return `invited by ${who}`;
+    if (touch.kind === "accepted") return `connected with ${who}`;
+    return touch.kind;
+  }
+
   function eventText(event) {
-    const whose = event.yours === true ? "your post" : event.yours === false ? "a teammate’s post" : "a post";
+    const who = whoOf(event);
+    const whose = who ? `${possessive(who)} post` : "a post";
     if (event.kind === "reacted") {
       const reaction = REACTIONS[event.reaction];
       return `Reacted to ${whose}${reaction ? ` with ${reaction}` : ""}`;
     }
     if (event.kind === "commented") return `Commented on ${whose}`;
     // A request is the member's whose LinkedIn sent it.
-    if (event.kind === "invited") return event.yours === false ? "A teammate sent a connection request" : "Connection request sent";
-    if (event.kind === "accepted") return event.yours === false ? "Accepted a teammate’s connection request" : "Accepted your connection request";
+    if (event.kind === "invited") return who && who !== "you" ? `${who[0].toUpperCase()}${who.slice(1)} sent a connection request` : "Connection request sent";
+    if (event.kind === "accepted") return who && who !== "you" ? `Accepted ${possessive(who)} connection request` : "Accepted your connection request";
     if (event.kind === "withdrawn") return "Connection request withdrawn";
     return event.kind;
   }

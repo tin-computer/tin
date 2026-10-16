@@ -41,14 +41,15 @@ export const profiles = ["ICP 1: founders who need growth done", "ICP 2: technic
 // People as the People API returns them: a fit, an old score, someone not scored, and a note.
 export function syntheticPeople() {
   const at = "2026-10-15T09:00:00Z";
-  const person = (id, name, headline, icp, fit, relationship, {stale = false, reason = "Runs a small B2B team with no marketing lead.", notes = []} = {}) => ({
+  const person = (id, name, headline, icp, fit, relationship, {stale = false, reason = "Runs a small B2B team with no marketing lead.", notes = [], touch = {kind: "reacted", at: "2026-10-13T08:00:00Z", who: "you"}} = {}) => ({
     id, name, headline, profile_url: `https://www.linkedin.com/in/${id}`,
     fields: {
       icp: {value: icp, reason, by: "engagers", at, stale, stale_reason: stale ? "definition" : null, definition: "strategy/ICP.md", previous: null},
       icp_fit: {value: fit, reason, by: "engagers", at, stale, stale_reason: stale ? "definition" : null, definition: "strategy/ICP.md", previous: null},
       linkedin_relationship: {value: relationship, reason: "", by: "engagers", at, stale: false, stale_reason: null, definition: "", previous: null},
     },
-    last_touch: {kind: "reacted", at: "2026-10-13T08:00:00Z"},
+    // Who was behind it, for the viewer: "you" or a teammate's first name.
+    last_touch: touch,
     added: {at, by: "engagers"},
     notes,
     // Whether the viewer can ask them to connect, and a request of theirs waiting to go out.
@@ -59,8 +60,8 @@ export function syntheticPeople() {
     person("p-maya", "Maya Lindqvist", "Founder, payroll for remote teams", "ICP 1: founders who need growth done", 0.84, "connected"),
     person("p-daniel", "Daniel Okafor", "Co-founder, Fieldline", "ICP 2: technical founders running their own marketing", 0.78, "none", {notes: [
       {id: "n-daniel-2", body: "Interned with us in 2024 before founding Fieldline.\nA friend of the team.", by: "you", mine: true, at: "2026-10-15T10:00:00Z", edited: false},
-      {id: "n-daniel-1", body: "Met at a founder dinner in Berlin.", by: "a teammate", mine: false, at: "2026-10-14T10:00:00Z", edited: false},
-    ]}),
+      {id: "n-daniel-1", body: "Met at a founder dinner in Berlin.", by: "a teammate", who: "Mira", mine: false, at: "2026-10-14T10:00:00Z", edited: false},
+    ], touch: {kind: "invited", at: "2026-10-16T08:00:00Z", who: "Mira"}}),
     person("p-sofia", "Sofia Marchetti", "Founder & CEO, Patchbay", "ICP 1: founders who need growth done", 0.66, "connected", {stale: true}),
     person("p-lea", "Lea Fischer", "Head of Marketing, Quanta Labs", "none", 0.15, "none"),
     person("p-hannah", "Hannah Kim", "Building something new", null, null, "none", {reason: "Tin couldn't score this person this time; the next run tries again."}),
@@ -78,8 +79,9 @@ function listed({notes, ...person}) {
 
 function detail(person) {
   return {...person, events: [
-    {kind: "reacted", at: "2026-10-13T08:00:00Z", reaction: "INTEREST", post_url: "https://www.linkedin.com/feed/update/urn:li:activity:1/", yours: true},
-    {kind: "reacted", at: "2026-09-30T08:00:00Z", reaction: "LIKE", post_url: "https://www.linkedin.com/feed/update/urn:li:activity:2/", yours: false},
+    {kind: "invited", at: "2026-10-16T08:00:00Z", reaction: null, post_url: "", yours: false, who: "Mira"},
+    {kind: "reacted", at: "2026-10-13T08:00:00Z", reaction: "INTEREST", post_url: "https://www.linkedin.com/feed/update/urn:li:activity:1/", yours: true, who: "you"},
+    {kind: "reacted", at: "2026-09-30T08:00:00Z", reaction: "LIKE", post_url: "https://www.linkedin.com/feed/update/urn:li:activity:2/", yours: false, who: "Mira"},
   ]};
 }
 
