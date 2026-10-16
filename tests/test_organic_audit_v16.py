@@ -529,10 +529,10 @@ def test_an_organization_without_official_profiles_is_one_finding_for_the_site()
     other = page("/about", '<a href="https://github.com/acme">GitHub</a>', json_ld=bare)
     item = found(findings(view([home, other])), "schema.entity_profiles_missing")
     assert item["urls"] == [f"{BASE}/"] and item["confidence"] == "likely"
+    # GitHub on /about alone is one page's link, not the site's own profile.
     assert [row["url"] for row in item["verification"]["candidates"]] == [
         "https://www.linkedin.com/company/acme",
         "https://x.com/acme",
-        "https://github.com/acme",
     ]
     assert item["evidence"][2] == (
         "https://www.linkedin.com/company/acme: your site links to it; couldn't check (the site "
@@ -755,3 +755,29 @@ async def test_the_audit_buys_one_backlinks_read_and_reads_the_candidates():
     }
     documents = await activities._site_documents_input(run_id)
     assert documents["site"]["entity"]["backlinks"]["status"] == "completed"
+
+
+def test_profiles_linked_from_one_article_are_not_the_businesss_own():
+    # As on Claw Messenger's blog: posts link to other projects' repos, packages and issues.
+    article = (
+        '<a href="https://github.com/NousResearch/hermes-agent/issues/9263">issue</a>'
+        '<a href="https://github.com/ZekeSnider/Jared">Jared</a>'
+        '<a href="https://pypi.org/project/py-iMessage/">py-iMessage</a>'
+    )
+    footer = '<footer><a href="https://github.com/acme/acme-sdk">GitHub</a></footer>'
+    org = json.dumps({"@type": "Organization", "name": "Example", "url": BASE})
+    pages = [
+        page("/", footer, json_ld=org),
+        page("/blog/a", footer + article),
+        page("/blog/b", footer),
+        page("/pricing", footer),
+    ]
+    assert pages[1]["profile_links"] == [
+        "https://github.com/acme/acme-sdk",
+        "https://github.com/ZekeSnider/Jared",
+        "https://pypi.org/project/py-iMessage",
+    ]
+    item = found(findings(view(pages)), "schema.entity_profiles_missing")
+    assert [row["url"] for row in item["verification"]["candidates"]] == [
+        "https://github.com/acme/acme-sdk"
+    ]
