@@ -1243,6 +1243,8 @@ def create_mcp_app(
             "fit_reason": fit.get("reason"),
             "fit_stale": fit.get("stale", False),
             "linkedin": value("linkedin_relationship"),
+            "can_request": bool(person.get("requestable")),
+            "request_queued": person.get("request") == "queued",
             "customer": value("customer") == "yes",
             "newest_note": (person.get("note") or {}).get("body"),
             "note_count": (person.get("note") or {}).get("count", 0),
@@ -1646,6 +1648,37 @@ def create_mcp_app(
             approve=True,
             person_ids=person_ids,
         )
+
+    @server.tool()
+    async def send_connection_requests(
+        project_id: str, person_ids: list[str], request_id: str
+    ) -> dict[str, Any]:
+        """Send LinkedIn connection requests to people the founder chose, only as they said in
+        their words. list_people shows who `can_request` (someone Tin can name on LinkedIn, not
+        a customer, not already connected to or asked by the caller). Choosing them is the
+        approval: Tin queues them and sends them one at a time on its own schedule from the
+        caller's own LinkedIn session, and stops at LinkedIn's first warning. Sending must be
+        on (the founder ticks it on the LinkedIn card). `request_id` is a fresh UUID; the same
+        one repeats the same choice."""
+        from tin_lite.linkedin_requests_service import ConnectionRequests, RequestsRefused
+
+        token = await caller()
+        project = _mcp_uuid(project_id, field="project_id")
+        await require_project(project, token, tool_name="send_connection_requests")
+        try:
+            return jsonable_encoder(
+                await ConnectionRequests(runtime(), settings).send(
+                    project,
+                    token.subject,
+                    request_id=_mcp_uuid(request_id, field="request_id"),
+                    people=[_mcp_uuid(item, field="person_ids") for item in person_ids],
+                    trigger_source="mcp",
+                    oauth_client_id=token.client_id,
+                )
+            )
+        except RequestsRefused as error:
+            code = {404: "not_found", 409: "conflict"}.get(error.status, "invalid")
+            raise ToolError(f"{code}: {error.message}") from None
 
     @server.tool()
     async def discard_connection_requests(

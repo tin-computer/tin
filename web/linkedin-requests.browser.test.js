@@ -1,7 +1,7 @@
 // Packaged dashboard with synthetic APIs. No live credentials, projects or LinkedIn.
-// Connection requests (Paper INVITE-A to INVITE-C): a batch waits in Decisions, approving queues
-// the ticked people for Tin to send one at a time, and sending is turned on, paused and resumed
-// on the LinkedIn card.
+// Connection requests (Paper INVITE-A to INVITE-C, REQ-A): a batch waits in Decisions, approving
+// queues the ticked people for Tin to send one at a time, people ticked in People are queued the
+// same way, and sending is turned on, paused and resumed on the LinkedIn card.
 import assert from "node:assert/strict";
 import test from "node:test";
 import { chromium } from "playwright";
@@ -30,6 +30,7 @@ function requests({on = false, held = false} = {}) {
     pause_text: held ? "LinkedIn asked to verify your account" : null,
     consent: {version: 1, text: "Send the connection requests I approve from Tin’s servers, with my LinkedIn session: one at a time, a few each weekday.", risk: "LinkedIn’s terms don’t allow automated requests."},
     week: {sent: 9, accepted: 3, queued: 5, pending: 6, next_send: inAnHour},
+    next_open: on ? inAnHour : null,
     batches: [{
       id: "batch-1", created_at: new Date(Date.now() - 7200000).toISOString(),
       first_send: inAnHour, last_send: new Date(Date.now() + 3 * 86400000).toISOString(),
@@ -150,5 +151,63 @@ test("People shows who was invited, in the column and as a segment", {timeout: 1
     assert.equal(await page.locator('tr[data-person="p-maya"] td.is-linkedin').innerText(), "Invited oct 16");
     await page.getByRole("tab", {name: /^Invited/}).click();
     assert.deepEqual(await page.locator(".people-table tbody td.is-name").allInnerTexts(), ["Maya Lindqvist"]);
+  });
+});
+
+test("people ticked in People are queued at once, best fit first", {timeout: 120000}, async () => {
+  await open({url: "/people", state: requests({on: true}), people: syntheticPeople()}, async (page, served) => {
+    await page.locator(".people-table").waitFor();
+    // Only people you can ask get a box: not your connections.
+    assert.equal(await page.locator('tr[data-person="p-maya"] td.is-pick input').count(), 0);
+    assert.equal(await page.locator(".people-picked").count(), 0);
+    await page.locator('tr[data-person="p-lea"] td.is-pick input').check();
+    await page.locator('tr[data-person="p-daniel"] td.is-pick input').check();
+    // Ticking doesn't open the person.
+    assert.equal(await page.locator("#person-panel").count(), 0);
+    const bar = page.locator(".people-picked");
+    assert.match(await bar.innerText(), /^2 selected\s+Clear/);
+    assert.match(await bar.innerText(), /One at a time from your LinkedIn, weekdays 9:00–17:00 Europe\/Berlin · the first around \d+:\d\d (today|tomorrow)/);
+    assert.equal(await page.locator('tr[data-person="p-daniel"]').getAttribute("class"), " is-picked");
+    await bar.getByRole("button", {name: "Send 2 requests"}).click();
+    await page.locator(".toast", {hasText: /Queued\. Tin sends the 2 one at a time from your LinkedIn, the first around \d+:\d\d/}).waitFor();
+    const write = served.requestWrites.find(item => item.path === "/send");
+    assert.deepEqual(write.body.people, ["p-daniel", "p-lea"]);
+    assert.match(write.body.request_id, /^[0-9a-f-]{36}$/);
+    assert.equal(await page.locator(".people-picked").count(), 0);
+    assert.equal(await page.locator('tr[data-person="p-daniel"] td.is-linkedin').innerText(), "Queued");
+    assert.equal(await page.locator('tr[data-person="p-daniel"] td.is-pick input').count(), 0);
+  });
+});
+
+test("the box above the grid ticks everyone you can ask on the page", {timeout: 120000}, async () => {
+  await open({url: "/people", state: requests({on: true}), people: syntheticPeople()}, async page => {
+    const all = page.locator("[data-people-pick-all]");
+    await all.waitFor();
+    await page.locator('tr[data-person="p-hannah"] td.is-pick input').check();
+    assert.equal(await all.evaluate(box => box.indeterminate), true);
+    await all.click();
+    assert.match(await page.locator(".people-picked").innerText(), /^3 selected/);
+    await page.locator(".people-picked").getByRole("button", {name: "Clear"}).click();
+    assert.equal(await page.locator(".people-picked").count(), 0);
+  });
+});
+
+test("with sending off, the bar sends you to the LinkedIn card", {timeout: 120000}, async () => {
+  await open({url: "/people", state: requests({on: false}), people: syntheticPeople()}, async page => {
+    await page.locator('tr[data-person="p-daniel"] td.is-pick input').check();
+    const bar = page.locator(".people-picked");
+    assert.match(await bar.innerText(), /Turn on sending on the LinkedIn card first\./);
+    assert.equal(await bar.getByRole("button", {name: "Send 1 request"}).isDisabled(), true);
+    await bar.getByRole("button", {name: "Open the LinkedIn card"}).click();
+    await page.locator(".linkedin-card.is-expanded .requests-sending").waitFor();
+    assert.equal(new URL(page.url()).pathname, "/integrations");
+  });
+});
+
+test("without your own LinkedIn reading, People has no boxes", {timeout: 120000}, async () => {
+  const integrations = [{...reading, configured: false, connection_id: null, status: "available", configuration: {}}];
+  await open({url: "/people", state: {...requests({on: false}), reading: false, browser_only: false}, integrations, people: syntheticPeople()}, async page => {
+    await page.locator(".people-table").waitFor();
+    assert.equal(await page.locator(".people-table .is-pick").count(), 0);
   });
 });

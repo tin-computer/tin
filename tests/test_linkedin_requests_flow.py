@@ -667,3 +667,217 @@ async def test_the_workflow_follows_each_step_and_keeps_only_ids_in_history():
             for payload in event.activity_task_scheduled_event_attributes.input.payloads:
                 value = json.loads(payload.data)
                 assert value == run_id or set(value) == {"run_id", "request_id"}
+
+
+async def test_people_you_choose_in_people_are_queued_and_sent_by_the_same_run(
+    collection_db, monkeypatch
+):
+    f = await fixture(collection_db)
+    # 1 and 4 fit and aren't connected, so they wait in Decisions; 2 is your connection; 3
+    # doesn't fit.
+    await ran(f, [person(1), person(2, degree="1st"), person(3, headline="Designer"), person(4)])
+    known = await ids(f)
+    people_path = f"/api/projects/{f.project.id}/people"
+    base = f"/api/projects/{f.project.id}/linkedin-requests"
+    choice = {"request_id": str(uuid4()), "people": [str(known[member(3)]), str(known[member(1)])]}
+    async with client(f) as http:
+        listed = {p["name"]: p for p in (await http.get(people_path)).json()["people"]}
+        # Anyone Tin can name on LinkedIn who isn't your connection, whatever their fit.
+        assert {name for name, p in listed.items() if p["requestable"]} == {
+            "Person 1",
+            "Person 3",
+            "Person 4",
+        }
+        off = await http.post(f"{base}/send", json=choice)
+        assert off.status_code == 409 and "Turn on sending" in off.json()["detail"]
+        assert (await http.get(base)).json()["next_open"] is None
+        await turn_on(http, f)
+        assert (await http.get(base)).json()["next_open"]
+        connected = {"request_id": str(uuid4()), "people": [str(known[member(2)])]}
+        refused = await http.post(f"{base}/send", json=connected)
+        assert refused.status_code == 422 and "can't get a request" in refused.json()["detail"]
+        assert (await http.post(f"{base}/send", json={**choice, "people": []})).status_code == 422
+        answer = await http.post(f"{base}/send", json=choice)
+        assert answer.status_code == 200, answer.text
+        sent = answer.json()
+        assert sent["status"] == "approved" and sent["queued"] == 2 and not sent["repeated"]
+        assert sent["first_send"] < sent["last_send"]
+        # The same request repeats the same choice.
+        repeated = (await http.post(f"{base}/send", json=choice)).json()
+        assert repeated["repeated"] is True and repeated["batch_id"] == sent["batch_id"]
+        listed = {p["name"]: p for p in (await http.get(people_path)).json()["people"]}
+        batches = (await http.get(base)).json()["batches"]
+    assert listed["Person 1"]["request"] == "queued" and not listed["Person 1"]["requestable"]
+    assert listed["Person 4"]["request"] is None and listed["Person 4"]["requestable"]
+    # Person 1 waited in Decisions; choosing them took them out, and Person 4 still waits.
+    assert [p["name"] for p in batches[0]["people"]] == ["Person 4"]
+    rows = await f.db.pool.fetch(
+        "SELECT record_id, batch_id FROM linkedin_requests WHERE status = 'queued' "
+        "ORDER BY queued_at, id"
+    )
+    assert [row["record_id"] for row in rows] == [known[member(3)], known[member(1)]]
+    assert {row["batch_id"] for row in rows} == {UUID(sent["batch_id"])}
+    assert {(b, m, source) for _p, b, m, source in STARTED} == {
+        (UUID(sent["batch_id"]), USER, "manual")
+    }
+
+    # The sending run sends them like an approved batch, in the order you chose them.
+    monkeypatch.setattr(linkedin_requests_activities, "datetime", Clock(MONDAY)())
+    cloud = InviteCloud(f.db)
+    acts = sender(f, cloud)
+    run_id = await requests_run(f, UUID(sent["batch_id"]))
+    await acts.prepare(run_id)
+    step = await acts.next(run_id)
+    assert step["action"] == "send"
+    await acts.send({"run_id": run_id, "request_id": step["request_id"]})
+    assert [call["member"] for call in cloud.calls] == [member(3)]
+    async with client(f) as http:
+        listed = {p["name"]: p for p in (await http.get(people_path)).json()["people"]}
+    assert listed["Person 3"]["fields"]["linkedin_relationship"]["value"] == "pending"
+    assert listed["Person 3"]["invited_at"] and listed["Person 3"]["request"] is None
+
+
+async def test_each_member_sees_their_own_linkedin_and_can_ask_a_teammates_connections(
+    collection_db,
+):
+    f = await fixture(collection_db)
+    await add_teammate(f)
+    await ran(f, [person(1), person(2, degree="1st")])
+    path = f"/api/projects/{f.project.id}/people"
+    async with client(f, TEAMMATE) as http:
+        theirs = {p["name"]: p for p in (await http.get(path)).json()["people"]}
+    # Tin hasn't read the teammate's LinkedIn: no relationship shows, and both can be asked.
+    assert "linkedin_relationship" not in theirs["Person 2"]["fields"]
+    assert theirs["Person 1"]["requestable"] and theirs["Person 2"]["requestable"]
+    async with client(f) as http:
+        mine = {p["name"]: p for p in (await http.get(path)).json()["people"]}
+    assert mine["Person 2"]["fields"]["linkedin_relationship"]["value"] == "connected"
+    assert not mine["Person 2"]["requestable"]
+
+    # The teammate's own run reads their LinkedIn; yours stays as it was.
+    await ran(f, [person(1, degree="1st")], by=TEAMMATE, n=2)
+    async with client(f, TEAMMATE) as http:
+        theirs = {p["name"]: p for p in (await http.get(path)).json()["people"]}
+    async with client(f) as http:
+        mine = {p["name"]: p for p in (await http.get(path)).json()["people"]}
+    assert theirs["Person 1"]["fields"]["linkedin_relationship"]["value"] == "connected"
+    assert not theirs["Person 1"]["requestable"]
+    assert mine["Person 1"]["fields"]["linkedin_relationship"]["value"] == "none"
+    assert mine["Person 1"]["requestable"]
+
+
+async def test_customers_and_people_you_asked_cant_be_chosen_and_a_failed_start_queues_nothing(
+    collection_db, monkeypatch
+):
+    f = await fixture(collection_db)
+    await ran(f, [person(1), person(4), person(5)])
+    known = await ids(f)
+    base = f"/api/projects/{f.project.id}/linkedin-requests"
+    async with f.db.pool.acquire() as conn:
+        await records.set_by_member(
+            conn, f.project.id, known[member(5)], [records.Value("customer", "yes")], member=USER
+        )
+
+    async def broken(*_args):
+        raise RuntimeError("no start")
+
+    async with client(f) as http:
+        await turn_on(http, f)
+        customer = {"request_id": str(uuid4()), "people": [str(known[member(5)])]}
+        assert (await http.post(f"{base}/send", json=customer)).status_code == 422
+        # Sending can't start: nothing stays queued, and Person 1 waits in Decisions again.
+        # Person 5, a customer since they were proposed, no longer does.
+        monkeypatch.setattr(ConnectionRequests, "_start", broken)
+        choice = {"request_id": str(uuid4()), "people": [str(known[member(1)])]}
+        failed = await http.post(f"{base}/send", json=choice)
+        assert failed.status_code == 503 and "nothing was queued" in failed.json()["detail"]
+        batches = (await http.get(base)).json()["batches"]
+        assert sorted(p["name"] for p in batches[0]["people"]) == ["Person 1", "Person 4"]
+        assert (
+            await f.db.pool.fetchval(
+                "SELECT count(*) FROM linkedin_request_batches WHERE status = 'approved'"
+            )
+            == 0
+        )
+        # The same choice works once sending starts, and then Person 1 can't be chosen again.
+        monkeypatch.undo()
+        STARTED.clear()
+
+        async def start(self, project_id, batch_id, member, trigger_source, oauth_client_id):
+            STARTED.append((project_id, batch_id, member, trigger_source))
+            return uuid4()
+
+        monkeypatch.setattr(ConnectionRequests, "_start", start)
+        assert (await http.post(f"{base}/send", json=choice)).status_code == 200
+        again = {"request_id": str(uuid4()), "people": [str(known[member(1)])]}
+        assert (await http.post(f"{base}/send", json=again)).status_code == 422
+
+
+async def test_mcp_lists_who_you_can_ask_and_sends_your_choice(collection_db, monkeypatch):
+    f = await fixture(collection_db)
+    await ran(f, [person(1), person(2, degree="1st")])
+    known = await ids(f)
+    async with client(f) as http:
+        await turn_on(http, f)
+    server = mcp(f, monkeypatch)
+    project = str(f.project.id)
+    listed = structured(await server.call_tool("list_people", {"project_id": project}))
+    can = {p["name"]: p["can_request"] for p in listed["people"]}
+    assert can == {"Person 1": True, "Person 2": False}
+    sent = structured(
+        await server.call_tool(
+            "send_connection_requests",
+            {
+                "project_id": project,
+                "person_ids": [str(known[member(1)])],
+                "request_id": str(uuid4()),
+            },
+        )
+    )
+    assert sent["status"] == "approved" and sent["queued"] == 1
+    assert STARTED[-1][3] == "mcp"
+    listed = structured(await server.call_tool("list_people", {"project_id": project}))
+    assert {p["name"]: p["request_queued"] for p in listed["people"]}["Person 1"] is True
+    with pytest.raises(ToolError, match="invalid"):
+        await server.call_tool(
+            "send_connection_requests",
+            {
+                "project_id": project,
+                "person_ids": [str(known[member(2)])],
+                "request_id": str(uuid4()),
+            },
+        )
+
+
+async def test_the_migration_gives_each_run_s_reading_to_the_member_who_started_it(
+    collection_db,
+):
+    """Before 071 a run wrote the relationship as one shared field; the migration moves each
+    reading to the member who started the run, and leaves the old field unread."""
+
+    from pathlib import Path
+
+    f = await fixture(collection_db)
+    await ran(f, [person(1), person(2, degree="1st")])
+    known = await ids(f)
+    run_id = await f.db.pool.fetchval(
+        "SELECT id FROM workflow_runs WHERE executor = 'social.linkedin_engagers'"
+    )
+    async with f.db.pool.acquire() as conn:
+        await conn.execute("DELETE FROM record_relationships")
+        for who, state in ((1, "none"), (2, "connected")):
+            await records.set_values(
+                conn,
+                f.project.id,
+                known[member(who)],
+                [records.Value("linkedin_relationship", state, "as before")],
+                set_by_kind="run",
+                set_by=str(run_id),
+            )
+        migration = Path(__file__).parents[1] / "migrations" / "071_member_relationships.sql"
+        await conn.execute(migration.read_text())
+        mine = await records.relationships(conn, f.project.id, USER)
+    assert {key: (row["state"], row["set_by"]) for key, row in mine.items()} == {
+        known[member(1)]: ("none", str(run_id)),
+        known[member(2)]: ("connected", str(run_id)),
+    }

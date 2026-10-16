@@ -237,6 +237,19 @@ async def _merge(conn, survivor: UUID, others: list[UUID]) -> None:
         survivor,
     )
     await conn.execute("DELETE FROM record_values WHERE record_id = ANY($1::uuid[])", others)
+    # Likewise each member's relationship: the survivor's own, else the newest.
+    await conn.execute(
+        """WITH moving AS (
+               SELECT DISTINCT ON (member) record_id, member FROM record_relationships
+               WHERE record_id = ANY($1::uuid[])
+                 AND member NOT IN (SELECT member FROM record_relationships WHERE record_id = $2)
+               ORDER BY member, set_at DESC)
+           UPDATE record_relationships x SET record_id = $2 FROM moving m
+           WHERE x.record_id = m.record_id AND x.member = m.member""",
+        others,
+        survivor,
+    )
+    await conn.execute("DELETE FROM record_relationships WHERE record_id = ANY($1::uuid[])", others)
     await conn.execute(
         "UPDATE record_notes SET record_id = $2 WHERE record_id = ANY($1::uuid[])", others, survivor
     )
@@ -370,6 +383,70 @@ async def add_event(
         run_id,
     )
     return bool(inserted)
+
+
+# Each member's LinkedIn relationship with a person.
+
+
+async def set_relationship(
+    conn,
+    project_id: UUID,
+    record_id: UUID,
+    member: str,
+    state: str,
+    *,
+    set_by: str,
+    reason: str = "",
+    keep_pending: bool = False,
+) -> bool:
+    """Record what a run read, or what a request made, of a member's relationship with a person;
+    returns whether it changed. A reaction's degree can't show an invitation, so a read with
+    `keep_pending` leaves a pending request as it is."""
+
+    if state not in RELATIONSHIPS:
+        raise RecordError("invalid_value")
+    if not member or not set_by:
+        raise RecordError("invalid_author")
+    target = await current(conn, project_id, record_id)
+    if target is None:
+        raise RecordError("record_gone")
+    return bool(
+        await conn.fetchval(
+            """INSERT INTO record_relationships (project_id, record_id, member, state, reason,
+                   set_by)
+               VALUES ($1, $2, $3, $4, $5, $6)
+               ON CONFLICT (record_id, member) DO UPDATE SET
+                   state = EXCLUDED.state, reason = EXCLUDED.reason, set_by = EXCLUDED.set_by,
+                   set_at = now()
+               WHERE (record_relationships.state, record_relationships.reason)
+                     IS DISTINCT FROM (EXCLUDED.state, EXCLUDED.reason)
+                 AND NOT ($7 AND record_relationships.state = 'pending'
+                          AND EXCLUDED.state = 'none')
+               RETURNING true""",
+            project_id,
+            target,
+            member[:200],
+            state,
+            " ".join((reason or "").split())[:REASON_LIMIT],
+            set_by[:200],
+            keep_pending,
+        )
+    )
+
+
+async def relationships(
+    conn, project_id: UUID, member: str, *, only: UUID | None = None
+) -> dict[UUID, dict[str, Any]]:
+    """The member's relationship with each person Tin has read or asked for them."""
+
+    rows = await conn.fetch(
+        """SELECT record_id, state, reason, set_by, set_at FROM record_relationships
+           WHERE project_id = $1 AND member = $2 AND ($3::uuid IS NULL OR record_id = $3)""",
+        project_id,
+        member,
+        only,
+    )
+    return {row["record_id"]: dict(row) for row in rows}
 
 
 # What members change: a value, back to the run's value it replaced, and notes.
@@ -514,6 +591,9 @@ async def forget(conn, project_id: UUID, record_id: UUID) -> bool:
         )
         await conn.execute("DELETE FROM record_events WHERE record_id = ANY($1::uuid[])", ids)
         await conn.execute("DELETE FROM record_notes WHERE record_id = ANY($1::uuid[])", ids)
+        await conn.execute(
+            "DELETE FROM record_relationships WHERE record_id = ANY($1::uuid[])", ids
+        )
         await conn.execute("DELETE FROM record_values WHERE record_id = ANY($1::uuid[])", ids)
         await conn.execute("DELETE FROM record_identifiers WHERE record_id = ANY($1::uuid[])", ids)
         await conn.execute("DELETE FROM records WHERE id = ANY($1::uuid[])", ids)
@@ -573,7 +653,8 @@ async def people(
 
 # Short names for the workflows that write records, shown beside a value as who set it.
 WRITERS = {"social.linkedin_engagers": "engagers", "social.linkedin_requests": "requests"}
-VIEW_FIELDS = ("icp", "icp_fit", "linkedin_relationship", "customer")
+# LinkedIn shows each member their own relationship, from `record_relationships`.
+VIEW_FIELDS = ("icp", "icp_fit", "customer")
 # Values computed under a definition, such as the ICP file, go stale when it changes.
 DEFINED_FIELDS = ("icp", "icp_fit")
 POST = re.compile(r"urn:li:(?:activity|ugcPost|share):[0-9]{1,30}")
@@ -699,7 +780,7 @@ async def directory(
     invited: dict[UUID, datetime] = {}
     for row in await conn.fetch(
         """SELECT COALESCE(r.merged_into, r.id) AS person, e.kind, e.occurred_at,
-               e.recorded_at, e.detail->>'posted_at' AS posted_at
+               e.recorded_at, e.detail->>'posted_at' AS posted_at, e.detail->>'member' AS member
            FROM record_events e JOIN records r ON r.id = e.record_id
            WHERE e.project_id = $1 AND ($2::uuid IS NULL OR COALESCE(r.merged_into, r.id) = $2)""",
         project_id,
@@ -708,9 +789,14 @@ async def directory(
         at = _when(row)
         if row["person"] not in touches or at > touches[row["person"]]["at"]:
             touches[row["person"]] = {"kind": row["kind"], "at": at}
-        # When a connection request last went out, for "Invited oct 16".
-        if row["kind"] == "invited" and at > invited.get(row["person"], at - timedelta(1)):
+        # When the viewer's connection request last went out, for "Invited oct 16".
+        if (
+            row["kind"] == "invited"
+            and row["member"] == viewer
+            and at > invited.get(row["person"], at - timedelta(1))
+        ):
             invited[row["person"]] = at
+    mine = await relationships(conn, project_id, viewer, only=only)
     runs = await _run_writers(
         conn,
         {
@@ -718,26 +804,40 @@ async def directory(
             for person in listed
             for value in person["fields"].values()
             if value["set_by_kind"] == "run"
-        },
+        }
+        | {row["set_by"] for row in mine.values()},
     )
     notes = await _notes(conn, project_id, only)
     result = []
     for person in listed:
         written = notes.get(person["id"], [])
         latest = written[0] if written else None
+        fields = _fields(
+            person,
+            runs,
+            viewer=viewer,
+            definition=definition,
+            noted=max((n["updated_at"] for n in written), default=None),
+        )
+        relationship = mine.get(person["id"])
+        if relationship:
+            fields["linkedin_relationship"] = {
+                "value": relationship["state"],
+                "reason": relationship["reason"],
+                "by": (runs.get(relationship["set_by"]) or {}).get("by") or "Tin",
+                "at": relationship["set_at"],
+                "stale": False,
+                "stale_reason": None,
+                "definition": "",
+                "previous": None,
+            }
         result.append(
             {
                 "id": person["id"],
                 "name": (person["fields"].get("name") or {}).get("text") or "",
                 "headline": (person["fields"].get("headline") or {}).get("text") or "",
                 "profile_url": person["profile_url"],
-                "fields": _fields(
-                    person,
-                    runs,
-                    viewer=viewer,
-                    definition=definition,
-                    noted=max((n["updated_at"] for n in written), default=None),
-                ),
+                "fields": fields,
                 "last_touch": touches.get(person["id"]),
                 "invited_at": invited.get(person["id"]),
                 "added": {"at": person["created_at"], "by": writer(person["source"])},
