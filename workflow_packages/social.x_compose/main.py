@@ -467,6 +467,7 @@ def _validate_model(parsed, count, units, source_texts, assets):
         if readiness == "ready" and not support_ids:
             raise ValueError("A ready X post must cite current factual support")
         support_text = "\n".join(source_by_id[source_id]["excerpt"] for source_id in support_ids)
+        evidence_notes = []
         for pattern, label in ((_NUMBER, "number"), (_QUOTE, "quotation"), (_URL, "URL")):
             for claim in pattern.findall(body):
                 if isinstance(claim, tuple):
@@ -476,7 +477,11 @@ def _validate_model(parsed, count, units, source_texts, assets):
                 elif label == "quotation":
                     claim = claim.rstrip(".,")
                 if not claim or claim not in support_text:
-                    raise ValueError(f"X post contains an unsupported {label}")
+                    readiness = "needs_evidence"
+                    evidence_notes.append(
+                        f"Check the {label} against the cited sources before publishing."
+                    )
+                    break
         attachments = item["attachments"]
         if not isinstance(attachments, list) or len(attachments) > 4:
             raise ValueError("Too many X attachments")
@@ -509,6 +514,7 @@ def _validate_model(parsed, count, units, source_texts, assets):
             raise ValueError("Invalid editor notes")
         if len(candidates) < count and index == 1 and not notes.strip():
             raise ValueError("A partial X batch must explain the evidence gap")
+        notes = "\n\n".join(filter(None, (notes, *evidence_notes)))
         posts.append(
             {
                 "id": f"p{index}",
