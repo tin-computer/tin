@@ -696,19 +696,21 @@ def _entity_decision(finding: dict, saved: dict | None) -> Decision:
         what = saved["profiles"]
         listed = ", ".join(what)
         candidates = [row["url"] for row in verification.get("candidates") or []]
+        missing = "No official profiles are confirmed yet."
         noun = "official profiles"
     else:
         parent = saved["parent_organization"]
         what = [parent] if parent else []
         listed = f"{parent['name']} ({parent['url']})" if parent else ""
         candidates = [row["url"] for row in verification.get("parent_candidates") or []]
-        noun = "the company behind the site"
+        missing = "The company behind the site isn't confirmed yet."
+        noun = "company behind the site"
     found = f" The audit's candidates: {', '.join(candidates)}." if candidates else ""
     keep = ("keep", "Leave the homepage's structured data as it is")
     if not what:
         return Decision(
-            question=f"No {noun} are confirmed yet.{found} Ask the founder which are theirs and "
-            "save them with set_official_profiles, then preview again.",
+            question=f"{missing}{found} Ask the founder which are theirs and save them with "
+            "set_official_profiles, then preview again.",
             options=(keep,),
             suggestion="keep",
             why="Tin writes only profiles and companies someone confirmed.",

@@ -748,6 +748,7 @@ async def test_entity_data_waits_for_confirmed_profiles_and_writes_exactly_them(
     assert "https://pypi.org/project/acme" in asked[ENTITY]["question"]
     assert "set_official_profiles" in asked[ENTITY]["question"]
     assert "https://acme.studio/" in asked[PARENT]["question"]
+    assert asked[PARENT]["question"].startswith("The company behind the site isn't confirmed yet.")
     assert preview["plan"]["repairs"] == []
     # The founder confirms the package page (not the parent): only the profiles change is
     # possible, and it names the saved revision.

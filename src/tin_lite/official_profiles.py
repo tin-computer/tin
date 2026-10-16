@@ -85,9 +85,14 @@ async def project_official_profiles(executor: Any, *, project_id: UUID) -> dict[
         project_id,
     )
     if row is None:
-        return {"revision": 0, "profiles": [], "parent_organization": None}
-    current = _view(row)
-    return {key: current[key] for key in ("revision", "profiles", "parent_organization")}
+        return {
+            "revision": 0,
+            "profiles": [],
+            "parent_organization": None,
+            "changed_by": None,
+            "changed_at": None,
+        }
+    return _view(row)
 
 
 async def read_official_profiles(

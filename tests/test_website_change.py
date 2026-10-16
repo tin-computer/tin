@@ -1264,6 +1264,7 @@ async def test_official_profiles_are_confirmed_saved_and_kept_as_history(
     assert saved["revision"] == 1
     assert saved["profiles"] == ["https://www.linkedin.com/company/acme", "https://x.com/acme"]
     assert saved["parent_organization"] == {"name": "Acme Studio", "url": "https://acme.studio/"}
+    assert saved["changed_by"] == ACTOR and saved["changed_at"]
     for profiles, parent, match in (
         (["http://x.com/acme"], None, "https URL"),
         (["https://localhost/acme"], None, "https URL"),
