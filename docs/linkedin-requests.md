@@ -46,6 +46,13 @@ Decisions moves to the new one. The fit doesn't matter: the member chose them. U
 time; the same `request_id` repeats the same choice. If the run can't start, the batch is
 removed, anyone it took from Decisions waits there again, and the member reads why.
 
+Before it goes, the member can cancel a request of theirs from the person's panel ("Cancel
+request", `POST …/linkedin-requests/people/{person_id}/cancel`, or
+`cancel_connection_request`). It reads as declined, so they can be chosen again; one being
+sent right now can't be cancelled. Marking someone a customer declines every member's request
+to them that still waits, and the sender checks again just before each send. The panel's
+LinkedIn row says when a queued request would go (`linkedin_requests.queued`).
+
 People and `list_people` say who the viewer can ask (`requestable`, `can_request`) and whose
 request of theirs waits to go out (`request`, `request_queued`). The requests state carries
 `next_open`, when one more request would go, for the bar above the grid.
@@ -108,7 +115,7 @@ queued.
   This week (sent, accepted, queued, pending, next send). A held sending makes the card need
   you.
 - **People:** the tick lane and its bar; "Queued", then "Invited oct 16", in the LinkedIn
-  column; an Invited segment once someone is invited; and "Connection request sent" /
+  column; in the panel, when a queued request goes and "Cancel request" (Paper REQ-C2); an Invited segment once someone is invited; and "Connection request sent" /
   "Accepted your connection request" on the timeline ("A teammate sent a connection request"
   for someone else's).
 

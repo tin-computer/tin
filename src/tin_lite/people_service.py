@@ -7,6 +7,7 @@ Tin's own workflows write the rest (#435). Anyone outside the project gets "proj
 from __future__ import annotations
 
 import logging
+from datetime import UTC, datetime
 from typing import Any
 from uuid import UUID
 
@@ -108,6 +109,10 @@ class People:
             )
             if found is not None:
                 await _requests(conn, project.id, viewer, [found], only=[found["id"]])
+                if found["request"]:
+                    found["queued"] = await requests.queued(
+                        conn, project.id, viewer, found["id"], datetime.now(UTC)
+                    )
         if found is None:
             raise PeopleError(404, GONE)
         return found
@@ -145,6 +150,9 @@ class People:
             async with self.db.pool.acquire() as conn:
                 if values:
                     await records.set_by_member(conn, project.id, person_id, values, member=viewer)
+                if customer:
+                    # A customer isn't asked to connect, even if a request already waits.
+                    await requests.drop_customer(conn, project.id, person_id)
                 if fit is None:
                     await records.restore_run_values(conn, project.id, person_id, FIT_FIELDS)
         except records.RecordError as error:

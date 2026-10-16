@@ -302,5 +302,15 @@ window.TinRequests = (() => {
     return `Queued. Tin sends the ${answer.queued} one at a time from your LinkedIn${at ? `, the first ${at}` : ""}.`;
   }
 
-  return { items, detail, bindDecision, sendingRow, summary, needsYou, bindSending, picked, queuedText };
+  // The person panel's LinkedIn row while the member's request to them waits (Paper REQ-C2).
+  function waitingText(queued, data) {
+    if (queued?.sending) return "Tin is sending it from your LinkedIn now.";
+    const sending = data?.sending || {};
+    if (!sending.on) return "It waits until you turn sending on, on the LinkedIn card. No note.";
+    if (sending.held) return "It waits while sending is paused. No note.";
+    const at = queued?.at ? ` ${when(queued.at, { at: true })}` : "";
+    return `Tin sends it from your LinkedIn${at}, one at a time with your other requests. No note.`;
+  }
+
+  return { items, detail, bindDecision, sendingRow, summary, needsYou, bindSending, picked, queuedText, waitingText };
 })();

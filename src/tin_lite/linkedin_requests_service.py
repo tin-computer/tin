@@ -258,6 +258,17 @@ class ConnectionRequests:
             "last_send": slots[-1] if slots else None,
         }
 
+    async def cancel(self, project_id: UUID, member: str, person_id: UUID) -> dict[str, Any]:
+        """Take the member's request to this person out of the queue before it goes."""
+
+        await self._project(project_id, member)
+        try:
+            async with self.db.pool.acquire() as conn:
+                cancelled = await requests.cancel(conn, project_id, member, person_id)
+        except requests.RequestError as error:
+            raise _refused(error) from None
+        return {"cancelled": cancelled}
+
     async def _unpick(self, project_id: UUID, batch_id: UUID) -> None:
         if await self.db.get_run_by_start_key(
             project_id=project_id, start_idempotency_key=f"linkedin-requests:{batch_id}"

@@ -539,8 +539,14 @@ window.TinPeople = (() => {
       }
       rows.push(fieldRow("ICP fit", value, lineage(fit), lines.length ? `<div class="person-field-notes">${lines.join("")}</div>` : ""));
     }
-    if (relationship) {
-      rows.push(fieldRow("LinkedIn", `<strong>${escape(relationshipLabel(person, relationship.value))}</strong>`, lineage(relationship)));
+    // A request of the viewer's waiting to go out says when, and can be cancelled (REQ-C2).
+    const queued = person.request === "queued";
+    if (relationship || queued) {
+      const notes = queued
+        ? `<div class="person-field-notes"><p>${escape(window.TinRequests.waitingText(person.queued, view.requests?.()))}</p>${person.queued?.sending ? "" : `<button class="person-field-action is-quiet" type="button" data-cancel-request ${view.saving ? "disabled" : ""}>Cancel request</button>`}</div>`
+        : "";
+      const since = queued && person.queued ? `you · ${day(person.queued.queued_at)}` : lineage(relationship);
+      rows.push(fieldRow("LinkedIn", `<strong>${escape(relationshipLabel(person, relationship?.value))}</strong>`, since, notes));
     }
     const isCustomer = customer?.value === "yes";
     rows.push(fieldRow(
@@ -740,6 +746,7 @@ window.TinPeople = (() => {
       options[next]?.focus();
     }));
     panel.querySelector("[data-use-tin-score]")?.addEventListener("click", () => change({ fit: null }));
+    panel.querySelector("[data-cancel-request]")?.addEventListener("click", cancelRequest);
 
     const draft = panel.querySelector("[data-note-draft]");
     draft?.addEventListener("input", () => {
@@ -847,6 +854,29 @@ window.TinPeople = (() => {
     syncSelection();
     renderPanel();
     return true;
+  }
+
+  // Before it goes, the viewer can take their request back; the person can be ticked again.
+  async function cancelRequest() {
+    const current = view;
+    const id = current.openId;
+    if (current.saving || !id) return;
+    current.saving = true;
+    current.fieldError = null;
+    renderPanel();
+    try {
+      await current.api(`/api/projects/${encodeURIComponent(current.projectId)}/linkedin-requests/people/${encodeURIComponent(id)}/cancel`, { method: "POST" });
+    } catch (error) {
+      if (view !== current) return;
+      current.saving = false;
+      current.fieldError = error.message;
+      if (current.active && current.openId === id) renderPanel();
+      return;
+    }
+    if (view !== current) return;
+    current.saving = false;
+    await write(peoplePath(id), undefined, "fieldError", "Request cancelled. Tin won’t send it.");
+    current.refreshRequests?.();
   }
 
   // Ticking is the approval: the people ticked are queued for Tin to send one at a time.
