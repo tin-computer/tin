@@ -40,6 +40,7 @@ def check_competitors(data, items, errors, notes):
     """The competitive set: every competitor labelled and checked on its own site, no
     alternatives or comparison page for one labelled drift, all four channels searched."""
     labels = {}
+    reasons = {}
     for row in data.get("competitors") or []:
         if not isinstance(row, dict) or not str(row.get("name") or "").strip():
             continue
@@ -55,6 +56,16 @@ def check_competitors(data, items, errors, notes):
             )
         if not str(row.get("does") or "").strip():
             notes.append(f"competitor {name!r}: say in does what its own site says it does")
+        if norm(row.get("why")):
+            reasons.setdefault(norm(row.get("why")), []).append(name)
+    # The founder reads each competitor's why in the plan; one sentence pasted on many rows
+    # tells them nothing.
+    for names in reasons.values():
+        if len(names) >= 3:
+            errors.append(
+                f"competitors {', '.join(names[:4])}{' and others' if len(names) > 4 else ''} "
+                "share one why; say for each what it shares with this product and why that use"
+            )
     for index, item in enumerate(items, 1):
         if item.get("format") not in {"alternative", "comparison"}:
             continue

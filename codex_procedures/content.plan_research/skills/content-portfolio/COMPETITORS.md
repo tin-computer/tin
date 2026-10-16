@@ -94,6 +94,7 @@ pages out.
 
 In the portfolio JSON, `competitors` holds every checked competitor with `label`, `does`,
 `buyer`, `evidence_url` (the page you opened), `channels` (which channels found it), `use` and
-`why`. `competitor_research.channels` lists, per channel, the queries you ran and the names it
+`why`: one sentence of your own for that competitor, saying what it shares with this product
+and why it gets that use. The founder reads it in the plan. `competitor_research.channels` lists, per channel, the queries you ran and the names it
 found, and `started_from` says whether you started from the earlier research. Tin keeps this set
 in `research/competitors.json` for the next plan.
