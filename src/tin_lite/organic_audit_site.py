@@ -329,6 +329,27 @@ MAX_HEADINGS = 8
 MAX_HEADING_CHARS = 100
 MAX_LEAD_CHARS = 300
 MAX_LINK_KEY_CHARS = 200
+# Links to a privacy policy or terms, by a path segment or the link's text (audit policy v16).
+PRIVACY_SEGMENT = re.compile(r"privacy|datenschutz|privacidad|confidentialit", re.I)
+TERMS_SEGMENT = re.compile(r"^(?:.*terms.*|tos|.*conditions.*|agb|cgu|cgv)$", re.I)
+PRIVACY_TEXT = re.compile(r"\bprivacy\b|datenschutz|privacidad|confidentialit", re.I)
+TERMS_TEXT = re.compile(r"\bterms\b|\bconditions\b|\bagb\b|\bcgu\b|\bcgv\b", re.I)
+
+
+def legal_kinds(url: str, text: str) -> set[str]:
+    """Which legal pages a link names: privacy, terms or both. A last segment of "legal"
+    usually holds both."""
+    found = set()
+    parts = segments(url)
+    if any(PRIVACY_SEGMENT.search(part) for part in parts) or PRIVACY_TEXT.search(text):
+        found.add("privacy")
+    if (
+        any(TERMS_SEGMENT.match(part) for part in parts)
+        or TERMS_TEXT.search(text)
+        or (parts and parts[-1].lower() == "legal")
+    ):
+        found.add("terms")
+    return found
 
 
 class _FactsParser(HTMLParser):
@@ -360,6 +381,15 @@ class _FactsParser(HTMLParser):
         self.description: str | None = None
         self.viewport = False
         self.open_graph: set[str] = set()
+        self.og_image: str | None = None
+        self.og_title: str | None = None
+        self.twitter_card: str | None = None
+        self.legal_links: dict[str, str | None] = {"privacy": None, "terms": None}
+        self._anchor: dict | None = None
+        # v16: questions a FAQ shows outside H2/H3 headings, in <dt>, <summary> or <h4>.
+        self.faq_questions = 0
+        self._question: list[str] | None = None
+        self._question_tag: str | None = None
         self.meta_author = False
         self.meta_dated = False
         self.time_elements = 0
@@ -473,6 +503,12 @@ class _FactsParser(HTMLParser):
                 self.meta_author = True
             if prop in {"og:title", "og:image", "og:description"} and content.strip():
                 self.open_graph.add(prop.removeprefix("og:"))
+            if prop == "og:title" and content.strip() and self.og_title is None:
+                self.og_title = " ".join(content.split())[:200]
+            if prop in {"og:image", "og:image:url"} and content.strip() and not self.og_image:
+                self.og_image = content.strip()[:2000]
+            if "twitter:card" in {name, prop} and content.strip() and not self.twitter_card:
+                self.twitter_card = content.strip().lower()[:40]
             if (
                 prop in {"article:published_time", "article:modified_time"}
                 or name in {"date", "last-modified", "article:published_time"}
@@ -521,6 +557,7 @@ class _FactsParser(HTMLParser):
                 # raising here would drop every fact after it on the page.
                 target = None
             if target and target.scheme in {"http", "https"} and target.hostname:
+                self._anchor = {"url": target.geturl()[:2000], "text": []}
                 host = target.hostname.lower()
                 if host != self.host and host.removeprefix("www.") != self.host.removeprefix(
                     "www."
@@ -530,6 +567,8 @@ class _FactsParser(HTMLParser):
                     self._internal_link(target)
         elif tag == "div" and values.get("id", "").strip().lower() in _MOUNT_IDS:
             self.mount_point = True
+        if tag in {"dt", "summary", "h4"} and self._question is None:
+            self._question, self._question_tag = [], tag
         if tag in {"h1", "h2", "h3"} and self._heading is None:
             self._heading, self._heading_tag = [], tag
         elif tag == "p" and self.lead is None and self._paragraph is None:
@@ -540,6 +579,17 @@ class _FactsParser(HTMLParser):
 
     def handle_endtag(self, tag):
         self._accessibility_end(tag)
+        if tag == self._question_tag and self._question is not None:
+            text = " ".join("".join(self._question).split())[:MAX_HEADING_CHARS]
+            if text.endswith("?") or QUESTION_START.match(text):
+                self.faq_questions += 1
+            self._question, self._question_tag = None, None
+        if tag == "a" and self._anchor is not None:
+            anchor, self._anchor = self._anchor, None
+            text = " ".join("".join(anchor["text"]).split())[:100]
+            for kind in legal_kinds(anchor["url"], text):
+                if self.legal_links[kind] is None:
+                    self.legal_links[kind] = anchor["url"]
         if tag == "script":
             self._in_script = False
         if tag in _HIDDEN_TEXT and self._hidden:
@@ -589,6 +639,10 @@ class _FactsParser(HTMLParser):
         elif not self._hidden:
             if self._controls and data.strip():
                 self._controls[-1]["named"] = True
+            if self._question is not None and len(self._question) < 20:
+                self._question.append(data[:MAX_HEADING_CHARS])
+            if self._anchor is not None and len(self._anchor["text"]) < 20:
+                self._anchor["text"].append(data[:100])
             self.words += len(data.split())
             if self._heading is not None:
                 self._heading.append(data)
@@ -756,6 +810,8 @@ V11_PAGE_FACTS = frozenset(
 
 # Page facts audit policy v12 added; a run pinned to v11 or earlier does not save them.
 V12_PAGE_FACTS = frozenset({"internal_links", "internal_links_capped"})
+# Page facts audit policy v16 added; a run pinned to v15 or earlier does not save them.
+V16_PAGE_FACTS = frozenset({"og_title", "og_image", "twitter_card", "legal_links", "faq_questions"})
 
 
 def html_facts(
@@ -816,6 +872,13 @@ def html_facts(
         "not_found_text": bool(NOT_FOUND_TEXT.search(heading_text)),
         "unnamed_controls": parser.unnamed_controls,
         "unlabeled_fields": parser.unlabeled_fields,
+        "og_image": urljoin(url, html.unescape(parser.og_image))[:2000]
+        if parser.og_image
+        else None,
+        "faq_questions": parser.question_headings + parser.faq_questions,
+        "og_title": parser.og_title,
+        "twitter_card": parser.twitter_card,
+        "legal_links": dict(parser.legal_links),
         **(
             {
                 "internal_links": parser.internal_links,

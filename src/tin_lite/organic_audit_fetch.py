@@ -1,6 +1,8 @@
 """Bounded reads of the audited site: robots.txt, sitemaps and the static HTML of chosen pages.
 
-Only HTTPS URLs on the audit's verified hosts are contacted. Every host is resolved first and
+Only HTTPS URLs on the audit's verified hosts are contacted, plus (audit policy v16) the other
+address's homepage (www or bare) and the link-preview images pages name, whose bodies are not
+kept. Every host is resolved first and
 refused unless all its addresses are public; the connection then goes to the vetted address
 with the original name for TLS. Page redirects are recorded; site-file redirects stay within
 the verified hosts. No cookies,
@@ -27,6 +29,7 @@ from tin_lite.organic_audit_site import (
     CRAWLER_AGENTS,
     FETCH_AGENT,
     V11_PAGE_FACTS,
+    V16_PAGE_FACTS,
     html_facts,
     parse_robots,
     parse_sitemap,
@@ -92,9 +95,31 @@ class SiteReader:
         if self._own_client:
             await self._client.aclose()
 
-    def in_scope(self, url: str, *, plain_root: bool = False) -> bool:
+    def peer(self) -> str:
+        """The audited host's other address: www.example.com for example.com, and back."""
+        host = self.hosts[0]
+        return host[4:] if host.startswith("www.") else f"www.{host}"
+
+    def in_scope(
+        self, url: str, *, plain_root: bool = False, peer_root: bool = False, asset: bool = False
+    ) -> bool:
         try:
             parts = urlsplit(url)
+            if peer_root or asset:
+                # The other address's homepage only (over HTTPS or plain HTTP), or one public
+                # image a page names. The address check below still refuses anything that
+                # isn't public.
+                return (
+                    parts.scheme in ({"https", "http"} if peer_root else {"https"})
+                    and bool(parts.hostname)
+                    and (asset or (parts.hostname == self.peer() and (parts.path or "/") == "/"))
+                    and parts.port in {None, 443 if parts.scheme == "https" else 80}
+                    and (asset or not parts.query)
+                    and not parts.username
+                    and not parts.password
+                    and len(url) <= 2000
+                    and not any(ord(c) < 33 for c in url)
+                )
             if plain_root:
                 # Only the plain-HTTP homepage, to see whether it redirects to HTTPS.
                 return (
@@ -129,13 +154,20 @@ class SiteReader:
         return self._addresses[host]
 
     async def get(
-        self, url: str, *, max_bytes: int, agent: str | None = None, plain_root: bool = False
+        self,
+        url: str,
+        *,
+        max_bytes: int,
+        agent: str | None = None,
+        plain_root: bool = False,
+        peer_root: bool = False,
+        asset: bool = False,
     ) -> dict:
         """One GET. Returns status, selected headers and at most `max_bytes` of the body.
 
         `agent` replaces Tin's user agent for one request (the crawler access comparison).
         """
-        if not self.in_scope(url, plain_root=plain_root):
+        if not self.in_scope(url, plain_root=plain_root, peer_root=peer_root, asset=asset):
             return {"status": "out_of_scope"}
         host = urlsplit(url).hostname
         try:
@@ -149,7 +181,7 @@ class SiteReader:
                         "User-Agent": agent or USER_AGENT,
                         "Accept-Encoding": "identity",
                     },
-                    extensions={} if plain_root else {"sni_hostname": host},
+                    extensions={"sni_hostname": host} if url.startswith("https:") else {},
                 )
                 response = await self._client.send(request, stream=True)
                 try:
@@ -289,6 +321,8 @@ async def read_site_files(reader: SiteReader, origin: str, policy: dict) -> dict
             _read_http_home(reader, origin),
             _read_missing_page(reader, origin, policy),
         )
+    if policy.get("site_basics"):  # v16: whether the other address comes to this one.
+        result["host_variant"] = await _read_host_variant(reader)
     result["sitemaps"] = {
         "referenced_in_robots": bool(robots.get("sitemaps")),
         "files": files[: policy["max_sitemap_files"] + 1],
@@ -329,6 +363,104 @@ async def _read_http_home(reader: SiteReader, origin: str) -> dict:
         "location": target[:2000] if target else None,
         "to_https": bool(target and urlsplit(target).scheme == "https"),
     }
+
+
+async def _read_host_variant(reader: SiteReader) -> dict:
+    """The other address's homepage (www or bare): a redirect to the site, a second copy of it,
+    or nothing at all. Only its status, redirect target and canonical are kept."""
+    url = f"https://{reader.peer()}/"
+    chain = await _peer_http_chain(reader)
+    if reader.peer() in reader.hosts:
+        # The run's own address check saw one address redirect to the other.
+        return {"url": url, "status": "redirect_verified", "http_chain": chain}
+    response = await reader.get(url, max_bytes=500_000, peer_root=True)
+    if response["status"] != "observed":
+        # No DNS record or no HTTPS answer: nobody reaches a second copy there.
+        return {"url": url, "status": response["status"], "http_chain": chain}
+    code = response["status_code"]
+    result = {"url": url, "status": "observed", "status_code": code}
+    if code in {301, 302, 303, 307, 308}:
+        target = urljoin(url, response.get("location") or "")
+        parts = urlsplit(target)
+        result.update(
+            location=target[:2000],
+            to_site=parts.scheme == "https" and parts.hostname in reader.hosts,
+        )
+    elif refused(response):
+        result["status"] = "refused"
+    elif code == 200 and "html" in (response.get("content_type") or "").lower():
+        facts = html_facts(
+            response["body"],
+            url=url,
+            charset=response.get("charset"),
+            truncated=response["truncated"],
+        )
+        result["canonical"] = facts["canonical"]
+    return {**result, "http_chain": chain}
+
+
+async def _peer_http_chain(reader: SiteReader) -> dict:
+    """Where http:// on the other address ends up, hop by hop, across the two homepages.
+
+    Typed addresses and old links often use it, and a crawl that starts on the site's own
+    host never sees it.
+    """
+    url = f"http://{reader.peer()}/"
+    hops = [url]
+    for _ in range(4):
+        parts = urlsplit(url)
+        if parts.hostname == reader.peer():
+            response = await reader.get(url, max_bytes=20_000, peer_root=True)
+        elif parts.scheme == "http":
+            response = await reader.get(url, max_bytes=20_000, plain_root=True)
+        else:
+            response = await reader.get(url, max_bytes=20_000)
+        if response["status"] != "observed":
+            return {"status": response["status"], "hops": hops}
+        code = response["status_code"]
+        if code not in {301, 302, 303, 307, 308} or not response.get("location"):
+            return {"status": "observed", "hops": hops, "final_status": code}
+        url = urljoin(url, response["location"])[:2000]
+        hops.append(url)
+        if (urlsplit(url).path or "/") != "/" or urlsplit(url).hostname not in {
+            reader.peer(),
+            *reader.hosts,
+        }:
+            return {"status": "left_homepages", "hops": hops}
+    return {"status": "redirect_limit", "hops": hops}
+
+
+async def read_share_images(reader: SiteReader, urls: list[str], *, seconds: float) -> dict:
+    """Whether each link-preview image loads: its status and content type, never its bytes.
+
+    Redirects are followed up to three hops, each hop checked like the first. No hop starts
+    after `seconds`.
+    """
+    deadline = time.monotonic() + seconds
+    rows = []
+    for url in urls:
+        current, row = url, None
+        for _ in range(4):
+            if time.monotonic() > deadline:
+                row = {"url": url, "status": "not_read_time_limit"}
+                break
+            response = await reader.get(current, max_bytes=1024, asset=True)
+            if response["status"] != "observed":
+                row = {"url": url, "status": response["status"]}
+                break
+            code = response["status_code"]
+            if code in {301, 302, 303, 307, 308} and response.get("location"):
+                current = urljoin(current, response["location"])
+                continue
+            row = {
+                "url": url,
+                "status": "refused" if refused(response) else "observed",
+                "status_code": code,
+                "content_type": (response.get("content_type") or "").split(";")[0].strip()[:100],
+            }
+            break
+        rows.append(row or {"url": url, "status": "redirect_limit"})
+    return {"status": "observed", "images": rows}
 
 
 async def _read_missing_page(reader: SiteReader, origin: str, policy: dict) -> dict:
@@ -414,6 +546,9 @@ async def read_pages(
             if not policy.get("site_angles"):
                 # v10 saves the page facts it saved before v11 widened the reader.
                 record = {k: v for k, v in record.items() if k not in V11_PAGE_FACTS}
+            if not policy.get("site_basics"):
+                # v15 and earlier save the page facts they saved before v16.
+                record = {k: v for k, v in record.items() if k not in V16_PAGE_FACTS}
             if record.get("fetch") == "redirect" and policy.get("max_redirect_hops"):
                 record["redirect"] = await follow_redirects(
                     reader, url, record, hops=policy["max_redirect_hops"]

@@ -783,3 +783,44 @@ causes, all fixed without a new policy because the requests they change always f
 - **Panel host:** the question draft named the brand domain (`example.com`), which the
   identity check refused for `www.example.com`. A draft naming the bare domain of the
   audited www host now takes the audited host; sources stay limited to observed hosts.
+
+## 0.12 — the other address, missing structured data, link previews and legal pages (organic-audit-v16)
+
+v16 adds four site checks that answer-engine checklists list and the audit did not make. v15 is
+on main and may deploy at any time, so this is a new pinned policy, `organic-audit-v16` (catalog
+organic.audit 0.12.0). Tests freeze v15's policy, instructions and schemas as main shipped them.
+The questions, answers and grading are unchanged.
+
+What else Tin reads (`site_basics`):
+
+- **The other address.** One read of `https://www.example.com/` for `example.com`, or the bare
+  host for a `www` site: its status, redirect target and canonical tag, never anything past the
+  homepage. When the run's address check already saw one address redirect to the other, Tin
+  doesn't read it again. It also follows `http://` on the other address, hop by hop across the
+  two homepages, since a crawl that starts on the site's own host never sees that path.
+- **Page facts.** Each page's `og:title`, `og:image` URL, how many questions it shows (`faq_questions`), `twitter:card` and the first links that name a
+  privacy policy or terms, by path segment or link text (`V16_PAGE_FACTS`). A run pinned to v15
+  or earlier saves the page facts it saved before.
+- **Link-preview images.** Up to `max_share_images` (3) distinct `og:image` URLs, homepage
+  first, read once after the page facts are complete. These are the only reads outside the
+  audited site: HTTPS only, public addresses only, at most three redirect hops, and only the
+  status and content type are kept.
+
+| Check | What it says |
+| --- | --- |
+| `redirects.host_variant_served` | The other address serves a second copy of the site (medium; low when its canonical names this site), redirects somewhere else, or answers an error. No DNS record is not a finding |
+| `redirects.host_variant_chain` | `http://` on the other address reaches the site in two or more redirects (for a www site, `http://example.com/` → `https://example.com/` → `https://www.example.com/`). Manual: the fix lives in the domain or host settings |
+| `schema.missing` | No Organization data on the homepage, no Product, SoftwareApplication or Service data on the pricing page, no FAQPage on a page that shows three or more questions in headings, `<dt>` or `<summary>` (or sits under `/faq`), leaving out articles and privacy, terms and cookie pages, no Article data on blog, news, guide or answer pages. Only pages whose content is in the static HTML and that use no microdata are judged, and the finding is "likely", since data a tag manager adds is not seen |
+| `onpage.link_preview_incomplete` | Pages that have og:title and og:image (otherwise `onpage.open_graph_missing` fires) but no og:description or twitter:card |
+| `onpage.link_preview_duplicate` | A page with its own title carries the homepage's og:title and og:image, so sharing it shows the homepage card. Privacy, terms and cookie pages are left out |
+| `onpage.share_image_broken` | An og:image answers an error, is not an image or does not load; a refused read is unknown |
+| `trust.legal_pages_unlinked` | A privacy policy or terms page exists in the sitemap or pages read, but the homepage doesn't link to it |
+| `trust.legal_pages_missing` | No link to one and no such page found, or the link answers an error. Medium when the privacy policy is missing |
+
+The repair plan fixes the rest through `website.change`: a host redirect, JSON-LD built from
+facts the page states, og:description and twitter:card from existing copy, each page's own
+title in its preview, an og:image that loads, and footer links to existing pages.
+`redirects.host_variant_chain` and `trust.legal_pages_missing` are manual: the first lives in
+the domain settings, and the founder writes the legal pages. The new keys are site-evidence settings, so an answer completion
+may cross v15 and v16. The audit's coverage gains `host_variant` and `share_images` rows, and
+the structured-data row says which pages missing data is reported for.
