@@ -415,11 +415,15 @@ def _project_task_result(run: Any, entries: list[Any] | None = None) -> dict[str
 
 
 def _mcp_integration_view(
-    definition: Any, connection: Any | None, *, configured: bool
+    definition: Any, connection: Any | None, *, configured: bool, viewer: str | None = None
 ) -> dict[str, Any]:
-    from tin_lite.integrations import connection_readiness
+    from tin_lite.integrations import LINKEDIN_POSTING_PROVIDER, connection_readiness
+    from tin_lite.linkedin_posting import member_view
 
     readiness = connection_readiness(connection)
+    configuration = connection.configuration if connection is not None else {}
+    if connection is not None and definition.key == LINKEDIN_POSTING_PROVIDER:
+        configuration = member_view(connection, viewer)
     return {
         "key": definition.key,
         "name": definition.name,
@@ -437,7 +441,7 @@ def _mcp_integration_view(
         "external_account_label": (
             connection.external_account_label if connection is not None else None
         ),
-        "configuration": connection.configuration if connection is not None else {},
+        "configuration": configuration,
         "last_checked_at": (
             connection.last_checked_at.isoformat()
             if connection is not None and connection.last_checked_at is not None
@@ -1214,7 +1218,7 @@ def create_mcp_app(
         token = await caller()
         parsed = _mcp_uuid(project_id, field="project_id")
         await require_project(parsed, token, tool_name=tool_name)
-        return parsed, token.subject, People(runtime().database, runtime().storage)
+        return parsed, token.subject, People(runtime().database, runtime().storage, auth)
 
     async def people_result(call):
         from tin_lite.people_service import PeopleError
@@ -5245,6 +5249,7 @@ def create_mcp_app(
                 definition,
                 connections.get(definition.key),
                 configured=service.is_configured(definition.key),
+                viewer=clerk_user_id,
             )
             for definition in service.definitions(
                 connections.values(), project_id=parsed_project_id

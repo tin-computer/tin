@@ -701,6 +701,15 @@ def _member(set_by: str, viewer: str) -> str:
     return "you" if set_by == viewer else "a teammate"
 
 
+def _event_member(member: str | None, run_id, runs: dict) -> str | None:
+    """The member behind an event: the one whose request it was, else the one who started the
+    run that saw it, whose LinkedIn that run read (so whose post was reacted to)."""
+
+    if member:
+        return member
+    return (runs.get(str(run_id)) or {}).get("started_by") if run_id else None
+
+
 def _fields(
     person: dict, runs: dict, *, viewer: str, definition: str, noted: datetime | None = None
 ) -> dict[str, dict]:
@@ -780,7 +789,8 @@ async def directory(
     invited: dict[UUID, datetime] = {}
     for row in await conn.fetch(
         """SELECT COALESCE(r.merged_into, r.id) AS person, e.kind, e.occurred_at,
-               e.recorded_at, e.detail->>'posted_at' AS posted_at, e.detail->>'member' AS member
+               e.recorded_at, e.detail->>'posted_at' AS posted_at, e.detail->>'member' AS member,
+               e.run_id
            FROM record_events e JOIN records r ON r.id = e.record_id
            WHERE e.project_id = $1 AND ($2::uuid IS NULL OR COALESCE(r.merged_into, r.id) = $2)""",
         project_id,
@@ -788,7 +798,7 @@ async def directory(
     ):
         at = _when(row)
         if row["person"] not in touches or at > touches[row["person"]]["at"]:
-            touches[row["person"]] = {"kind": row["kind"], "at": at}
+            touches[row["person"]] = {"kind": row["kind"], "at": at, "row": row}
         # When the viewer's connection request last went out, for "Invited oct 16".
         if (
             row["kind"] == "invited"
@@ -805,8 +815,12 @@ async def directory(
             for value in person["fields"].values()
             if value["set_by_kind"] == "run"
         }
-        | {row["set_by"] for row in mine.values()},
+        | {row["set_by"] for row in mine.values()}
+        | {str(touch["row"]["run_id"]) for touch in touches.values() if touch["row"]["run_id"]},
     )
+    for touch in touches.values():
+        row = touch.pop("row")
+        touch["member"] = _event_member(row["member"], row["run_id"], runs)
     notes = await _notes(conn, project_id, only)
     result = []
     for person in listed:
@@ -846,6 +860,7 @@ async def directory(
                     {
                         "body": latest["body"],
                         "by": _member(latest["author"], viewer),
+                        "member": latest["author"],
                         "at": latest["created_at"],
                         "count": len(written),
                     }
@@ -886,6 +901,7 @@ async def person(
         post = detail.get("post") if isinstance(detail.get("post"), str) else ""
         reaction = detail.get("reaction")
         started_by = (runs.get(str(row["run_id"])) or {}).get("started_by")
+        member = _event_member(detail.get("member"), row["run_id"], runs)
         events.append(
             {
                 "kind": row["kind"],
@@ -896,6 +912,8 @@ async def person(
                 ),
                 # Whose post: a run reads the LinkedIn of the member who started it.
                 "yours": started_by == viewer if started_by else None,
+                # Named for the viewer by the service; never sent as a member ID.
+                "member": member if isinstance(member, str) else None,
             }
         )
     events.sort(key=lambda event: event["at"], reverse=True)
@@ -904,6 +922,7 @@ async def person(
             "id": row["id"],
             "body": row["body"],
             "by": _member(row["author"], viewer),
+            "member": row["author"],
             "mine": row["author"] == viewer,
             "at": row["created_at"],
             "edited": row["updated_at"] > row["created_at"],

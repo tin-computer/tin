@@ -7093,8 +7093,11 @@ function renderXIntegrationExpanded(integration) {
   </div>`;
 }
 
-function linkedInPostingAccounts(integration) {
-  return (integration.configuration?.accounts || []).filter((account) => account.active);
+// The accounts this member can post as: the project's pages, and only their own profile. A
+// teammate's profile shows only under Manage, and in what disconnecting would stop.
+function linkedInPostingAccounts(integration, { everyone = false } = {}) {
+  return (integration.configuration?.accounts || [])
+    .filter((account) => account.active && (everyone || account.can_post !== false));
 }
 
 function linkedInPostingHealth(integration) {
@@ -7202,14 +7205,15 @@ function linkedInPostingPart(posting) {
     });
   }
   const accounts = posting.configuration?.accounts || [];
-  const active = accounts.filter((account) => account.active).map((account) => account.name);
-  const lapsed = accounts.filter((account) => !account.active).map((account) => account.name);
+  const yours = accounts.filter((account) => account.can_post !== false);
+  const active = yours.filter((account) => account.active).map((account) => account.name);
+  const lapsed = yours.filter((account) => !account.active).map((account) => account.name);
   const needs = posting.status === "needs_attention"
     ? "LinkedIn needs reconnecting. No connected account can post. Connect again and pick yourself or a page."
     : lapsed.length ? `${lapsed.join(", ")} ${lapsed.length === 1 ? "needs" : "need"} reconnecting.` : "";
   const managing = state.linkedInManaging;
   const manage = managing ? `<div class="linkedin-part-manage">
-      ${accounts.map((account) => `<span><code>${account.kind === "organization" ? "page" : "profile"}</code> ${escapeHtml(account.name)}${account.active ? "" : " · needs reconnecting"}</span>`).join("") || "<span>No account connected</span>"}
+      ${accounts.map((account) => `<span><code>${account.kind === "organization" ? "page" : "profile"}</code> ${escapeHtml(account.name)}${account.can_post === false ? ` · only ${escapeHtml(String(account.name || "").trim().split(/\s+/)[0] || "its owner")} posts as it` : account.active ? "" : " · needs reconnecting"}</span>`).join("") || "<span>No account connected</span>"}
       <p>Drafting never posts to LinkedIn. Tin publishes only the exact post you preview and confirm, as the account you choose for it.</p>
       <div>
         <button class="integration-reconnect" type="button" data-linkedin-posting-refresh>Check again</button>
@@ -7629,7 +7633,7 @@ async function disconnectLinkedIn() {
   const posting = state.integrations.find((item) => item.key === "social.linkedin");
   const reading = state.integrations.find((item) => item.key === "network.linkedin");
   const keys = [posting, reading].filter((part) => part?.connection_id).map((part) => part.key);
-  const accounts = posting?.connection_id ? linkedInPostingAccounts(posting).map((account) => account.name).filter(Boolean) : [];
+  const accounts = posting?.connection_id ? linkedInPostingAccounts(posting, { everyone: true }).map((account) => account.name).filter(Boolean) : [];
   const removes = [
     posting?.connection_id ? `Tin stops posting${accounts.length ? ` as ${accounts.join(", ")}` : ""} for everyone in this project.` : "",
     reading?.connection_id ? "Tin deletes your saved LinkedIn session here." : "",
