@@ -707,3 +707,86 @@ def test_which_preparation_outcomes_fail():
         "Tin couldn't read every file in the repository: public/hero.mp4; dist/app.js; and 3 "
         "more. No change proposed."
     )
+
+
+# --- Official profiles: written only once someone confirmed them -----------------------------
+
+ENTITY = "oa_" + "9" * 20
+PARENT = "oa_" + "8" * 20
+
+
+async def test_entity_data_waits_for_confirmed_profiles_and_writes_exactly_them(
+    publication_db, monkeypatch
+):
+    from test_website_change import save_profiles
+
+    f = await fixture(publication_db, monkeypatch)
+    candidates = {
+        "kind": "confirm_profiles",
+        "candidates": [
+            {"url": "https://pypi.org/project/acme", "source": "links_to_site", "check": "x"}
+        ],
+        "parent_candidates": [
+            {"url": "https://acme.studio/", "source": "footer_link_to_site", "check": "x"}
+        ],
+    }
+    await audit_run(
+        f,
+        [
+            row(
+                "schema.entity_profiles_missing", ENTITY, urls=[f"{BASE}/"], verification=candidates
+            ),
+            row("schema.entity_parent_unclear", PARENT, urls=[f"{BASE}/"], verification=candidates),
+        ],
+        revision="2" * 40,
+    )
+    # Nothing confirmed: the only answer leaves the site alone, and the question says how to
+    # confirm, naming the audit's candidates.
+    preview = await preflight(f)
+    asked = {item["id"]: item for item in preview["decisions_needed"]}
+    assert [option["value"] for option in asked[ENTITY]["options"]] == ["keep"]
+    assert "https://pypi.org/project/acme" in asked[ENTITY]["question"]
+    assert "set_official_profiles" in asked[ENTITY]["question"]
+    assert "https://acme.studio/" in asked[PARENT]["question"]
+    assert asked[PARENT]["question"].startswith("The company behind the site isn't confirmed yet.")
+    assert preview["plan"]["repairs"] == []
+    # The founder confirms the package page (not the parent): only the profiles change is
+    # possible, and it names the saved revision.
+    await save_profiles(f, ["https://pypi.org/project/acme"], 0)
+    preview = await preflight(f)
+    asked = {item["id"]: item for item in preview["decisions_needed"]}
+    assert [option["value"] for option in asked[ENTITY]["options"]] == ["confirmed_r1", "keep"]
+    assert [option["value"] for option in asked[PARENT]["options"]] == ["keep"]
+    answered = await preflight(f, decisions=[f"{ENTITY}=confirmed_r1", f"{PARENT}=keep"])
+    [repair] = answered["plan"]["repairs"]
+    assert repair["kind"] == "entity_profiles"
+    assert repair["profiles"] == ["https://pypi.org/project/acme"]
+    [change] = answered["changes"]
+    assert change["detail"]["profiles"] == ["https://pypi.org/project/acme"]
+    await approve(f, ENTITY)
+    assert (await preflight(f))["plan"]["repairs"][0]["profiles"] == [
+        "https://pypi.org/project/acme"
+    ]
+    # A newer confirmation is a different change: the remembered answer is asked again
+    # instead of failing the preview or writing the old list.
+    await save_profiles(
+        f,
+        ["https://pypi.org/project/acme", "https://github.com/acme"],
+        1,
+        {"name": "Acme Studio", "url": "https://acme.studio"},
+    )
+    again = await preflight(f)
+    asked = {item["id"]: item for item in again["decisions_needed"]}
+    assert [option["value"] for option in asked[ENTITY]["options"]] == ["confirmed_r2", "keep"]
+    assert again["plan"]["repairs"] == []
+    both = await preflight(f, decisions=[f"{ENTITY}=confirmed_r2", f"{PARENT}=confirmed_r2"])
+    by_kind = {entry["kind"]: entry for entry in both["plan"]["repairs"]}
+    assert by_kind["entity_profiles"]["profiles"] == [
+        "https://pypi.org/project/acme",
+        "https://github.com/acme",
+    ]
+    assert by_kind["entity_parent"]["parent_organization"] == {
+        "name": "Acme Studio",
+        "url": "https://acme.studio/",
+    }
+    assert "profiles" not in by_kind["entity_parent"]

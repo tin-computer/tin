@@ -322,8 +322,8 @@ async def guard_attempts(conn, *, project_id, inputs, source):
     if not duplicate:
         return
     prior = await conn.fetchrow("SELECT status FROM workflow_runs WHERE id=$1", duplicate)
-    # GitHub refused the earlier PR before writing anything (for example another open PR
-    # changed a shared file), or never got the request: nothing was delivered, so a fresh
+    # GitHub refused the earlier PR before writing anything (for example a later commit
+    # changed the page), or never got the request: nothing was delivered, so a fresh
     # adaptation may replace it. A PR that opened, or a request with an unknown outcome,
     # still has to be reconciled first. A saved patch alone no longer blocks; Retry delivery
     # stays the free way to send it.
@@ -1241,7 +1241,7 @@ def _words(text):
 
 
 def blocking_paths(proof):
-    """The page's own path, the one file another open PR must not also add; None when the
+    """The page's own path, the one file a later commit must not also change; None when the
     patch has no recognizable page, so every file blocks as for any other PR."""
     return frozenset({proof["article_path"]}) if proof.get("article_path") else None
 

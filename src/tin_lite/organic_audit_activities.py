@@ -14,7 +14,7 @@ from temporalio import activity
 from temporalio.exceptions import ApplicationError
 
 from tin_lite.billing_contracts import BillingError
-from tin_lite.dataforseo import DataForSEO, DataForSEOError
+from tin_lite.dataforseo import DataForSEO, DataForSEOError, DataForSEORefused
 from tin_lite.failures import failure_projection, is_spending_limit, split_failure_input
 from tin_lite.organic_audit import (
     AUDIT_KEY,
@@ -34,6 +34,7 @@ from tin_lite.organic_audit import (
     V12_AUDIT_POLICY,
     V13_AUDIT_POLICY,
     V14_AUDIT_POLICY,
+    V15_AUDIT_POLICY,
     audit_paths,
     audit_policy,
     build_documents,
@@ -68,8 +69,10 @@ from tin_lite.organic_audit_ai import (
 from tin_lite.organic_audit_fetch import (
     SiteReader,
     read_crawler_access,
+    read_entity_pages,
     read_pages,
     read_pagespeed,
+    read_share_images,
     read_site_files,
 )
 from tin_lite.organic_audit_format import count
@@ -245,6 +248,13 @@ class OrganicAuditActivities:
                             ),
                             "billing_code": exc.code,
                         }
+                    elif isinstance(exc, DataForSEORefused):
+                        # Refused at no cost: nothing was bought, so nothing to reconcile.
+                        result = {
+                            "status": "unavailable",
+                            "reason": "provider_refused",
+                            "provider_code": exc.code,
+                        }
                     # Preserve only a safe product fact, not raw provider errors.
                     # Leave crawl intent incomplete so a later attempt can recover it.
                     elif recover:
@@ -339,6 +349,7 @@ class OrganicAuditActivities:
                 V12_AUDIT_POLICY,
                 V13_AUDIT_POLICY,
                 V14_AUDIT_POLICY,
+                V15_AUDIT_POLICY,
                 AUDIT_POLICY,
             )
             or definition.get("audit_instructions") != ai_contract(pinned_policy["version"])
@@ -366,6 +377,7 @@ class OrganicAuditActivities:
                 V12_AUDIT_POLICY,
                 V13_AUDIT_POLICY,
                 V14_AUDIT_POLICY,
+                V15_AUDIT_POLICY,
                 AUDIT_POLICY,
             ):
                 raise ValueError("Audit completion requires the current compatible policy")
@@ -807,11 +819,93 @@ class OrganicAuditActivities:
         # started) keeps the attempt inside its two-minute limit.
         if not await self._collect_page_facts(run_id, scope, seconds=20):
             return False
+        if not await self._share_image_step(run_id, scope):
+            return False  # Keep this attempt short; the crawl is read on the next poll.
         if not crawl_was_final and scope.get("pagespeed") == "configured":
             return False  # Keep this attempt short; speed is read on the next poll.
         if not crawl_final or not await self._pagespeed_step(run_id, scope):
             return False
         return await self._inspection_step(run_id, scope, seconds=20)
+
+    async def _share_image_step(self, run_id: str, scope: dict) -> bool:
+        """v16: whether the link-preview images the read pages name load, read once.
+
+        True when there is nothing (left) to read; False after a read, ending the attempt.
+        """
+        from tin_lite.organic_audit_site import url_key
+
+        policy = audit_policy(scope["policy_version"])
+        if not policy.get("max_share_images") or await self._result(run_id, "share_images"):
+            return True
+        facts = await self.db.get_effect(self.key(run_id, "page_facts"))
+        pages = list(((facts.result or {}) if facts else {}).get("pages", {}).values())
+        pages.sort(key=lambda page: (url_key(page["url"]) != "/", page["url"]))
+        urls = list(
+            dict.fromkeys(
+                page["og_image"]
+                for page in pages
+                if page.get("fetch") == "observed" and page.get("og_image")
+            )
+        )[: policy["max_share_images"]]
+        try:
+            async with self.site_reader(audit_hosts(scope)) as reader:
+                result = await read_share_images(reader, urls, seconds=20)
+        except Exception:  # noqa: BLE001 - unread images stay unknown.
+            activity.logger.warning("Organic audit share images were not read.", exc_info=True)
+            result = {"status": "unavailable", "reason": "site_read_failed", "images": []}
+        await self._save(run_id, "share_images", result)
+        return not urls
+
+    async def _entity_step(self, run_id: str) -> None:
+        """v16: links from profile sites and footers (one Backlinks call), then one read of
+        each profile and parent-company candidate, each saved once. Runs after the crawl, so
+        the page facts are final, in the brand checks' longer activity."""
+        from tin_lite.organic_audit_site import entity_candidates, profile_domains
+
+        scope = await self._result(run_id, "scope")
+        policy = audit_policy(scope["policy_version"])
+        if not policy.get("entity_backlinks_limit") or scope.get("completion"):
+            return
+        backlinks = await self._result(run_id, "entity_backlinks")
+        if backlinks is None and getattr(self.provider, "backlinks", None) is None:
+            backlinks = await self._save(
+                run_id, "entity_backlinks", {"status": "unavailable", "reason": "not_configured"}
+            )
+        elif backlinks is None:
+            request = self.provider.backlinks_request(
+                host=scope["host"],
+                domains=profile_domains(),
+                limit=policy["entity_backlinks_limit"],
+            )
+            backlinks = await self._paid(
+                run_id,
+                "entity_backlinks",
+                request,
+                policy["entity_backlinks_reservation_usd"],
+                lambda: self.provider.backlinks(request),
+            )
+        if await self._result(run_id, "entity_checks"):
+            return
+        facts = await self.db.get_effect(self.key(run_id, "page_facts"))
+        pages = [
+            page
+            for page in ((facts.result or {}) if facts else {}).get("pages", {}).values()
+            if page.get("fetch") == "observed"
+        ]
+        found = entity_candidates(
+            scope["host"],
+            pages,
+            backlinks.get("value") if backlinks.get("status") == "completed" else None,
+        )
+        urls = [row["url"] for row in [*found["profiles"], *found["parents"]]]
+        urls = list(dict.fromkeys(urls))[: policy["max_entity_checks"]]
+        try:
+            async with self.site_reader(audit_hosts(scope)) as reader:
+                result = await read_entity_pages(reader, urls, host=scope["host"], seconds=25)
+        except Exception:  # noqa: BLE001 - unread candidates stay "couldn't check".
+            activity.logger.warning("Organic audit entity pages were not read.", exc_info=True)
+            result = {"status": "unavailable", "reason": "site_read_failed", "pages": []}
+        await self._save(run_id, "entity_checks", result)
 
     async def _access_step(self, run_id: str, scope: dict) -> None:
         """The homepage and one selected page read as a browser and as AI crawlers, once."""
@@ -898,13 +992,19 @@ class OrganicAuditActivities:
         await self._active(run_id)
         submission = await self._result(run_id, "crawl_submit")
         if not submission or submission["status"] != "completed":
+            refused = (submission or {}).get("reason") == "provider_refused"
             await self._save(
                 run_id,
                 "crawl",
                 {
                     "status": "unavailable",
                     "pages": [],
-                    "note": "Crawl was not confirmed; no second crawl was submitted.",
+                    "note": (
+                        "The crawl provider refused the request "
+                        f"(code {submission.get('provider_code')}); no crawl ran."
+                        if refused
+                        else "Crawl was not confirmed; no second crawl was submitted."
+                    ),
                 },
             )
             return True
@@ -920,7 +1020,10 @@ class OrganicAuditActivities:
             return False
         scope = await self._result(run_id, "scope")
         hosts = audit_hosts(scope)
-        if summary.get("domain") not in {None, *hosts}:
+        # A www site's crawl targets its bare domain when it carries priority URLs, and the
+        # provider then reports that domain; the pages are still filtered to the audited hosts.
+        bare = scope["host"].removeprefix("www.")
+        if summary.get("domain") not in {None, *hosts, bare}:
             await self._save(
                 run_id,
                 "crawl",
@@ -1282,6 +1385,7 @@ class OrganicAuditActivities:
     @activity.defn
     async def organic_brand_checks(self, run_id: str) -> None:
         await self._content_review(run_id)
+        await self._entity_step(run_id)
         if await self._result(run_id, "brand_checks"):
             return
         panel = await self._result(run_id, "panel")
@@ -1605,6 +1709,14 @@ class OrganicAuditActivities:
                 "url_inspection": inspection,
                 "content_review": await self._result(run_id, "content_review")
                 or {"status": "not_collected"},
+                "share_images": await self._result(run_id, "share_images")
+                or {"status": "not_collected"},
+                "entity": {
+                    "backlinks": await self._result(run_id, "entity_backlinks")
+                    or {"status": "not_collected"},
+                    "checks": await self._result(run_id, "entity_checks")
+                    or {"status": "not_collected"},
+                },
             },
         }
 

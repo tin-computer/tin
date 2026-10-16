@@ -401,8 +401,7 @@ class TechnicalFixSources:
                 "Saved crawl observations, not a live verification of the website.",
                 "Unobserved checks are unknown, not passes.",
                 "Supported missing-metadata findings affecting at most five pages are "
-                "eligible. Execution still requires a verified source/build profile and no "
-                "overlapping PR.",
+                "eligible. Execution still requires a verified source/build profile.",
                 "Execution requires fresh verification and an exact source match. "
                 "This preview makes no changes.",
             ],

@@ -549,6 +549,22 @@ async def test_crash_after_crawl_acceptance_recovers_without_second_submit():
     assert provider.submit.await_count == 1 and provider.recover.await_count == 1
 
 
+@pytest.mark.asyncio
+async def test_a_refused_crawl_names_its_cause_and_is_not_reconciled():
+    from tin_lite.dataforseo import DataForSEORefused
+
+    activities, db, _, provider = await activities_fixture()
+    run_id = str(db.run.id)
+    provider.submit.side_effect = DataForSEORefused(40501)
+    await activities.organic_start_crawl(run_id)  # A refusal is an outcome, not a retry.
+    await activities.organic_start_crawl(run_id)
+    assert provider.submit.await_count == 1 and provider.recover.await_count == 0
+    assert await activities.organic_poll_crawl(run_id)
+    crawl = await activities._result(run_id, "crawl")
+    assert crawl["status"] == "unavailable" and crawl["pages"] == []
+    assert crawl["note"] == "The crawl provider refused the request (code 40501); no crawl ran."
+
+
 def test_registry_pins_policy_and_instructions_without_github_or_review():
     definition = next(w.definition for w in BUILTIN_WORKFLOWS if w.key == "organic.audit")
     assert definition["audit_policy"] == AUDIT_POLICY

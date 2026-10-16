@@ -238,14 +238,15 @@ async def test_retry_never_overwrites_an_unexpected_branch(delivery, foreign):
     )
 
 
-async def test_incomplete_open_pr_evidence_fails_closed(delivery):
+async def test_other_open_pull_requests_are_not_read_before_a_write(delivery):
+    # Since 10/16 a busy repository's open PRs never stop a write; they aren't even read.
     f = delivery
     f.service._github_read_open_pull_requests = AsyncMock(
-        return_value=(SimpleNamespace(truncated=True, changed_paths=()), None)
+        return_value=(SimpleNamespace(truncated=True, changed_paths=("index.html",)), None)
     )
-    with pytest.raises(IntegrationAuthorizationError, match="incomplete"):
-        await f.service.github_create_pull_request(**f.kwargs)
-    assert not any(method in {"POST", "PUT", "PATCH"} for method, _ in f.requests)
+    result = await f.service.github_create_pull_request(**f.kwargs)
+    assert result.number == 1
+    f.service._github_read_open_pull_requests.assert_not_called()
 
 
 @pytest.mark.parametrize("fault", [None, "after_file_write", "after_pr_create"])

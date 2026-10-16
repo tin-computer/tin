@@ -329,6 +329,100 @@ MAX_HEADINGS = 8
 MAX_HEADING_CHARS = 100
 MAX_LEAD_CHARS = 300
 MAX_LINK_KEY_CHARS = 200
+# Links to a privacy policy or terms, by a path segment or the link's text (audit policy v16).
+PRIVACY_SEGMENT = re.compile(r"privacy|datenschutz|privacidad|confidentialit", re.I)
+TERMS_SEGMENT = re.compile(r"^(?:.*terms.*|tos|.*conditions.*|agb|cgu|cgv)$", re.I)
+PRIVACY_TEXT = re.compile(r"\bprivacy\b|datenschutz|privacidad|confidentialit", re.I)
+TERMS_TEXT = re.compile(r"\bterms\b|\bconditions\b|\bagb\b|\bcgu\b|\bcgv\b", re.I)
+
+
+# Hosts of official profiles a business links to, which name it as an entity (v16). Share and
+# intent links on them are not profiles.
+PROFILE_HOSTS = frozenset(
+    {
+        "linkedin.com",
+        "x.com",
+        "twitter.com",
+        "github.com",
+        "crunchbase.com",
+        "facebook.com",
+        "instagram.com",
+        "youtube.com",
+        "tiktok.com",
+        "threads.net",
+        "bsky.app",
+        "producthunt.com",
+        "wikipedia.org",
+        "wikidata.org",
+        "g2.com",
+        "capterra.com",
+        "trustpilot.com",
+        "discord.gg",
+        "medium.com",
+        # Package registries: the product's own pages there, for a software product.
+        "pypi.org",
+        "npmjs.com",
+    }
+)
+
+
+def profile_domains() -> list[str]:
+    """Every host form of the profile sites, for a provider filter on exact domains."""
+    return sorted({form for host in PROFILE_HOSTS for form in (host, f"www.{host}")})
+
+
+def brand_key(text: str | None) -> str:
+    """Letters and digits only, lowercased: 'Claw Messenger' and clawmessenger.com's label
+    compare equal."""
+    return re.sub(r"[^a-z0-9]", "", (text or "").lower())
+
+
+def host_brand(host: str) -> str:
+    """The brand a host names: its label without www., get/try/use and app/hq."""
+    label = host.lower().removeprefix("www.").split(".")[0]
+    label = re.sub(r"^(?:get|try|use|join)(?=.{3,})", "", label)
+    return brand_key(re.sub(r"(?<=.{3})(?:app|hq)$", "", label))
+
+
+SHARE_PATH = re.compile(
+    r"^/(?:intent|share|sharer|shareArticle|sharing|home|search|hashtag|login|signup)\b", re.I
+)
+MAX_PROFILE_LINKS = 10
+
+
+def profile_link(url: str) -> str | None:
+    """A link to an official-looking profile, as https://host/path, or None."""
+    try:
+        parts = urlsplit(url)
+    except ValueError:
+        return None
+    host = (parts.hostname or "").lower().removeprefix("www.").removeprefix("m.")
+    host = host[3:] if host.endswith(".wikipedia.org") and len(host) > 14 else host
+    base = next((h for h in PROFILE_HOSTS if host == h or host.endswith("." + h)), None)
+    path = parts.path.rstrip("/")
+    if base is None or not path or SHARE_PATH.match(path):
+        return None
+    # An owner or a repository is a profile; an issue, pull request or file in one is a page
+    # someone links to, not who the business is.
+    if base == "github.com" and len([part for part in path.split("/") if part]) > 2:
+        return None
+    return f"https://{parts.hostname.lower()}{path}"[:300]
+
+
+def legal_kinds(url: str, text: str) -> set[str]:
+    """Which legal pages a link names: privacy, terms or both. A last segment of "legal"
+    usually holds both."""
+    found = set()
+    parts = segments(url)
+    if any(PRIVACY_SEGMENT.search(part) for part in parts) or PRIVACY_TEXT.search(text):
+        found.add("privacy")
+    if (
+        any(TERMS_SEGMENT.match(part) for part in parts)
+        or TERMS_TEXT.search(text)
+        or (parts and parts[-1].lower() == "legal")
+    ):
+        found.add("terms")
+    return found
 
 
 class _FactsParser(HTMLParser):
@@ -360,6 +454,16 @@ class _FactsParser(HTMLParser):
         self.description: str | None = None
         self.viewport = False
         self.open_graph: set[str] = set()
+        self.og_image: str | None = None
+        self.og_title: str | None = None
+        self.twitter_card: str | None = None
+        self.legal_links: dict[str, str | None] = {"privacy": None, "terms": None}
+        self._anchor: dict | None = None
+        self.profile_links: list[str] = []
+        # v16: questions a FAQ shows outside H2/H3 headings, in <dt>, <summary> or <h4>.
+        self.faq_questions = 0
+        self._question: list[str] | None = None
+        self._question_tag: str | None = None
         self.meta_author = False
         self.meta_dated = False
         self.time_elements = 0
@@ -473,6 +577,12 @@ class _FactsParser(HTMLParser):
                 self.meta_author = True
             if prop in {"og:title", "og:image", "og:description"} and content.strip():
                 self.open_graph.add(prop.removeprefix("og:"))
+            if prop == "og:title" and content.strip() and self.og_title is None:
+                self.og_title = " ".join(content.split())[:200]
+            if prop in {"og:image", "og:image:url"} and content.strip() and not self.og_image:
+                self.og_image = content.strip()[:2000]
+            if "twitter:card" in {name, prop} and content.strip() and not self.twitter_card:
+                self.twitter_card = content.strip().lower()[:40]
             if (
                 prop in {"article:published_time", "article:modified_time"}
                 or name in {"date", "last-modified", "article:published_time"}
@@ -521,15 +631,25 @@ class _FactsParser(HTMLParser):
                 # raising here would drop every fact after it on the page.
                 target = None
             if target and target.scheme in {"http", "https"} and target.hostname:
+                self._anchor = {"url": target.geturl()[:2000], "text": []}
                 host = target.hostname.lower()
                 if host != self.host and host.removeprefix("www.") != self.host.removeprefix(
                     "www."
                 ):
                     self.external_links += 1
+                    profile = profile_link(target.geturl())
+                    if (
+                        profile
+                        and profile not in self.profile_links
+                        and len(self.profile_links) < MAX_PROFILE_LINKS
+                    ):
+                        self.profile_links.append(profile)
                 elif self.max_links:
                     self._internal_link(target)
         elif tag == "div" and values.get("id", "").strip().lower() in _MOUNT_IDS:
             self.mount_point = True
+        if tag in {"dt", "summary", "h4"} and self._question is None:
+            self._question, self._question_tag = [], tag
         if tag in {"h1", "h2", "h3"} and self._heading is None:
             self._heading, self._heading_tag = [], tag
         elif tag == "p" and self.lead is None and self._paragraph is None:
@@ -540,6 +660,17 @@ class _FactsParser(HTMLParser):
 
     def handle_endtag(self, tag):
         self._accessibility_end(tag)
+        if tag == self._question_tag and self._question is not None:
+            text = " ".join("".join(self._question).split())[:MAX_HEADING_CHARS]
+            if text.endswith("?") or QUESTION_START.match(text):
+                self.faq_questions += 1
+            self._question, self._question_tag = None, None
+        if tag == "a" and self._anchor is not None:
+            anchor, self._anchor = self._anchor, None
+            text = " ".join("".join(anchor["text"]).split())[:100]
+            for kind in legal_kinds(anchor["url"], text):
+                if self.legal_links[kind] is None:
+                    self.legal_links[kind] = anchor["url"]
         if tag == "script":
             self._in_script = False
         if tag in _HIDDEN_TEXT and self._hidden:
@@ -589,6 +720,10 @@ class _FactsParser(HTMLParser):
         elif not self._hidden:
             if self._controls and data.strip():
                 self._controls[-1]["named"] = True
+            if self._question is not None and len(self._question) < 20:
+                self._question.append(data[:MAX_HEADING_CHARS])
+            if self._anchor is not None and len(self._anchor["text"]) < 20:
+                self._anchor["text"].append(data[:100])
             self.words += len(data.split())
             if self._heading is not None:
                 self._heading.append(data)
@@ -610,6 +745,19 @@ SCHEMA_RULES = {
     "SoftwareApplication": {"required": ("name",), "any": ("offers", "aggregateRating")},
 }
 SCHEMA_ALIASES = {"Corporation": "Organization", "LocalBusiness": "Organization"}
+# Types that describe the business itself (audit policy v16's entity checks).
+ORGANIZATION_TYPES = frozenset(
+    {
+        "Organization",
+        "Corporation",
+        "LocalBusiness",
+        "OnlineBusiness",
+        "OnlineStore",
+        "NGO",
+        "EducationalOrganization",
+        "ProfessionalService",
+    }
+)
 
 
 def _schema_items(value, depth: int = 0):
@@ -662,6 +810,28 @@ def _breadcrumb_problems(item: dict) -> list[str]:
     return []
 
 
+def _names(value) -> list[str]:
+    values = value if isinstance(value, list) else [value]
+    names = []
+    for item in values[:5]:
+        name = item.get("name") if isinstance(item, dict) else item
+        if isinstance(name, str) and name.strip():
+            names.append(" ".join(name.split())[:120])
+    return names
+
+
+def _organization(item: dict) -> dict:
+    """The first Organization: who it says it is, where, its brands and whether it names a
+    parent company."""
+    url = item.get("url")
+    return {
+        "name": (_names(item.get("name")) or [None])[0],
+        "url": url.strip()[:300] if isinstance(url, str) and url.strip() else None,
+        "brands": _names(item.get("brand")),
+        "parent": any(_present(item.get(field)) for field in ("parentOrganization", "publisher")),
+    }
+
+
 def structured_data(documents: list[str]) -> dict:
     """Parse JSON-LD blocks and check the common types' required fields.
 
@@ -670,6 +840,8 @@ def structured_data(documents: list[str]) -> dict:
     problems: list[dict] = []
     invalid = 0
     dated = author = False
+    same_as: list[str] = []
+    organization: dict | None = None
     for text in documents:
         try:
             value = json.loads(text)
@@ -681,6 +853,13 @@ def structured_data(documents: list[str]) -> dict:
                 dated = True
             if _present(item.get("author")):
                 author = True
+            if set(_types(item)) & ORGANIZATION_TYPES:
+                if organization is None:
+                    organization = _organization(item)
+                links = item.get("sameAs")
+                for link in links if isinstance(links, list) else [links]:
+                    if isinstance(link, str) and link.strip() and len(same_as) < 20:
+                        same_as.append(link.strip()[:300])
             for name in _types(item):
                 rule = SCHEMA_RULES.get(SCHEMA_ALIASES.get(name, name))
                 if rule is None:
@@ -699,7 +878,14 @@ def structured_data(documents: list[str]) -> dict:
                     problems.append(
                         {"type": name, "missing": missing, "recommended_missing": recommended}
                     )
-    return {"problems": problems, "invalid_blocks": invalid, "dated": dated, "author": author}
+    return {
+        "problems": problems,
+        "invalid_blocks": invalid,
+        "dated": dated,
+        "author": author,
+        "same_as": same_as,
+        "organization": organization,
+    }
 
 
 _VALUED_DIRECTIVES = frozenset(
@@ -756,6 +942,19 @@ V11_PAGE_FACTS = frozenset(
 
 # Page facts audit policy v12 added; a run pinned to v11 or earlier does not save them.
 V12_PAGE_FACTS = frozenset({"internal_links", "internal_links_capped"})
+# Page facts audit policy v16 added; a run pinned to v15 or earlier does not save them.
+V16_PAGE_FACTS = frozenset(
+    {
+        "og_title",
+        "og_image",
+        "twitter_card",
+        "legal_links",
+        "faq_questions",
+        "profile_links",
+        "organization_same_as",
+        "organization",
+    }
+)
 
 
 def html_facts(
@@ -816,6 +1015,16 @@ def html_facts(
         "not_found_text": bool(NOT_FOUND_TEXT.search(heading_text)),
         "unnamed_controls": parser.unnamed_controls,
         "unlabeled_fields": parser.unlabeled_fields,
+        "og_image": urljoin(url, html.unescape(parser.og_image))[:2000]
+        if parser.og_image
+        else None,
+        "faq_questions": parser.question_headings + parser.faq_questions,
+        "profile_links": parser.profile_links,
+        "organization_same_as": schema["same_as"],
+        "organization": schema["organization"],
+        "og_title": parser.og_title,
+        "twitter_card": parser.twitter_card,
+        "legal_links": dict(parser.legal_links),
         **(
             {
                 "internal_links": parser.internal_links,
@@ -1001,4 +1210,80 @@ def select_pages(
             }
             for name in section_order
         ][:200],
+    }
+
+
+# --- Entity candidates (audit policy v16) ------------------------------------------------------
+
+MAX_PROFILE_CANDIDATES = 10
+MAX_PARENT_CANDIDATES = 3
+# A footer link from a page this spammy is a link network, not a company.
+MAX_PARENT_SPAM_SCORE = 30
+
+
+def entity_candidates(host: str, pages: list[dict], backlinks: dict | None) -> dict:
+    """Profiles and a parent company the evidence points to: candidates for the founder to
+    confirm, never facts.
+
+    Profiles come from the profile links the site's pages carry (homepage first) and from
+    profile pages that link to the site. A parent company is a site that links here from its
+    footer, passing link equity, with the site's brand as the anchor.
+    """
+    organization = next(
+        (
+            page.get("organization")
+            for page in pages
+            if url_key(page["url"]) == "/" and page.get("organization")
+        ),
+        None,
+    )
+    brands = {host_brand(host)} | {
+        brand_key(name) for name in (organization or {}).get("brands", []) if brand_key(name)
+    }
+    # The site's own profiles sit on the homepage or in the header and footer of most pages;
+    # a profile linked from one article is usually someone else's (a library, an issue).
+    home = next((page for page in pages if url_key(page["url"]) == "/"), None)
+    counts: dict[str, int] = {}
+    for page in pages:
+        for link in dict.fromkeys(page.get("profile_links") or []):
+            counts[link] = counts.get(link, 0) + 1
+    sitewide = max(2, (len(pages) + 1) // 2)
+    profiles: dict[str, dict] = {}
+    for link in [*(home or {}).get("profile_links", []), *counts]:
+        if link in (home or {}).get("profile_links", []) or counts[link] >= sitewide:
+            profiles.setdefault(link, {"url": link, "source": "site_links_to_it"})
+    links = (backlinks or {}).get("links") or []
+    for link in links:
+        profile = profile_link(link["url_from"])
+        if profile:
+            profiles.setdefault(profile, {"url": profile, "source": "links_to_site"})
+    site = host.lower().removeprefix("www.")
+    parents: dict[str, dict] = {}
+    for link in links:
+        domain = (link.get("domain_from") or "").lower().removeprefix("www.")
+        anchor = brand_key(link.get("anchor"))
+        if (
+            link.get("semantic_location") != "footer"
+            or not link.get("dofollow")
+            or not domain
+            or domain == site
+            or domain.endswith("." + site)
+            or profile_link(f"https://{domain}/x") is not None
+            or (link.get("spam_score") or 0) > MAX_PARENT_SPAM_SCORE
+            or not anchor
+            or not any(brand and brand in anchor for brand in brands)
+        ):
+            continue
+        parents.setdefault(
+            domain,
+            {
+                "url": f"https://{link.get('domain_from')}/",
+                "anchor": link.get("anchor"),
+                "linking_page": link["url_from"],
+                "source": "footer_link_to_site",
+            },
+        )
+    return {
+        "profiles": list(profiles.values())[:MAX_PROFILE_CANDIDATES],
+        "parents": list(parents.values())[:MAX_PARENT_CANDIDATES],
     }

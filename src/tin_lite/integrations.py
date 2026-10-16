@@ -3418,8 +3418,8 @@ class IntegrationService:
         blocking_paths: frozenset[str] | None = None,
         repository: str | None = None,
     ) -> GitHubPullRequestResult:
-        """Open one PR. `blocking_paths` narrows which of its files another open PR or a later
-        commit may not also touch; by default every file counts. Content delivery passes its
+        """Open one PR. `blocking_paths` narrows which of its files a later commit may not also
+        touch; by default every file counts. Content delivery passes its
         page file alone, so a shared sitemap or index edited elsewhere never blocks an article.
         A named `repository` is one of the code repositories; Tin never merges there.
         """
@@ -4210,25 +4210,8 @@ class IntegrationService:
             # Keep the immutable prepared branch base. GitHub's PR merge preserves
             # later unrelated commits; retry never rewrites the approved content.
             base_sha = expected_base_sha
-        open_pull_requests, _request_id = await self._github_read_open_pull_requests(
-            connection=connection,
-            repository=repository,
-            base_branch=resolved_base,
-        )
-        overlapping_paths = sorted(
-            {item.path for item in blocking}.intersection(open_pull_requests.changed_paths)
-        )
-        if overlapping_paths:
-            preview = ", ".join(overlapping_paths[:3])
-            if len(overlapping_paths) > 3:
-                preview += ", …"
-            raise IntegrationAuthorizationError(
-                "An open GitHub pull request already changes "
-                f"{preview}; resolve it or choose a non-overlapping improvement"
-            )
+        # Other open PRs never block this one; the founder reconciles overlapping changes.
         if expected_binding is not None:
-            if open_pull_requests.truncated:
-                raise IntegrationAuthorizationError("Open pull-request evidence is incomplete")
             await self._check_github_binding(
                 connection.project_id,
                 connection,

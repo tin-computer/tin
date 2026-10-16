@@ -200,7 +200,7 @@ V14_AUDIT_POLICY = {
 # as its public pages, and asks up to sixteen. The questions are frozen on the first run and
 # reused by later runs, so organic.prompt_panel is no longer read. v14 may be deployed, so a run
 # pinned to it or earlier still reads the newest panel and asks at most eight questions.
-AUDIT_POLICY = {
+V15_AUDIT_POLICY = {
     **V14_AUDIT_POLICY,
     "version": "organic-audit-v15",
     "prompt_panel": False,
@@ -220,6 +220,27 @@ AUDIT_POLICY = {
     "ai_engines_max_cost_usd": "2.00",
     # The billed ceiling for the audit's own calls; see service_pricing.AUDIT_MAXIMUM_USD.
     "billing_maximum_usd": "4.00",
+}
+# v16 keeps v15 and adds four site checks: the other address (www or bare) redirecting to the
+# site, structured data the key pages lack, complete link previews whose image loads, and links
+# to a privacy policy and terms. v15 may be deployed, so a run pinned to it or earlier reads
+# none of the new evidence and makes none of the new findings.
+AUDIT_POLICY = {
+    **V15_AUDIT_POLICY,
+    "version": "organic-audit-v16",
+    # One read of the other host's homepage, the page facts below (V16_PAGE_FACTS) and the
+    # findings they support.
+    "site_basics": True,
+    # The link-preview images read, homepage first; each read keeps only its status and type.
+    "max_share_images": 3,
+    # One DataForSEO Backlinks call for links from profile sites (LinkedIn, X, GitHub, package
+    # registries) and from footers that pass link equity, where a parent company links from.
+    # It cost $0.024 for 3 links on a real site; the reservation covers 100 links.
+    "entity_backlinks_limit": 100,
+    "entity_backlinks_reservation_usd": "0.05",
+    # The profile and parent candidates read once each, as evidence for the founder; a site
+    # that turns readers away (LinkedIn, X) is "couldn't check", never a verdict.
+    "max_entity_checks": 12,
 }
 
 # Crawl, site-file and Search Console settings. They never change how an AI answer is
@@ -257,6 +278,11 @@ SITE_EVIDENCE_POLICY_KEYS = frozenset(
         "next_action_from_repair_plan",
         "follow_links_without_sitemap",
         "next_action_fix",
+        "site_basics",
+        "max_share_images",
+        "entity_backlinks_limit",
+        "entity_backlinks_reservation_usd",
+        "max_entity_checks",
     }
 )
 
@@ -334,6 +360,7 @@ def audit_policy(version: str = AUDIT_POLICY["version"]) -> dict:
         V12_AUDIT_POLICY,
         V13_AUDIT_POLICY,
         V14_AUDIT_POLICY,
+        V15_AUDIT_POLICY,
         AUDIT_POLICY,
     ):
         if version == policy["version"]:
@@ -355,6 +382,7 @@ def grounded_preparation(policy_version: str) -> bool:
         V12_AUDIT_POLICY,
         V13_AUDIT_POLICY,
         V14_AUDIT_POLICY,
+        V15_AUDIT_POLICY,
         AUDIT_POLICY,
     )
 
@@ -1597,6 +1625,15 @@ def site_check_documents(
                     "content_review": site.get("content_review") or {"status": "not_collected"},
                 }
                 if policy.get("site_angles")
+                else {}
+            ),
+            # v16's link-preview image reads; v15 evidence keeps v15's shape.
+            **(
+                {
+                    "share_images": site.get("share_images") or {"status": "not_collected"},
+                    "entity": site.get("entity") or {"status": "not_collected"},
+                }
+                if policy.get("site_basics")
                 else {}
             ),
         },

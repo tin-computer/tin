@@ -294,6 +294,31 @@ def test_the_procedure_check_asks_for_labels_evidence_and_every_channel(tmp_path
     assert "#1: Zapier is labelled drift" in out
     assert "#2: 'Nobody' is not in competitors" in out
     assert "no queries for comparison_pages, job_and_stack" in out
+    assert "share one why" not in out
     # A v10 brief runs none of these checks.
     code, out = run_check(tmp_path / "v10", value, research=False)
     assert "labelled drift" not in out and "competitor_research" not in out
+
+
+def test_the_procedure_check_asks_for_a_why_per_competitor(tmp_path):
+    value = researched()
+    filler = "A buyer may weigh this option."
+    for index, name in enumerate(("Alpha", "Beta", "Gamma", "Delta")):
+        value["competitors"].append(
+            {
+                "name": name,
+                "host": f"{name.lower()}.com",
+                "label": "adjacent",
+                "does": "Sends messages",
+                "evidence_url": f"https://{name.lower()}.com/",
+                "use": "roundup",
+                "why": filler if index < 3 else "Covers only SMS for the same buyer.",
+            }
+        )
+    code, out = run_check(tmp_path, value)
+    assert code == 1
+    assert "competitors Alpha, Beta, Gamma share one why" in out
+    # Two rows may agree; the check is for a sentence pasted across the set.
+    value["competitors"][-2]["why"] = "Same buyer, but email only."
+    code, out = run_check(tmp_path / "two", value)
+    assert "share one why" not in out

@@ -277,7 +277,7 @@ class TechnicalFixExecution:
             reason = "nothing_to_fix"
         elif not still:
             reason = "already_resolved"
-        strict, overlap, missing = {}, [], {}
+        strict, missing = {}, {}
         if reason is None:
             binding = binding_from(selection)
             bundle = await self.integrations.github_repository_bundle(
@@ -298,17 +298,9 @@ class TechnicalFixExecution:
             if files is None:
                 reason = "unsupported_source"
             else:
+                # Other open PRs don't limit a repair: the founder's review of this PR is the
+                # place to reconcile two changes to one file.
                 strict = self._strict_files(files, still, robots, sitemaps or [], page_reads)
-                evidence = await self.integrations.github_open_pull_requests(
-                    project_id=run.project_id,
-                    run_id=run.id,
-                    execution_key=f"{run.id}:procedure_open_pull_requests",
-                    base_branch=binding.default_branch,
-                    expected_binding=binding,
-                )
-                if evidence.truncated:
-                    reason = "incomplete_pr_evidence"
-                overlap = sorted(set(evidence.changed_paths))[:500]
         observations = [
             {
                 "url": read["url"],
@@ -330,7 +322,7 @@ class TechnicalFixExecution:
                 "repairs": still,
                 "left_out": left_out,
                 "strict_files": strict,
-                "overlap_paths": overlap,
+                "overlap_paths": [],
                 "observations": observations,
                 "caps": {
                     "files": repair_plan.MAX_FILES,
