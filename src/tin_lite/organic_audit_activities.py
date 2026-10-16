@@ -14,7 +14,7 @@ from temporalio import activity
 from temporalio.exceptions import ApplicationError
 
 from tin_lite.billing_contracts import BillingError
-from tin_lite.dataforseo import DataForSEO, DataForSEOError
+from tin_lite.dataforseo import DataForSEO, DataForSEOError, DataForSEORefused
 from tin_lite.failures import failure_projection, is_spending_limit, split_failure_input
 from tin_lite.organic_audit import (
     AUDIT_KEY,
@@ -244,6 +244,13 @@ class OrganicAuditActivities:
                                 "spending_limit" if is_spending_limit(exc) else "billing_refused"
                             ),
                             "billing_code": exc.code,
+                        }
+                    elif isinstance(exc, DataForSEORefused):
+                        # Refused at no cost: nothing was bought, so nothing to reconcile.
+                        result = {
+                            "status": "unavailable",
+                            "reason": "provider_refused",
+                            "provider_code": exc.code,
                         }
                     # Preserve only a safe product fact, not raw provider errors.
                     # Leave crawl intent incomplete so a later attempt can recover it.
@@ -898,13 +905,19 @@ class OrganicAuditActivities:
         await self._active(run_id)
         submission = await self._result(run_id, "crawl_submit")
         if not submission or submission["status"] != "completed":
+            refused = (submission or {}).get("reason") == "provider_refused"
             await self._save(
                 run_id,
                 "crawl",
                 {
                     "status": "unavailable",
                     "pages": [],
-                    "note": "Crawl was not confirmed; no second crawl was submitted.",
+                    "note": (
+                        "The crawl provider refused the request "
+                        f"(code {submission.get('provider_code')}); no crawl ran."
+                        if refused
+                        else "Crawl was not confirmed; no second crawl was submitted."
+                    ),
                 },
             )
             return True
@@ -920,7 +933,10 @@ class OrganicAuditActivities:
             return False
         scope = await self._result(run_id, "scope")
         hosts = audit_hosts(scope)
-        if summary.get("domain") not in {None, *hosts}:
+        # A www site's crawl targets its bare domain when it carries priority URLs, and the
+        # provider then reports that domain; the pages are still filtered to the audited hosts.
+        bare = scope["host"].removeprefix("www.")
+        if summary.get("domain") not in {None, *hosts, bare}:
             await self._save(
                 run_id,
                 "crawl",

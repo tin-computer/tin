@@ -429,3 +429,25 @@ async def test_blind_readers_are_bounded_and_keep_each_question_separate():
     assert len({stage for stage, _ in requests}) == 16
     assert {text for _, text in requests} == {q["question"] for q in questions}
     assert [row["number"] for row in json.loads(result["value"]["text"])] == list(range(1, 17))
+
+
+def test_a_www_site_accepts_its_bare_domain_as_the_panel_host():
+    raw = research()
+    raw["output"][:1] = [
+        {
+            "type": "web_search_call",
+            "status": "completed",
+            "action": {"type": "open_page", "url": "https://www.example.com/", "sources": None},
+        }
+    ]
+    proposed = panel_fixture()
+    for question in proposed["questions"]:
+        question["source_url"] = "https://www.example.com/"
+    assert proposed["host"] == "example.com"  # The brand domain, as models write it.
+    panel = grounded_panel(read(draft(proposed), search=False), read(raw), "www.example.com")
+    assert panel["host"] == "www.example.com"
+    # Only the bare domain of the audited www host; a sibling host is still another site.
+    proposed["host"] = "app.example.com"
+    with pytest.raises(AuditValidationError) as exc:
+        grounded_panel(read(draft(proposed), search=False), read(raw), "www.example.com")
+    assert exc.value.reason == "panel_identity_invalid"

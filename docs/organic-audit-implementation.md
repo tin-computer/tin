@@ -763,3 +763,23 @@ instructions and schemas as main shipped them.
   engines to fit; with $5 the audit stops buying answers partway through.
 - The new keys are panel-preparation settings and `billing_maximum_usd` is neutral, so an
   answer completion may cross v14 and v15.
+
+## www sites (10/16)
+
+An audit of a customer's www site kept no crawl and measured no AI answers. Three
+causes, all fixed without a new policy because the requests they change always failed:
+
+- **Crawl target:** DataForSEO refuses `priority_urls` under a `www.` target (40501 "Invalid
+  Field: 'priority_urls'", whichever host the URLs name) and accepts them under the bare
+  domain, still crawling from the www start URL and reporting the bare domain. A www site
+  with priority URLs now sends the bare `target`; `submit` reads the host from `start_url`,
+  and the poll accepts the bare domain the provider reports. Pages are still filtered to the
+  audited hosts. Requests without priority URLs are unchanged.
+- **Refusals and recovery:** a task the provider refuses at no cost (a 4xxxx code other than
+  the in-queue codes) raises `DataForSEORefused`. The crawl submission records
+  `provider_refused` with the code, nothing is reconciled, and the crawl note names the code.
+  Recovery listed tasks up to 13 minutes after the submission, which the provider refuses as a
+  future date, so it never matched; the window now ends a few seconds ago.
+- **Panel host:** the question draft named the brand domain (`example.com`), which the
+  identity check refused for `www.example.com`. A draft naming the bare domain of the
+  audited www host now takes the audited host; sources stay limited to observed hosts.

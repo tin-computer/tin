@@ -11,7 +11,7 @@ import asyncio
 import ipaddress
 import json
 import socket
-from datetime import datetime, timedelta
+from datetime import UTC, datetime, timedelta
 from decimal import Decimal
 from typing import Any
 from urllib.parse import urlsplit
@@ -28,6 +28,14 @@ LEGACY_PAGE_CAP = 100
 
 class DataForSEOError(RuntimeError):
     """Safe provider error: never include response bodies or credentials."""
+
+
+class DataForSEORefused(DataForSEOError):
+    """The provider answered and refused the task at no cost: nothing was bought."""
+
+    def __init__(self, code: int) -> None:
+        super().__init__(f"Provider refused the task ({code}).")
+        self.code = code
 
 
 class DataForSEO:
@@ -65,7 +73,10 @@ class DataForSEO:
                 raise DataForSEOError("Provider returned an invalid task envelope.")
             task = tasks[0]
             await observe_tool(observation, task)
-            if task.get("status_code") not in {20000, 20100, 40601, 40602}:
+            code = task.get("status_code")
+            if code not in {20000, 20100, 40601, 40602}:
+                if type(code) is int and 40000 <= code < 50000 and not task.get("cost"):
+                    raise DataForSEORefused(code)
                 raise DataForSEOError("Provider task was not successful or pending.")
             cost = Decimal(str(task.get("cost", 0)))
             if not cost.is_finite() or cost < 0:
@@ -124,8 +135,13 @@ class DataForSEO:
                 or urlsplit(url).fragment
             ):
                 raise ValueError("Priority URLs must be HTTPS pages on the crawl target.")
+        # The provider refuses priority URLs whenever the target starts with www. (40501
+        # "Invalid Field: 'priority_urls'", checked live 10/16) and accepts them under the
+        # bare domain, still crawling from the www start URL. Requests without priority URLs
+        # keep the target they always had.
+        target = host.removeprefix("www.") if priority and host.startswith("www.") else host
         request = {
-            "target": host,
+            "target": target,
             "start_url": f"https://{host}/",
             "tag": tag,
             "max_crawl_pages": max_pages,
@@ -145,7 +161,7 @@ class DataForSEO:
 
     async def submit(self, request: dict) -> dict:
         expected = self.crawl_request(
-            host=request["target"],
+            host=urlsplit(request["start_url"]).hostname,
             tag=request["tag"],
             respect_sitemap=request.get("respect_sitemap", False),
             max_pages=request.get("max_crawl_pages", LEGACY_PAGE_CAP),
@@ -165,7 +181,9 @@ class DataForSEO:
         Account-wide metadata stays inside this trusted adapter.
         """
         start = datetime.fromisoformat(submitted_at) - timedelta(minutes=2)
-        finish = start + timedelta(minutes=15)
+        # The provider refuses a window that ends in the future (40501), so a recovery soon
+        # after the submission lists up to a few seconds ago.
+        finish = min(start + timedelta(minutes=15), datetime.now(UTC) - timedelta(seconds=5))
         matches: dict[str, dict] = {}
         for offset in range(0, 5000, 1000):
             task = await self._request(
