@@ -27,7 +27,7 @@ from tin_lite.organic_audit_ai import ai_contract, ai_schemas
 from tin_lite.organic_audit_checks import SiteView, site_check_coverage, site_findings
 from tin_lite.organic_audit_completion import NEUTRAL_KEYS
 from tin_lite.organic_audit_fetch import read_pages, read_share_images, read_site_files
-from tin_lite.organic_audit_site import V16_PAGE_FACTS, parse_robots
+from tin_lite.organic_audit_site import V16_PAGE_FACTS, parse_robots, profile_link
 from tin_lite.technical_repair_plan import classify, next_action
 
 V15 = "organic-audit-v15"
@@ -39,6 +39,7 @@ V15_SCHEMAS_DIGEST = "9697781502162fb2f38dfa57224b8dd1b521a1a7b93633c68aa5b68fda
 NEW_CHECKS = {
     "redirects.host_variant_served",
     "schema.missing",
+    "schema.entity_profiles_missing",
     "redirects.host_variant_chain",
     "onpage.link_preview_incomplete",
     "onpage.link_preview_duplicate",
@@ -46,7 +47,14 @@ NEW_CHECKS = {
     "trust.legal_pages_unlinked",
     "trust.legal_pages_missing",
 }
-ORGANIZATION = json.dumps({"@context": "https://schema.org", "@type": "Organization", "name": "X"})
+ORGANIZATION = json.dumps(
+    {
+        "@context": "https://schema.org",
+        "@type": "Organization",
+        "name": "X",
+        "sameAs": ["https://www.linkedin.com/company/x"],
+    }
+)
 FOOTER = '<footer><a href="/privacy">Privacy</a> <a href="/legal/terms">Terms</a></footer>'
 PREVIEW = (
     '<meta property="og:title" content="Example"><meta property="og:image" '
@@ -415,6 +423,7 @@ def test_every_new_check_has_a_place_in_the_repair_plan():
         "redirects.host_variant_served": "fix",
         "redirects.host_variant_chain": "manual",
         "schema.missing": "fix",
+        "schema.entity_profiles_missing": "manual",
         "onpage.link_preview_incomplete": "fix",
         "onpage.link_preview_duplicate": "fix",
         "onpage.share_image_broken": "fix",
@@ -448,3 +457,64 @@ def test_faq_questions_in_definition_lists_count_and_legal_pages_are_left_out():
     item = found(findings(view(pages)), "schema.missing")
     assert item["evidence"][0] == "Visible questions and answers but no FAQPage data: /"
     assert item["urls"] == [f"{BASE}/"]
+
+
+SOCIAL = (
+    '<a href="https://www.linkedin.com/company/acme/">LinkedIn</a>'
+    '<a href="https://x.com/acme?ref=site">X</a>'
+    '<a href="https://twitter.com/intent/tweet?text=hi">Share</a>'
+    '<a href="https://www.linkedin.com/shareArticle?url=x">Share</a>'
+    '<a href="https://example.org/partner">Partner</a>'
+)
+
+
+def test_profile_links_are_candidates_and_share_links_are_not():
+    assert profile_link("https://www.linkedin.com/company/acme/") == (
+        "https://www.linkedin.com/company/acme"
+    )
+    assert profile_link("https://x.com/acme?ref=site") == "https://x.com/acme"
+    assert (
+        profile_link("https://en.wikipedia.org/wiki/Acme") == "https://en.wikipedia.org/wiki/Acme"
+    )
+    for not_profile in (
+        "https://twitter.com/intent/tweet?text=hi",
+        "https://www.facebook.com/sharer/sharer.php?u=x",
+        "https://github.com/",
+        "https://notgithub.com/acme",
+    ):
+        assert profile_link(not_profile) is None
+    home = page("/", SOCIAL)
+    assert home["profile_links"] == ["https://www.linkedin.com/company/acme", "https://x.com/acme"]
+    assert complete_home()["organization_same_as"] == ["https://www.linkedin.com/company/x"]
+
+
+def test_an_organization_without_official_profiles_is_one_finding_for_the_site():
+    bare = json.dumps({"@type": "Organization", "name": "Acme", "url": BASE})
+    home = page("/", FOOTER + SOCIAL, json_ld=bare)
+    other = page("/about", '<a href="https://github.com/acme">GitHub</a>', json_ld=bare)
+    item = found(findings(view([home, other])), "schema.entity_profiles_missing")
+    assert item["urls"] == [f"{BASE}/"] and item["confidence"] == "likely"
+    candidates = [
+        "https://www.linkedin.com/company/acme",
+        "https://x.com/acme",
+        "https://github.com/acme",
+    ]
+    assert item["verification"]["candidates"] == candidates
+    assert item["evidence"][1] == (
+        "Profiles the site links to, as candidates to confirm: " + ", ".join(candidates) + "."
+    )
+    assert next_action("schema.entity_profiles_missing") == "manual"
+    alone = found(
+        findings(view([page("/", FOOTER, json_ld=bare)])), "schema.entity_profiles_missing"
+    )
+    assert alone["verification"]["candidates"] == []
+    assert "None of the pages Tin read links to a profile" in alone["evidence"][1]
+    # sameAs present, no Organization at all, or a v15 run: no entity finding.
+    assert "schema.entity_profiles_missing" not in ids(findings(view([complete_home()])))
+    no_org = findings(view([page("/", FOOTER + SOCIAL)]))
+    assert "schema.entity_profiles_missing" not in ids(no_org)
+    assert (
+        "Profiles the site links to, for its sameAs: https://www.linkedin.com/company/acme, "
+        "https://x.com/acme." in found(no_org, "schema.missing")["evidence"]
+    )
+    assert "schema.entity_profiles_missing" not in ids(findings(view([home], basics=False)))

@@ -336,6 +336,52 @@ PRIVACY_TEXT = re.compile(r"\bprivacy\b|datenschutz|privacidad|confidentialit", 
 TERMS_TEXT = re.compile(r"\bterms\b|\bconditions\b|\bagb\b|\bcgu\b|\bcgv\b", re.I)
 
 
+# Hosts of official profiles a business links to, which name it as an entity (v16). Share and
+# intent links on them are not profiles.
+PROFILE_HOSTS = frozenset(
+    {
+        "linkedin.com",
+        "x.com",
+        "twitter.com",
+        "github.com",
+        "crunchbase.com",
+        "facebook.com",
+        "instagram.com",
+        "youtube.com",
+        "tiktok.com",
+        "threads.net",
+        "bsky.app",
+        "producthunt.com",
+        "wikipedia.org",
+        "wikidata.org",
+        "g2.com",
+        "capterra.com",
+        "trustpilot.com",
+        "discord.gg",
+        "medium.com",
+    }
+)
+SHARE_PATH = re.compile(
+    r"^/(?:intent|share|sharer|shareArticle|sharing|home|search|hashtag|login|signup)\b", re.I
+)
+MAX_PROFILE_LINKS = 10
+
+
+def profile_link(url: str) -> str | None:
+    """A link to an official-looking profile, as https://host/path, or None."""
+    try:
+        parts = urlsplit(url)
+    except ValueError:
+        return None
+    host = (parts.hostname or "").lower().removeprefix("www.").removeprefix("m.")
+    host = host[3:] if host.endswith(".wikipedia.org") and len(host) > 14 else host
+    base = next((h for h in PROFILE_HOSTS if host == h or host.endswith("." + h)), None)
+    path = parts.path.rstrip("/")
+    if base is None or not path or SHARE_PATH.match(path):
+        return None
+    return f"https://{parts.hostname.lower()}{path}"[:300]
+
+
 def legal_kinds(url: str, text: str) -> set[str]:
     """Which legal pages a link names: privacy, terms or both. A last segment of "legal"
     usually holds both."""
@@ -386,6 +432,7 @@ class _FactsParser(HTMLParser):
         self.twitter_card: str | None = None
         self.legal_links: dict[str, str | None] = {"privacy": None, "terms": None}
         self._anchor: dict | None = None
+        self.profile_links: list[str] = []
         # v16: questions a FAQ shows outside H2/H3 headings, in <dt>, <summary> or <h4>.
         self.faq_questions = 0
         self._question: list[str] | None = None
@@ -563,6 +610,13 @@ class _FactsParser(HTMLParser):
                     "www."
                 ):
                     self.external_links += 1
+                    profile = profile_link(target.geturl())
+                    if (
+                        profile
+                        and profile not in self.profile_links
+                        and len(self.profile_links) < MAX_PROFILE_LINKS
+                    ):
+                        self.profile_links.append(profile)
                 elif self.max_links:
                     self._internal_link(target)
         elif tag == "div" and values.get("id", "").strip().lower() in _MOUNT_IDS:
@@ -664,6 +718,19 @@ SCHEMA_RULES = {
     "SoftwareApplication": {"required": ("name",), "any": ("offers", "aggregateRating")},
 }
 SCHEMA_ALIASES = {"Corporation": "Organization", "LocalBusiness": "Organization"}
+# Types that describe the business itself (audit policy v16's entity checks).
+ORGANIZATION_TYPES = frozenset(
+    {
+        "Organization",
+        "Corporation",
+        "LocalBusiness",
+        "OnlineBusiness",
+        "OnlineStore",
+        "NGO",
+        "EducationalOrganization",
+        "ProfessionalService",
+    }
+)
 
 
 def _schema_items(value, depth: int = 0):
@@ -724,6 +791,7 @@ def structured_data(documents: list[str]) -> dict:
     problems: list[dict] = []
     invalid = 0
     dated = author = False
+    same_as: list[str] = []
     for text in documents:
         try:
             value = json.loads(text)
@@ -735,6 +803,11 @@ def structured_data(documents: list[str]) -> dict:
                 dated = True
             if _present(item.get("author")):
                 author = True
+            if set(_types(item)) & ORGANIZATION_TYPES:
+                links = item.get("sameAs")
+                for link in links if isinstance(links, list) else [links]:
+                    if isinstance(link, str) and link.strip() and len(same_as) < 20:
+                        same_as.append(link.strip()[:300])
             for name in _types(item):
                 rule = SCHEMA_RULES.get(SCHEMA_ALIASES.get(name, name))
                 if rule is None:
@@ -753,7 +826,13 @@ def structured_data(documents: list[str]) -> dict:
                     problems.append(
                         {"type": name, "missing": missing, "recommended_missing": recommended}
                     )
-    return {"problems": problems, "invalid_blocks": invalid, "dated": dated, "author": author}
+    return {
+        "problems": problems,
+        "invalid_blocks": invalid,
+        "dated": dated,
+        "author": author,
+        "same_as": same_as,
+    }
 
 
 _VALUED_DIRECTIVES = frozenset(
@@ -811,7 +890,17 @@ V11_PAGE_FACTS = frozenset(
 # Page facts audit policy v12 added; a run pinned to v11 or earlier does not save them.
 V12_PAGE_FACTS = frozenset({"internal_links", "internal_links_capped"})
 # Page facts audit policy v16 added; a run pinned to v15 or earlier does not save them.
-V16_PAGE_FACTS = frozenset({"og_title", "og_image", "twitter_card", "legal_links", "faq_questions"})
+V16_PAGE_FACTS = frozenset(
+    {
+        "og_title",
+        "og_image",
+        "twitter_card",
+        "legal_links",
+        "faq_questions",
+        "profile_links",
+        "organization_same_as",
+    }
+)
 
 
 def html_facts(
@@ -876,6 +965,8 @@ def html_facts(
         if parser.og_image
         else None,
         "faq_questions": parser.question_headings + parser.faq_questions,
+        "profile_links": parser.profile_links,
+        "organization_same_as": schema["same_as"],
         "og_title": parser.og_title,
         "twitter_card": parser.twitter_card,
         "legal_links": dict(parser.legal_links),
