@@ -20,6 +20,7 @@ from tin_lite.organic_audit import (
     AUDIT_POLICY,
     PANEL_PREPARATION_POLICY_KEYS,
     V14_AUDIT_POLICY,
+    V15_AUDIT_POLICY,
     audit_policy,
     digest,
 )
@@ -95,9 +96,9 @@ def test_v14_is_exactly_what_main_shipped():
     assert digest(ai_schemas(V14)) == V14_SCHEMAS_DIGEST
 
 
-def test_v15_is_the_default_and_raises_the_question_limit_to_sixteen():
-    assert AUDIT_POLICY["version"] == V15 and audit_policy() is AUDIT_POLICY
-    assert {k: v for k, v in AUDIT_POLICY.items() if k != "version"} == {
+def test_v15_raises_the_question_limit_to_sixteen():
+    assert V15_AUDIT_POLICY["version"] == V15 and audit_policy(V15) is V15_AUDIT_POLICY
+    assert {k: v for k, v in V15_AUDIT_POLICY.items() if k != "version"} == {
         **{k: v for k, v in V14_AUDIT_POLICY.items() if k != "version"},
         "prompt_panel": False,
         "max_panel_jobs": 4,
@@ -115,7 +116,7 @@ def test_v15_is_the_default_and_raises_the_question_limit_to_sixteen():
         "panel_max_output_tokens",
         "search_console_questions",
     } <= PANEL_PREPARATION_POLICY_KEYS
-    assert {k: v for k, v in AUDIT_POLICY.items() if k not in NEUTRAL_KEYS} == {
+    assert {k: v for k, v in V15_AUDIT_POLICY.items() if k not in NEUTRAL_KEYS} == {
         k: v for k, v in V14_AUDIT_POLICY.items() if k not in NEUTRAL_KEYS
     }
     for stage in ("answer", "answer_memory", "judge_graded", "content_review"):
@@ -129,15 +130,14 @@ def test_v15_is_the_default_and_raises_the_question_limit_to_sixteen():
         "BuyerPanelV15",
         "PanelReviewV15",
     }
+    # v16 keeps v15's instructions and schemas, so the catalog still pins these.
     workflow = next(w for w in BUILTIN_WORKFLOWS if w.key == "organic.audit")
-    assert workflow.version_label == "0.11.0"
-    assert workflow.definition["audit_policy"] == AUDIT_POLICY
     assert workflow.definition["audit_instructions"] == ai_contract(V15)
     assert workflow.definition["audit_schemas"] == ai_schemas(V15)
     # $4 for the audit's own calls and $2 for the engines; v14 keeps $2 and $1.
     definition = {"executor": "organic.audit"}
     v14 = service_terms({**definition, "audit_policy": V14_AUDIT_POLICY})
-    v15 = service_terms({**definition, "audit_policy": AUDIT_POLICY})
+    v15 = service_terms({**definition, "audit_policy": V15_AUDIT_POLICY})
     assert v14["maximum_nanos"] == 3 * NANOS_PER_DOLLAR
     assert v15["maximum_nanos"] == 6 * NANOS_PER_DOLLAR
 

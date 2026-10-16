@@ -225,7 +225,7 @@ def test_robots_sitemap_and_limits_are_reported_without_inventing_passes(audit):
         "for required fields." in report
     )
     assert "speed: PageSpeed Insights is not configured on this deployment." in report
-    assert not any("schema" in item["check_id"] for item in audit.inventory["findings"])
+    assert not any(item["check_id"] == "schema.invalid" for item in audit.inventory["findings"])
 
 
 def test_one_finding_format_ordered_by_area_with_summary_and_action_plan(audit):
@@ -299,8 +299,13 @@ def test_the_site_is_read_once_per_page_across_duplicate_delivery(audit):
     assert requests.count(f"{tin.BASE}/sitemap.xml") == 1
     assert requests.count(f"{tin.BASE}/sign-in") == 1
     page_reads = [url for url in requests if not url.endswith((".txt", ".xml"))]
-    # The plain-HTTP homepage and a made-up missing page are probes, not page reads.
-    page_reads = [u for u in page_reads if u.startswith("https://") and "missing-page" not in u]
+    # The plain-HTTP homepage, a made-up missing page and the www homepage are probes, not page
+    # reads.
+    page_reads = [
+        u
+        for u in page_reads
+        if u.startswith("https://") and "missing-page" not in u and "://www." not in u
+    ]
     assert len(page_reads) == len(set(page_reads)) == 100
 
 

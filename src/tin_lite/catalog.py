@@ -2103,7 +2103,9 @@ BUILTIN_WORKFLOWS = (
         # 0.10.0: organic-audit-v14 follows links when the site has no sitemap.
         # 0.11.0: organic-audit-v15 drafts up to sixteen questions from public pages and
         # Search Console searches, and no longer reads organic.prompt_panel.
-        version_label="0.11.0",
+        # 0.12.0: organic-audit-v16 adds the other address (www or bare), missing structured
+        # data, complete link previews and links to a privacy policy and terms.
+        version_label="0.12.0",
         model_route=ModelRoute(
             key="organic.audit.visibility.v1",
             provider=ProviderName.OPENAI,

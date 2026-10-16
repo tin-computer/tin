@@ -3,7 +3,8 @@
 Every function here is deterministic over the saved robots.txt, sitemap, static HTML facts,
 provider crawl and Search Console rows, so a later reader can recompute the findings.
 Unobserved facts are unknown, never passes: a page Tin could not read has no H1 verdict,
-and structured data is never reported missing from unrendered HTML.
+and structured data is reported missing only where v16 can judge it: key pages whose content
+is in the static HTML, as a likely finding.
 """
 
 from __future__ import annotations
@@ -24,6 +25,7 @@ from tin_lite.organic_audit_site import (
     is_utility_url,
     lacks_link_preview,
     language_prefix,
+    legal_kinds,
     named_groups_missing_wildcard_rules,
     path_allowed,
     robots_allows,
@@ -63,6 +65,39 @@ ARTICLE_SECTIONS = frozenset(
 )
 ABOUT_SEGMENTS = frozenset({"about", "about-us", "company", "team", "our-story", "who-we-are"})
 CONTACT_SEGMENTS = frozenset({"contact", "contact-us", "support", "help"})
+# Structured data types that state each fact (audit policy v16's missing-schema check).
+ORGANIZATION_TYPES = frozenset(
+    {
+        "Organization",
+        "Corporation",
+        "LocalBusiness",
+        "OnlineBusiness",
+        "OnlineStore",
+        "NGO",
+        "EducationalOrganization",
+        "ProfessionalService",
+    }
+)
+OFFER_TYPES = frozenset(
+    {
+        "Product",
+        "ProductGroup",
+        "SoftwareApplication",
+        "WebApplication",
+        "MobileApplication",
+        "Service",
+        "Offer",
+        "AggregateOffer",
+    }
+)
+FAQ_TYPES = frozenset({"FAQPage", "QAPage"})
+ARTICLE_TYPES = frozenset(
+    {"Article", "BlogPosting", "NewsArticle", "TechArticle", "Report", "ScholarlyArticle"}
+)
+PRICING_SEGMENTS = frozenset({"pricing", "plans", "price", "prices"})
+FAQ_SEGMENTS = frozenset({"faq", "faqs"})
+# Article sections whose pages should carry Article data; docs and libraries are reference.
+ARTICLE_SCHEMA_SECTIONS = ARTICLE_SECTIONS - {"docs", "library", "resources"}
 LIGHTHOUSE_LABELS = {
     "seo": "SEO",
     "accessibility": "accessibility",
@@ -92,10 +127,13 @@ class SiteView:
         search_pages: list[dict],
         search_queries: list[dict],
         angles: bool = True,
+        basics: bool = False,
     ) -> None:
         self.host, self.hosts = host, hosts
         # Audit policy v11's added checks; a run pinned to v10 keeps v10's findings.
         self.angles = angles
+        # Audit policy v16's added checks; a run pinned to v15 or earlier keeps its findings.
+        self.basics = basics
         files = site.get("files") or {}
         self.site_status = files.get("status", "not_collected")
         self.robots = files.get("robots") or {
@@ -134,6 +172,7 @@ class SiteView:
         self.access = site.get("access") or {"status": "not_collected"}
         self.inspection = site.get("url_inspection") or {"status": "not_collected"}
         self.content_review = site.get("content_review") or {"status": "not_collected"}
+        self.share_images = site.get("share_images") or {"status": "not_collected"}
 
     def in_scope(self, url: str) -> bool:
         try:
@@ -1784,6 +1823,409 @@ def _aeo_findings(view: SiteView, host: str) -> list[dict]:
     return findings
 
 
+def _host_variant_findings(view: SiteView, host: str) -> list[dict]:
+    """v16: the other address (www or bare) should send visitors to this one, in one hop."""
+    variant = view.files.get("host_variant") or {}
+    return [*_host_variant_served(view, host, variant), *_host_variant_chain(host, variant)]
+
+
+def _host_variant_chain(host: str, variant: dict) -> list[dict]:
+    chain = variant.get("http_chain") or {}
+    hops = chain.get("hops", [])
+    if (
+        chain.get("status") != "observed"
+        or not 200 <= chain.get("final_status", 0) < 300
+        or len(hops) < 3
+        or urlsplit(hops[-1]).scheme != "https"
+        or urlsplit(hops[-1]).hostname != host
+    ):
+        return []
+    return [
+        site_finding(
+            host=host,
+            check_id="redirects.host_variant_chain",
+            category="site",
+            area="technical_foundations",
+            issue=f"{hops[0]} reaches the site in {len(hops) - 1} redirects",
+            impact="low",
+            evidence=[
+                " → ".join(hops) + ".",
+                "Typed addresses and old links use this address; each extra hop adds a round "
+                "trip and a crawl that starts on the site's own host never sees it.",
+            ],
+            fix=(
+                f"Redirect {hops[0]} straight to https://{host}/ in the domain or host "
+                "settings, so every address reaches the site in one hop."
+            ),
+            priority="quick_win",
+            evidence_kind="site_files",
+            urls=[f"https://{host}/"],
+            evidence_refs=["site.files.host_variant"],
+        )
+    ]
+
+
+def _host_variant_served(view: SiteView, host: str, variant: dict) -> list[dict]:
+    if variant.get("status") != "observed":
+        return []
+    code = variant["status_code"]
+    other = urlsplit(variant["url"]).hostname
+    if code in {301, 302, 303, 307, 308}:
+        if variant.get("to_site"):
+            return []
+        evidence = [
+            f"https://{other}/ redirects to {variant.get('location') or 'an empty location'}, "
+            f"not to https://{host}/."
+        ]
+        issue, impact = f"{other} does not redirect to {host}", "medium"
+    elif 200 <= code < 300:
+        canonical = variant.get("canonical")
+        consolidated = bool(canonical and urlsplit(canonical).hostname in view.hosts)
+        evidence = [
+            f"https://{other}/ answers HTTP {code} with a page instead of redirecting to "
+            f"https://{host}/, so the site can be reached and linked at two addresses.",
+            f"Its canonical tag points to {canonical}, which tells Google which copy to keep; "
+            "other crawlers and anyone linking still see two sites."
+            if consolidated
+            else "Its homepage names no canonical on this site, so search engines may treat "
+            "the two addresses as two competing sites and split their links.",
+        ]
+        issue = f"Both {host} and {other} serve the site"
+        impact = "low" if consolidated else "medium"
+    elif code >= 400:
+        evidence = [
+            f"https://{other}/ answers HTTP {code}, so people and links that use that address "
+            "reach an error instead of the site."
+        ]
+        issue, impact = f"{other} answers with an error", "low"
+    else:
+        return []
+    return [
+        site_finding(
+            host=host,
+            check_id="redirects.host_variant_served",
+            category="site",
+            area="crawlability_indexation",
+            issue=issue,
+            impact=impact,
+            evidence=evidence,
+            fix=(
+                f"Permanently redirect (301 or 308) every URL on {other} to the same path on "
+                f"{host}, in the host's domain settings or the site's redirect config."
+            ),
+            priority="quick_win",
+            evidence_kind="site_files",
+            urls=[f"https://{host}/"],
+            evidence_refs=["site.files.host_variant"],
+        )
+    ]
+
+
+def _schema_missing_findings(view: SiteView, host: str) -> list[dict]:
+    """v16: key pages without the structured data that states their facts.
+
+    Only pages whose content is in the static HTML and that use no microdata are judged;
+    structured data added by JavaScript is not seen, so the finding says so.
+    """
+    pages = [
+        f
+        for f in _indexable_pages(view)
+        if not client_rendered(f) and not f.get("microdata") and "json_ld_types" in f
+    ]
+    gaps: list[tuple[str, list[dict]]] = []
+    home = [f for f in pages if url_key(f["url"]) == "/"]
+    if home and not ORGANIZATION_TYPES & set(home[0]["json_ld_types"]):
+        gaps.append(("No Organization data on the homepage (name, logo, social profiles)", home))
+    pricing = [
+        f
+        for f in pages
+        if _first_segment(f["url"]) in PRICING_SEGMENTS
+        and len(segments(f["url"])) <= 2
+        and not OFFER_TYPES & set(f["json_ld_types"])
+    ]
+    if pricing:
+        gaps.append(("No Product, SoftwareApplication or Service data with offers", pricing))
+    faq = [
+        f
+        for f in pages
+        if (_first_segment(f["url"]) in FAQ_SEGMENTS or f.get("faq_questions", 0) >= 3)
+        and not _is_article(f["url"])
+        and not _legal_page(f["url"])
+        and not FAQ_TYPES & set(f["json_ld_types"])
+    ]
+    if faq:
+        gaps.append(("Visible questions and answers but no FAQPage data", faq))
+    articles = [
+        f
+        for f in pages
+        if _is_article(f["url"])
+        and _first_segment(f["url"]) in ARTICLE_SCHEMA_SECTIONS
+        and not ARTICLE_TYPES & set(f["json_ld_types"])
+    ]
+    if articles:
+        gaps.append(("Articles without Article or BlogPosting data", articles))
+    if not gaps:
+        return []
+    urls = list(dict.fromkeys(f["url"] for _, rows in gaps for f in rows))
+    return [
+        site_finding(
+            host=host,
+            check_id="schema.missing",
+            category="site",
+            area="technical_foundations",
+            issue="Key pages have no structured data stating their facts",
+            impact="low",
+            evidence=[
+                *(
+                    f"{label}: " + ", ".join(_path(f["url"]) for f in rows[:4])
+                    for label, rows in gaps
+                ),
+                "Structured data is how search engines and AI assistants read who you are, what "
+                "you sell and what it costs without guessing from the page text.",
+                "Only the static HTML was read; data added later by JavaScript or a tag "
+                "manager was not seen.",
+            ],
+            fix=(
+                "Add JSON-LD built from facts the page already states: Organization on the "
+                "homepage, Product or SoftwareApplication with offers on the pricing page, "
+                "FAQPage that mirrors the visible questions, and Article with its headline, "
+                "author and dates on each article."
+            ),
+            priority="quick_win",
+            evidence_kind="page_fetch",
+            confidence="likely",
+            urls=urls,
+            evidence_refs=["site.pages"],
+        )
+    ]
+
+
+def _have(rows: list) -> str:
+    return "has" if len(rows) == 1 else "have"
+
+
+def _preview_findings(view: SiteView, host: str) -> list[dict]:
+    """v16: link previews with the rest of their tags and an image that loads."""
+    findings = []
+    pages = [f for f in _indexable_pages(view) if "twitter_card" in f and not lacks_link_preview(f)]
+    no_card = [f for f in pages if not f.get("twitter_card")]
+    no_description = [f for f in pages if "description" not in (f.get("open_graph") or [])]
+    if no_card or no_description:
+        findings.append(
+            site_finding(
+                host=host,
+                check_id="onpage.link_preview_incomplete",
+                category="site",
+                area="on_page",
+                issue="Link previews lack a description or an X card",
+                impact="low",
+                evidence=[
+                    *(
+                        [
+                            f"{count(len(no_description), 'page')} {_have(no_description)} no "
+                            "og:description, so "
+                            "shared links show a title and image with no summary. "
+                            + _examples(no_description, 4)
+                        ]
+                        if no_description
+                        else []
+                    ),
+                    *(
+                        [
+                            f"{count(len(no_card), 'page')} {_have(no_card)} no twitter:card, "
+                            "which X reads "
+                            "to choose the large-image preview. " + _examples(no_card, 4)
+                        ]
+                        if no_card
+                        else []
+                    ),
+                ],
+                fix=(
+                    "Add og:description from each page's meta description, and "
+                    'twitter:card "summary_large_image" in the shared layout.'
+                ),
+                priority="long_term",
+                evidence_kind="page_fetch",
+                urls=list(dict.fromkeys(f["url"] for f in [*no_description, *no_card])),
+                evidence_refs=["site.pages"],
+            )
+        )
+    home = view.facts.get("/") or {}
+    copies = [
+        f
+        for f in pages
+        if home.get("og_title")
+        and url_key(f["url"]) != "/"
+        and f.get("og_title") == home["og_title"]
+        and f.get("og_image") == home.get("og_image")
+        and f.get("title")
+        and f["title"] != home.get("title")
+        and not _legal_page(f["url"])
+    ]
+    if copies:
+        findings.append(
+            site_finding(
+                host=host,
+                check_id="onpage.link_preview_duplicate",
+                category="site",
+                area="on_page",
+                issue="Pages share the homepage's link preview",
+                impact="low",
+                evidence=[
+                    f"{count(len(copies), 'page')} {_have(copies)} the homepage's og:title "
+                    f'("{home["og_title"]}") and og:image, so a link to them shared in chats '
+                    "and social posts looks like a link to the homepage.",
+                    _examples(copies, 4),
+                ],
+                fix=(
+                    "Give each page its own og:title and og:description from its own title and "
+                    "meta description; a layout-wide value usually overrides them."
+                ),
+                priority="quick_win",
+                evidence_kind="page_fetch",
+                urls=[f["url"] for f in copies],
+                evidence_refs=["site.pages"],
+            )
+        )
+    broken: dict[str, str] = {}
+    for row in view.share_images.get("images", []):
+        if row.get("status") == "observed":
+            code, kind = row["status_code"], row.get("content_type") or ""
+            if code >= 400:
+                broken[row["url"]] = f"HTTP {code}"
+            elif 200 <= code < 300 and not kind.startswith("image/"):
+                broken[row["url"]] = f"{kind or 'no content type'}, not an image"
+        elif row.get("status") in {"unreachable", "non_public_address", "redirect_limit"}:
+            broken[row["url"]] = "did not load"
+    if broken:
+        affected = [f for f in _indexable_pages(view) if f.get("og_image") in broken]
+        findings.append(
+            site_finding(
+                host=host,
+                check_id="onpage.share_image_broken",
+                category="site",
+                area="on_page",
+                issue="The link-preview image does not load",
+                impact="medium",
+                evidence=[
+                    *(f"{url}: {reason}." for url, reason in list(broken.items())[:4]),
+                    f"{count(len(affected), 'page')} "
+                    + ("names" if len(affected) == 1 else "name")
+                    + " it as og:image, so links to them shared in chats and social posts show "
+                    "a blank or missing image. " + _examples(affected, 4),
+                ],
+                fix=(
+                    "Point og:image at an image that loads: an absolute HTTPS URL to a PNG or "
+                    "JPEG of about 1200 by 630 pixels."
+                ),
+                priority="quick_win",
+                evidence_kind="page_fetch",
+                urls=[f["url"] for f in affected],
+                evidence_refs=["site.pages", "site.share_images"],
+            )
+        )
+    return findings
+
+
+def _legal_page(url: str) -> bool:
+    """Privacy, terms and cookie pages: often question-shaped, rarely shared."""
+    return bool(legal_kinds(url, "")) or any("cookie" in part.lower() for part in segments(url))
+
+
+def _legal_findings(view: SiteView, host: str) -> list[dict]:
+    """v16: the homepage links to a privacy policy and terms that load."""
+    home = view.facts.get("/") or {}
+    if (
+        home.get("fetch") != "observed"
+        or "legal_links" not in home
+        or client_rendered(home)
+        or not 200 <= home["status_code"] < 300
+    ):
+        return []
+    known = [entry["loc"] for entry in view.entries] + [f["url"] for f in view.observed()]
+    labels = {"privacy": "a privacy policy", "terms": "terms of service"}
+    nouns = {"privacy": "privacy policy", "terms": "terms of service"}
+    unlinked, missing, notes = [], [], []
+    for kind in ("privacy", "terms"):
+        link = home["legal_links"].get(kind)
+        target = view.facts.get(url_key(link)) if link and view.in_scope(link) else None
+        if link and not (target and target.get("fetch") == "http_error"):
+            continue
+        if link:
+            missing.append(kind)
+            notes.append(
+                f"The homepage links to {labels[kind]} at {link}, which answers HTTP "
+                f"{target['status_code']}."
+            )
+            continue
+        page = next(
+            (
+                url
+                for url in known
+                if len(segments(url)) <= 2 and not _is_article(url) and kind in legal_kinds(url, "")
+            ),
+            None,
+        )
+        if page:
+            unlinked.append(kind)
+            notes.append(
+                f"{labels[kind].capitalize()} exists at {page} but the homepage doesn't link to it."
+            )
+        else:
+            missing.append(kind)
+            notes.append(
+                f"The homepage has no link to {labels[kind]}, and no such page is in the "
+                "sitemap or the pages Tin read."
+            )
+    why = (
+        "Visitors, app stores, payment providers and AI assistants look for these pages "
+        "before trusting a product; privacy laws such as GDPR require a privacy policy when "
+        "a site collects personal data."
+    )
+    findings = []
+    if unlinked:
+        findings.append(
+            site_finding(
+                host=host,
+                check_id="trust.legal_pages_unlinked",
+                category="site",
+                area="authority",
+                issue="The homepage doesn't link to " + " or ".join(labels[k] for k in unlinked),
+                impact="low",
+                evidence=[n for n in notes if "doesn't link" in n] + [why],
+                fix="Link the existing pages from the footer of every page.",
+                priority="quick_win",
+                evidence_kind="page_fetch",
+                urls=[home["url"]],
+                evidence_refs=["site.pages", "site.files.sitemaps"],
+            )
+        )
+    if missing:
+        findings.append(
+            site_finding(
+                host=host,
+                check_id="trust.legal_pages_missing",
+                category="site",
+                area="authority",
+                issue="No " + " or ".join(nouns[k] for k in missing) + " was found",
+                impact="medium" if "privacy" in missing else "low",
+                evidence=[n for n in notes if "doesn't link" not in n] + [why],
+                fix=(
+                    "Publish the missing pages, written for how your product actually handles "
+                    "data and accounts, and link them from the footer of every page."
+                ),
+                priority="long_term",
+                evidence_kind="page_fetch",
+                confidence="observed"
+                if any(r.get("status") == "observed" for r in view.sitemaps.get("files", []))
+                else "likely",
+                urls=[home["url"]],
+                evidence_refs=["site.pages", "site.files.sitemaps"],
+            )
+        )
+    return findings
+
+
 def _measurement_findings(view: SiteView, host: str) -> list[dict]:
     pages = [
         f
@@ -2048,6 +2490,16 @@ def site_findings(view: SiteView, *, home: str, pagespeed: dict) -> list[dict]:
         *_speed_findings(pagespeed, view.host),
         *_lighthouse_findings(pagespeed, view.host),
         *_content_review_findings(view, view.host),
+        *(
+            [
+                *_host_variant_findings(view, view.host),
+                *_schema_missing_findings(view, view.host),
+                *_preview_findings(view, view.host),
+                *_legal_findings(view, view.host),
+            ]
+            if view.basics
+            else []
+        ),
     ]
 
 
@@ -2168,6 +2620,41 @@ def site_check_coverage(view: SiteView, *, pagespeed: dict, search: dict) -> lis
             else "No matching Search Console property, so search checks did not run.",
         },
     ]
+    if view.basics:
+        variant = view.files.get("host_variant") or {}
+        images = view.share_images.get("images", [])
+        read = sum(row.get("status") == "observed" for row in images)
+        structured_row = next(row for row in rows if row["check"] == "structured_data")
+        structured_row["note"] = (
+            structured_row["note"].split("Pages were not rendered")[0]
+            + "Pages were not rendered, so structured data added by JavaScript is unknown; "
+            "missing data is reported only for the homepage, pricing, FAQ and article pages "
+            "whose content is in the static HTML."
+        )
+        rows += [
+            {
+                "check": "host_variant",
+                "status": "observed"
+                if variant.get("status") in {"observed", "unreachable", "redirect_verified"}
+                else "unknown",
+                "note": {
+                    "observed": f"{variant.get('url')} answered HTTP {variant.get('status_code')}.",
+                    "unreachable": f"{variant.get('url')} did not answer, so it serves no copy.",
+                    "redirect_verified": "The address check saw one address redirect to the other.",
+                }.get(variant.get("status"), "The other address (www or bare) was not read."),
+            },
+            {
+                "check": "share_images",
+                "status": "observed"
+                if read == len(images) and images
+                else "partial"
+                if read
+                else "unknown",
+                "note": f"{count(read, 'link-preview image')} of {len(images)} read."
+                if images
+                else "No page Tin read names an og:image, or the images were not read.",
+            },
+        ]
     if view.angles:
         return rows
     # v10 had no rendering, crawler-access, URL Inspection or content-review checks.

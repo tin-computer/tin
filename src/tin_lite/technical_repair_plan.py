@@ -331,6 +331,15 @@ REPAIRS: dict[str, Repair] = {
         how="Add the redirect where the repository controls it (framework middleware or host "
         "config). If only the host's settings can do it, leave it for the manual list.",
     ),
+    "redirects.host_variant_served": Repair(
+        "host_redirect",
+        "redirects",
+        "redirects the site's other address (www or bare) to the one it uses",
+        how="Add a permanent redirect from the other host to the same path on the site's host "
+        "where the repository controls it (framework middleware, or a host-conditioned rule "
+        "in vercel.json, netlify.toml or _redirects). If only the host's domain settings can "
+        "do it, leave it for the manual list.",
+    ),
     # --- Page structure ----------------------------------------------------------------
     "metadata.title_missing": Repair(
         "html_title",
@@ -440,6 +449,17 @@ REPAIRS: dict[str, Repair] = {
         how="Fix JSON that doesn't parse, and fill required fields only from facts already on "
         "the page; drop a type whose required facts the site doesn't state.",
     ),
+    "schema.missing": Repair(
+        "schema_add",
+        "schema",
+        "adds structured data that states facts the pages already show",
+        how="Add JSON-LD in the page's head, once per page type through its shared layout or "
+        "template: Organization (name, url, logo, sameAs from profiles the site links) on the "
+        "homepage, Product or SoftwareApplication with offers from the prices the pricing page "
+        "shows, FAQPage that mirrors the visible questions and answers word for word, and "
+        "Article with headline, author and dates on articles. Use only facts already on the "
+        "page; skip a type whose facts the page doesn't state.",
+    ),
     # --- Social previews ---------------------------------------------------------------
     "onpage.open_graph_missing": Repair(
         "open_graph",
@@ -448,6 +468,28 @@ REPAIRS: dict[str, Repair] = {
         live="open_graph",
         how="Copy the page's existing title and description into og:title and og:description, "
         "and use an existing site image for og:image. Write no new text.",
+    ),
+    "onpage.link_preview_incomplete": Repair(
+        "social_tags",
+        "social",
+        "adds og:description and twitter:card to link previews",
+        how="Copy each page's existing meta description into og:description and add "
+        'twitter:card "summary_large_image" once in the shared layout. Write no new text.',
+    ),
+    "onpage.link_preview_duplicate": Repair(
+        "open_graph_page",
+        "social",
+        "gives each page a link preview with its own title and description",
+        how="Let each page's own title and meta description reach og:title and og:description, "
+        "usually by removing a layout-wide override; keep the shared image unless the page has "
+        "its own. Write no new text.",
+    ),
+    "onpage.share_image_broken": Repair(
+        "share_image",
+        "social",
+        "points og:image at an image that loads",
+        how="Point og:image at an existing image in the repository or a generated preview "
+        "route, as an absolute HTTPS URL; don't design a new image.",
     ),
     # --- Internal links ----------------------------------------------------------------
     "discovery.possible_orphan": Repair(
@@ -468,6 +510,13 @@ REPAIRS: dict[str, Repair] = {
         "links",
         "stops linking to URLs that return an error",
         how="Point internal links and sitemap entries at a live page, or remove them.",
+    ),
+    "trust.legal_pages_unlinked": Repair(
+        "legal_links",
+        "links",
+        "links the existing privacy policy and terms from the footer",
+        how="Add footer links to the existing pages on every page, using their existing "
+        "titles as the link text.",
     ),
     "aeo.llms_txt_missing": Repair(
         "llms_txt",
@@ -528,6 +577,14 @@ MANUAL: dict[str, str] = {
         "Analytics setup is left to you; the technical fix never touches tracking."
     ),
     "http.server_error": "Server errors need the server's logs to find the cause.",
+    "redirects.host_variant_chain": (
+        "The other address's plain-HTTP redirect is set in the domain or host settings; point "
+        "it straight at the site's HTTPS address there."
+    ),
+    "trust.legal_pages_missing": (
+        "A privacy policy and terms describe how you run the product, so you write them (or "
+        "have them written); once they exist, the next audit asks Tin to link them."
+    ),
     "robots.unavailable": "robots.txt fails to load; check the host or server serving it.",
     "indexation.not_indexed_by_google": (
         "Once the other fixes deploy, ask Google to index these pages with Search Console's "

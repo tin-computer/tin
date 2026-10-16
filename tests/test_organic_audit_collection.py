@@ -103,8 +103,13 @@ async def test_page_reads_resume_after_the_time_limit_without_rereading(monkeypa
     result = await run_audit(site=site)
     assert budgets[:2] == [120, 20]
     page_reads = [url for url in site.requests if not url.endswith((".txt", ".xml"))]
-    # The plain-HTTP homepage and a made-up missing page are probes, not page reads.
-    page_reads = [u for u in page_reads if u.startswith("https://") and "missing-page" not in u]
+    # The plain-HTTP homepage, a made-up missing page and the www homepage are probes, not page
+    # reads.
+    page_reads = [
+        u
+        for u in page_reads
+        if u.startswith("https://") and "missing-page" not in u and "://www." not in u
+    ]
     assert len(page_reads) == len(set(page_reads)) == 100
     assert result.evidence["site"]["pages_status"] == "complete"
 
