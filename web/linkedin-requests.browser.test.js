@@ -192,6 +192,30 @@ test("the box above the grid ticks everyone you can ask on the page", {timeout: 
   });
 });
 
+test("when nobody on the list can be asked, the bar's place says why", {timeout: 120000}, async () => {
+  const relate = (people, value) => people.forEach(person => {
+    person.fields.linkedin_relationship = {...person.fields.linkedin_relationship, value};
+    person.requestable = false;
+  });
+  const people = syntheticPeople();
+  relate(people, "connected");
+  const daniel = people.find(item => item.id === "p-daniel");
+  daniel.fields.linkedin_relationship.value = "pending";
+  daniel.invited_at = "2026-10-15T09:40:00Z";
+  await open({url: "/people", state: requests({on: true}), people}, async page => {
+    await page.locator(".people-table").waitFor();
+    assert.equal(await page.locator(".people-nobody").innerText(), "No one here to ask. Everyone on this list is already connected to you or invited.");
+    assert.equal(await page.locator("[data-people-pick-all]").isDisabled(), true);
+  });
+  // A reason Tin can't name reads plainly.
+  const unnamed = syntheticPeople();
+  relate(unnamed, "none");
+  await open({url: "/people", state: requests({on: true}), people: unnamed}, async page => {
+    await page.locator(".people-table").waitFor();
+    assert.equal(await page.locator(".people-nobody").innerText(), "No one on this list can be asked right now.");
+  });
+});
+
 test("with sending off, the bar sends you to the LinkedIn card", {timeout: 120000}, async () => {
   await open({url: "/people", state: requests({on: false}), people: syntheticPeople()}, async page => {
     await page.locator('tr[data-person="p-daniel"] td.is-pick input').check();
