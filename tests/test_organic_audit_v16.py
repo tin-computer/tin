@@ -343,6 +343,17 @@ def test_a_page_with_the_homepages_preview_is_a_finding():
         titled("/privacy-policy", "Privacy"),
         titled("/cookie-policy", "Cookies"),
         facts("/own", html_page(title="Own")),
+        facts(
+            "/moved",
+            html_page(title="Moved", canonical=f"{BASE}/").replace(
+                b"</head>", card.encode() + b"</head>"
+            ),
+        ),
+        facts(
+            "/app",
+            b"<html><head><title>App</title>" + card.encode() + b'</head><body><div id="root">'
+            b'</div><script src="/a.js"></script></body></html>',
+        ),
     ]
     item = found(findings(view(pages)), "onpage.link_preview_duplicate")
     assert item["urls"] == [f"{BASE}/platform"]

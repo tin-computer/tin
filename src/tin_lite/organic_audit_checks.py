@@ -2117,6 +2117,9 @@ def _preview_findings(view: SiteView, host: str) -> list[dict]:
         and f.get("title")
         and f["title"] != home.get("title")
         and not _legal_page(f["url"])
+        # App shells and pages that name another page canonical are not what people share.
+        and not client_rendered(f)
+        and not view.canonical_elsewhere(url_key(f["url"]))
     ]
     if copies:
         findings.append(
