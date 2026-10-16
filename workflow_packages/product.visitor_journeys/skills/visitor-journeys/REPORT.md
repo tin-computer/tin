@@ -28,6 +28,9 @@ Connect GitHub; the pricing calculator failed four times for one visitor.">
 - **Who:** <names of identified people; a count of anonymous ones>.
 - **Cause:** <likely cause, the file and line if found, or "cause unknown">.
 
+### Smaller frictions
+- <What happens> on <page>: <who>.
+
 ## Delights
 - <Person, the moment, and why it matters.>
 

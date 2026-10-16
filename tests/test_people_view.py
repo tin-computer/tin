@@ -413,6 +413,36 @@ async def test_mcp_reads_and_corrects_people_like_a_member(collection_db, monkey
     with pytest.raises(ToolError, match="not_found"):
         await server.call_tool("get_person", {"project_id": project, "person_id": designer})
 
+    # Someone a visitor journeys run named reads by their email and last visit.
+    from tin_lite import people_records
+
+    async with f.db.pool.acquire() as conn:
+        visitor = await people_records.upsert_person(
+            conn, f.project.id, {"email": "ana@fieldnotes.dev"}, source="product.visitor_journeys"
+        )
+        await people_records.ensure_fields(conn, f.project.id)
+        await people_records.set_values(
+            conn,
+            f.project.id,
+            visitor,
+            [
+                people_records.Value("web_tier", "new_user", "/connect"),
+                people_records.Value("web_summary", "Signed up, stopped at Connect GitHub."),
+            ],
+            set_by_kind="run",
+            set_by="visitors-run",
+        )
+    site = structured(
+        await server.call_tool("list_people", {"project_id": project, "segment": "on_the_site"})
+    )
+    assert [(p["email"], p["on_the_site"], p["last_visit"]) for p in site["people"]] == [
+        ("ana@fieldnotes.dev", "new_user", "Signed up, stopped at Connect GitHub.")
+    ]
+    found = structured(
+        await server.call_tool("list_people", {"project_id": project, "query": "fieldnotes"})
+    )
+    assert [p["email"] for p in found["people"]] == ["ana@fieldnotes.dev"]
+
     outsider = mcp(f, monkeypatch, actor="user_outsider")
     with pytest.raises(ToolError, match="not_found"):
         await outsider.call_tool("list_people", {"project_id": project})

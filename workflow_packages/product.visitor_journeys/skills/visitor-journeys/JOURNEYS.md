@@ -911,10 +911,11 @@ def frictions(rows, loops, stalled, p):
         people_named = [by_id[i] for i in item["person_ids"] if i in by_id]
         item["people"] = len(item["person_ids"])
         item["identified"] = [x["email"] for x in people_named if x["email"]][:10]
-        # The product failing, or one person on the way to signup, booking or payment, is
-        # enough; anything else needs two people.
-        item["blocking"] = item["kind"] in ("failure", "stall") or any(
-            x["tier"] in ("new_user", "lead") for x in people_named
+        # The product failing, or a new user hitting a click or error on their way in, is
+        # enough on its own; anything else needs two people. A loop always needs two.
+        item["blocking"] = item["kind"] in ("failure", "stall") or (
+            item["kind"] in ("rage_click", "dead_click", "error")
+            and any(x["tier"] == "new_user" for x in people_named)
         )
         item["reportable"] = item["people"] >= 2 or item["blocking"]
         result.append(item)

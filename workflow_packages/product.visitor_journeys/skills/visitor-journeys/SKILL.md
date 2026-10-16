@@ -101,8 +101,12 @@ person typed. Element text is button and link labels only.
 
 `frictions(friction_rows, loop_rows, stalls(p, m), p)` groups rage clicks, dead clicks, errors,
 failure events, loops (the same page opened three or more times in one session) and stalls (a
-step reached and the next never reached). A friction is reportable when the product failed, when
-two or more people hit it, or when one person hit it on the way to signup, booking or payment.
+step reached and the next never reached). A friction is reportable when the product failed,
+when two or more people hit it, or when a new user hit a click or error on their way in.
+
+Write at most 10 frictions in full, most costly first: people lost before signup, booking or
+payment, then people affected. Merge frictions with one cause into one, such as the same limit
+reached on different plans. List the rest under "Smaller frictions", one line each.
 
 For each reportable friction:
 - say who hit it: names for identified people, a count for anonymous ones;
@@ -130,7 +134,8 @@ case study; say so when it fits.
 
 For each lead, each new user and any user with a friction or a delight, call `named()` with:
 - `summary`: who they are, from their own data only (name, email domain, company if their domain
-  or their signup answers give it, the ICP they fit and why), then what they did;
+  or their signup answers give it, the ICP they fit and why), then what they did. Leave out
+  what you don't know; never repeat the same sentence for every person;
 - `stopped_at`: where they stopped;
 - `action`: one suggested next step with a short draft if it is a message. "Wait, they are still
   exploring" is a valid action;
