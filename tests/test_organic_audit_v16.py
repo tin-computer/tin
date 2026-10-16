@@ -8,7 +8,9 @@ exactly as main shipped them. Every check runs on synthetic sites; nothing touch
 from __future__ import annotations
 
 import json
+from unittest.mock import AsyncMock
 
+import httpx
 import organic_tin_fixture as tin
 import pytest
 from organic_site_stub import SyntheticSite, html_page
@@ -16,6 +18,7 @@ from test_organic_audit_acceptance import run_audit
 from test_organic_audit_angles import BASE, HOST, facts, found, ids
 
 from tin_lite.catalog import BUILTIN_WORKFLOWS
+from tin_lite.dataforseo import DataForSEO
 from tin_lite.organic_audit import (
     AUDIT_POLICY,
     SITE_EVIDENCE_POLICY_KEYS,
@@ -26,8 +29,18 @@ from tin_lite.organic_audit import (
 from tin_lite.organic_audit_ai import ai_contract, ai_schemas
 from tin_lite.organic_audit_checks import SiteView, site_check_coverage, site_findings
 from tin_lite.organic_audit_completion import NEUTRAL_KEYS
-from tin_lite.organic_audit_fetch import read_pages, read_share_images, read_site_files
-from tin_lite.organic_audit_site import V16_PAGE_FACTS, parse_robots, profile_link
+from tin_lite.organic_audit_fetch import (
+    read_entity_pages,
+    read_pages,
+    read_share_images,
+    read_site_files,
+)
+from tin_lite.organic_audit_site import (
+    V16_PAGE_FACTS,
+    parse_robots,
+    profile_domains,
+    profile_link,
+)
 from tin_lite.technical_repair_plan import classify, next_action
 
 V15 = "organic-audit-v15"
@@ -40,6 +53,7 @@ NEW_CHECKS = {
     "redirects.host_variant_served",
     "schema.missing",
     "schema.entity_profiles_missing",
+    "schema.entity_parent_unclear",
     "redirects.host_variant_chain",
     "onpage.link_preview_incomplete",
     "onpage.link_preview_duplicate",
@@ -113,9 +127,18 @@ def test_v16_is_the_default_and_only_adds_site_evidence_settings():
         **{k: v for k, v in V15_AUDIT_POLICY.items() if k != "version"},
         "site_basics": True,
         "max_share_images": 3,
+        "entity_backlinks_limit": 100,
+        "entity_backlinks_reservation_usd": "0.05",
+        "max_entity_checks": 12,
     }
     # Site evidence never changes how an answer is asked or graded, so a completion may cross.
-    assert {"site_basics", "max_share_images"} <= SITE_EVIDENCE_POLICY_KEYS
+    assert {
+        "site_basics",
+        "max_share_images",
+        "entity_backlinks_limit",
+        "entity_backlinks_reservation_usd",
+        "max_entity_checks",
+    } <= SITE_EVIDENCE_POLICY_KEYS
     assert {k: v for k, v in AUDIT_POLICY.items() if k not in NEUTRAL_KEYS} == {
         k: v for k, v in V15_AUDIT_POLICY.items() if k not in NEUTRAL_KEYS
     }
@@ -434,7 +457,8 @@ def test_every_new_check_has_a_place_in_the_repair_plan():
         "redirects.host_variant_served": "fix",
         "redirects.host_variant_chain": "manual",
         "schema.missing": "fix",
-        "schema.entity_profiles_missing": "manual",
+        "schema.entity_profiles_missing": "fix",
+        "schema.entity_parent_unclear": "fix",
         "onpage.link_preview_incomplete": "fix",
         "onpage.link_preview_duplicate": "fix",
         "onpage.share_image_broken": "fix",
@@ -505,21 +529,22 @@ def test_an_organization_without_official_profiles_is_one_finding_for_the_site()
     other = page("/about", '<a href="https://github.com/acme">GitHub</a>', json_ld=bare)
     item = found(findings(view([home, other])), "schema.entity_profiles_missing")
     assert item["urls"] == [f"{BASE}/"] and item["confidence"] == "likely"
-    candidates = [
+    assert [row["url"] for row in item["verification"]["candidates"]] == [
         "https://www.linkedin.com/company/acme",
         "https://x.com/acme",
         "https://github.com/acme",
     ]
-    assert item["verification"]["candidates"] == candidates
-    assert item["evidence"][1] == (
-        "Profiles the site links to, as candidates to confirm: " + ", ".join(candidates) + "."
+    assert item["evidence"][2] == (
+        "https://www.linkedin.com/company/acme: your site links to it; couldn't check (the site "
+        "turns automated readers away)."
     )
-    assert next_action("schema.entity_profiles_missing") == "manual"
+    assert "set_official_profiles" in item["evidence"][-1]
+    assert classify("schema.entity_profiles_missing") == "fix"
     alone = found(
         findings(view([page("/", FOOTER, json_ld=bare)])), "schema.entity_profiles_missing"
     )
     assert alone["verification"]["candidates"] == []
-    assert "None of the pages Tin read links to a profile" in alone["evidence"][1]
+    assert "No profile on a site such as LinkedIn" in alone["evidence"][1]
     # sameAs present, no Organization at all, or a v15 run: no entity finding.
     assert "schema.entity_profiles_missing" not in ids(findings(view([complete_home()])))
     no_org = findings(view([page("/", FOOTER + SOCIAL)]))
@@ -529,3 +554,204 @@ def test_an_organization_without_official_profiles_is_one_finding_for_the_site()
         "https://x.com/acme." in found(no_org, "schema.missing")["evidence"]
     )
     assert "schema.entity_profiles_missing" not in ids(findings(view([home], basics=False)))
+
+
+BACKLINKS = {
+    "status": "completed",
+    "value": {
+        "total": 4,
+        "links": [
+            {
+                "url_from": "https://pypi.org/project/acme-sdk/",
+                "domain_from": "pypi.org",
+                "anchor": "Homepage",
+                "dofollow": False,
+                "semantic_location": "main",
+                "spam_score": 0,
+            },
+            {
+                "url_from": "https://www.acme.studio/",
+                "domain_from": "www.acme.studio",
+                "anchor": "Example",
+                "dofollow": True,
+                "semantic_location": "footer",
+                "spam_score": 0,
+            },
+            # A link network's footer, and a footer link that doesn't name the brand.
+            {
+                "url_from": "https://seo-links.site/dir/1",
+                "domain_from": "seo-links.site",
+                "anchor": "Example",
+                "dofollow": True,
+                "semantic_location": "footer",
+                "spam_score": 70,
+            },
+            {
+                "url_from": "https://partner.example.org/",
+                "domain_from": "partner.example.org",
+                "anchor": "Our partners",
+                "dofollow": True,
+                "semantic_location": "footer",
+                "spam_score": 0,
+            },
+        ],
+    },
+}
+
+
+def test_candidates_come_from_the_site_and_from_who_links_to_it():
+    home = page("/", SOCIAL, json_ld=json.dumps({"@type": "Organization", "name": "Example"}))
+    entity = {
+        "backlinks": BACKLINKS,
+        "checks": {
+            "status": "observed",
+            "pages": [
+                {"url": "https://pypi.org/project/acme-sdk", "check": "names_site"},
+                {"url": "https://www.acme.studio/", "check": "names_site"},
+            ],
+        },
+    }
+    item = found(findings(view([home], entity=entity)), "schema.entity_profiles_missing")
+    by_url = {row["url"]: row for row in item["verification"]["candidates"]}
+    assert by_url["https://pypi.org/project/acme-sdk"] == {
+        "url": "https://pypi.org/project/acme-sdk",
+        "source": "links_to_site",
+        "check": "names_site",
+    }
+    assert [row["url"] for row in item["verification"]["parent_candidates"]] == [
+        "https://www.acme.studio/"
+    ]
+    assert any(
+        line.startswith(
+            "Possibly your company (parentOrganization, not sameAs): "
+            'https://www.acme.studio/: its footer links to your site as "Example"'
+        )
+        for line in item["evidence"]
+    )
+
+
+def test_an_organization_named_after_another_company_is_a_finding():
+    claw = json.dumps(
+        {
+            "@type": "Organization",
+            "name": "Emotion Machine",
+            "url": BASE,
+            "brand": {"@type": "Brand", "name": "Example"},
+            "sameAs": ["https://x.com/example"],
+        }
+    )
+    home = page("/", FOOTER, json_ld=claw)
+    assert home["organization"] == {
+        "name": "Emotion Machine",
+        "url": BASE,
+        "brands": ["Example"],
+        "parent": False,
+    }
+    item = found(
+        findings(view([home], entity={"backlinks": BACKLINKS})), "schema.entity_parent_unclear"
+    )
+    assert (
+        item["issue"]
+        == 'The homepage describes "Emotion Machine", not the product this site is about'
+    )
+    assert item["evidence"][0].startswith(
+        f'The homepage\'s Organization is named "Emotion Machine" at {BASE}, with "Example" as '
+        "its brand."
+    )
+    assert "https://www.acme.studio/" in item["evidence"][1]
+    assert classify("schema.entity_parent_unclear") == "fix"
+    # The same company as the site's brand, or one that already names its parent: fine.
+    for fine in (
+        {"@type": "Organization", "name": "Example Inc", "url": BASE},
+        {"@type": "Organization", "name": "Emotion Machine", "url": "https://emotion.example"},
+        {**json.loads(claw), "parentOrganization": {"@type": "Organization", "name": "EM"}},
+    ):
+        quiet = findings(view([page("/", FOOTER, json_ld=json.dumps(fine))]))
+        assert "schema.entity_parent_unclear" not in ids(quiet)
+
+
+@pytest.mark.asyncio
+async def test_entity_pages_are_read_once_and_a_refusal_is_not_a_verdict():
+    site = SyntheticSite()
+    site.page("https://pypi.org/project/acme-sdk", b"<html>Homepage: example.com</html>")
+    site.page("https://github.com/acme", b"<html>Acme on GitHub</html>")
+    site.routes["https://www.linkedin.com/company/acme"] = (999, {}, b"")
+    async with site.reader((HOST,)) as reader:
+        result = await read_entity_pages(
+            reader,
+            [
+                "https://pypi.org/project/acme-sdk",
+                "https://github.com/acme",
+                "https://www.linkedin.com/company/acme",
+                "https://x.com/gone",
+            ],
+            host=HOST,
+            seconds=9,
+        )
+    assert [(row["url"], row["check"]) for row in result["pages"]] == [
+        ("https://pypi.org/project/acme-sdk", "names_site"),
+        ("https://github.com/acme", "does_not_name_site"),
+        ("https://www.linkedin.com/company/acme", "couldnt_check"),
+        ("https://x.com/gone", "not_found"),
+    ]
+
+
+@pytest.mark.asyncio
+async def test_the_backlinks_call_asks_for_profile_and_footer_links_and_keeps_few_fields():
+    sent = []
+
+    def respond(request):
+        sent.append(json.loads(request.content))
+        item = {
+            **BACKLINKS["value"]["links"][0],
+            "page_from_title": "Acme SDK",
+            "domain_from_rank": 664,
+        }
+        item["backlink_spam_score"] = item.pop("spam_score")
+        return httpx.Response(
+            200,
+            json={
+                "status_code": 20000,
+                "tasks": [
+                    {
+                        "status_code": 20000,
+                        "cost": 0.024,
+                        "result": [{"total_count": 1, "items": [item]}],
+                    }
+                ],
+            },
+        )
+
+    provider = DataForSEO("login", "password", transport=httpx.MockTransport(respond))
+    request = DataForSEO.backlinks_request(host=f"www.{HOST}", domains=profile_domains(), limit=100)
+    result = await provider.backlinks(request)
+    assert sent[0][0]["target"] == HOST and sent[0][0]["mode"] == "one_per_domain"
+    assert sent[0][0]["filters"][0][:2] == ["domain_from", "in"]
+    assert "www.linkedin.com" in sent[0][0]["filters"][0][2]
+    assert result["reported_cost_usd"] == "0.024" and result["total"] == 1
+    assert result["links"][0]["domain_rank"] == 664 and result["links"][0]["spam_score"] == 0
+    assert "page_from_title" not in result["links"][0]
+
+
+@pytest.mark.asyncio
+async def test_the_audit_buys_one_backlinks_read_and_reads_the_candidates():
+    from test_organic_audit import activities_fixture
+
+    activities, db, _, provider = await activities_fixture()
+    run_id = str(db.run.id)
+    await activities.organic_start_crawl(run_id)
+    assert await activities.organic_poll_crawl(run_id)
+    provider.backlinks_request = DataForSEO.backlinks_request
+    provider.backlinks = AsyncMock(return_value={**BACKLINKS["value"], "reported_cost_usd": "0.02"})
+    await activities._entity_step(run_id)
+    await activities._entity_step(run_id)  # A retry buys nothing twice.
+    assert provider.backlinks.await_count == 1
+    saved = await activities._result(run_id, "entity_backlinks")
+    assert saved["status"] == "completed" and saved["reservation_usd"] == "0.05"
+    checks = await activities._result(run_id, "entity_checks")
+    assert {row["url"] for row in checks["pages"]} == {
+        "https://pypi.org/project/acme-sdk",
+        "https://www.acme.studio/",
+    }
+    documents = await activities._site_documents_input(run_id)
+    assert documents["site"]["entity"]["backlinks"]["status"] == "completed"

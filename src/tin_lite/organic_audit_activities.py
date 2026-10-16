@@ -69,6 +69,7 @@ from tin_lite.organic_audit_ai import (
 from tin_lite.organic_audit_fetch import (
     SiteReader,
     read_crawler_access,
+    read_entity_pages,
     read_pages,
     read_pagespeed,
     read_share_images,
@@ -855,6 +856,57 @@ class OrganicAuditActivities:
         await self._save(run_id, "share_images", result)
         return not urls
 
+    async def _entity_step(self, run_id: str) -> None:
+        """v16: links from profile sites and footers (one Backlinks call), then one read of
+        each profile and parent-company candidate, each saved once. Runs after the crawl, so
+        the page facts are final, in the brand checks' longer activity."""
+        from tin_lite.organic_audit_site import entity_candidates, profile_domains
+
+        scope = await self._result(run_id, "scope")
+        policy = audit_policy(scope["policy_version"])
+        if not policy.get("entity_backlinks_limit") or scope.get("completion"):
+            return
+        backlinks = await self._result(run_id, "entity_backlinks")
+        if backlinks is None and getattr(self.provider, "backlinks", None) is None:
+            backlinks = await self._save(
+                run_id, "entity_backlinks", {"status": "unavailable", "reason": "not_configured"}
+            )
+        elif backlinks is None:
+            request = self.provider.backlinks_request(
+                host=scope["host"],
+                domains=profile_domains(),
+                limit=policy["entity_backlinks_limit"],
+            )
+            backlinks = await self._paid(
+                run_id,
+                "entity_backlinks",
+                request,
+                policy["entity_backlinks_reservation_usd"],
+                lambda: self.provider.backlinks(request),
+            )
+        if await self._result(run_id, "entity_checks"):
+            return
+        facts = await self.db.get_effect(self.key(run_id, "page_facts"))
+        pages = [
+            page
+            for page in ((facts.result or {}) if facts else {}).get("pages", {}).values()
+            if page.get("fetch") == "observed"
+        ]
+        found = entity_candidates(
+            scope["host"],
+            pages,
+            backlinks.get("value") if backlinks.get("status") == "completed" else None,
+        )
+        urls = [row["url"] for row in [*found["profiles"], *found["parents"]]]
+        urls = list(dict.fromkeys(urls))[: policy["max_entity_checks"]]
+        try:
+            async with self.site_reader(audit_hosts(scope)) as reader:
+                result = await read_entity_pages(reader, urls, host=scope["host"], seconds=25)
+        except Exception:  # noqa: BLE001 - unread candidates stay "couldn't check".
+            activity.logger.warning("Organic audit entity pages were not read.", exc_info=True)
+            result = {"status": "unavailable", "reason": "site_read_failed", "pages": []}
+        await self._save(run_id, "entity_checks", result)
+
     async def _access_step(self, run_id: str, scope: dict) -> None:
         """The homepage and one selected page read as a browser and as AI crawlers, once."""
         policy = audit_policy(scope["policy_version"])
@@ -1333,6 +1385,7 @@ class OrganicAuditActivities:
     @activity.defn
     async def organic_brand_checks(self, run_id: str) -> None:
         await self._content_review(run_id)
+        await self._entity_step(run_id)
         if await self._result(run_id, "brand_checks"):
             return
         panel = await self._result(run_id, "panel")
@@ -1658,6 +1711,12 @@ class OrganicAuditActivities:
                 or {"status": "not_collected"},
                 "share_images": await self._result(run_id, "share_images")
                 or {"status": "not_collected"},
+                "entity": {
+                    "backlinks": await self._result(run_id, "entity_backlinks")
+                    or {"status": "not_collected"},
+                    "checks": await self._result(run_id, "entity_checks")
+                    or {"status": "not_collected"},
+                },
             },
         }
 

@@ -735,3 +735,44 @@ async def read_pagespeed(url: str, api_key: str, *, client=None, lighthouse: boo
     finally:
         if own:
             await client.aclose()
+
+
+async def read_entity_pages(
+    reader: SiteReader, urls: list[str], *, host: str, seconds: float
+) -> dict:
+    """Best-effort reads of profile and parent-company candidates: does the page load, and
+    does it name the audited site? Many profile sites turn automated readers away, so
+    "couldn't check" is an ordinary answer, never a verdict. Only the outcome is kept.
+    """
+    deadline = time.monotonic() + seconds
+    site = host.lower().removeprefix("www.").encode()
+    rows = []
+    for url in urls:
+        current, row = url, None
+        for _ in range(4):
+            if time.monotonic() > deadline:
+                row = {"url": url, "check": "couldnt_check", "reason": "time_limit"}
+                break
+            response = await reader.get(current, max_bytes=500_000, asset=True)
+            if response["status"] != "observed":
+                row = {"url": url, "check": "couldnt_check", "reason": response["status"]}
+                break
+            code = response["status_code"]
+            if code in {301, 302, 303, 307, 308} and response.get("location"):
+                current = urljoin(current, response["location"])
+                continue
+            if code in {404, 410}:
+                row = {"url": url, "check": "not_found", "status_code": code}
+            elif code != 200 or refused(response):
+                # LinkedIn answers 999, X a login wall: the page may well be fine.
+                row = {"url": url, "check": "couldnt_check", "status_code": code}
+            else:
+                named = site in response["body"].lower()
+                row = {
+                    "url": url,
+                    "check": "names_site" if named else "does_not_name_site",
+                    "status_code": code,
+                }
+            break
+        rows.append(row or {"url": url, "check": "couldnt_check", "reason": "redirect_limit"})
+    return {"status": "observed", "pages": rows}

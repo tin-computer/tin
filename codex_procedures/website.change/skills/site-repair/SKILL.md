@@ -15,6 +15,9 @@ the founder approves or declines in Tin (`website_change.change_ids`). Each entr
 - `expected`: exact values for robots.txt and sitemap changes (Sitemap URLs to add, AI
   search agents to allow, sitemap URLs to remove or add).
 - `redirects`: for a merge, each URL to redirect and where it goes.
+- `profiles` and `parent_organization`: for entity data, the profiles and the company someone
+  on the project confirmed. Write exactly these URLs and that name, never a profile you found
+  or guessed yourself, and change no other structured-data field than the entry asks.
 
 Entries whose `check_id` is `planned.redirect` or `planned.noindex` come from page decisions
 or the site architecture plan, not the audit. Write a planned redirect exactly like a merge,

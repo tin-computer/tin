@@ -18,9 +18,12 @@ from tin_lite.organic_audit_site import (
     GOOGLE_AGENT,
     ORGANIZATION_TYPES,
     ai_crawlers,
+    brand_key,
     canonical_elsewhere,
     client_rendered,
     crawler_stances,
+    entity_candidates,
+    host_brand,
     is_ad_landing_url,
     is_noindex,
     is_utility_url,
@@ -162,6 +165,7 @@ class SiteView:
         self.inspection = site.get("url_inspection") or {"status": "not_collected"}
         self.content_review = site.get("content_review") or {"status": "not_collected"}
         self.share_images = site.get("share_images") or {"status": "not_collected"}
+        self.entity = site.get("entity") or {}
 
     def in_scope(self, url: str) -> bool:
         try:
@@ -1956,7 +1960,7 @@ def _schema_missing_findings(view: SiteView, host: str) -> list[dict]:
     if not gaps:
         return []
     urls = list(dict.fromkeys(f["url"] for _, rows in gaps for f in rows))
-    candidates = _profile_candidates(view) if gaps[0][1] is home else []
+    candidates = [row["url"] for row in _entity(view)["profiles"]] if gaps[0][1] is home else []
     return [
         site_finding(
             host=host,
@@ -1999,18 +2003,47 @@ def _have(rows: list) -> str:
     return "has" if len(rows) == 1 else "have"
 
 
-def _profile_candidates(view: SiteView) -> list[str]:
-    """Profile links the pages Tin read carry, homepage first: candidates, never confirmed."""
-    pages = sorted(view.observed(), key=lambda f: (url_key(f["url"]) != "/", f["url"]))
-    links = (link for f in pages for link in f.get("profile_links") or [])
-    return list(dict.fromkeys(links))[:10]
+ENTITY_SOURCES = {
+    "site_links_to_it": "your site links to it",
+    "links_to_site": "it links to your site",
+    "footer_link_to_site": "its footer links to your site",
+}
+ENTITY_CHECKS = {
+    "names_site": "the page names your domain",
+    "does_not_name_site": "Tin didn't find your domain on the page",
+    "not_found": "the page doesn't exist",
+    "couldnt_check": "couldn't check (the site turns automated readers away)",
+}
+
+
+def _entity(view: SiteView) -> dict:
+    """Profile and parent-company candidates with what one read of each showed."""
+    backlinks = view.entity.get("backlinks") or {}
+    found = entity_candidates(
+        view.host,
+        view.observed(),
+        backlinks.get("value") if backlinks.get("status") == "completed" else None,
+    )
+    checks = {
+        row["url"]: row["check"] for row in (view.entity.get("checks") or {}).get("pages", [])
+    }
+    for row in [*found["profiles"], *found["parents"]]:
+        row["check"] = checks.get(row["url"], "couldnt_check")
+    return found
+
+
+def _candidate_line(row: dict) -> str:
+    anchor = f' as "{row["anchor"]}"' if row.get("anchor") else ""
+    return f"{row['url']}: {ENTITY_SOURCES[row['source']]}{anchor}; {ENTITY_CHECKS[row['check']]}."
 
 
 def _entity_findings(view: SiteView, host: str) -> list[dict]:
-    """v16: the homepage's Organization data names no official profiles (sameAs).
+    """v16: the homepage's Organization data names no official profiles (sameAs), or names a
+    different company than the site's own brand.
 
-    Reported once for the site. The profile links the site already carries are candidates
-    for the founder to confirm; none is added on Tin's say-so.
+    Each is reported once for the site. Profiles the site links to, profile pages that link
+    to it and a site that links to it from its footer by name are candidates for the founder
+    to confirm; none is added on Tin's say-so.
     """
     home = view.facts.get("/") or {}
     if (
@@ -2019,45 +2052,108 @@ def _entity_findings(view: SiteView, host: str) -> list[dict]:
         or client_rendered(home)
         or not 200 <= home["status_code"] < 300
         or not ORGANIZATION_TYPES & set(home.get("json_ld_types") or [])
-        or home["organization_same_as"]
     ):
         return []
-    candidates = _profile_candidates(view)
-    return [
-        site_finding(
-            host=host,
-            check_id="schema.entity_profiles_missing",
-            category="site",
-            area="authority",
-            issue="The homepage's Organization data names no official profiles",
-            impact="low",
-            evidence=[
-                "The Organization structured data on the homepage has no sameAs, the list of "
-                "profiles (LinkedIn, X, GitHub, Crunchbase and the like) that tells search "
-                "engines and AI assistants which entity the site is.",
-                "Profiles the site links to, as candidates to confirm: "
-                + ", ".join(candidates)
-                + "."
-                if candidates
-                else "None of the pages Tin read links to a profile on a site such as LinkedIn, "
-                "X, GitHub or Crunchbase.",
-            ],
-            fix=(
-                "Add sameAs to the homepage's Organization data with the profiles you confirm "
-                "are yours, and link them from the site's footer."
-            ),
-            priority="quick_win",
-            evidence_kind="page_fetch",
-            confidence="likely",
-            urls=[home["url"]],
-            evidence_refs=["site.pages"],
-            verification={
-                "kind": "confirm_profiles",
-                "check_id": "schema.entity_profiles_missing",
-                "candidates": candidates,
-            },
+    found = _entity(view)
+    organization = home.get("organization") or {}
+    parents = found["parents"] if not organization.get("parent") else []
+    confirm = (
+        "Tin adds only what you confirm: save your profiles and parent company with "
+        "set_official_profiles, and website.change writes them."
+    )
+    verification = {
+        "kind": "confirm_profiles",
+        "candidates": found["profiles"],
+        "parent_candidates": parents,
+    }
+    findings = []
+    if not home["organization_same_as"]:
+        findings.append(
+            site_finding(
+                host=host,
+                check_id="schema.entity_profiles_missing",
+                category="site",
+                area="authority",
+                issue="The homepage's Organization data names no official profiles",
+                impact="low",
+                evidence=[
+                    "The Organization structured data on the homepage has no sameAs, the list "
+                    "of profiles (LinkedIn, X, GitHub, Crunchbase, package pages and the like) "
+                    "that tells search engines and AI assistants which entity the site is.",
+                    *(
+                        ["Candidates:", *(_candidate_line(row) for row in found["profiles"][:6])]
+                        if found["profiles"]
+                        else [
+                            "No profile on a site such as LinkedIn, X, GitHub or Crunchbase links "
+                            "to the site or is linked from the pages Tin read."
+                        ]
+                    ),
+                    *(
+                        "Possibly your company (parentOrganization, not sameAs): "
+                        + _candidate_line(row)
+                        for row in parents
+                    ),
+                    confirm,
+                ],
+                fix=(
+                    "Add sameAs to the homepage's Organization data with the profiles you "
+                    "confirm are yours, and link them from the site's footer."
+                ),
+                priority="quick_win",
+                evidence_kind="page_fetch",
+                confidence="likely",
+                urls=[home["url"]],
+                evidence_refs=["site.pages", "site.entity"],
+                verification={**verification, "check_id": "schema.entity_profiles_missing"},
+            )
         )
-    ]
+    name = organization.get("name")
+    brand = host_brand(host)
+    name_key = brand_key(name)
+    url_host = (urlsplit(organization.get("url") or "").hostname or "").removeprefix("www.")
+    if (
+        name_key
+        and brand
+        and not organization.get("parent")
+        and brand not in name_key
+        and name_key not in brand
+        and (
+            url_host == host.removeprefix("www.")
+            or any(brand in brand_key(b) for b in organization.get("brands", []))
+        )
+    ):
+        brands = organization.get("brands") or []
+        findings.append(
+            site_finding(
+                host=host,
+                check_id="schema.entity_parent_unclear",
+                category="site",
+                area="authority",
+                issue=f'The homepage describes "{name}", not the product this site is about',
+                impact="low",
+                evidence=[
+                    f'The homepage\'s Organization is named "{name}"'
+                    + (f" at {organization['url']}" if organization.get("url") else "")
+                    + (f', with "{brands[0]}" as its brand' if brands else "")
+                    + ". Search engines and AI assistants read that as the company living at "
+                    f"{host}, and the product gets no entity of its own.",
+                    *("Possibly your company: " + _candidate_line(row) for row in parents),
+                    confirm,
+                ],
+                fix=(
+                    "Describe the product as its own entity (SoftwareApplication or "
+                    "Organization) with its publisher or parentOrganization pointing at the "
+                    "company's @id on the company's own site, and have that site name the "
+                    "product as its brand."
+                ),
+                priority="quick_win",
+                evidence_kind="page_fetch",
+                urls=[home["url"]],
+                evidence_refs=["site.pages", "site.entity"],
+                verification={**verification, "check_id": "schema.entity_parent_unclear"},
+            )
+        )
+    return findings
 
 
 def _preview_findings(view: SiteView, host: str) -> list[dict]:

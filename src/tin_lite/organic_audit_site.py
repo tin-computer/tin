@@ -359,8 +359,31 @@ PROFILE_HOSTS = frozenset(
         "trustpilot.com",
         "discord.gg",
         "medium.com",
+        # Package registries: the product's own pages there, for a software product.
+        "pypi.org",
+        "npmjs.com",
     }
 )
+
+
+def profile_domains() -> list[str]:
+    """Every host form of the profile sites, for a provider filter on exact domains."""
+    return sorted({form for host in PROFILE_HOSTS for form in (host, f"www.{host}")})
+
+
+def brand_key(text: str | None) -> str:
+    """Letters and digits only, lowercased: 'Claw Messenger' and clawmessenger.com's label
+    compare equal."""
+    return re.sub(r"[^a-z0-9]", "", (text or "").lower())
+
+
+def host_brand(host: str) -> str:
+    """The brand a host names: its label without www., get/try/use and app/hq."""
+    label = host.lower().removeprefix("www.").split(".")[0]
+    label = re.sub(r"^(?:get|try|use|join)(?=.{3,})", "", label)
+    return brand_key(re.sub(r"(?<=.{3})(?:app|hq)$", "", label))
+
+
 SHARE_PATH = re.compile(
     r"^/(?:intent|share|sharer|shareArticle|sharing|home|search|hashtag|login|signup)\b", re.I
 )
@@ -783,6 +806,28 @@ def _breadcrumb_problems(item: dict) -> list[str]:
     return []
 
 
+def _names(value) -> list[str]:
+    values = value if isinstance(value, list) else [value]
+    names = []
+    for item in values[:5]:
+        name = item.get("name") if isinstance(item, dict) else item
+        if isinstance(name, str) and name.strip():
+            names.append(" ".join(name.split())[:120])
+    return names
+
+
+def _organization(item: dict) -> dict:
+    """The first Organization: who it says it is, where, its brands and whether it names a
+    parent company."""
+    url = item.get("url")
+    return {
+        "name": (_names(item.get("name")) or [None])[0],
+        "url": url.strip()[:300] if isinstance(url, str) and url.strip() else None,
+        "brands": _names(item.get("brand")),
+        "parent": any(_present(item.get(field)) for field in ("parentOrganization", "publisher")),
+    }
+
+
 def structured_data(documents: list[str]) -> dict:
     """Parse JSON-LD blocks and check the common types' required fields.
 
@@ -792,6 +837,7 @@ def structured_data(documents: list[str]) -> dict:
     invalid = 0
     dated = author = False
     same_as: list[str] = []
+    organization: dict | None = None
     for text in documents:
         try:
             value = json.loads(text)
@@ -804,6 +850,8 @@ def structured_data(documents: list[str]) -> dict:
             if _present(item.get("author")):
                 author = True
             if set(_types(item)) & ORGANIZATION_TYPES:
+                if organization is None:
+                    organization = _organization(item)
                 links = item.get("sameAs")
                 for link in links if isinstance(links, list) else [links]:
                     if isinstance(link, str) and link.strip() and len(same_as) < 20:
@@ -832,6 +880,7 @@ def structured_data(documents: list[str]) -> dict:
         "dated": dated,
         "author": author,
         "same_as": same_as,
+        "organization": organization,
     }
 
 
@@ -899,6 +948,7 @@ V16_PAGE_FACTS = frozenset(
         "faq_questions",
         "profile_links",
         "organization_same_as",
+        "organization",
     }
 )
 
@@ -967,6 +1017,7 @@ def html_facts(
         "faq_questions": parser.question_headings + parser.faq_questions,
         "profile_links": parser.profile_links,
         "organization_same_as": schema["same_as"],
+        "organization": schema["organization"],
         "og_title": parser.og_title,
         "twitter_card": parser.twitter_card,
         "legal_links": dict(parser.legal_links),
@@ -1155,4 +1206,73 @@ def select_pages(
             }
             for name in section_order
         ][:200],
+    }
+
+
+# --- Entity candidates (audit policy v16) ------------------------------------------------------
+
+MAX_PROFILE_CANDIDATES = 10
+MAX_PARENT_CANDIDATES = 3
+# A footer link from a page this spammy is a link network, not a company.
+MAX_PARENT_SPAM_SCORE = 30
+
+
+def entity_candidates(host: str, pages: list[dict], backlinks: dict | None) -> dict:
+    """Profiles and a parent company the evidence points to: candidates for the founder to
+    confirm, never facts.
+
+    Profiles come from the profile links the site's pages carry (homepage first) and from
+    profile pages that link to the site. A parent company is a site that links here from its
+    footer, passing link equity, with the site's brand as the anchor.
+    """
+    organization = next(
+        (
+            page.get("organization")
+            for page in pages
+            if url_key(page["url"]) == "/" and page.get("organization")
+        ),
+        None,
+    )
+    brands = {host_brand(host)} | {
+        brand_key(name) for name in (organization or {}).get("brands", []) if brand_key(name)
+    }
+    ordered = sorted(pages, key=lambda page: (url_key(page["url"]) != "/", page["url"]))
+    profiles: dict[str, dict] = {}
+    for page in ordered:
+        for link in page.get("profile_links") or []:
+            profiles.setdefault(link, {"url": link, "source": "site_links_to_it"})
+    links = (backlinks or {}).get("links") or []
+    for link in links:
+        profile = profile_link(link["url_from"])
+        if profile:
+            profiles.setdefault(profile, {"url": profile, "source": "links_to_site"})
+    site = host.lower().removeprefix("www.")
+    parents: dict[str, dict] = {}
+    for link in links:
+        domain = (link.get("domain_from") or "").lower().removeprefix("www.")
+        anchor = brand_key(link.get("anchor"))
+        if (
+            link.get("semantic_location") != "footer"
+            or not link.get("dofollow")
+            or not domain
+            or domain == site
+            or domain.endswith("." + site)
+            or profile_link(f"https://{domain}/x") is not None
+            or (link.get("spam_score") or 0) > MAX_PARENT_SPAM_SCORE
+            or not anchor
+            or not any(brand and brand in anchor for brand in brands)
+        ):
+            continue
+        parents.setdefault(
+            domain,
+            {
+                "url": f"https://{link.get('domain_from')}/",
+                "anchor": link.get("anchor"),
+                "linking_page": link["url_from"],
+                "source": "footer_link_to_site",
+            },
+        )
+    return {
+        "profiles": list(profiles.values())[:MAX_PROFILE_CANDIDATES],
+        "parents": list(parents.values())[:MAX_PARENT_CANDIDATES],
     }
