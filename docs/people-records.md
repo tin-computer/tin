@@ -51,10 +51,19 @@ the next run fills the field.
 
 The built-in fields are:
 - `name`, `headline` (text);
-- `linkedin_relationship` (`connected`, `pending` or `none`);
 - `icp` (which named profile in the ICP file, or `none`);
 - `icp_fit` (a number from 0 to 1);
 - `customer` (`yes` or `no`), which only members set.
+
+## LinkedIn relationships
+
+Whether someone is connected is each member's own: a person can be one teammate's connection
+and a stranger to another. `record_relationships` holds one row per person and member
+(`connected`, `pending` or `none`), with the run that read or changed it. An engagers run
+writes its starter's, from each reaction's degree; a connection request writes its sender's.
+A merge keeps the survivor's row for each member, else the newest. The `linkedin_relationship`
+field from before is no longer written or read; migration 071 moved each run's value to the
+member who started the run.
 
 ## Notes
 
@@ -81,7 +90,7 @@ the page sorts, searches, segments and pages them. The HTTP routes (`people_api.
 tools share `people_service.People`.
 
 - **Grid:** name (with "customer" for a customer), headline, ICP, ICP fit, notes, LinkedIn
-  (connected or not) and last touch.
+  (the viewer's own: connected or not, "—" where Tin hasn't read it for them) and last touch.
   - The full grid names an ICP by its short label ("ICP 1"), with the heading on hover; beside
     the panel it reads in full.
   - Notes shows the start of the newest note; hovering shows it whole, with who wrote it and
@@ -90,7 +99,14 @@ tools share `people_service.People`.
     on the post's date.
   - The segments are all people, ICP fit (0.6 or more) and not connected yet, plus Invited
     once a [connection request](linkedin-requests.md) went out. The LinkedIn column reads
-    "Invited oct 16" for a request Tin sent.
+    "Queued" for the viewer's request waiting to go out and "Invited oct 16" for one Tin sent.
+  - With the viewer's own LinkedIn reading on the project, a tick lane before the name lets
+    them choose people to ask to connect (Paper REQ-A). Only people they can ask get a box:
+    someone with a LinkedIn profile ID, not a customer, not their connection or invitee, and
+    not asked by them before. Ticking shows a bar above the grid with the schedule and "Send N
+    requests", which queues them at once (see [connection requests](linkedin-requests.md)).
+    When nobody on the list has a box, a line in the bar's place says why (REQ-A4): "Everyone
+    on this list is already connected to you or invited".
 - **Score hover:** the reason, the score, the ICP and when it was set.
   - A score computed under an earlier `strategy/ICP.md`, or by an earlier version of the
     scoring, reads "old": the view compares each value's `definition` with the current one

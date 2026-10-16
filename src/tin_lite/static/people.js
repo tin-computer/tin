@@ -1,9 +1,10 @@
 "use strict";
 
-// People (Paper PEOPLE-A1, C1, C1b, E1–E3, N1 and N1b): everyone this project keeps a record of,
-// as a grid with segments and the newest note, and one person in a side panel. A member picks
-// their ICP (which no run replaces), marks a customer, writes notes and forgets them. Tin's
-// workflows write the rest, and read the notes the next time they score the person.
+// People (Paper PEOPLE-A1, C1, C1b, E1–E3, N1, N1b and REQ-A): everyone this project keeps a
+// record of, as a grid with segments and the newest note, and one person in a side panel. A
+// member picks their ICP (which no run replaces), marks a customer, writes notes, forgets them,
+// and ticks people to ask to connect from their own LinkedIn. Tin's workflows write the rest,
+// and read the notes the next time they score the person.
 window.TinPeople = (() => {
   const PAGE = 50;
   const MONTHS = ["jan", "feb", "mar", "apr", "may", "jun", "jul", "aug", "sep", "oct", "nov", "dec"];
@@ -66,8 +67,10 @@ window.TinPeople = (() => {
     return { text: value, short: numbered ? numbered[1] : value, muted: false };
   }
 
-  // A request Tin sent and not yet answered reads with its day: "Invited oct 16".
+  // Each member sees their own LinkedIn: a request of theirs waiting to go out reads "Queued",
+  // one Tin sent and not yet answered reads with its day, "Invited oct 16".
   function relationshipLabel(person, relationship) {
+    if (person.request === "queued") return "Queued";
     if (relationship === "pending" && person.invited_at) return `Invited ${day(person.invited_at)}`;
     return RELATIONSHIP[relationship] || "—";
   }
@@ -101,7 +104,7 @@ window.TinPeople = (() => {
       close();
       view = {
         ...options, people: null, error: null, fitShown: 0.6, profiles: [], segment: "all", query: "",
-        sort: { key: "fit", descending: true }, page: 0,
+        sort: { key: "fit", descending: true }, page: 0, picked: new Set(), queueing: false,
         openId: new URLSearchParams(window.location.search).get("person"),
         person: null, personError: null, confirming: false, forgetting: false, forgetError: null,
         ...personState(),
@@ -128,6 +131,9 @@ window.TinPeople = (() => {
       const listed = await current.api(peoplePath());
       if (view !== current || !current.active) return;
       current.people = listed.people;
+      // Only people the member can still ask stay ticked.
+      const open = new Set(listed.people.filter((person) => person.requestable).map((person) => person.id));
+      current.picked = new Set([...current.picked].filter((id) => open.has(id)));
       current.fitShown = listed.fit_shown;
       current.profiles = listed.profiles || [];
       current.error = null;
@@ -202,6 +208,43 @@ window.TinPeople = (() => {
     box.querySelector("[data-clear-people-search]").hidden = !view.query;
   }
 
+  // Ticking people to ask to connect needs the member's own LinkedIn reading on this project.
+  function picking() {
+    const data = view.requests?.();
+    return Boolean(data?.offered && (data.reading || data.browser_only));
+  }
+
+  // The bar above the grid while people are ticked (REQ-A, REQ-A3).
+  function pickedBar() {
+    const count = view.picked.size;
+    if (!count || !picking()) return "";
+    const { ready, line } = window.TinRequests.picked(view.requests());
+    return `<div class="people-picked" role="region" aria-label="Ticked people">
+      <strong>${count} selected</strong>
+      <button class="people-picked-clear" type="button" data-people-clear-picked>Clear</button>
+      <span class="people-picked-space"></span>
+      <p>${escape(line)}</p>
+      ${ready ? "" : '<button class="requests-settings-link" type="button" data-people-open-linkedin>Open the LinkedIn card</button>'}
+      <button class="button people-picked-send" type="button" data-people-send ${ready && !view.queueing ? "" : "disabled"}>${view.queueing ? "Queueing…" : `Send ${count} ${count === 1 ? "request" : "requests"}`}</button>
+    </div>`;
+  }
+
+  // In the bar's place when nobody on the list has a box, why (REQ-A4).
+  function nobodyLine(people) {
+    if (!picking() || !people.length || people.some((person) => person.requestable)) return "";
+    const why = new Set(people.map((person) => {
+      const relationship = field(person, "linkedin_relationship")?.value;
+      if (field(person, "customer")?.value === "yes") return "a customer";
+      if (relationship === "connected") return "connected to you";
+      if (relationship === "pending" || person.request === "queued") return "invited";
+      return "";
+    }));
+    const reasons = ["connected to you", "invited", "a customer"].filter((reason) => why.has(reason));
+    const listed = reasons.length > 1 ? `${reasons.slice(0, -1).join(", ")} or ${reasons.at(-1)}` : reasons[0];
+    const line = why.has("") ? "No one on this list can be asked right now." : `No one here to ask. Everyone on this list is already ${listed}.`;
+    return `<div class="people-picked people-nobody"><p>${escape(line)}</p></div>`;
+  }
+
   function renderBody() {
     const body = view.main.querySelector(".people-body");
     if (!body) return;
@@ -224,13 +267,18 @@ window.TinPeople = (() => {
     view.page = Math.min(view.page, pages - 1);
     const start = view.page * PAGE;
     const visible = people.slice(start, start + PAGE);
+    const pick = picking();
+    const pickable = visible.filter((person) => person.requestable);
+    const ticked = pickable.filter((person) => view.picked.has(person.id)).length;
     body.innerHTML = `
       <div class="workflow-sections system-sections people-sections" role="tablist" aria-label="People segments">
         ${SEGMENTS.filter((segment) => segment.key !== "invited" || view.segment === "invited" || segmentPeople("invited").length).map((segment) => `<button class="workflow-section ${view.segment === segment.key ? "is-active" : ""}" type="button" role="tab" aria-selected="${view.segment === segment.key}" data-people-segment="${segment.key}">${segment.label} <span>${segmentPeople(segment.key).length}</span></button>`).join("")}
       </div>
+      ${pickedBar() || nobodyLine(people)}
       <div class="people-grid">
-        <table class="tin-table people-table">
+        <table class="tin-table people-table ${pick ? "has-pick" : ""}">
           <thead><tr>
+            ${pick ? `<th class="is-pick" scope="col"><input type="checkbox" data-people-pick-all aria-label="Tick everyone on this page you can ask to connect" ${pickable.length ? "" : "disabled"} ${pickable.length && ticked === pickable.length ? "checked" : ""} /></th>` : ""}
             ${header("name", "Name")}
             <th class="is-headline" scope="col">Headline</th>
             <th class="is-icp" scope="col">ICP</th>
@@ -239,7 +287,7 @@ window.TinPeople = (() => {
             <th class="is-linkedin" scope="col">LinkedIn</th>
             ${header("touch", "Last touch")}
           </tr></thead>
-          <tbody>${visible.length ? visible.map(row).join("") : `<tr class="is-none"><td colspan="7">${view.query.trim() ? `No one matches “${escape(view.query.trim())}”.` : "No one here yet."}</td></tr>`}</tbody>
+          <tbody>${visible.length ? visible.map((person) => row(person, pick)).join("") : `<tr class="is-none"><td colspan="${pick ? 8 : 7}">${view.query.trim() ? `No one matches “${escape(view.query.trim())}”.` : "No one here yet."}</td></tr>`}</tbody>
         </table>
       </div>
       <footer class="people-pager">
@@ -250,7 +298,9 @@ window.TinPeople = (() => {
           <button type="button" data-people-page="1" aria-label="Next page" ${view.page >= pages - 1 ? "disabled" : ""}><svg aria-hidden="true" viewBox="0 0 12 12"><path d="M4.5 2.5 8 6l-3.5 3.5" /></svg></button>
         </div>` : ""}
       </footer>`;
-    bindBody(body);
+    const all = body.querySelector("[data-people-pick-all]");
+    if (all) all.indeterminate = ticked > 0 && ticked < pickable.length;
+    bindBody(body, pickable);
   }
 
   function header(key, label) {
@@ -261,7 +311,7 @@ window.TinPeople = (() => {
     </th>`;
   }
 
-  function row(person) {
+  function row(person, pick = false) {
     const icp = field(person, "icp");
     const fit = field(person, "icp_fit");
     const relationship = field(person, "linkedin_relationship")?.value;
@@ -273,8 +323,12 @@ window.TinPeople = (() => {
     const mark = fit?.stale && fitValue !== null ? "old" : memberSet ? setMark(fit) : "";
     const touch = person.last_touch;
     const note = person.note;
-    return `<tr tabindex="0" data-person="${escape(person.id)}" class="${person.id === view.openId ? "is-selected" : ""}" aria-label="${escape(person.name || "Unnamed")}">
-      <td class="is-name"><span class="people-name"><span>${escape(person.name || "Unnamed")}</span>${customer ? "<small>customer</small>" : ""}</span></td>
+    const picked = view.picked.has(person.id);
+    const box = pick
+      ? `<td class="is-pick">${person.requestable ? `<input type="checkbox" data-people-pick="${escape(person.id)}" aria-label="Ask ${escape(person.name || "this person")} to connect" ${picked ? "checked" : ""} />` : ""}</td>`
+      : "";
+    return `<tr tabindex="0" data-person="${escape(person.id)}" class="${person.id === view.openId ? "is-selected" : ""} ${picked ? "is-picked" : ""}" aria-label="${escape(person.name || "Unnamed")}">
+      ${box}<td class="is-name"><span class="people-name"><span>${escape(person.name || "Unnamed")}</span>${customer ? "<small>customer</small>" : ""}</span></td>
       <td class="is-headline"><span>${escape(person.headline)}</span></td>
       <td class="is-icp ${icpLabel.muted ? "is-muted" : ""}" title="${escape(icpLabel.muted ? "" : icpLabel.text)}"><span class="is-short">${escape(icpLabel.short)}</span><span class="is-full">${escape(icpLabel.text)}</span></td>
       <td class="is-fit ${fitClass}" ${fit ? `data-fit="${escape(person.id)}"` : ""}>${mark ? `<small>${mark}</small>` : ""}<span>${fitValue === null ? "—" : fitValue.toFixed(2)}</span></td>
@@ -284,7 +338,7 @@ window.TinPeople = (() => {
     </tr>`;
   }
 
-  function bindBody(body) {
+  function bindBody(body, pickable = []) {
     body.querySelectorAll("[data-people-segment]").forEach((button) => button.addEventListener("click", () => {
       view.segment = button.dataset.peopleSegment;
       view.page = 0;
@@ -301,6 +355,28 @@ window.TinPeople = (() => {
       renderBody();
       body.querySelector(".people-grid")?.scrollIntoView({ block: "nearest" });
     }));
+    body.querySelectorAll("[data-people-pick]").forEach((box) => {
+      // Ticking someone doesn't open them.
+      box.closest("td").addEventListener("click", (event) => event.stopPropagation());
+      box.addEventListener("keydown", (event) => event.stopPropagation());
+      box.addEventListener("change", () => {
+        if (box.checked) view.picked.add(box.dataset.peoplePick);
+        else view.picked.delete(box.dataset.peoplePick);
+        renderBody();
+      });
+    });
+    body.querySelector("[data-people-pick-all]")?.addEventListener("change", (event) => {
+      const every = pickable.every((person) => view.picked.has(person.id));
+      pickable.forEach((person) => (every ? view.picked.delete(person.id) : view.picked.add(person.id)));
+      event.target.checked = !every;
+      renderBody();
+    });
+    body.querySelector("[data-people-clear-picked]")?.addEventListener("click", () => {
+      view.picked.clear();
+      renderBody();
+    });
+    body.querySelector("[data-people-open-linkedin]")?.addEventListener("click", () => view.openLinkedInCard?.());
+    body.querySelector("[data-people-send]")?.addEventListener("click", () => sendRequests());
     body.querySelectorAll("tbody tr[data-person]").forEach((tr) => {
       tr.addEventListener("click", () => openPerson(tr.dataset.person));
       tr.addEventListener("keydown", (event) => {
@@ -525,8 +601,9 @@ window.TinPeople = (() => {
       return `Reacted to ${whose}${reaction ? ` with ${reaction}` : ""}`;
     }
     if (event.kind === "commented") return `Commented on ${whose}`;
-    if (event.kind === "invited") return "Connection request sent";
-    if (event.kind === "accepted") return "Accepted your connection request";
+    // A request is the member's whose LinkedIn sent it.
+    if (event.kind === "invited") return event.yours === false ? "A teammate sent a connection request" : "Connection request sent";
+    if (event.kind === "accepted") return event.yours === false ? "Accepted a teammate’s connection request" : "Accepted your connection request";
     if (event.kind === "withdrawn") return "Connection request withdrawn";
     return event.kind;
   }
@@ -758,15 +835,50 @@ window.TinPeople = (() => {
     current.people = (current.people || []).map((item) => (item.id !== person.id ? item : {
       ...item,
       fields: person.fields,
+      requestable: person.requestable,
+      request: person.request,
       note: notes[0] ? { body: notes[0].body, by: notes[0].by, at: notes[0].at, count: notes.length } : null,
       notes_text: notes.map((note) => note.body).join(" \n"),
     }));
     if (done) current.toast?.(done);
+    if (!person.requestable) current.picked.delete(person.id);
     if (!current.active) return true;
     renderBody();
     syncSelection();
     renderPanel();
     return true;
+  }
+
+  // Ticking is the approval: the people ticked are queued for Tin to send one at a time.
+  async function sendRequests() {
+    const current = view;
+    if (current.queueing || !current.picked.size) return;
+    // In the order they show, best fit first.
+    const order = new Map(shown().map((person, index) => [person.id, index]));
+    const people = [...current.picked].sort((a, b) => (order.get(a) ?? 1e9) - (order.get(b) ?? 1e9));
+    current.queueing = true;
+    renderBody();
+    let answer;
+    try {
+      answer = await current.api(`/api/projects/${encodeURIComponent(current.projectId)}/linkedin-requests/send`, {
+        method: "POST",
+        body: JSON.stringify({ request_id: window.crypto.randomUUID(), people }),
+      });
+    } catch (error) {
+      if (view !== current) return;
+      current.queueing = false;
+      current.toast?.(error.message);
+      if (current.active) renderBody();
+      return;
+    }
+    if (view !== current) return;
+    current.queueing = false;
+    current.picked.clear();
+    const queued = new Set(people);
+    current.people = (current.people || []).map((item) => (queued.has(item.id) ? { ...item, requestable: false, request: "queued" } : item));
+    current.toast?.(window.TinRequests.queuedText(answer));
+    if (current.active) renderBody();
+    current.refreshRequests?.();
   }
 
   async function forget(person) {
@@ -786,6 +898,7 @@ window.TinPeople = (() => {
     if (view !== current) return;
     current.forgetting = false;
     current.people = (current.people || []).filter((item) => item.id !== person.id);
+    current.picked.delete(person.id);
     current.toast?.(`Forgot ${person.name || "this person"}.`);
     if (!current.active) return;
     closePerson({ restoreFocus: false });

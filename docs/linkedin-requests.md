@@ -3,7 +3,8 @@
 `social.linkedin_requests` (#450) sends the LinkedIn connection requests a member approved, one
 at a time, from their own saved session, then reads who accepted. It follows
 [People who engaged with your LinkedIn posts](linkedin-engagers.md), whose people it proposes.
-Boards: Paper "Warm reach · connection requests", INVITE-A to INVITE-C.
+Members can also choose people themselves in People. Boards: Paper "Warm reach · connection
+requests", INVITE-A to INVITE-C and REQ-A.
 
 ## Proposed
 
@@ -12,7 +13,8 @@ the starter's open batch (one open batch per member and project). Someone is eli
 
 - they reacted to or commented on the starter's own posts (events from runs the starter began);
 - their ICP fit is 0.6 or more, whoever set it;
-- they aren't connected or already invited (`linkedin_relationship` is `none`);
+- the starter isn't connected to them or already inviting them (their own row in
+  `record_relationships` is `none`);
 - they aren't marked a customer;
 - the starter never had them in a batch before, decided or not.
 
@@ -29,6 +31,24 @@ repeats the same decision. Approving needs sending to be on, and starts the batc
 `social.linkedin_requests` run with the start key `linkedin-requests:<batch>`; nothing else
 can start it. Nothing is sent at the moment of approval. If the run can't start, the batch goes
 back to Decisions as it was and the member reads why.
+
+## Chosen in People
+
+A member can tick people in People and press "Send N requests"
+(`POST /api/projects/{project_id}/linkedin-requests/send`, or `send_connection_requests`).
+Choosing is the approval: `linkedin_requests.pick` queues them, in the order sent, in a batch
+of their own that is approved at once, and starts its `social.linkedin_requests` run like an
+approved batch. Anyone chosen must be someone the member can ask (`pickable`): with a LinkedIn
+profile ID, not a customer, not the member's connection or invitee as far as Tin knows, and
+with no request from the member that went out or waits. A request that lapsed, was declined in
+Decisions or never went out doesn't stop them; someone waiting in the member's batch in
+Decisions moves to the new one. The fit doesn't matter: the member chose them. Up to 100 at a
+time; the same `request_id` repeats the same choice. If the run can't start, the batch is
+removed, anyone it took from Decisions waits there again, and the member reads why.
+
+People and `list_people` say who the viewer can ask (`requestable`, `can_request`) and whose
+request of theirs waits to go out (`request`, `request_queued`). The requests state carries
+`next_open`, when one more request would go, for the bar above the grid.
 
 ## Sent, one at a time
 
@@ -87,9 +107,11 @@ queued.
 - **LinkedIn card:** the Sending row (switch, consent, limits, the paused state with Resume) and
   This week (sent, accepted, queued, pending, next send). A held sending makes the card need
   you.
-- **People:** "Invited oct 16" in the LinkedIn column, an Invited segment once someone is
-  invited, and "Connection request sent" / "Accepted your connection request" on the timeline.
+- **People:** the tick lane and its bar; "Queued", then "Invited oct 16", in the LinkedIn
+  column; an Invited segment once someone is invited; and "Connection request sent" /
+  "Accepted your connection request" on the timeline ("A teammate sent a connection request"
+  for someone else's).
 
 The sandbox image needs the new runner kinds: build a new `tin-linkedin-*` alias from
 `sandbox/linkedin/Dockerfile` and point `TIN_LITE_LINKEDIN_TEMPLATE` at it, staging first.
-Deleting a project removes its sending settings, batches and requests.
+Deleting a project removes its sending settings, batches, requests and relationships.

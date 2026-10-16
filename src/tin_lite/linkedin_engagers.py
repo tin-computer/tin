@@ -70,9 +70,10 @@ def reacted_key(thread_urn: str, member: str) -> str:
 
 
 async def record_reactions(
-    conn, *, project_id: UUID, run_id: UUID, post: dict, people: list[dict]
+    conn, *, project_id: UUID, run_id: UUID, member: str, post: dict, people: list[dict]
 ) -> dict[str, int]:
-    """Write one page of a post's reactions as records, values and events."""
+    """Write one page of a post's reactions as records, values and events. Whether each person
+    is a connection is the run's starter's own relationship: it's their LinkedIn Tin reads."""
 
     counts = {"people": 0, "events": 0, "forgotten": 0}
     for person in people:
@@ -94,14 +95,21 @@ async def record_reactions(
                 "" if person["headline"] else "LinkedIn showed none",
             ),
         ]
-        relationship = RELATIONSHIP.get(person.get("degree") or "")
-        if relationship:
-            values.append(
-                Value("linkedin_relationship", relationship, f"{person['degree']} on LinkedIn")
-            )
         await records.set_values(
             conn, project_id, record_id, values, set_by_kind="run", set_by=str(run_id)
         )
+        relationship = RELATIONSHIP.get(person.get("degree") or "")
+        if relationship:
+            await records.set_relationship(
+                conn,
+                project_id,
+                record_id,
+                member,
+                relationship,
+                set_by=str(run_id),
+                reason=f"{person['degree']} on LinkedIn",
+                keep_pending=True,
+            )
         counts["people"] += 1
         counts["events"] += await records.add_event(
             conn,
@@ -345,10 +353,17 @@ COLUMNS = (
 )
 
 
-async def engagers(conn, project_id: UUID) -> list[dict]:
-    """Everyone who engaged with the founder's posts, best fit first."""
+async def engagers(conn, project_id: UUID, member: str) -> list[dict]:
+    """Everyone who engaged with the team's posts, best fit first, with whether each is the
+    member's own connection."""
 
     people = await records.people(conn, project_id)
+    mine = await records.relationships(conn, project_id, member)
+    for person in people:
+        relationship = mine.get(person["id"])
+        person["fields"].pop("linkedin_relationship", None)
+        if relationship:
+            person["fields"]["linkedin_relationship"] = {"text": relationship["state"]}
     dates: dict[UUID, set[str]] = {}
     for row in await conn.fetch(
         """SELECT COALESCE(r.merged_into, r.id) AS person, e.detail->>'posted_at' AS posted_at

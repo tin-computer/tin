@@ -1,5 +1,5 @@
-/* People (Paper PEOPLE-A1, C1, C1b): the grid uses the Files table metrics, the person panel
-   the workflow diagram panel's canvas and page shadow. */
+/* People (Paper PEOPLE-A1, C1, C1b, REQ-A): the grid uses the Files table metrics, the person
+   panel the workflow diagram panel's canvas and page shadow. */
 
 .nav-item[hidden] { display: none; }
 
@@ -172,13 +172,13 @@
 
 .people-table tbody tr[data-person]:hover td { background-color: rgb(var(--ink-rgb) / 3%); }
 
-.people-table tbody tr[data-person]:hover td.is-name {
+.people-table tbody tr[data-person]:hover td:is(.is-name, .is-pick) {
   background: linear-gradient(rgb(var(--ink-rgb) / 3%), rgb(var(--ink-rgb) / 3%)), var(--paper-bg);
 }
 
 .people-table tbody tr.is-selected td { background-color: rgb(var(--ink-rgb) / 6%); }
 
-.people-table tbody tr.is-selected td.is-name {
+.people-table tbody tr.is-selected td:is(.is-name, .is-pick) {
   background: linear-gradient(rgb(var(--ink-rgb) / 6%), rgb(var(--ink-rgb) / 6%)), var(--paper-bg);
 }
 
@@ -193,6 +193,124 @@
   color: var(--ink-muted);
   font-size: 13px;
 }
+
+/* Ticking people to ask to connect (REQ-A): a lane before the name, and a bar above the grid
+   while anyone is ticked. Only people the member can ask get a box. */
+.people-table th.is-pick { width: 36px; }
+
+.people-table.has-pick th.is-name { width: 188px; }
+
+.people-table .is-pick {
+  position: sticky;
+  left: 0;
+  z-index: 1;
+  padding: 0;
+  text-align: center;
+}
+
+.people-table td.is-pick { background: var(--paper-bg); }
+
+.people-table.has-pick .is-name {
+  left: 36px;
+  padding-left: 12px;
+}
+
+/* Drawn as on the board (REQ-A), not the platform's box: an outline until ticked. */
+.people-table .is-pick input {
+  display: inline-grid;
+  width: 14px;
+  height: 14px;
+  margin: 0;
+  appearance: none;
+  place-content: center;
+  vertical-align: middle;
+  background: transparent;
+  border: 1.5px solid rgb(var(--ink-rgb) / 32%);
+  border-radius: 3px;
+  cursor: pointer;
+}
+
+.people-table .is-pick input:is(:checked, :indeterminate) {
+  background: var(--accent-deep);
+  border-color: var(--accent-deep);
+}
+
+.people-table .is-pick input:checked::after {
+  width: 7px;
+  height: 4px;
+  transform: translateY(-1px) rotate(-45deg);
+  border-bottom: 1.5px solid var(--checkbox-check);
+  border-left: 1.5px solid var(--checkbox-check);
+  content: "";
+}
+
+.people-table .is-pick input:indeterminate::after {
+  width: 6px;
+  height: 0;
+  transform: none;
+  border: 0;
+  border-top: 1.5px solid var(--checkbox-check);
+  content: "";
+}
+
+.people-table .is-pick input:focus-visible {
+  outline: 2px solid var(--accent-deep);
+  outline-offset: 2px;
+}
+
+.people-table .is-pick input:disabled {
+  cursor: default;
+  opacity: 0.4;
+}
+
+.people-table tbody tr.is-picked td { background-color: rgb(var(--accent-deep-rgb) / 7%); }
+
+.people-table tbody tr.is-picked td:is(.is-name, .is-pick) {
+  background: linear-gradient(rgb(var(--accent-deep-rgb) / 7%), rgb(var(--accent-deep-rgb) / 7%)), var(--paper-bg);
+}
+
+.people-picked {
+  display: flex;
+  min-height: 30px;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px 12px;
+}
+
+.people-picked strong {
+  color: var(--ink);
+  font: 700 13px/16px var(--sans);
+}
+
+.people-picked-clear {
+  padding: 0;
+  border: 0;
+  background: none;
+  color: var(--ink-secondary);
+  font: 12.5px/16px var(--sans);
+  cursor: pointer;
+}
+
+.people-picked-clear:hover { color: var(--ink); }
+
+.people-picked-space { flex: 1 1 0; }
+
+.people-picked p {
+  margin: 0;
+  color: var(--ink-secondary);
+  font: 12.5px/16px var(--sans);
+}
+
+.people-picked .requests-settings-link { align-self: center; }
+
+.people-picked-send {
+  min-height: 30px;
+  padding: 6px 14px;
+  font-size: 13px;
+  line-height: 16px;
+}
+
+.people-picked-send:disabled { cursor: not-allowed; }
 
 /* Beside the person panel, or on a narrow screen: Name, ICP, fit and LinkedIn (PEOPLE-C1). */
 @container view (max-width: 860px) {

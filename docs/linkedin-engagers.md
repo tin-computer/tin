@@ -33,7 +33,9 @@ sends nothing.
    at a time.
    - Each person is upserted by their LinkedIn profile ID, with:
      - name and headline;
-     - `linkedin_relationship` from their degree: 1st is connected, 2nd or 3rd is not;
+     - the starter's own relationship with them, from their degree (1st is connected, 2nd or
+       3rd is not), kept per member in `record_relationships`. A degree can't show an
+       invitation, so it leaves a pending request as it is;
      - a `reacted` event keyed on the post's thread and the person.
    - A forgotten person is skipped.
    - A read LinkedIn objects to (a challenge, a limit, a signed-out session, a changed

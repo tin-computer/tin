@@ -2,7 +2,8 @@
 
 A member sees and decides only requests their own LinkedIn would send; turning sending on takes
 their own tick of the consent box, so it happens on the LinkedIn card, never over MCP.
-Approving starts the `social.linkedin_requests` run for that batch.
+Approving a batch, or choosing people in People, starts the `social.linkedin_requests` run for
+that batch.
 """
 
 from __future__ import annotations
@@ -92,6 +93,8 @@ class ConnectionRequests:
             sending = await requests.sending(conn, project_id, member)
             week = await requests.week(conn, project_id, member, now)
             batches = await requests.open_batches(conn, project_id, member, now)
+            # When one more request, chosen now in People, would go.
+            next_open = (await requests.plan(conn, project_id, member, ["next"], now) or [None])[0]
         offered = enabled(self.settings, project_id)
         reading = await self._reading(project_id, member) if offered else None
         return {
@@ -122,6 +125,7 @@ class ConnectionRequests:
                 "risk": RISK_TEXT,
             },
             "week": week,
+            "next_open": next_open if sending["on"] else None,
             "batches": batches,
         }
 
@@ -201,6 +205,66 @@ class ConnectionRequests:
                 ) from None
             decided["run_id"] = str(run_id)
         return decided
+
+    async def send(
+        self,
+        project_id: UUID,
+        member: str,
+        *,
+        request_id: UUID,
+        people: list[UUID],
+        trigger_source: str = "manual",
+        oauth_client_id: str | None = None,
+    ) -> dict[str, Any]:
+        """Queue requests to the people the member chose in People and start sending them.
+        Choosing is the approval; if sending can't start, nothing stays approved."""
+
+        await self._project(project_id, member)
+        try:
+            async with self.db.pool.acquire() as conn:
+                picked = await requests.pick(
+                    conn, project_id, member, people, request_id=request_id
+                )
+        except requests.RequestError as error:
+            raise _refused(error) from None
+        batch_id = picked["batch_id"]
+        start_key = f"linkedin-requests:{batch_id}"
+        if not await self.db.get_run_by_start_key(
+            project_id=project_id, start_idempotency_key=start_key
+        ):
+            try:
+                await self._start(project_id, batch_id, member, trigger_source, oauth_client_id)
+            except RequestsRefused:
+                await self._unpick(project_id, batch_id)
+                raise
+            except Exception:
+                logger.exception("connection requests: the sending run did not start")
+                await self._unpick(project_id, batch_id)
+                raise RequestsRefused(
+                    503, "Tin couldn't start sending, so nothing was queued. Try again shortly."
+                ) from None
+        async with self.db.pool.acquire() as conn:
+            ids = [
+                row["id"]
+                for row in await conn.fetch(
+                    "SELECT id FROM linkedin_requests WHERE batch_id = $1 ORDER BY queued_at, id",
+                    batch_id,
+                )
+            ]
+            slots = await requests.plan(conn, project_id, member, ids, datetime.now(UTC))
+        return {
+            **picked,
+            "first_send": slots[0] if slots else None,
+            "last_send": slots[-1] if slots else None,
+        }
+
+    async def _unpick(self, project_id: UUID, batch_id: UUID) -> None:
+        if await self.db.get_run_by_start_key(
+            project_id=project_id, start_idempotency_key=f"linkedin-requests:{batch_id}"
+        ):
+            return
+        async with self.db.pool.acquire() as conn, conn.transaction():
+            await requests.unpick(conn, batch_id)
 
     async def _reopen(self, project_id: UUID, batch_id: UUID) -> None:
         """The sending run never started: the batch goes back to Decisions as it was, so the

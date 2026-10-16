@@ -1,4 +1,5 @@
-"""HTTP routes for connection requests (#450): the member's sending, and their waiting batch.
+"""HTTP routes for connection requests (#450): the member's sending, their waiting batch, and
+the people they choose in People.
 
 They share `linkedin_requests_service.ConnectionRequests` with MCP. Only project members reach
 them, and each member sees and decides only what their own LinkedIn would send.
@@ -38,6 +39,13 @@ class Decision(BaseModel):
 
     request_id: UUID
     people: list[UUID] = Field(default_factory=list, max_length=500)
+
+
+class Choice(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    request_id: UUID
+    people: list[UUID] = Field(min_length=1, max_length=100)
 
 
 def _service(request: Request) -> ConnectionRequests:
@@ -104,5 +112,14 @@ async def discard(
             user.clerk_user_id,
             request_id=decision.request_id,
             approve=False,
+        )
+    )
+
+
+@router.post("/send")
+async def send(project_id: UUID, choice: Choice, request: Request, user: AuthContext = USER):
+    return await _answer(
+        _service(request).send(
+            project_id, user.clerk_user_id, request_id=choice.request_id, people=choice.people
         )
     )
