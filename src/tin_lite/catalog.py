@@ -719,7 +719,9 @@ BUILTIN_WORKFLOWS = (
         "to the project's protected pages, opens a pull request for you to merge. Deleting a "
         "page stays with you.",
         executor=CODEX_PROCEDURE_EXECUTOR,
-        version_label="1.11.0",
+        # 1.12.0: entity data from the audit writes only the profiles and company someone
+        # confirmed (official_profiles).
+        version_label="1.12.0",
         system=ORGANIC_TRAFFIC_SYSTEM,
         schedule_modes=("on_demand",),
         # Agents start it for an approved change; the catalog has no picker for change rows.
@@ -2103,7 +2105,9 @@ BUILTIN_WORKFLOWS = (
         # 0.10.0: organic-audit-v14 follows links when the site has no sitemap.
         # 0.11.0: organic-audit-v15 drafts up to sixteen questions from public pages and
         # Search Console searches, and no longer reads organic.prompt_panel.
-        version_label="0.11.0",
+        # 0.12.0: organic-audit-v16 adds the other address (www or bare), missing structured
+        # data, complete link previews and links to a privacy policy and terms.
+        version_label="0.12.0",
         model_route=ModelRoute(
             key="organic.audit.visibility.v1",
             provider=ProviderName.OPENAI,

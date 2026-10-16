@@ -185,8 +185,12 @@ async def test_mcp_exposes_personal_project_bootstrap_explicitly() -> None:
         "decline_website_change",
         "get_protected_paths",
         "set_protected_paths",
+        "get_official_profiles",
+        "set_official_profiles",
         "preflight_website_change",
     } <= {tool.name for tool in tools}
+    profiles = next(tool for tool in tools if tool.name == "get_official_profiles")
+    assert profiles.annotations.read_only_hint is True
     assert "revise_capture_proposal" in {tool.name for tool in tools}
     assert "discard_workflow_review" in {tool.name for tool in tools}
     assert {"list_project_authors", "save_project_author", "select_project_member_author"} <= {
@@ -216,7 +220,7 @@ async def test_mcp_exposes_personal_project_bootstrap_explicitly() -> None:
     assert "confirm_name" in forget.input_schema["required"]
     approve = next(tool for tool in tools if tool.name == "approve_connection_requests")
     assert {"batch_id", "person_ids", "request_id"} <= set(approve.input_schema["required"])
-    assert len(tools) == 114
+    assert len(tools) == 116
     assert "refund_billing_payment" not in {tool.name for tool in tools}
     start = next(tool for tool in tools if tool.name == "start_workflow")
     assert "instruction and title are only for project.task" in start.description

@@ -13,6 +13,7 @@ from tin_lite.failures import public_error_text
 
 router = APIRouter(prefix="/api/projects/{project_id}/website-changes")
 settings_router = APIRouter(prefix="/api/projects/{project_id}/protected-paths")
+profiles_router = APIRouter(prefix="/api/projects/{project_id}/official-profiles")
 USER = Depends(require_user)
 
 
@@ -191,6 +192,54 @@ async def save_protected_paths(
             project_id=project_id,
             actor=user.clerk_user_id,
             paths=payload.paths,
+            expected_revision=payload.expected_revision,
+            request_id=payload.request_id,
+        )
+    except LookupError as exc:
+        raise HTTPException(status_code=404, detail="project not found") from exc
+    except website_change.WebsiteChangeConflict as exc:
+        raise HTTPException(status_code=409, detail=public_error_text(exc)) from exc
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail=public_error_text(exc)) from exc
+
+
+class OfficialProfiles(BaseModel):
+    """The business's confirmed profiles and parent company, saved over the read revision."""
+
+    model_config = ConfigDict(extra="forbid")
+    request_id: UUID
+    expected_revision: int = Field(ge=0)
+    profiles: list[str] = Field(max_length=20)
+    parent_organization: dict[str, str] | None = None
+
+
+@profiles_router.get("")
+async def read_official_profiles(project_id: UUID, request: Request, user: AuthContext = USER):
+    """The profiles and parent company website.change may write, and who confirmed them."""
+    from tin_lite import official_profiles
+
+    try:
+        return await official_profiles.read_official_profiles(
+            request.app.state.runtime.database, project_id=project_id, actor=user.clerk_user_id
+        )
+    except LookupError as exc:
+        raise HTTPException(status_code=404, detail="project not found") from exc
+
+
+@profiles_router.put("")
+async def save_official_profiles(
+    project_id: UUID, payload: OfficialProfiles, request: Request, user: AuthContext = USER
+):
+    """Replace the confirmed profiles and parent company."""
+    from tin_lite import official_profiles
+
+    try:
+        return await official_profiles.save_official_profiles(
+            request.app.state.runtime.database,
+            project_id=project_id,
+            actor=user.clerk_user_id,
+            profiles=payload.profiles,
+            parent_organization=payload.parent_organization,
             expected_revision=payload.expected_revision,
             request_id=payload.request_id,
         )

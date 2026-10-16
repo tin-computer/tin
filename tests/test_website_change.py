@@ -1221,3 +1221,131 @@ def test_site_code_merges_only_under_a_folder_the_site_serves_pages_from():
         "config/blog/settings.ts",
         "blog/index.ts",
     ]
+
+
+# The business's official profiles: a setting someone confirms; website.change writes only it.
+
+
+async def save_profiles(f, profiles, revision, parent=None, request_id=None, actor=ACTOR):
+    from tin_lite import official_profiles
+
+    return await official_profiles.save_official_profiles(
+        f.db,
+        project_id=f.project.id,
+        actor=actor,
+        profiles=profiles,
+        parent_organization=parent,
+        expected_revision=revision,
+        request_id=request_id or uuid4(),
+    )
+
+
+async def test_official_profiles_are_confirmed_saved_and_kept_as_history(
+    publication_db, monkeypatch
+):
+    from tin_lite import official_profiles
+
+    f = await fixture(publication_db, monkeypatch)
+    unset = await official_profiles.read_official_profiles(
+        f.db, project_id=f.project.id, actor=ACTOR
+    )
+    assert (unset["revision"], unset["profiles"], unset["parent_organization"]) == (0, [], None)
+    # Pages, not visits: tracking and trailing slashes go, repeats are dropped.
+    saved = await save_profiles(
+        f,
+        [
+            "https://www.linkedin.com/company/acme/?trk=x",
+            "https://x.com/acme",
+            "https://www.linkedin.com/company/acme",
+        ],
+        0,
+        {"name": " Acme  Studio ", "url": "https://acme.studio/"},
+    )
+    assert saved["revision"] == 1
+    assert saved["profiles"] == ["https://www.linkedin.com/company/acme", "https://x.com/acme"]
+    assert saved["parent_organization"] == {"name": "Acme Studio", "url": "https://acme.studio/"}
+    assert saved["changed_by"] == ACTOR and saved["changed_at"]
+    for profiles, parent, match in (
+        (["http://x.com/acme"], None, "https URL"),
+        (["https://localhost/acme"], None, "https URL"),
+        (["https://x.com/" + "a" * 400], None, "at most 300"),
+        ([f"https://x.com/{n}" for n in range(21)], None, "at most 20"),
+        ("https://x.com/acme", None, "list"),
+        ([], {"name": "Acme"}, "https URL"),
+        ([], {"name": "", "url": "https://acme.studio"}, "1 to 120"),
+        ([], {"name": "Acme", "url": "https://acme.studio", "logo": "x"}, "name and an https"),
+    ):
+        with pytest.raises(ValueError, match=match):
+            await save_profiles(f, profiles, 1, parent)
+    with pytest.raises(WebsiteChangeConflict, match="changed since you read them"):
+        await save_profiles(f, ["https://x.com/acme"], 0)
+    request = uuid4()
+    first = await save_profiles(f, ["https://x.com/acme"], 1, request_id=request)
+    assert await save_profiles(f, ["https://x.com/acme"], 1, request_id=request) == first
+    with pytest.raises(WebsiteChangeConflict, match="request ID"):
+        await save_profiles(f, ["https://github.com/acme"], 2, request_id=request)
+    with pytest.raises(LookupError):
+        await save_profiles(f, [], 2, actor="user_stranger")
+    assert [(row["revision"], row["profiles"]) for row in first["history"]] == [
+        (2, ["https://x.com/acme"]),
+        (1, ["https://www.linkedin.com/company/acme", "https://x.com/acme"]),
+    ]
+    with pytest.raises(Exception, match="is history"):
+        await f.db.pool.execute(
+            "UPDATE project_official_profiles SET profiles='[]'::jsonb WHERE project_id=$1",
+            f.project.id,
+        )
+    # HTTP and MCP read and save the same setting.
+    base = f"/api/projects/{f.project.id}/official-profiles"
+    async with httpx.AsyncClient(
+        transport=httpx.ASGITransport(app=app(f)), base_url="https://tin.test"
+    ) as client:
+        read = await client.get(base)
+        assert read.status_code == 200 and read.json()["profiles"] == ["https://x.com/acme"]
+        put = await client.put(
+            base,
+            json={
+                "request_id": str(uuid4()),
+                "expected_revision": 2,
+                "profiles": ["https://github.com/acme"],
+            },
+        )
+        assert put.status_code == 200 and put.json()["revision"] == 3
+        invalid = await client.put(
+            base,
+            json={"request_id": str(uuid4()), "expected_revision": 3, "profiles": ["acme"]},
+        )
+        assert invalid.status_code == 422
+    async with httpx.AsyncClient(
+        transport=httpx.ASGITransport(app=app(f, "user_stranger")), base_url="https://tin.test"
+    ) as client:
+        assert (await client.get(base)).status_code == 404
+    server = mcp(f, monkeypatch)
+    shown = structured(
+        await server.call_tool("get_official_profiles", {"project_id": str(f.project.id)})
+    )
+    assert shown["revision"] == 3 and shown["profiles"] == ["https://github.com/acme"]
+    set_by_mcp = structured(
+        await server.call_tool(
+            "set_official_profiles",
+            {
+                "project_id": str(f.project.id),
+                "profiles": ["https://github.com/acme", "https://x.com/acme"],
+                "parent_organization": {"name": "Acme Studio", "url": "https://acme.studio"},
+                "expected_revision": 3,
+                "request_id": str(uuid4()),
+            },
+        )
+    )
+    assert set_by_mcp["revision"] == 4
+    assert any("Acme Studio" in item for item in set_by_mcp["relay"])
+    with pytest.raises(ToolError, match="conflict"):
+        await server.call_tool(
+            "set_official_profiles",
+            {
+                "project_id": str(f.project.id),
+                "profiles": [],
+                "expected_revision": 3,
+                "request_id": str(uuid4()),
+            },
+        )

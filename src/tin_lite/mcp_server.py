@@ -1858,6 +1858,82 @@ def create_mcp_app(
             ),
         }
 
+    @server.tool(annotations=ToolAnnotations(readOnlyHint=True))
+    async def get_official_profiles(project_id: str) -> dict[str, Any]:
+        """Read the business's confirmed official profiles and parent company.
+
+        website.change writes exactly these into the homepage's structured data: `profiles`
+        as sameAs, `parent_organization` ({name, url}) as publisher or parentOrganization.
+        The latest audit's entity findings list candidates in verification.candidates and
+        parent_candidates; nothing is written until someone confirms them here. `revision` is
+        what set_official_profiles needs, and `history` shows who confirmed what and when.
+        """
+        from tin_lite import official_profiles
+
+        token = await caller()
+        project = _mcp_uuid(project_id, field="project_id")
+        await require_project(project, token, tool_name="get_official_profiles")
+        try:
+            return await official_profiles.read_official_profiles(
+                runtime().database, project_id=project, actor=token.subject
+            )
+        except LookupError as exc:
+            raise ToolError("not_found: project not found") from exc
+
+    @server.tool()
+    async def set_official_profiles(
+        project_id: str,
+        profiles: list[str],
+        expected_revision: int,
+        request_id: str,
+        parent_organization: dict[str, str] | None = None,
+    ) -> dict[str, Any]:
+        """Save the profiles the founder confirms are the business's own, and the company
+        that publishes the site, so website.change can add them to the homepage.
+
+        Show the founder the candidates from the latest audit (and anything they name), and
+        save only the ones they confirm: a LinkedIn company page, X account, GitHub org,
+        Crunchbase entry, package page and the like (https URLs, at most 20). A profile that
+        is someone else's, or a page about the business rather than its own, does not belong
+        here. parent_organization is {"name", "url"} of the company behind the product, when
+        it is a different company (for example a studio that makes several products); omit
+        it otherwise. Pass the revision from get_official_profiles. Reuse request_id when
+        retrying.
+        """
+        from tin_lite import official_profiles, website_change
+
+        token = await caller()
+        project = _mcp_uuid(project_id, field="project_id")
+        await require_project(project, token, tool_name="set_official_profiles")
+        try:
+            saved = await official_profiles.save_official_profiles(
+                runtime().database,
+                project_id=project,
+                actor=token.subject,
+                profiles=profiles,
+                parent_organization=parent_organization,
+                expected_revision=expected_revision,
+                request_id=_mcp_uuid(request_id, field="request_id"),
+            )
+        except LookupError as exc:
+            raise ToolError("not_found: project not found") from exc
+        except website_change.WebsiteChangeConflict as exc:
+            raise ToolError(f"conflict: {exc}") from exc
+        except ValueError as exc:
+            raise ToolError(f"invalid: {exc}") from exc
+        parent = saved["parent_organization"]
+        return {
+            **saved,
+            **_founder_words(
+                relay=[
+                    f"Saved {len(saved['profiles'])} official profiles"
+                    + (f" and {parent['name']} as the company behind the site" if parent else "")
+                    + ". The next website.change run from the audit adds them to the "
+                    "homepage's structured data once you approve that change."
+                ]
+            ),
+        }
+
     @server.tool()
     async def retry_content_delivery(project_id: str, run_id: str) -> dict[str, Any]:
         """Retry only GitHub delivery for an already approved, delivery-enabled draft.
