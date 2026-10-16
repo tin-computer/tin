@@ -16,6 +16,7 @@ from tin_lite.organic_audit_site import (
     AI_SEARCH_CRAWLERS,
     FETCH_AGENT,
     GOOGLE_AGENT,
+    ORGANIZATION_TYPES,
     ai_crawlers,
     canonical_elsewhere,
     client_rendered,
@@ -66,18 +67,6 @@ ARTICLE_SECTIONS = frozenset(
 ABOUT_SEGMENTS = frozenset({"about", "about-us", "company", "team", "our-story", "who-we-are"})
 CONTACT_SEGMENTS = frozenset({"contact", "contact-us", "support", "help"})
 # Structured data types that state each fact (audit policy v16's missing-schema check).
-ORGANIZATION_TYPES = frozenset(
-    {
-        "Organization",
-        "Corporation",
-        "LocalBusiness",
-        "OnlineBusiness",
-        "OnlineStore",
-        "NGO",
-        "EducationalOrganization",
-        "ProfessionalService",
-    }
-)
 OFFER_TYPES = frozenset(
     {
         "Product",
@@ -1967,6 +1956,7 @@ def _schema_missing_findings(view: SiteView, host: str) -> list[dict]:
     if not gaps:
         return []
     urls = list(dict.fromkeys(f["url"] for _, rows in gaps for f in rows))
+    candidates = _profile_candidates(view) if gaps[0][1] is home else []
     return [
         site_finding(
             host=host,
@@ -1979,6 +1969,11 @@ def _schema_missing_findings(view: SiteView, host: str) -> list[dict]:
                 *(
                     f"{label}: " + ", ".join(_path(f["url"]) for f in rows[:4])
                     for label, rows in gaps
+                ),
+                *(
+                    ["Profiles the site links to, for its sameAs: " + ", ".join(candidates) + "."]
+                    if candidates
+                    else []
                 ),
                 "Structured data is how search engines and AI assistants read who you are, what "
                 "you sell and what it costs without guessing from the page text.",
@@ -2002,6 +1997,67 @@ def _schema_missing_findings(view: SiteView, host: str) -> list[dict]:
 
 def _have(rows: list) -> str:
     return "has" if len(rows) == 1 else "have"
+
+
+def _profile_candidates(view: SiteView) -> list[str]:
+    """Profile links the pages Tin read carry, homepage first: candidates, never confirmed."""
+    pages = sorted(view.observed(), key=lambda f: (url_key(f["url"]) != "/", f["url"]))
+    links = (link for f in pages for link in f.get("profile_links") or [])
+    return list(dict.fromkeys(links))[:10]
+
+
+def _entity_findings(view: SiteView, host: str) -> list[dict]:
+    """v16: the homepage's Organization data names no official profiles (sameAs).
+
+    Reported once for the site. The profile links the site already carries are candidates
+    for the founder to confirm; none is added on Tin's say-so.
+    """
+    home = view.facts.get("/") or {}
+    if (
+        home.get("fetch") != "observed"
+        or "organization_same_as" not in home
+        or client_rendered(home)
+        or not 200 <= home["status_code"] < 300
+        or not ORGANIZATION_TYPES & set(home.get("json_ld_types") or [])
+        or home["organization_same_as"]
+    ):
+        return []
+    candidates = _profile_candidates(view)
+    return [
+        site_finding(
+            host=host,
+            check_id="schema.entity_profiles_missing",
+            category="site",
+            area="authority",
+            issue="The homepage's Organization data names no official profiles",
+            impact="low",
+            evidence=[
+                "The Organization structured data on the homepage has no sameAs, the list of "
+                "profiles (LinkedIn, X, GitHub, Crunchbase and the like) that tells search "
+                "engines and AI assistants which entity the site is.",
+                "Profiles the site links to, as candidates to confirm: "
+                + ", ".join(candidates)
+                + "."
+                if candidates
+                else "None of the pages Tin read links to a profile on a site such as LinkedIn, "
+                "X, GitHub or Crunchbase.",
+            ],
+            fix=(
+                "Add sameAs to the homepage's Organization data with the profiles you confirm "
+                "are yours, and link them from the site's footer."
+            ),
+            priority="quick_win",
+            evidence_kind="page_fetch",
+            confidence="likely",
+            urls=[home["url"]],
+            evidence_refs=["site.pages"],
+            verification={
+                "kind": "confirm_profiles",
+                "check_id": "schema.entity_profiles_missing",
+                "candidates": candidates,
+            },
+        )
+    ]
 
 
 def _preview_findings(view: SiteView, host: str) -> list[dict]:
@@ -2494,6 +2550,7 @@ def site_findings(view: SiteView, *, home: str, pagespeed: dict) -> list[dict]:
             [
                 *_host_variant_findings(view, view.host),
                 *_schema_missing_findings(view, view.host),
+                *_entity_findings(view, view.host),
                 *_preview_findings(view, view.host),
                 *_legal_findings(view, view.host),
             ]

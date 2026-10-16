@@ -798,7 +798,7 @@ What else Tin reads (`site_basics`):
   homepage. When the run's address check already saw one address redirect to the other, Tin
   doesn't read it again. It also follows `http://` on the other address, hop by hop across the
   two homepages, since a crawl that starts on the site's own host never sees that path.
-- **Page facts.** Each page's `og:title`, `og:image` URL, how many questions it shows (`faq_questions`), `twitter:card` and the first links that name a
+- **Page facts.** Each page's `og:title`, `og:image` URL, how many questions it shows (`faq_questions`), links to profiles on sites such as LinkedIn, X, GitHub and Crunchbase (`profile_links`, share links left out), the sameAs of its Organization data (`organization_same_as`), `twitter:card` and the first links that name a
   privacy policy or terms, by path segment or link text (`V16_PAGE_FACTS`). A run pinned to v15
   or earlier saves the page facts it saved before.
 - **Link-preview images.** Up to `max_share_images` (3) distinct `og:image` URLs, homepage
@@ -811,6 +811,7 @@ What else Tin reads (`site_basics`):
 | `redirects.host_variant_served` | The other address serves a second copy of the site (medium; low when its canonical names this site), redirects somewhere else, or answers an error. No DNS record is not a finding |
 | `redirects.host_variant_chain` | `http://` on the other address reaches the site in two or more redirects (for a www site, `http://example.com/` → `https://example.com/` → `https://www.example.com/`). Manual: the fix lives in the domain or host settings |
 | `schema.missing` | No Organization data on the homepage, no Product, SoftwareApplication or Service data on the pricing page, no FAQPage on a page that shows three or more questions in headings, `<dt>` or `<summary>` (or sits under `/faq`), leaving out articles and privacy, terms and cookie pages, no Article data on blog, news, guide or answer pages. Only pages whose content is in the static HTML and that use no microdata are judged, and the finding is "likely", since data a tag manager adds is not seen |
+| `schema.entity_profiles_missing` | The homepage has Organization data but no sameAs. Reported once for the site, with the profile links the pages Tin read carry as candidates (also in `verification.candidates`). Manual: only the founder can confirm which profiles are theirs. Without Organization data, `schema.missing` names the same candidates |
 | `onpage.link_preview_incomplete` | Pages that have og:title and og:image (otherwise `onpage.open_graph_missing` fires) but no og:description or twitter:card |
 | `onpage.link_preview_duplicate` | A page with its own title carries the homepage's og:title and og:image, so sharing it shows the homepage card. Privacy, terms and cookie pages are left out |
 | `onpage.share_image_broken` | An og:image answers an error, is not an image or does not load; a refused read is unknown |
@@ -820,7 +821,8 @@ What else Tin reads (`site_basics`):
 The repair plan fixes the rest through `website.change`: a host redirect, JSON-LD built from
 facts the page states, og:description and twitter:card from existing copy, each page's own
 title in its preview, an og:image that loads, and footer links to existing pages.
-`redirects.host_variant_chain` and `trust.legal_pages_missing` are manual: the first lives in
-the domain settings, and the founder writes the legal pages. The new keys are site-evidence settings, so an answer completion
+`redirects.host_variant_chain`, `schema.entity_profiles_missing` and `trust.legal_pages_missing`
+are manual: the first lives in the domain settings, only the founder can confirm their
+profiles, and the founder writes the legal pages. The new keys are site-evidence settings, so an answer completion
 may cross v15 and v16. The audit's coverage gains `host_variant` and `share_images` rows, and
 the structured-data row says which pages missing data is reported for.

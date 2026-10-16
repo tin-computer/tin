@@ -577,6 +577,10 @@ MANUAL: dict[str, str] = {
         "Analytics setup is left to you; the technical fix never touches tracking."
     ),
     "http.server_error": "Server errors need the server's logs to find the cause.",
+    "schema.entity_profiles_missing": (
+        "Only you can say which profiles are yours. Add the ones you confirm to sameAs in the "
+        "homepage's Organization data; the audit lists the profiles the site links to."
+    ),
     "redirects.host_variant_chain": (
         "The other address's plain-HTTP redirect is set in the domain or host settings; point "
         "it straight at the site's HTTPS address there."
