@@ -1,9 +1,9 @@
 "use strict";
 
-// Connection requests (#450, Paper INVITE-A to INVITE-C): the batch waiting in Decisions, and
-// the Sending row on the LinkedIn card. Approving queues people; Tin sends them one at a time
-// on its own schedule from the member's own session. Sending is turned on only here, with the
-// member's own tick of the consent box.
+// Connection requests (#450, Paper INVITE-A to INVITE-C, REQ-A): the batch waiting in
+// Decisions, the Sending row on the LinkedIn card, and what People says when people are ticked.
+// Approving queues people; Tin sends them one at a time on its own schedule from the member's
+// own session. Sending is turned on only here, with the member's own tick of the consent box.
 window.TinRequests = (() => {
   const MONTHS = ["jan", "feb", "mar", "apr", "may", "jun", "jul", "aug", "sep", "oct", "nov", "dec"];
   const DAYS = ["Sunday", "Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday"];
@@ -285,5 +285,22 @@ window.TinRequests = (() => {
     });
   }
 
-  return { items, detail, bindDecision, sendingRow, summary, needsYou, bindSending };
+  // People (Paper REQ-A): what the bar above the grid says about sending to the people ticked.
+  function picked(data) {
+    const sending = data?.sending || {};
+    if (!sending.on) return { ready: false, line: "Turn on sending on the LinkedIn card first." };
+    if (sending.held) return { ready: true, line: `Sending is paused: ${data.pause_text || "LinkedIn refused a request"}. They wait until you resume it.` };
+    const where = zone(sending);
+    const window = `weekdays ${clock(sending.start_minute)}–${clock(sending.end_minute)}${where === "your time" ? "" : ` ${where}`}`;
+    const first = data.next_open ? ` · the first ${when(data.next_open, { at: true })}` : "";
+    return { ready: true, line: `One at a time from your LinkedIn, ${window}${first}` };
+  }
+
+  function queuedText(answer) {
+    const at = answer.first_send ? when(answer.first_send, { at: true }) : "";
+    if (answer.queued === 1) return `Queued. Tin sends it from your LinkedIn${at ? ` ${at}` : ""}.`;
+    return `Queued. Tin sends the ${answer.queued} one at a time from your LinkedIn${at ? `, the first ${at}` : ""}.`;
+  }
+
+  return { items, detail, bindDecision, sendingRow, summary, needsYou, bindSending, picked, queuedText };
 })();

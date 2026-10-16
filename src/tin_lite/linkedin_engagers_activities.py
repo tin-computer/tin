@@ -305,6 +305,7 @@ class LinkedInEngagersActivities:
                     conn,
                     project_id=run.project_id,
                     run_id=run.id,
+                    member=run.started_by_clerk_user_id,
                     post=post,
                     people=[person.model_dump() for person in parsed.people],
                 )
@@ -485,7 +486,9 @@ class LinkedInEngagersActivities:
                         if receipt is None:
                             await self.db.start_effect(conn, execution_key=key, operation=KEY)
                         documents = engagers.render(
-                            await engagers.engagers(conn, run.project_id),
+                            await engagers.engagers(
+                                conn, run.project_id, run.started_by_clerk_user_id
+                            ),
                             notes=notes,
                             now=datetime.now(UTC),
                         )

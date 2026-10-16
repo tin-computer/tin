@@ -117,6 +117,45 @@ async def test_two_records_merge_when_one_read_names_both(publication_db):
     assert after[0]["events"] == {"commented": 1, "reacted": 1}
 
 
+async def test_each_member_keeps_their_own_relationship_through_a_merge(publication_db):
+    project_id = await project(publication_db)
+    async with publication_db.pool.acquire() as conn:
+        older = await records.upsert_person(
+            conn, project_id, {"linkedin_member": MEMBER}, source="test"
+        )
+        newer = await records.upsert_person(
+            conn, project_id, {"linkedin_slug": "jane"}, source="test"
+        )
+        assert await records.set_relationship(
+            conn, project_id, older, "user_a", "none", set_by=RUN, reason="2nd on LinkedIn"
+        )
+        await records.set_relationship(conn, project_id, newer, "user_a", "connected", set_by=RUN)
+        await records.set_relationship(conn, project_id, newer, "user_b", "pending", set_by=RUN)
+        # The same read again changes nothing; a reaction's degree can't undo an invitation.
+        assert not await records.set_relationship(
+            conn, project_id, older, "user_a", "none", set_by=RUN, reason="2nd on LinkedIn"
+        )
+        assert not await records.set_relationship(
+            conn, project_id, newer, "user_b", "none", set_by=RUN, keep_pending=True
+        )
+        with pytest.raises(RecordError):
+            await records.set_relationship(conn, project_id, older, "user_a", "friends", set_by=RUN)
+        await records.upsert_person(
+            conn, project_id, {"linkedin_member": MEMBER, "linkedin_slug": "jane"}, source="test"
+        )
+        a = await records.relationships(conn, project_id, "user_a")
+        b = await records.relationships(conn, project_id, "user_b")
+        assert await records.relationships(conn, project_id, "user_c") == {}
+        assert await records.forget(conn, project_id, older)
+        left = await conn.fetchval("SELECT count(*) FROM record_relationships")
+    # The survivor keeps its own; one only the merged record had moves over.
+    assert {key: (v["state"], v["reason"]) for key, v in a.items()} == {
+        older: ("none", "2nd on LinkedIn")
+    }
+    assert {key: v["state"] for key, v in b.items()} == {older: "pending"}
+    assert left == 0
+
+
 async def test_values_keep_lineage_and_a_members_edit(publication_db):
     project_id = await project(publication_db)
     async with publication_db.pool.acquire() as conn:
@@ -285,6 +324,7 @@ async def test_deleting_the_project_purges_its_people(publication_db):
             conn, project_id, person, [Value("name", "Jane")], set_by_kind="run", set_by=RUN
         )
         await records.add_event(conn, project_id, person, kind="reacted", event_key="r1")
+        await records.set_relationship(conn, project_id, person, "user_a", "none", set_by=RUN)
         await records.upsert_person(conn, project_id, {"linkedin_member": OTHER}, source="test")
         other = await records.upsert_person(
             conn, project_id, {"linkedin_member": OTHER}, source="test"
@@ -297,6 +337,8 @@ async def test_deleting_the_project_purges_its_people(publication_db):
                   (SELECT count(*) FROM record_identifiers WHERE project_id = $1) AS identifiers,
                   (SELECT count(*) FROM record_values WHERE project_id = $1) AS values,
                   (SELECT count(*) FROM record_events WHERE project_id = $1) AS events,
+                  (SELECT count(*) FROM record_relationships WHERE project_id = $1)
+                      AS relationships,
                   (SELECT count(*) FROM record_fields WHERE project_id = $1) AS fields,
                   (SELECT count(*) FROM record_suppressions WHERE project_id = $1) AS hashes""",
         project_id,
@@ -306,6 +348,7 @@ async def test_deleting_the_project_purges_its_people(publication_db):
         "identifiers": 0,
         "values": 0,
         "events": 0,
+        "relationships": 0,
         "fields": 0,
         "hashes": 0,
     }

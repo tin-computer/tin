@@ -11,6 +11,7 @@ from typing import Any
 from uuid import UUID
 
 from tin_lite import linkedin_engagers as engagers
+from tin_lite import linkedin_requests as requests
 from tin_lite import people_records as records
 
 logger = logging.getLogger(__name__)
@@ -41,6 +42,17 @@ class PeopleError(Exception):
 def _refused(error: records.RecordError) -> PeopleError:
     status, message = SAYS.get(error.code, (422, "Tin couldn't save that."))
     return PeopleError(status, message)
+
+
+async def _requests(conn, project_id: UUID, viewer: str, people: list[dict], only=None) -> None:
+    """Whether the viewer can ask each person to connect from People, and whether a request of
+    theirs waits to go out."""
+
+    open_ = await requests.pickable(conn, project_id, viewer, only=only)
+    queued = await requests.waiting(conn, project_id, viewer)
+    for person in people:
+        person["requestable"] = person["id"] in open_
+        person["request"] = "queued" if person["id"] in queued else None
 
 
 class People:
@@ -74,6 +86,7 @@ class People:
                 definition=icp.get("definition", ""),
                 limit=LIMIT + 1,
             )
+            await _requests(conn, project.id, viewer, people)
         return {
             "people": people[:LIMIT],
             "truncated": len(people) > LIMIT,
@@ -93,6 +106,8 @@ class People:
             found = await records.person(
                 conn, project.id, person_id, viewer=viewer, definition=icp.get("definition", "")
             )
+            if found is not None:
+                await _requests(conn, project.id, viewer, [found], only=[found["id"]])
         if found is None:
             raise PeopleError(404, GONE)
         return found

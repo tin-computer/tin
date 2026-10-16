@@ -16,6 +16,7 @@ import pytest
 from temporalio import activity
 from temporalio.testing import WorkflowEnvironment
 from temporalio.worker import Replayer, Worker
+from test_connection_collection import USER
 from test_connection_collection import collection_db as collection_db
 from test_connection_collection_lifecycle import prepared
 from test_procedure_publication import HistoryStorage
@@ -362,7 +363,13 @@ async def test_a_run_keeps_everyone_who_reacted_scores_them_and_writes_the_list(
     assert len(people) == 152
     by_member = {p["identifiers"]["linkedin_member"]: p for p in people}
     assert by_member[member(5)]["events"] == {"reacted": 2}
-    assert by_member[member(1)]["fields"]["linkedin_relationship"]["text"] == "connected"
+    # Whether someone is a connection is the starter's own: it's their LinkedIn Tin read.
+    assert "linkedin_relationship" not in by_member[member(1)]["fields"]
+    mine = await records.relationships(f.db.pool, f.project.id, USER)
+    assert mine[by_member[member(1)]["id"]]["state"] == "connected"
+    assert mine[by_member[member(5)]["id"]]["state"] == "none"
+    assert mine[by_member[member(1)]["id"]]["reason"] == "1st on LinkedIn"
+    assert await records.relationships(f.db.pool, f.project.id, "someone-else") == {}
     assert by_member[member(200)]["fields"]["icp"]["text"] == "none"
     headline = by_member[member(201)]["fields"]["headline"]
     assert {k: headline[k] for k in ("text", "number", "reason", "definition", "set_by")} == {

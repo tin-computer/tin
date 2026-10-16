@@ -11,6 +11,9 @@ from the member's saved session:
 - under a daily and a weekly cap, halved in the member's first week of sending;
 - only after a fresh read shows the person neither connected nor already invited.
 
+A member can also choose people in People: choosing them approves them, in a batch of their
+own that the same run sends.
+
 A request that may have gone out is never sent again. LinkedIn's warning, a signed-out session
 or a refusal pauses the member's sending until they resume; LinkedIn's weekly limit holds it
 until the next week. Approvals not sent within 14 days lapse. After sending, the run reads each
@@ -43,6 +46,8 @@ INPUT_SCHEMA = {
 CONSENT_VERSION = 1
 FIT = 0.6
 QUEUE_DAYS = 14
+# People a member can choose at once in People: a runaway guard above a fortnight's sending.
+MAX_PICKED = 100
 CHECK_DAYS = 21
 GAP = timedelta(minutes=15)
 JITTER_SECONDS = 25 * 60
@@ -328,8 +333,8 @@ async def propose(conn, project_id: UUID, member: str, *, run_id: UUID | None = 
                    AND w.started_by_clerk_user_id = $2)
              AND EXISTS (SELECT 1 FROM record_values v WHERE v.record_id = r.id
                          AND v.field = 'icp_fit' AND v.value_number >= $3)
-             AND EXISTS (SELECT 1 FROM record_values v WHERE v.record_id = r.id
-                         AND v.field = 'linkedin_relationship' AND v.value_text = 'none')
+             AND EXISTS (SELECT 1 FROM record_relationships x WHERE x.record_id = r.id
+                         AND x.member = $2 AND x.state = 'none')
              AND NOT EXISTS (SELECT 1 FROM record_values v WHERE v.record_id = r.id
                              AND v.field = 'customer' AND v.value_text = 'yes')
              AND NOT EXISTS (SELECT 1 FROM linkedin_requests q
@@ -382,6 +387,185 @@ async def propose(conn, project_id: UUID, member: str, *, run_id: UUID | None = 
     return added
 
 
+# People a member picks themselves.
+
+
+async def pickable(
+    conn, project_id: UUID, member: str, *, only: list[UUID] | None = None
+) -> dict[UUID, str]:
+    """The people the member can ask now, with each one's LinkedIn profile ID: someone Tin can
+    name on LinkedIn, not a customer, not the member's connection or invitee as far as Tin
+    knows, and not asked by the member before. A request lapsed, declined or never sent doesn't
+    count; one waiting in the member's batch in Decisions moves to theirs."""
+
+    rows = await conn.fetch(
+        """SELECT r.id, min(i.value) AS target FROM records r
+           JOIN record_identifiers i ON i.record_id = r.id AND i.kind = 'linkedin_member'
+           WHERE r.project_id = $1 AND r.merged_into IS NULL AND r.type = 'person'
+             AND ($3::uuid[] IS NULL OR r.id = ANY($3::uuid[]))
+             AND i.value ~ '^ACo[A-Za-z0-9_-]{20,80}$'
+             AND NOT EXISTS (SELECT 1 FROM record_values v WHERE v.record_id = r.id
+                             AND v.field = 'customer' AND v.value_text = 'yes')
+             AND NOT EXISTS (SELECT 1 FROM record_relationships x WHERE x.record_id = r.id
+                             AND x.member = $2 AND x.state IN ('connected', 'pending'))
+             AND NOT EXISTS (
+                 SELECT 1 FROM linkedin_requests q JOIN records m ON m.id = q.record_id
+                 WHERE q.project_id = $1 AND q.member = $2
+                   AND COALESCE(m.merged_into, m.id) = r.id
+                   AND q.status NOT IN ('proposed', 'declined', 'lapsed', 'not_sent'))
+           GROUP BY r.id""",
+        project_id,
+        member,
+        only,
+    )
+    return {row["id"]: row["target"] for row in rows}
+
+
+async def waiting(conn, project_id: UUID, member: str) -> set[UUID]:
+    """The people whose request from the member waits to go out."""
+
+    rows = await conn.fetch(
+        """SELECT DISTINCT COALESCE(m.merged_into, m.id) AS person
+           FROM linkedin_requests q JOIN records m ON m.id = q.record_id
+           WHERE q.project_id = $1 AND q.member = $2 AND q.status IN ('queued', 'sending')""",
+        project_id,
+        member,
+    )
+    return {row["person"] for row in rows}
+
+
+async def pick(
+    conn, project_id: UUID, member: str, people: list[UUID], *, request_id: UUID
+) -> dict:
+    """Queue requests to the people the member chose in People: choosing them is the approval,
+    so they wait in a batch of their own, approved, for a sending run like any other. The same
+    request ID repeats the same choice."""
+
+    chosen = list(dict.fromkeys(people))
+    async with conn.transaction():
+        await conn.execute(
+            "SELECT pg_advisory_xact_lock(hashtextextended($1, 0))",
+            f"linkedin-picks:{project_id}:{member}",
+        )
+        repeated = await conn.fetchrow(
+            "SELECT * FROM linkedin_request_batches WHERE decision_request_id = $1", request_id
+        )
+        if repeated is not None:
+            if repeated["project_id"] != project_id or repeated["member"] != member:
+                raise RequestError("conflict", "This choice was already recorded.")
+            queued = await conn.fetchval(
+                "SELECT count(*) FROM linkedin_requests WHERE batch_id = $1", repeated["id"]
+            )
+            return {
+                "status": repeated["status"],
+                "batch_id": repeated["id"],
+                "queued": queued,
+                "repeated": True,
+            }
+        if not chosen:
+            raise RequestError("invalid", "Choose at least one person.")
+        if len(chosen) > MAX_PICKED:
+            raise RequestError("invalid", f"Choose up to {MAX_PICKED} people at a time.")
+        if not (await sending(conn, project_id, member))["on"]:
+            raise RequestError("sending_off", "Turn on sending on the LinkedIn card first.")
+        targets = await pickable(conn, project_id, member, only=chosen)
+        if set(chosen) - set(targets):
+            raise RequestError(
+                "invalid",
+                "Someone you chose can't get a request from you now. Choose again in People.",
+            )
+        batch_id = uuid4()
+        decided_at = await conn.fetchval(
+            """INSERT INTO linkedin_request_batches (id, project_id, member, status, decided_at,
+                   decision_request_id)
+               VALUES ($1, $2, $3, 'approved', now(), $4) RETURNING decided_at""",
+            batch_id,
+            project_id,
+            member,
+            request_id,
+        )
+        # Requests go in the order they were queued: here, the order the member chose.
+        for offset, record_id in enumerate(chosen):
+            queued_at = decided_at + timedelta(milliseconds=offset)
+            # Someone already waiting in the member's batch in Decisions moves over.
+            moved = await conn.fetchval(
+                """UPDATE linkedin_requests q SET batch_id = $3, record_id = $4,
+                       status = 'queued', queued_at = $5
+                   FROM records m
+                   WHERE m.id = q.record_id AND q.project_id = $1 AND q.member = $2
+                     AND q.status = 'proposed' AND COALESCE(m.merged_into, m.id) = $4
+                   RETURNING true""",
+                project_id,
+                member,
+                batch_id,
+                record_id,
+                queued_at,
+            )
+            if not moved:
+                await conn.execute(
+                    """INSERT INTO linkedin_requests (id, project_id, batch_id, record_id,
+                           member, target, status, queued_at)
+                       VALUES ($1, $2, $3, $4, $5, $6, 'queued', $7)""",
+                    uuid4(),
+                    project_id,
+                    batch_id,
+                    record_id,
+                    member,
+                    targets[record_id],
+                    queued_at,
+                )
+    return {"status": "approved", "batch_id": batch_id, "queued": len(chosen), "repeated": False}
+
+
+async def unpick(conn, batch_id: UUID) -> bool:
+    """Undo a choice whose sending run never started: nothing was approved, so the batch goes
+    and its people can be chosen again. Anyone it took from the member's batch in Decisions
+    waits there again. Returns whether anything changed."""
+
+    batch = await conn.fetchrow(
+        "SELECT * FROM linkedin_request_batches WHERE id = $1 FOR UPDATE", batch_id
+    )
+    if batch is None or batch["status"] != "approved" or batch["send_run_id"] is not None:
+        return False
+    if await conn.fetchval(
+        """SELECT EXISTS (SELECT 1 FROM linkedin_requests WHERE batch_id = $1
+           AND (attempted_at IS NOT NULL OR status <> 'queued'))""",
+        batch_id,
+    ):
+        return False
+    # The choice wrote its own requests as it was made; older ones came from Decisions.
+    await conn.execute(
+        """UPDATE linkedin_requests SET status = 'proposed', queued_at = NULL, batch_id = b.id
+           FROM linkedin_request_batches b
+           WHERE linkedin_requests.batch_id = $1 AND linkedin_requests.created_at < $2
+             AND b.project_id = $3 AND b.member = $4 AND b.status = 'open'""",
+        batch_id,
+        batch["decided_at"],
+        batch["project_id"],
+        batch["member"],
+    )
+    await conn.execute("DELETE FROM linkedin_request_batches WHERE id = $1", batch_id)
+    return True
+
+
+async def plan(conn, project_id: UUID, member: str, request_ids: list, now: datetime) -> list:
+    """When each of these requests would go, after everything the member already queued."""
+
+    settings = await sending(conn, project_id, member)
+    attempts, first = await member_attempts(conn, member, now)
+    queued = [
+        row["id"]
+        for row in await conn.fetch(
+            "SELECT id FROM linkedin_requests WHERE member = $1 AND status = 'queued' "
+            "ORDER BY queued_at, id",
+            member,
+        )
+    ]
+    mine = set(request_ids)
+    ahead = [request_id for request_id in queued if request_id not in mine]
+    return projection(now, settings, attempts, [*ahead, *request_ids], first=first)[len(ahead) :]
+
+
 async def open_batches(conn, project_id: UUID, member: str, now: datetime) -> list[dict]:
     """The member's batch waiting in Decisions, best fit first, with when each would go."""
 
@@ -407,6 +591,11 @@ async def open_batches(conn, project_id: UUID, member: str, now: datetime) -> li
                     WHERE v.record_id = q.record_id AND v.field = 'icp_fit') AS fit
                FROM linkedin_requests q
                WHERE q.batch_id = $1 AND q.status = 'proposed'
+                 -- Someone marked a customer since they were proposed drops out.
+                 AND NOT EXISTS (SELECT 1 FROM records m JOIN record_values v
+                                 ON v.record_id = COALESCE(m.merged_into, m.id)
+                                 WHERE m.id = q.record_id AND v.field = 'customer'
+                                   AND v.value_text = 'yes')
                ORDER BY fit DESC NULLS LAST, name""",
             batch["id"],
         )
@@ -427,28 +616,14 @@ async def open_batches(conn, project_id: UUID, member: str, now: datetime) -> li
         at = records._when(row)
         if row["person"] not in engaged or at > engaged[row["person"]]["at"]:
             engaged[row["person"]] = {"kind": row["kind"], "at": at}
-    settings = await sending(conn, project_id, member)
-    attempts, first = await member_attempts(conn, member, now)
-    queued = await conn.fetch(
-        "SELECT id FROM linkedin_requests WHERE member = $1 AND status = 'queued' "
-        "ORDER BY queued_at, id",
-        member,
-    )
-    ahead = [row["id"] for row in queued]
-    plan = projection(
-        now,
-        settings,
-        attempts,
-        [*ahead, *[p["request_id"] for p in people]],
-        first=first,
-    )[len(ahead) :]
+    slots = await plan(conn, project_id, member, [p["request_id"] for p in people], now)
     return [
         {
             "id": batch["id"],
             "created_at": batch["created_at"],
             "people": [{**p, "engaged": engaged.get(p["record_id"])} for p in people],
-            "first_send": plan[0] if plan else None,
-            "last_send": plan[-1] if plan else None,
+            "first_send": slots[0] if slots else None,
+            "last_send": slots[-1] if slots else None,
         }
     ]
 
@@ -481,8 +656,12 @@ async def decide(
         proposed = {
             row["record_id"]
             for row in await conn.fetch(
-                "SELECT record_id FROM linkedin_requests WHERE batch_id = $1 AND status = "
-                "'proposed'",
+                """SELECT q.record_id FROM linkedin_requests q WHERE q.batch_id = $1
+                   AND q.status = 'proposed'
+                   AND NOT EXISTS (SELECT 1 FROM records m JOIN record_values v
+                                   ON v.record_id = COALESCE(m.merged_into, m.id)
+                                   WHERE m.id = q.record_id AND v.field = 'customer'
+                                     AND v.value_text = 'yes')""",
                 batch_id,
             )
         }
@@ -756,12 +935,12 @@ async def settle(
 
 async def _relationship(conn, request, value: str, run_id: UUID) -> None:
     try:
-        await records.set_values(
+        await records.set_relationship(
             conn,
             request["project_id"],
             request["record_id"],
-            [records.Value("linkedin_relationship", value, "")],
-            set_by_kind="run",
+            request["member"],
+            value,
             set_by=str(run_id),
         )
     except records.RecordError as error:

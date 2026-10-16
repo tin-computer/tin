@@ -51,6 +51,9 @@ export function syntheticPeople() {
     last_touch: {kind: "reacted", at: "2026-10-13T08:00:00Z"},
     added: {at, by: "engagers"},
     notes,
+    // Whether the viewer can ask them to connect, and a request of theirs waiting to go out.
+    requestable: relationship === "none",
+    request: null,
   });
   return [
     person("p-maya", "Maya Lindqvist", "Founder, payroll for remote teams", "ICP 1: founders who need growth done", 0.84, "connected"),
@@ -228,6 +231,12 @@ export async function serveApp({decisionCount = 4, people = syntheticPeople(), e
       if (rest === "/sending/resume") {
         Object.assign(requests.sending, {paused: false, held: false, paused_reason: null});
         return send(requests);
+      }
+      // Ticking people in People queues them at once.
+      if (rest === "/send") {
+        if (!requests.sending.on) return refuse(409, "Turn on sending on the LinkedIn card first.");
+        for (const id of body.people) Object.assign(people.find(item => item.id === id) || {}, {requestable: false, request: "queued"});
+        return send({status: "approved", batch_id: "batch-people", queued: body.people.length, repeated: false, first_send: requests.next_open, last_send: requests.next_open});
       }
       const decided = rest.match(/^\/batches\/([^/]+)\/(approve|discard)$/);
       if (decided) {

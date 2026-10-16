@@ -1951,12 +1951,16 @@ function render() {
 }
 
 function renderPeople() {
+  const requests = requestsContext();
   window.TinPeople.mount(main, {
     api,
     projectId: state.project.id,
     projectName: state.project.name,
     toast: showToast,
     openSystem: () => navigate("workflows"),
+    requests: () => state.linkedInRequests,
+    openLinkedInCard: requests.openLinkedInCard,
+    refreshRequests: requests.refresh,
   });
 }
 

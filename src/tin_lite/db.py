@@ -6930,6 +6930,7 @@ class Database:
             "DELETE FROM linkedin_sending WHERE project_id = $1",
             "DELETE FROM record_events WHERE project_id = $1",
             "DELETE FROM record_notes WHERE project_id = $1",
+            "DELETE FROM record_relationships WHERE project_id = $1",
             "DELETE FROM record_values WHERE project_id = $1",
             "DELETE FROM record_identifiers WHERE project_id = $1",
             "DELETE FROM records WHERE project_id = $1",
