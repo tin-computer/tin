@@ -402,6 +402,10 @@ def profile_link(url: str) -> str | None:
     path = parts.path.rstrip("/")
     if base is None or not path or SHARE_PATH.match(path):
         return None
+    # An owner or a repository is a profile; an issue, pull request or file in one is a page
+    # someone links to, not who the business is.
+    if base == "github.com" and len([part for part in path.split("/") if part]) > 2:
+        return None
     return f"https://{parts.hostname.lower()}{path}"[:300]
 
 
@@ -1236,10 +1240,17 @@ def entity_candidates(host: str, pages: list[dict], backlinks: dict | None) -> d
     brands = {host_brand(host)} | {
         brand_key(name) for name in (organization or {}).get("brands", []) if brand_key(name)
     }
-    ordered = sorted(pages, key=lambda page: (url_key(page["url"]) != "/", page["url"]))
+    # The site's own profiles sit on the homepage or in the header and footer of most pages;
+    # a profile linked from one article is usually someone else's (a library, an issue).
+    home = next((page for page in pages if url_key(page["url"]) == "/"), None)
+    counts: dict[str, int] = {}
+    for page in pages:
+        for link in dict.fromkeys(page.get("profile_links") or []):
+            counts[link] = counts.get(link, 0) + 1
+    sitewide = max(2, (len(pages) + 1) // 2)
     profiles: dict[str, dict] = {}
-    for page in ordered:
-        for link in page.get("profile_links") or []:
+    for link in [*(home or {}).get("profile_links", []), *counts]:
+        if link in (home or {}).get("profile_links", []) or counts[link] >= sitewide:
             profiles.setdefault(link, {"url": link, "source": "site_links_to_it"})
     links = (backlinks or {}).get("links") or []
     for link in links:
