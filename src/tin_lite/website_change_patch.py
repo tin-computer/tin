@@ -475,7 +475,7 @@ async def apply(spec: PatchSource, *, database, storage, integrations, run, slee
             run_id=run.id,
             expected_binding=binding,
             # Commits that touch none of the plan's files since admission don't block it;
-            # one that changes a plan file, or an open PR that does, still does.
+            # one that changes a plan file still does.
             allow_unrelated_base_advance=True,
         )
     except IntegrationAuthorizationError as exc:

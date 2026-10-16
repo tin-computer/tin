@@ -484,8 +484,7 @@ async def test_a_blog_index_that_cannot_apply_ends_failed_and_names_the_file(
     run = await start_pinned(f, monkeypatch)
     integrations = f.runtime.integrations
     integrations.github_create_pull_request.side_effect = IntegrationAuthorizationError(
-        "An open GitHub pull request already changes src/lib/posts.ts; resolve it or choose a "
-        "non-overlapping improvement"
+        "A later commit changed src/lib/posts.ts in GitHub; review its changes first"
     )
     assert await f.activities.prepare_codex_procedure(str(run.id)) is True
     run = await f.db.get_run(run.id)

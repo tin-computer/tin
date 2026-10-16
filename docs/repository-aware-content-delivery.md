@@ -45,13 +45,13 @@ and Open a pull request, which use the exact Markdown publisher below.
   arrangements are reported as a prerequisite, not silently approximated as rewritten JSX.
 - The switchboard checks exact source preservation before accepting a patch and again
   before delivery. The immutable checkpoint survives sandbox teardown. The existing
-  GitHub gateway checks the destination, overlaps and retry identity, and opens an
-  unmerged PR. For article delivery only the page file counts as a blocking path: another
-  open PR, or a later commit on the default branch, that edits a shared file such as the
-  sitemap or an index does not block the article (GitHub shows a conflict if the same lines
-  clash). An open PR or a later commit that changes the page file itself still refuses the
-  PR, and changed page paths are not silently rebased. Other procedures keep every file as a
-  blocking path.
+  GitHub gateway checks the destination, later commits and retry identity, and opens an
+  unmerged PR. Other open PRs never block it (10/16); GitHub shows a conflict if the same
+  lines clash, and the founder reconciles it. For article delivery only the page file counts
+  as a blocking path: a later commit on the default branch that edits a shared file such as
+  the sitemap or an index does not block the article. A later commit that changes the page
+  file itself still refuses the PR, and changed page paths are not silently rebased. Other
+  procedures keep every file as a blocking path.
 - Every repository procedure (page delivery, audit fixes, site health, code maps)
   reads a snapshot of up to 100,000 eligible files / 250 MB, each file at most 10 MB. The
   gateway downloads the pinned commit as one tarball and checks every file against its blob

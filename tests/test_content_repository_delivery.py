@@ -437,22 +437,21 @@ SITEMAP = {"path": "src/app/sitemap.ts", "content": "export default [];\n"}
 
 
 def refuse_shared_files(**call):
-    """GitHub as it was: any file another open PR edits blocks, unless the caller names its
-    blocking paths. Another open PR edits the sitemap here."""
+    """The gateway's file check: any file a later commit edits blocks, unless the caller names
+    its blocking paths. A later commit edited the sitemap here."""
     from tin_lite.integrations import GitHubPullRequestResult, IntegrationAuthorizationError
 
     blocking = call.get("blocking_paths") or {item.path for item in call["files"]}
     if SITEMAP["path"] in blocking:
         raise IntegrationAuthorizationError(
-            "An open GitHub pull request already changes src/app/sitemap.ts; "
-            "resolve it or choose a non-overlapping improvement"
+            "A later commit changed src/app/sitemap.ts in GitHub; review its changes first"
         )
     return GitHubPullRequestResult(
         "owner/site", "tin/test", 42, "https://github.com/owner/site/pull/42"
     )
 
 
-async def test_a_sitemap_another_open_pr_edits_does_not_block_the_article(
+async def test_a_sitemap_a_later_commit_edits_does_not_block_the_article(
     publication_db, monkeypatch
 ):
     f = await prepared(publication_db, monkeypatch)
@@ -471,7 +470,7 @@ async def refused_attempt(f):
 
     run = await checkpoint(f, await deliver_start(f), extra_files=(SITEMAP,))
     f.runtime.integrations.github_create_pull_request.side_effect = IntegrationAuthorizationError(
-        "An open GitHub pull request already changes src/app/sitemap.ts"
+        "A later commit changed src/app/sitemap.ts in GitHub; review its changes first"
     )
     with pytest.raises(IntegrationAuthorizationError):
         await f.activities.commit_codex_procedure_artifact(str(run.id))
