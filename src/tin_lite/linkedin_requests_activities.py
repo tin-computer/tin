@@ -1,4 +1,6 @@
-"""Activities for `social.linkedin_requests` (#450): send one approved batch, one at a time.
+"""Activities for `social.linkedin_requests` (#450): send a member's approved requests, one at a
+time. The run sends every batch it holds: the one that started it and those approved while it
+still had requests waiting.
 
 The workflow asks what to do next and follows: send, wait, read who accepted, or finish. Every
 decision about time (the window, the gap, the caps, a pause) is made here from Postgres, so the
@@ -101,7 +103,7 @@ class LinkedInRequestsActivities:
     async def next(self, run_id: str) -> dict:
         run = await self._active(run_id)
         async with self.db.pool.acquire() as conn:
-            return await requests.next_step(conn, self._batch(run), datetime.now(UTC))
+            return await requests.next_step(conn, run.id, datetime.now(UTC))
 
     async def _pause(self, member: str, code: str, settings: dict | None = None) -> None:
         async with self.db.pool.acquire() as conn:
@@ -229,27 +231,25 @@ class LinkedInRequestsActivities:
         """Read who accepted. A read that can't run counts as done for today."""
 
         run = await self._active(run_id)
-        batch_id = self._batch(run)
+        member = run.started_by_clerk_user_id
         async with self.db.pool.acquire() as conn:
-            waiting = await requests.checking(conn, batch_id, datetime.now(UTC))
-            batch = await conn.fetchrow(
-                "SELECT * FROM linkedin_request_batches WHERE id = $1", batch_id
+            waiting = await requests.checking(conn, run.id, datetime.now(UTC))
+            last = await conn.fetchval(
+                "SELECT max(checked_at) FROM linkedin_request_batches WHERE send_run_id = $1",
+                run.id,
             )
-        if not waiting:
-            await self.db.pool.execute(
-                "UPDATE linkedin_request_batches SET checked_at = now() WHERE id = $1", batch_id
-            )
-            return {"outcome": "nothing"}
-        stamp = batch["checked_at"].isoformat() if batch["checked_at"] else "first"
+            if not waiting:
+                await requests.read_at(conn, run.id)
+                return {"outcome": "nothing"}
+        stamp = last.isoformat() if last else "first"
         key = f"{run.id}:requests:check:{stamp}"
         try:
             session, actor = await saved_session(
-                self.db, self.settings, self.cipher, run.project_id, batch["member"]
+                self.db, self.settings, self.cipher, run.project_id, member
             )
         except (IntegrationAuthorizationError, WorkflowInputError, IntegrationUpstreamError):
-            await self.db.pool.execute(
-                "UPDATE linkedin_request_batches SET checked_at = now() WHERE id = $1", batch_id
-            )
+            async with self.db.pool.acquire() as conn:
+                await requests.read_at(conn, run.id)
             return {"outcome": "unread"}
         async with self.db.effect_lock(key, ENGAGEMENT_OPERATION) as (conn, receipt):
             states = None
@@ -280,7 +280,7 @@ class LinkedInRequestsActivities:
                         conn, execution_key=key, result={"outcome": "error", "reason": code}
                     )
                     if code in STOPPING:
-                        await self._pause(batch["member"], code)
+                        await self._pause(member, code)
             elif (receipt.result or {}).get("sandbox_id"):
                 await self.cloud.cleanup(receipt.result["sandbox_id"])
                 await self.db.complete_effect(
@@ -288,25 +288,22 @@ class LinkedInRequestsActivities:
                 )
         async with self.db.pool.acquire() as conn, conn.transaction():
             if states is None:
-                await conn.execute(
-                    "UPDATE linkedin_request_batches SET checked_at = now() WHERE id = $1",
-                    batch_id,
-                )
+                await requests.read_at(conn, run.id)
                 return {"outcome": "unread"}
-            counts = await requests.checked(conn, batch_id, states, run_id=run.id)
+            counts = await requests.checked(conn, run.id, states)
         return {"outcome": "read", **counts}
 
     @activity.defn(name="linkedin_requests_finish")
     async def finish(self, run_id: str) -> None:
         run = await self._active(run_id)
-        batch_id = self._batch(run)
         rows = await self.db.pool.fetch(
             """SELECT q.status,
                    (SELECT value_text FROM record_values v
                     WHERE v.record_id = q.record_id AND v.field = 'name') AS name
-               FROM linkedin_requests q WHERE q.batch_id = $1 AND q.status <> 'declined'
+               FROM linkedin_requests q JOIN linkedin_request_batches b ON b.id = q.batch_id
+               WHERE b.send_run_id = $1 AND q.status <> 'declined'
                ORDER BY q.queued_at, q.id""",
-            batch_id,
+            run.id,
         )
         counts: dict[str, int] = {}
         for row in rows:
@@ -366,11 +363,15 @@ class LinkedInRequestsActivities:
         run = await self.db.get_run(UUID(str(run_id)))
         if not run or run.executor != KEY:
             return
-        # Nothing queued is sent once the run has failed: it waits for the next approval.
+        # Nothing queued is sent once the run has failed, from any batch it held: those people
+        # can be chosen again in People.
         await self.db.pool.execute(
-            """UPDATE linkedin_requests SET status = 'lapsed', settled_at = now()
-               WHERE batch_id = $1 AND status = 'queued'""",
+            """UPDATE linkedin_requests q SET status = 'lapsed', settled_at = now()
+               FROM linkedin_request_batches b
+               WHERE b.id = q.batch_id AND (b.id = $1 OR b.send_run_id = $2)
+                 AND q.status = 'queued'""",
             UUID(str(run.input["batch_id"])),
+            run.id,
         )
         await self.db.project_failure(run_id=run.id, **failure_projection(passed, FALLBACK))
 

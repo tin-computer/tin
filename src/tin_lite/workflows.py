@@ -1827,9 +1827,10 @@ class LinkedInEngagersWorkflow:
 
 @workflow.defn(name=LINKEDIN_REQUESTS_WORKFLOW_NAME)
 class LinkedInRequestsWorkflow:
-    """Send one approved batch of connection requests one at a time, then read who accepted.
-    Each step asks an activity what comes next, so every decision about time is made from
-    Postgres; history holds request IDs, waits and outcomes."""
+    """Send a member's approved connection requests one at a time, then read who accepted. The
+    run sends every batch approved while it still has requests waiting. Each step asks an
+    activity what comes next, so every decision about time is made from Postgres; history
+    holds request IDs, waits and outcomes."""
 
     @workflow.run
     async def run(self, run_id: str) -> None:
@@ -1867,7 +1868,14 @@ class LinkedInRequestsWorkflow:
                         await workflow.sleep(timedelta(seconds=sent.get("wait") or 60))
                 elif step["action"] == "check":
                     await call("linkedin_requests_check", minutes=8)
+            else:
+                if workflow.patched("linkedin-requests-one-line-v1"):
+                    # A member's line can outlast the steps: carry on as the same run rather
+                    # than finish with requests waiting. Preparation is safe to repeat.
+                    workflow.continue_as_new(run_id)
             await call("linkedin_requests_finish")
+        except workflow.ContinueAsNewError:
+            raise
         except BaseException as exc:
             await call("linkedin_requests_failure", failure_input(run_id, exc))
             raise
