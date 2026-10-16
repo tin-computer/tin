@@ -237,6 +237,7 @@
           "product.code_map",
           "project.task",
           "product.analytics_brief",
+          "product.visitor_journeys",
           "growth.score_quiz"
         ],
         "integrations": [
@@ -599,6 +600,7 @@
     "content.release_announce": "Announce a new release",
     "growth.score_quiz": "Draft an embeddable score quiz",
     "product.analytics_brief": "Product analytics brief",
+    "product.visitor_journeys": "Visitor journeys",
     "social.post_batch": "Draft social posts from a weekly plan or article",
     "social.content_plan": "Plan a sustainable social week",
     "outreach.awesome_submit": "Submit to awesome lists",
@@ -657,6 +659,7 @@
     "content.release_announce": "Drafts posts for X, LinkedIn, Reddit and Hacker News plus a newsletter email from one release's changelog, announcing only listed changes; never posts, sends or adds claims or links beyond the changelog and release link.",
     "growth.score_quiz": "Drafts a self-contained scored quiz widget (a lead magnet) with a call to action to the founder's signup link; never deploys it, adds other links, or runs model-written code.",
     "product.analytics_brief": "A recurring PostHog brief (needs the PostHog connection, read-only OAuth to one project): ordered activation, event trends, traffic, error signals and one supported breakdown with reproducible queries; read-only reporting, no product changes.",
+    "product.visitor_journeys": "A daily read of one PostHog project, person by person (needs the PostHog connection, read-only OAuth to one project): each signed-up person's journey and where they stopped, frictions such as rage clicks, errors, failed tools and stalls with the code behind them, delights, who to follow up with and what to fix; names only people who gave an email, writes them to People, never contacts anyone.",
     "social.post_batch": "Draft X and LinkedIn posts in two manual modes. Weekly mode reads social/PLAN.md and current source notes, checks earlier batch files to avoid reusing material, and keeps earlier files unchanged. Repurpose mode reads one article file or article_text fallback. Both read current writing guidance and save a dated reviewable batch. No automatic posting, recurring schedule, rendered carousel or producer/version picker.",
     "social.content_plan": "Read current product context and optional writing guidance, then save an editable social/PLAN.md with platforms, content pillars, a weekly calendar and a time budget. Supports X and LinkedIn in this first version. Manual and reviewable; no posts or automatic schedule.",
     "outreach.awesome_submit": "After an awesome lists run (outreach.awesome_lists), reads each recommended list's current file, places the entry with code and shows every exact change; after the founder approves, forks each list and opens one pull request or issue from the founder's connected GitHub account; never submits to a list twice.",

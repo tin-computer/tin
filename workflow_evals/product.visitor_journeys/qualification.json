@@ -1,0 +1,69 @@
+{
+  "version": 1,
+  "assumptions": [
+    "One PostHog project, the one selected in the analytics.posthog connection, with web capture (pageviews, autocapture, exceptions) and at least one event that identifies a signed-up person by email.",
+    "A window of 1 to 168 hours ending when the run starts, with a 90-day lookback for earlier visits and a 30-day inventory. The first run maps the events; later runs reuse the map and ledger from the newest report under reports/visitors/.",
+    "Run success establishes delivery. A useful report also needs a reviewer to compare the journeys and frictions with the PostHog data."
+  ],
+  "cost_drivers": [
+    "One bounded Codex session at the pinned model pricing, under a $5 ceiling. No managed-model routes.",
+    "Agent work grows with the number of people read in full (max_people_detailed, at most 30), the size of the map on a first run, and the repositories read to find the code behind a friction.",
+    "At most 16 PostHog calls, each one SELECT of at most 8000 bytes, LIMIT <= 1000, 400000-byte responses. PostHog's own query cost is separate and unknown."
+  ],
+  "effects": [
+    "Read-only analytics.posthog calls through Tin's gateway: project.read and query.hogql against the project selected in Integrations.",
+    "One run-owned reports/visitors/<run_id>.md in project state.",
+    "After publication, each person the report names by an email they gave the product becomes or joins a People record with a visited event. Anonymous visitors are never written; forgotten people are skipped.",
+    "No messages, no PostHog changes, no pull requests and no other workflows. Suggested actions are for the founder."
+  ],
+  "cases": [
+    {
+      "id": "ordinary_day",
+      "description": "A day with two hackathon signups who stall at connecting GitHub, one returning user, one anonymous visitor whose estimate fails four times with a rage click, the team on a personal address, and one-page bot visits from one country.",
+      "inputs": {"lookback_hours": 24, "internal_people": ["cofounder@gmail.com"]},
+      "expect": {
+        "contains": ["Status: complete", "## People to act on today", "## Frictions", "## Numbers", "Suggested:", "<!-- tin-visitor-journal-v1 -->"],
+        "excludes": ["cofounder@gmail.com", "Status: incomplete"]
+      }
+    },
+    {
+      "id": "renamed_key_event",
+      "description": "The map from yesterday's report names book_call_clicked; today only book_cta_clicked fires. The run re-maps, records the change and lists it under Tracking.",
+      "inputs": {"lookback_hours": 24},
+      "expect": {
+        "contains": ["Status: complete", "## Tracking", "book_cta_clicked"]
+      }
+    },
+    {
+      "id": "only_the_team",
+      "description": "Boundary: everyone in the window is the team or a bot. Nothing to act on, and nobody named.",
+      "inputs": {"lookback_hours": 24, "exclude_email_domains": ["fixture.example"]},
+      "expect": {
+        "contains": ["Status: nothing to report", "## Numbers"],
+        "excludes": ["## People to act on today"]
+      }
+    },
+    {
+      "id": "census_refused",
+      "description": "Plausible but unusable provider response: PostHog refuses the census for its query budget. The report must say what is missing and not count zero visitors.",
+      "inputs": {"lookback_hours": 24},
+      "expect": {
+        "contains": ["Status: incomplete", "## How this was measured"],
+        "excludes": ["Status: complete", "Nobody outside the team"]
+      }
+    },
+    {
+      "id": "every_query_refused",
+      "description": "Plausible but unusable connection: every PostHog query is refused. The run fails with Tin's reason and keeps the diagnostic.",
+      "inputs": {"lookback_hours": 24},
+      "expected_status": "failed"
+    }
+  ],
+  "rubric": [
+    {"id": "named_only_identified", "question": "Does the report name only people who gave the product an email, and never guess who an anonymous visitor is from a location, network or device?"},
+    {"id": "grounded_journeys", "question": "Does every journey match the timeline PostHog returned, in order, ending where the person really stopped?"},
+    {"id": "friction_bar", "question": "Is every reported friction either a product failure, hit by two or more people, or in the way of a signup, booking or payment, with extension noise called noise?"},
+    {"id": "actionable", "question": "Does each person to act on have one concrete next step, and does each product change name the evidence and, when a repository is connected, the file?"},
+    {"id": "honest_gaps", "question": "Are refused or truncated queries, silent events and capture settings that hide frictions stated, without reporting missing data as zero?"}
+  ]
+}

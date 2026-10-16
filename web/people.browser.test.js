@@ -5,7 +5,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import { chromium } from "playwright";
-import { openApp, serveApp } from "./app-fixture.js";
+import { openApp, serveApp, syntheticPeople, visitorPerson } from "./app-fixture.js";
 
 const title = page => page.locator("#main h1").first().evaluate(node => {
   const style = getComputedStyle(node);
@@ -313,6 +313,44 @@ test("notes show in the grid and the panel, and a new one makes the score old", 
     assert.equal(await notes.nth(0).getByRole("button", {name: "Delete"}).count(), 1);
     assert.equal(await notes.nth(1).getByRole("button", {name: "Delete"}).count(), 0);
     assert.match(await notes.nth(1).innerText(), /Met at a founder dinner in Berlin\.\s*a teammate · oct 14/);
+    assert.deepEqual(errors, []);
+    await context.close();
+  } finally {
+    await browser.close();
+    server.close();
+  }
+});
+
+test("someone a visitor journeys run named reads by their email, their visit and its replay", {timeout: 120000}, async () => {
+  const {server, base} = await serveApp({visitors: true, people: [...syntheticPeople(), visitorPerson()]});
+  const browser = await chromium.launch({headless: true});
+  try {
+    const {page, context, errors} = await openApp(browser, base, {url: "/system"});
+    await page.locator(".system-header h1").waitFor();
+    // Visitor journeys finds people too, so People shows in the menu without LinkedIn.
+    await page.locator('.nav-item[data-view="people"]').click();
+    await page.locator(".people-table").waitFor();
+    assert.deepEqual(
+      await page.locator(".people-sections .workflow-section").allTextContents(),
+      ["All people 6", "ICP fit 3", "Not connected yet 3", "On the site 1"],
+    );
+    await page.getByRole("tab", {name: "On the site 1"}).click();
+    const row = page.getByRole("row", {name: "Ana Souza"});
+    assert.equal(await row.locator("td.is-headline").textContent(), "Signed up from the hackathon page, picked a plan, stopped at Connect GitHub.");
+    await page.getByRole("tab", {name: "All people 6"}).click();
+    await page.getByLabel("Search people").fill("fieldnotes.dev");
+    assert.deepEqual(await page.locator(".people-table tbody td.is-name").allTextContents(), ["Ana Souza"]);
+
+    await row.click();
+    const panel = page.locator("#person-panel");
+    await panel.getByText("ana@fieldnotes.dev").waitFor();
+    assert.equal(await panel.getByRole("link", {name: "Open on LinkedIn"}).count(), 0);
+    assert.match(await panel.locator(".person-section").first().innerText(), /On the site\s*New user\s*visitors · oct 16[\s\S]*Stopped at \/scan\/connect/);
+    const visit = panel.locator("a.person-event", {hasText: "Visited: Signed up from the hackathon page"});
+    assert.equal(await visit.getAttribute("href"), "https://us.posthog.com/project/1/replay/01a1449a-9164-7200-8316-b1ea9c8c006a");
+    assert.equal(await visit.getAttribute("target"), "_blank");
+    assert.equal(await panel.locator(".person-event-note").textContent(), "Suggested: Email her a two-line guide to connecting GitHub.");
+    assert.equal(await panel.locator("footer code").textContent(), "added oct 16 by visitors");
     assert.deepEqual(errors, []);
     await context.close();
   } finally {

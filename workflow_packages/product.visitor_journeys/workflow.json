@@ -1,0 +1,158 @@
+{
+  "package_format": "tin-workflow-package-v1",
+  "definition": {
+    "key": "product.visitor_journeys",
+    "title": "Visitor journeys",
+    "description": "A daily read of who used your site and product: each signed-up person's journey, where people struggled, what worked for them, who to follow up with and what to fix. Writes people who told you who they are to People.",
+    "version": "1.0.0",
+    "executor": "codex.procedure",
+    "schedule_modes": [
+      "on_demand",
+      "daily"
+    ],
+    "input_schema": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "project_id": {
+          "type": "string",
+          "format": "uuid"
+        },
+        "lookback_hours": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 168,
+          "default": 24,
+          "title": "Hours to look back"
+        },
+        "website_hosts": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "maxLength": 253
+          },
+          "maxItems": 5,
+          "uniqueItems": true,
+          "default": [],
+          "title": "Optional website hosts"
+        },
+        "product_hosts": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "maxLength": 253
+          },
+          "maxItems": 5,
+          "uniqueItems": true,
+          "default": [],
+          "title": "Optional product hosts"
+        },
+        "exclude_email_domains": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "maxLength": 63
+          },
+          "maxItems": 10,
+          "uniqueItems": true,
+          "default": [],
+          "title": "Optional team email domains to leave out"
+        },
+        "internal_people": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "maxLength": 200
+          },
+          "maxItems": 50,
+          "uniqueItems": true,
+          "default": [],
+          "title": "Optional team emails or PostHog person IDs to leave out"
+        },
+        "max_people_detailed": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 30,
+          "default": 12,
+          "title": "People to read in full"
+        },
+        "notes": {
+          "type": "string",
+          "maxLength": 2000,
+          "default": "",
+          "title": "Optional notes on your events or what to watch"
+        }
+      },
+      "required": [
+        "project_id"
+      ]
+    },
+    "integration_requirements": [
+      {
+        "provider_key": "analytics.posthog",
+        "capabilities": [
+          "query.read",
+          "definitions.read"
+        ],
+        "required": true
+      }
+    ],
+    "procedure": {
+      "prompt_path": "PROMPT.md",
+      "skills_path": "skills",
+      "skill_files": [
+        "skills/visitor-journeys/SKILL.md",
+        "skills/visitor-journeys/JOURNEYS.md",
+        "skills/visitor-journeys/REPORT.md"
+      ],
+      "entry_skill": "visitor-journeys",
+      "workspace": {
+        "kind": "project.state"
+      },
+      "sandbox": {
+        "profile": "isolated",
+        "egress": "fenced",
+        "timeout_seconds": 1500
+      },
+      "services": {
+        "analytics": {
+          "provider_key": "analytics.posthog",
+          "max_calls": 16,
+          "max_response_bytes": 400000
+        }
+      },
+      "output": {
+        "kind": "project.artifact",
+        "media_type": "text/markdown",
+        "max_bytes": 256000,
+        "path_template": "reports/visitors/{run_id}.md",
+        "validator": "visitor-journal.v1"
+      }
+    },
+    "system": "product-qa",
+    "presentation": {
+      "flow": {
+        "direction": "TD",
+        "nodes": [
+          {"id": "memory", "kind": "store", "label": "The last report's map and ledger", "fact": "events, hosts, team and open frictions"},
+          {"id": "posthog", "kind": "surface", "label": "PostHog project", "fact": "at most 16 read-only queries"},
+          {"id": "map", "kind": "step", "label": "Check the map against the events", "fact": "re-maps renamed or silent key events"},
+          {"id": "census", "kind": "step", "label": "Everyone active in the window", "fact": "team and bots left out, one tier each"},
+          {"id": "nothing", "kind": "ghost", "label": "PostHog answered nothing", "fact": "run fails, the diagnostic stays readable"},
+          {"id": "read", "kind": "step", "label": "Journeys, frictions, delights", "fact": "up to 30 people, repositories name the file"},
+          {"id": "report", "kind": "receipt", "label": "Visitor journal in Files", "fact": "people to act on, fixes, tracking gaps"},
+          {"id": "people", "kind": "receipt", "label": "People", "fact": "only people who signed up or gave an email"}
+        ],
+        "edges": [
+          {"from": "memory", "to": "map", "kind": "call"},
+          {"from": "posthog", "to": "map", "kind": "call"},
+          {"from": "map", "to": "census", "kind": "call"},
+          {"from": "census", "to": "nothing", "kind": "call", "label": "every query refused"},
+          {"from": "census", "to": "read", "kind": "call"},
+          {"from": "read", "to": "report", "kind": "call"},
+          {"from": "report", "to": "people", "kind": "call", "label": "after publishing"}
+        ]
+      }
+    }
+  }
+}
