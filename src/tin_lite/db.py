@@ -6909,6 +6909,7 @@ class Database:
             "DELETE FROM run_decisions WHERE project_id = $1",
             "DELETE FROM website_changes WHERE project_id = $1",
             "DELETE FROM project_protected_paths WHERE project_id = $1",
+            "DELETE FROM project_official_profiles WHERE project_id = $1",
             "DELETE FROM broker_grants WHERE run_id IN "
             "(SELECT id FROM workflow_runs WHERE project_id = $1)",
             "DELETE FROM run_rollouts WHERE run_id IN "

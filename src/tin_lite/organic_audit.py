@@ -233,6 +233,14 @@ AUDIT_POLICY = {
     "site_basics": True,
     # The link-preview images read, homepage first; each read keeps only its status and type.
     "max_share_images": 3,
+    # One DataForSEO Backlinks call for links from profile sites (LinkedIn, X, GitHub, package
+    # registries) and from footers that pass link equity, where a parent company links from.
+    # It cost $0.024 for 3 links on a real site; the reservation covers 100 links.
+    "entity_backlinks_limit": 100,
+    "entity_backlinks_reservation_usd": "0.05",
+    # The profile and parent candidates read once each, as evidence for the founder; a site
+    # that turns readers away (LinkedIn, X) is "couldn't check", never a verdict.
+    "max_entity_checks": 12,
 }
 
 # Crawl, site-file and Search Console settings. They never change how an AI answer is
@@ -272,6 +280,9 @@ SITE_EVIDENCE_POLICY_KEYS = frozenset(
         "next_action_fix",
         "site_basics",
         "max_share_images",
+        "entity_backlinks_limit",
+        "entity_backlinks_reservation_usd",
+        "max_entity_checks",
     }
 )
 
@@ -1618,7 +1629,10 @@ def site_check_documents(
             ),
             # v16's link-preview image reads; v15 evidence keeps v15's shape.
             **(
-                {"share_images": site.get("share_images") or {"status": "not_collected"}}
+                {
+                    "share_images": site.get("share_images") or {"status": "not_collected"},
+                    "entity": site.get("entity") or {"status": "not_collected"},
+                }
                 if policy.get("site_basics")
                 else {}
             ),

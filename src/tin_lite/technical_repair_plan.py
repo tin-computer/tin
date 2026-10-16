@@ -66,6 +66,9 @@ class Decision:
     suggestion: str
     why: str
     keep: str
+    # An answer naming an older saved revision (confirmed_r3 once r4 is saved) asks again
+    # instead of failing the plan.
+    renewable: str | None = None
 
 
 @dataclass(frozen=True)
@@ -460,6 +463,27 @@ REPAIRS: dict[str, Repair] = {
         "Article with headline, author and dates on articles. Use only facts already on the "
         "page; skip a type whose facts the page doesn't state.",
     ),
+    # Only profiles and a company the founder confirmed (official_profiles); the decision
+    # names the saved revision, so an approval covers exact URLs.
+    "schema.entity_profiles_missing": Repair(
+        "entity_profiles",
+        "schema",
+        "adds the business's confirmed profiles to the homepage's Organization data (sameAs)",
+        how="Add sameAs to the homepage's Organization JSON-LD with exactly the URLs in this "
+        "repair's profiles, in that order; add no other URL and change no other field. If the "
+        "site links to some of them nowhere, also link them from the shared footer, using each "
+        "site's name as the link text.",
+    ),
+    "schema.entity_parent_unclear": Repair(
+        "entity_parent",
+        "schema",
+        "describes the product as its own entity, published by the confirmed company",
+        how="Make the homepage's JSON-LD describe the product (keep its existing name, url, "
+        "logo and brand facts) and point publisher (SoftwareApplication) or parentOrganization "
+        "(Organization) at this repair's parent_organization: an Organization with exactly "
+        "its name and url and @id <url>#organization. Move sameAs and contact facts only if "
+        "they plainly belong to the company. Write no new text.",
+    ),
     # --- Social previews ---------------------------------------------------------------
     "onpage.open_graph_missing": Repair(
         "open_graph",
@@ -577,10 +601,6 @@ MANUAL: dict[str, str] = {
         "Analytics setup is left to you; the technical fix never touches tracking."
     ),
     "http.server_error": "Server errors need the server's logs to find the cause.",
-    "schema.entity_profiles_missing": (
-        "Only you can say which profiles are yours. Add the ones you confirm to sameAs in the "
-        "homepage's Organization data; the audit lists the profiles the site links to."
-    ),
     "redirects.host_variant_chain": (
         "The other address's plain-HTTP redirect is set in the domain or host settings; point "
         "it straight at the site's HTTPS address there."
@@ -661,9 +681,55 @@ def _merge_decision(finding: dict) -> Decision:
     )
 
 
-def decision_for(finding: dict) -> Decision | None:
+ENTITY_CHECKS = ("schema.entity_profiles_missing", "schema.entity_parent_unclear")
+
+
+def _entity_decision(finding: dict, saved: dict | None) -> Decision:
+    """Which confirmed profiles or company to write: the saved official profiles, by revision.
+
+    Confirming happens in the setting (set_official_profiles), where the founder picks from
+    the audit's candidates; this decision only says whether to write what they saved.
+    """
+    saved = saved or {"revision": 0, "profiles": [], "parent_organization": None}
+    verification = finding.get("verification") or {}
+    if finding["check_id"] == "schema.entity_profiles_missing":
+        what = saved["profiles"]
+        listed = ", ".join(what)
+        candidates = [row["url"] for row in verification.get("candidates") or []]
+        noun = "official profiles"
+    else:
+        parent = saved["parent_organization"]
+        what = [parent] if parent else []
+        listed = f"{parent['name']} ({parent['url']})" if parent else ""
+        candidates = [row["url"] for row in verification.get("parent_candidates") or []]
+        noun = "the company behind the site"
+    found = f" The audit's candidates: {', '.join(candidates)}." if candidates else ""
+    keep = ("keep", "Leave the homepage's structured data as it is")
+    if not what:
+        return Decision(
+            question=f"No {noun} are confirmed yet.{found} Ask the founder which are theirs and "
+            "save them with set_official_profiles, then preview again.",
+            options=(keep,),
+            suggestion="keep",
+            why="Tin writes only profiles and companies someone confirmed.",
+            keep="keep",
+        )
+    value = f"confirmed_r{saved['revision']}"
+    return Decision(
+        question=f"Write the confirmed {noun} into the homepage's structured data?",
+        options=((value, f"Yes: {listed}"), keep),
+        suggestion=value,
+        why="Someone on the project confirmed these with set_official_profiles.",
+        keep="keep",
+        renewable="confirmed_r",
+    )
+
+
+def decision_for(finding: dict, context: dict | None = None) -> Decision | None:
     if finding.get("check_id") == "search.cannibalization":
         return _merge_decision(finding)
+    if finding.get("check_id") in ENTITY_CHECKS:
+        return _entity_decision(finding, (context or {}).get("official_profiles"))
     repair = REPAIRS.get(finding.get("check_id"))
     return repair.decision if repair else None
 
@@ -736,11 +802,14 @@ def merge_expectations(finding: dict, survivor: str) -> list[dict]:
     return moves[:MAX_URLS_PER_FINDING]
 
 
-def build_plan(selections: list[dict], answers: dict[str, str]) -> dict:
+def build_plan(
+    selections: list[dict], answers: dict[str, str], context: dict | None = None
+) -> dict:
     """Sort a verified audit's findings into repairs and what stays out, with reasons.
 
     `selections` are the audit's findings with their affected URLs (TechnicalFixSources);
-    each has `finding`, `affected_urls`, `affected_count` and `source_eligible`.
+    each has `finding`, `affected_urls`, `affected_count` and `source_eligible`. `context`
+    holds project settings a decision reads (`official_profiles`).
     """
     repairs, decisions_needed = [], []
     left_out: dict[str, list[dict]] = {
@@ -784,11 +853,18 @@ def build_plan(selections: list[dict], answers: dict[str, str]) -> dict:
                 brief(row, row.get("ineligible_reason") or "not eligible")
             )
             continue
-        decision = decision_for(finding)
+        decision = decision_for(finding, context)
         choice = None
         if decision is not None:
             view = decision_view(finding, decision)
             answer = answers.get(finding["id"])
+            if (
+                answer is not None
+                and decision.renewable
+                and answer.startswith(decision.renewable)
+                and answer not in {value for value, _ in decision.options}
+            ):
+                answer = None  # Confirmed against an older revision: ask again.
             if answer is None:
                 decisions_needed.append(view)
                 left_out["decision_unanswered"].append(
@@ -833,6 +909,13 @@ def build_plan(selections: list[dict], answers: dict[str, str]) -> dict:
         if repair.kind == "merge_redirect" and choice:
             entry["redirects"] = merge_expectations(finding, choice)
             entry["survivor"] = choice
+        if repair.kind in {"entity_profiles", "entity_parent"} and choice:
+            # The decision named this revision, so these are the exact confirmed values.
+            saved = (context or {})["official_profiles"]
+            if repair.kind == "entity_profiles":
+                entry["profiles"] = list(saved["profiles"])
+            else:
+                entry["parent_organization"] = dict(saved["parent_organization"])
         repairs.append(entry)
     return {"repairs": repairs, "decisions_needed": decisions_needed, "left_out": left_out}
 

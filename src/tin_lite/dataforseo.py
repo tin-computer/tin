@@ -2,6 +2,7 @@
 
 Contract: https://docs.dataforseo.com/v3/on_page/task_post/
 Recovery: https://docs.dataforseo.com/v3/appendix/id_list/
+Backlinks (audit policy v16's entity links): https://docs.dataforseo.com/v3/backlinks/backlinks/live/
 There are deliberately no automatic retries of chargeable POST requests.
 """
 
@@ -43,8 +44,10 @@ class DataForSEO:
         self._auth = httpx.BasicAuth(login, password)
         self._transport = transport
 
-    async def _request(self, method: str, endpoint: str, payload: list | None = None) -> dict:
-        observation = await begin_observation("dataforseo", "tool", f"on_page/{endpoint}")
+    async def _request(
+        self, method: str, endpoint: str, payload: list | None = None, *, api: str = "on_page"
+    ) -> dict:
+        observation = await begin_observation("dataforseo", "tool", f"{api}/{endpoint}")
         try:
             async with (
                 asyncio.timeout(40),
@@ -56,7 +59,7 @@ class DataForSEO:
                     transport=self._transport,
                 ) as client,
                 client.stream(
-                    method, f"https://api.dataforseo.com/v3/on_page/{endpoint}", json=payload
+                    method, f"https://api.dataforseo.com/v3/{api}/{endpoint}", json=payload
                 ) as response,
             ):
                 response.raise_for_status()
@@ -276,3 +279,61 @@ class DataForSEO:
 
     async def stop(self, task_id: str) -> None:
         await self._request("POST", "force_stop", [{"id": str(UUID(task_id))}])
+
+    @staticmethod
+    def backlinks_request(*, host: str, domains: list[str], limit: int) -> dict:
+        """Live links to the site from the listed profile domains, or from a footer that
+        passes link equity: where official profiles and a parent company link from."""
+        if type(limit) is not int or not 1 <= limit <= 100 or not 1 <= len(domains) <= 60:
+            raise ValueError("The backlinks request is outside its bounds.")
+        return {
+            "target": host.removeprefix("www."),
+            "include_subdomains": True,
+            "mode": "one_per_domain",
+            "backlinks_status_type": "live",
+            "limit": limit,
+            "order_by": ["domain_from_rank,desc"],
+            "filters": [
+                ["domain_from", "in", sorted(domains)],
+                "or",
+                [["semantic_location", "=", "footer"], "and", ["dofollow", "=", True]],
+            ],
+        }
+
+    async def backlinks(self, request: dict) -> dict:
+        """The links, cut to the fields the audit keeps, with the reported cost."""
+        task = await self._request("POST", "backlinks/live", [request], api="backlinks")
+        results = task.get("result")
+        if task["status_code"] != 20000 or not isinstance(results, list) or len(results) != 1:
+            raise DataForSEOError("Backlinks are unavailable.")
+        items = results[0].get("items") or []
+        if not isinstance(items, list) or len(items) > request["limit"]:
+            raise DataForSEOError("Backlinks exceeded their collection contract.")
+        links = []
+        for item in items:
+            if not isinstance(item, dict) or not isinstance(item.get("url_from"), str):
+                continue
+            links.append(
+                {
+                    "url_from": item["url_from"][:500],
+                    "domain_from": str(item.get("domain_from") or "")[:200],
+                    "url_to": str(item.get("url_to") or "")[:500],
+                    "anchor": " ".join(str(item.get("anchor") or "").split())[:120],
+                    "dofollow": item.get("dofollow") is True,
+                    "semantic_location": str(item.get("semantic_location") or "")[:40] or None,
+                    "domain_rank": item.get("domain_from_rank")
+                    if type(item.get("domain_from_rank")) is int
+                    else None,
+                    "spam_score": item.get("backlink_spam_score")
+                    if type(item.get("backlink_spam_score")) is int
+                    else None,
+                    "first_seen": str(item.get("first_seen") or "")[:10] or None,
+                }
+            )
+        return {
+            "total": results[0].get("total_count")
+            if type(results[0].get("total_count")) is int
+            else None,
+            "links": links,
+            "reported_cost_usd": str(task.get("cost", 0)),
+        }

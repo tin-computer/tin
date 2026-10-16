@@ -174,6 +174,8 @@ is refused. A trigger in Postgres refuses any update to a decided row.
 | everything waiting in Decisions | | `list_open_decisions` |
 | read protected pages | `GET /api/projects/{id}/protected-paths` | `get_protected_paths` |
 | set protected pages | `PUT /api/projects/{id}/protected-paths` `{request_id, expected_revision, paths}` | `set_protected_paths` |
+| read official profiles | `GET /api/projects/{id}/official-profiles` | `get_official_profiles` |
+| set official profiles | `PUT /api/projects/{id}/official-profiles` `{request_id, expected_revision, profiles, parent_organization}` | `set_official_profiles` |
 
 Project membership is the boundary on both transports. A page is still approved with
 `approve_workflow_run`; the new actions decide rows of the other sources.
@@ -210,6 +212,24 @@ save appends one revision: the paths, `changed_by_clerk_user_id`, `changed_at` a
 - **Admission** pins the effective list and the setting's revision
   (`protected_paths_revision`) in the run's source receipt. Before any merge, Tin reads the
   setting again and adds it to the pinned list.
+
+## Official profiles
+
+The audit's entity findings (`schema.entity_profiles_missing`, `schema.entity_parent_unclear`)
+list candidates: profile pages the site links to or that link to it, and a site that links to it
+from its footer by name, possibly the company behind it. A candidate is never written. Someone
+on the project confirms the real ones with `set_official_profiles`: up to 20 https profile URLs
+and an optional `parent_organization` (`{name, url}`). The setting lives in
+`project_official_profiles` (migration 072), revisioned like protected pages: who saved it,
+when, a stale revision refused, a retried request ID returning what it saved, and a trigger
+refusing updates to a saved revision.
+
+Each entity finding is a judgment call that reads the setting. With nothing confirmed, its only
+answer is `keep`, and the question names the audit's candidates and says to confirm them first.
+Once confirmed, the answer `confirmed_r<revision>` writes exactly that revision: the profiles as
+`sameAs` on the homepage's Organization, or the company as `publisher` or `parentOrganization`.
+The change row carries the URLs, so an approval covers them. A newer confirmation asks the
+question again instead of reusing an approval for the old list.
 
 ## Pages land at the address their plan gave them
 
