@@ -397,10 +397,6 @@ def validate(manifest: dict, prepared: dict, originals: dict[str, str | None] | 
     files = manifest["files"]
     if manifest.get("outcome") != "patch":
         raise ValueError("The technical result has no valid outcome.")
-    overlap = set(batch.get("overlap_paths", []))
-    for item in files:
-        if item["path"] in overlap:
-            raise ValueError(f"An open pull request already changes {item['path']}.")
     for item in files:
         reason = blocked(item["path"])
         if reason:

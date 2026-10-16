@@ -1936,7 +1936,8 @@ async def test_github_open_pull_requests_are_bounded_untrusted_evidence(tmp_path
 
 
 @pytest.mark.asyncio
-async def test_github_write_refuses_paths_changed_by_an_open_pull_request(tmp_path) -> None:
+async def test_github_write_is_not_blocked_by_another_open_pull_request(tmp_path) -> None:
+    """Other open PRs never block a write (10/16): the founder reconciles overlapping PRs."""
     private_key = rsa.generate_private_key(public_exponent=65537, key_size=2048)
     private_key_path = tmp_path / "github-app.pem"
     private_key_path.write_bytes(
@@ -1979,27 +1980,8 @@ async def test_github_write_refuses_paths_changed_by_an_open_pull_request(tmp_pa
             return httpx.Response(200, json={"default_branch": "main"})
         if request.method == "GET" and path.endswith("/git/ref/heads/main"):
             return httpx.Response(200, json={"object": {"sha": "base-sha"}})
-        if request.method == "GET" and path.endswith("/pulls"):
-            return httpx.Response(
-                200,
-                json=[
-                    {
-                        "number": 5,
-                        "title": "Existing fix",
-                        "body": "Already active.",
-                        "html_url": "https://github.com/example-org/site/pull/5",
-                        "draft": False,
-                        "updated_at": "2026-09-02T12:00:00Z",
-                        "user": {"login": "founder"},
-                        "head": {"ref": "existing", "sha": "c" * 40},
-                    }
-                ],
-            )
-        if request.method == "GET" and path.endswith("/pulls/5/files"):
-            return httpx.Response(
-                200,
-                json=[{"filename": "src/index.html", "status": "modified"}],
-            )
+        if request.method == "POST" and path.endswith("/git/refs"):
+            return httpx.Response(500, json={"message": "stop here"})
         raise AssertionError(f"unexpected GitHub request {request.method} {request.url}")
 
     configured = settings(
@@ -2019,7 +2001,7 @@ async def test_github_write_refuses_paths_changed_by_an_open_pull_request(tmp_pa
             settings=configured,  # type: ignore[arg-type]
             client=client,
         )
-        with pytest.raises(IntegrationAuthorizationError, match="already changes"):
+        with pytest.raises(IntegrationError):
             await service.github_create_pull_request(
                 project_id=PROJECT_ID,
                 execution_key="run-11:github-pr",
@@ -2031,7 +2013,9 @@ async def test_github_write_refuses_paths_changed_by_an_open_pull_request(tmp_pa
                 run_id=RUN_ID,
             )
 
-    assert not any(method == "POST" and path.endswith("/git/refs") for method, path in requests)
+    # The write went on to create its branch without reading anyone's open pull requests.
+    assert ("POST", "/repos/example-org/site/git/refs") in requests
+    assert not any(path.endswith("/pulls") for _, path in requests)
 
 
 class _PastOverlapCheck(Exception):
@@ -2041,12 +2025,13 @@ class _PastOverlapCheck(Exception):
 @pytest.mark.asyncio
 @pytest.mark.parametrize(
     ("open_pr_file", "blocked"),
-    [("src/app/sitemap.ts", False), ("content/blog/new-page.md", True)],
+    [("src/app/sitemap.ts", False), ("content/blog/new-page.md", False)],
 )
-async def test_only_blocking_paths_count_against_an_open_pull_request(
+async def test_another_open_pull_request_never_blocks_an_article(
     tmp_path, open_pr_file, blocked
 ) -> None:
-    """An article PR shares a sitemap with another open PR; only its own page blocks it."""
+    """An article PR shares its sitemap or even its page with another open PR; neither blocks
+    it since 10/16. The founder reconciles the two PRs."""
     private_key = rsa.generate_private_key(public_exponent=65537, key_size=2048)
     private_key_path = tmp_path / "github-app.pem"
     private_key_path.write_bytes(

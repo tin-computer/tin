@@ -48,8 +48,9 @@ listed.
 ### One run, one pull request
 
 - The run re-reads the live site: robots.txt, the sitemaps it names, and up to 40 pages.
-  It drops findings that are already fixed, then binds the repository and reads open-PR
-  evidence.
+  It drops findings that are already fixed, then binds the repository. Other open PRs
+  never limit it (10/16): a busy repository always had more open-PR files than Tin read,
+  so every run stopped. The founder's review reconciles two PRs that change one file.
 - The repository snapshot leaves out files over 10 MB. Images, video, fonts and built
   bundles don't count; any other file Tin couldn't read (a source or data file over 10 MB, a
   link, a submodule) ends the run **failed**, and its reason and report name each file. The
@@ -69,7 +70,6 @@ listed.
     deploy setting it may edit is a host's redirect list (`redirects` in `vercel.json` or
     `netlify.toml`), and only that list. A new `vercel.json` or `netlify.toml` holds
     nothing but redirects;
-  - no file an open PR already changes;
   - files the site serves byte for byte (robots.txt, sitemaps, static pages) change only
     as their findings call for, checked from the diff. A served page with several
     findings keeps its visible text, and its meta tags, `<link>`s, scripts, link and form

@@ -348,20 +348,18 @@ def prepared_batch(strict=None, overlap=()):
     }
 
 
-def test_changes_tin_cannot_build_must_say_so_and_open_prs_are_left_alone():
+def test_changes_tin_cannot_build_must_say_so_and_other_open_prs_never_block():
     prepared = prepared_batch(overlap=["app/layout.tsx"])
     layout = {"path": "app/login/page.tsx", "content": "export const x = 2;\n"}
     originals = {"app/login/page.tsx": "export const x = 1;\n"}
     with pytest.raises(ValueError, match="couldn't build"):
         rules.validate(patch(prepared, [layout], body="Fixes it."), prepared, originals)
     rules.validate(patch(prepared, [layout], body=f"Fixes it. {NOTE}"), prepared, originals)
+    # A file another open PR changes, even in a batch saved before 10/16, is not refused.
     touched = {"path": "app/layout.tsx", "content": "export default 1;\n"}
-    with pytest.raises(ValueError, match="open pull request"):
-        rules.validate(
-            patch(prepared, [touched], body=NOTE),
-            prepared,
-            {"app/layout.tsx": "export default 0;\n"},
-        )
+    rules.validate(
+        patch(prepared, [touched], body=NOTE), prepared, {"app/layout.tsx": "export default 0;\n"}
+    )
     deps = {"path": "package.json", "content": "{}\n"}
     with pytest.raises(ValueError, match="dependencies"):
         rules.validate(patch(prepared, [deps], body=NOTE), prepared, {"package.json": "{ }\n"})
@@ -453,7 +451,9 @@ async def test_preparation_drops_fixed_findings_and_names_files_the_diff_can_pro
         "sitemaps": [f"{BASE}/sitemap.xml"]
     }
     assert batch["strict_files"]["login.html"]["kinds"] == ["html_noindex"]
-    assert batch["overlap_paths"] == ["README.md"]
+    # Other open PRs are not read, so a busy repository never stops the run (10/16).
+    assert batch["overlap_paths"] == []
+    execution.integrations.github_open_pull_requests.assert_not_called()
     assert len(json.dumps(prepared, default=str)) < 70_000
 
     # Delivery: exact served files checked from the diff; the rest needs the sentence.
