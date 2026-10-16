@@ -103,6 +103,10 @@ def intent(entry: dict) -> dict:
     }
     if entry.get("planned"):
         value["planned"] = {"from": entry["planned"]["from"], "to": entry["planned"].get("to")}
+    # The exact URLs a confirmed-profiles change writes, so its approval covers them.
+    for key in ("profiles", "parent_organization"):
+        if entry.get(key):
+            value[key] = entry[key]
     return value
 
 
@@ -150,6 +154,7 @@ def change_row(entry: dict, origin: dict) -> ChangeRow:
             "change": entry["change"],
             **({"decision": entry["decision"]} if entry.get("decision") else {}),
             **({"survivor": entry["survivor"]} if entry.get("survivor") else {}),
+            **{key: entry[key] for key in ("profiles", "parent_organization") if entry.get(key)},
             "urls": entry.get("urls", [])[:10],
         },
     )
@@ -304,8 +309,13 @@ async def plan_changes(
         detail = delivery_decode(row["detail"])
         if row["status"] == "approved" and detail.get("decision") and change_id not in answers:
             answers[change_id] = detail["decision"]
+    from tin_lite.official_profiles import project_official_profiles
+
+    context = {
+        "official_profiles": await project_official_profiles(database.pool, project_id=project_id)
+    }
     try:
-        planned = repair_plan.build_plan(selections, answers)
+        planned = repair_plan.build_plan(selections, answers, context)
     except ValueError as exc:
         raise TechnicalFixError("invalid_decision", str(exc), status_code=422) from exc
     if declined:

@@ -763,3 +763,78 @@ instructions and schemas as main shipped them.
   engines to fit; with $5 the audit stops buying answers partway through.
 - The new keys are panel-preparation settings and `billing_maximum_usd` is neutral, so an
   answer completion may cross v14 and v15.
+
+## www sites (10/16)
+
+An audit of a customer's www site kept no crawl and measured no AI answers. Three
+causes, all fixed without a new policy because the requests they change always failed:
+
+- **Crawl target:** DataForSEO refuses `priority_urls` under a `www.` target (40501 "Invalid
+  Field: 'priority_urls'", whichever host the URLs name) and accepts them under the bare
+  domain, still crawling from the www start URL and reporting the bare domain. A www site
+  with priority URLs now sends the bare `target`; `submit` reads the host from `start_url`,
+  and the poll accepts the bare domain the provider reports. Pages are still filtered to the
+  audited hosts. Requests without priority URLs are unchanged.
+- **Refusals and recovery:** a task the provider refuses at no cost (a 4xxxx code other than
+  the in-queue codes) raises `DataForSEORefused`. The crawl submission records
+  `provider_refused` with the code, nothing is reconciled, and the crawl note names the code.
+  Recovery listed tasks up to 13 minutes after the submission, which the provider refuses as a
+  future date, so it never matched; the window now ends a few seconds ago.
+- **Panel host:** the question draft named the brand domain (`example.com`), which the
+  identity check refused for `www.example.com`. A draft naming the bare domain of the
+  audited www host now takes the audited host; sources stay limited to observed hosts.
+
+## 0.12 — the other address, missing structured data, link previews and legal pages (organic-audit-v16)
+
+v16 adds four site checks that answer-engine checklists list and the audit did not make. v15 is
+on main and may deploy at any time, so this is a new pinned policy, `organic-audit-v16` (catalog
+organic.audit 0.12.0). Tests freeze v15's policy, instructions and schemas as main shipped them.
+The questions, answers and grading are unchanged.
+
+What else Tin reads (`site_basics`):
+
+- **The other address.** One read of `https://www.example.com/` for `example.com`, or the bare
+  host for a `www` site: its status, redirect target and canonical tag, never anything past the
+  homepage. When the run's address check already saw one address redirect to the other, Tin
+  doesn't read it again. It also follows `http://` on the other address, hop by hop across the
+  two homepages, since a crawl that starts on the site's own host never sees that path.
+- **Page facts.** Each page's `og:title`, `og:image` URL, how many questions it shows (`faq_questions`), links to profiles on sites such as LinkedIn, X, GitHub and Crunchbase (`profile_links`, share links left out), the sameAs of its Organization data (`organization_same_as`), `twitter:card` and the first links that name a
+  privacy policy or terms, by path segment or link text (`V16_PAGE_FACTS`). A run pinned to v15
+  or earlier saves the page facts it saved before.
+- **Entity links.** After the content review (`organic_brand_checks`), one DataForSEO
+  Backlinks call (`backlinks/backlinks/live`, one link per domain, at most
+  `entity_backlinks_limit` 100, reserved at $0.05; a real site cost $0.024) for live links
+  from profile sites (LinkedIn, X, GitHub, Crunchbase, PyPI, npm and the like) or from a
+  followed footer link. Profile pages that link to the site become profile candidates; a
+  footer link from a low-spam site whose anchor names the site's brand becomes a parent-company
+  candidate. Then one read of each candidate (at most `max_entity_checks` 12): it names the
+  site's domain, it doesn't, it doesn't exist, or "couldn't check", the ordinary answer for
+  sites like LinkedIn and X that turn readers away. A candidate is never dropped for that.
+- **Link-preview images.** Up to `max_share_images` (3) distinct `og:image` URLs, homepage
+  first, read once after the page facts are complete. These are the only reads outside the
+  audited site: HTTPS only, public addresses only, at most three redirect hops, and only the
+  status and content type are kept.
+
+| Check | What it says |
+| --- | --- |
+| `redirects.host_variant_served` | The other address serves a second copy of the site (medium; low when its canonical names this site), redirects somewhere else, or answers an error. No DNS record is not a finding |
+| `redirects.host_variant_chain` | `http://` on the other address reaches the site in two or more redirects (for a www site, `http://example.com/` → `https://example.com/` → `https://www.example.com/`). Manual: the fix lives in the domain or host settings |
+| `schema.missing` | No Organization data on the homepage, no Product, SoftwareApplication or Service data on the pricing page, no FAQPage on a page that shows three or more questions in headings, `<dt>` or `<summary>` (or sits under `/faq`), leaving out articles and privacy, terms and cookie pages, no Article data on blog, news, guide or answer pages. Only pages whose content is in the static HTML and that use no microdata are judged, and the finding is "likely", since data a tag manager adds is not seen |
+| `schema.entity_profiles_missing` | The homepage has Organization data but no sameAs. Reported once for the site, with candidates in `verification.candidates` and possible parent companies in `verification.parent_candidates`, each with where it came from and what one read of it showed. Without Organization data, `schema.missing` names the same candidates |
+| `schema.entity_parent_unclear` | The homepage's Organization is named after a different company than the site's brand (its name doesn't match the host and it lists the site's brand, or its url is this site) and names no parent. The fix describes the product as its own entity, published by the company |
+| `onpage.link_preview_incomplete` | Pages that have og:title and og:image (otherwise `onpage.open_graph_missing` fires) but no og:description or twitter:card |
+| `onpage.link_preview_duplicate` | A page with its own title carries the homepage's og:title and og:image, so sharing it shows the homepage card. Privacy, terms and cookie pages are left out |
+| `onpage.share_image_broken` | An og:image answers an error, is not an image or does not load; a refused read is unknown |
+| `trust.legal_pages_unlinked` | A privacy policy or terms page exists in the sitemap or pages read, but the homepage doesn't link to it |
+| `trust.legal_pages_missing` | No link to one and no such page found, or the link answers an error. Medium when the privacy policy is missing |
+
+The entity findings are judgment calls in `website.change`: it writes only the profiles and
+company someone confirmed with `set_official_profiles` (see [Official
+profiles](website-change.md#official-profiles)). The repair plan fixes the rest through
+`website.change`: a host redirect, JSON-LD built from facts the page states, og:description
+and twitter:card from existing copy, each page's own title in its preview, an og:image that
+loads, and footer links to existing pages. `redirects.host_variant_chain` and
+`trust.legal_pages_missing` are manual: the first lives in the domain settings, and the founder
+writes the legal pages. The new keys are site-evidence settings, so an answer completion may
+cross v15 and v16. The audit's coverage gains `host_variant` and `share_images` rows, and
+the structured-data row says which pages missing data is reported for.

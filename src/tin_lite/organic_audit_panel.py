@@ -49,6 +49,12 @@ def grounded_panel(draft, research, host, *, aliases=(), model=BuyerPanel, max_j
         proposal = model.model_validate_json(draft["text"])
     except ValueError:
         raise AuditValidationError("panel_questions_invalid") from None
+    # A www site's bare domain names the same site: the model often writes the brand domain
+    # (example.com for www.example.com). The draft then carries the audited host, and its
+    # sources stay limited to the hosts Tin observed.
+    if proposal.host != host and proposal.host == host.removeprefix("www."):
+        proposal = proposal.model_copy(update={"host": host})
+        draft = {**draft, "text": proposal.model_dump_json()}
     if proposal.host not in (host, *aliases) or proposal.site_type == "unsupported":
         raise AuditValidationError("panel_identity_invalid")
     if any(question.source_url not in sources for question in proposal.questions):

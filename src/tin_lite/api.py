@@ -135,6 +135,7 @@ from tin_lite.run_service import (
 )
 from tin_lite.schedules import WorkflowSchedule, next_run_after
 from tin_lite.system_week import upcoming_occurrences, week_window
+from tin_lite.website_change_api import profiles_router as official_profiles_router
 from tin_lite.website_change_api import router as website_change_router
 from tin_lite.website_change_api import settings_router as protected_paths_router
 from tin_lite.workflow_inputs import client_input_schema, normalize_workflow_inputs
@@ -176,6 +177,7 @@ router.include_router(collection_router)
 router.include_router(public_catalog_router)
 router.include_router(website_change_router)
 router.include_router(protected_paths_router)
+router.include_router(official_profiles_router)
 logger = logging.getLogger(__name__)
 AUTHENTICATED_USER = Depends(require_user)
 SEARCH_PATHS = Query(default=None, max_length=100)

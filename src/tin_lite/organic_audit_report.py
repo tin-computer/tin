@@ -93,6 +93,7 @@ def analyze(
         search_pages=pages,
         search_queries=queries,
         angles=bool(policy.get("site_angles")),
+        basics=bool(policy.get("site_basics")),
     )
     cover = coverage(view, site.get("plan"), page_cap=scope.get("page_cap"))
     titles = {}

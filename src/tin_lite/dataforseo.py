@@ -2,6 +2,7 @@
 
 Contract: https://docs.dataforseo.com/v3/on_page/task_post/
 Recovery: https://docs.dataforseo.com/v3/appendix/id_list/
+Backlinks (audit policy v16's entity links): https://docs.dataforseo.com/v3/backlinks/backlinks/live/
 There are deliberately no automatic retries of chargeable POST requests.
 """
 
@@ -11,7 +12,7 @@ import asyncio
 import ipaddress
 import json
 import socket
-from datetime import datetime, timedelta
+from datetime import UTC, datetime, timedelta
 from decimal import Decimal
 from typing import Any
 from urllib.parse import urlsplit
@@ -30,13 +31,23 @@ class DataForSEOError(RuntimeError):
     """Safe provider error: never include response bodies or credentials."""
 
 
+class DataForSEORefused(DataForSEOError):
+    """The provider answered and refused the task at no cost: nothing was bought."""
+
+    def __init__(self, code: int) -> None:
+        super().__init__(f"Provider refused the task ({code}).")
+        self.code = code
+
+
 class DataForSEO:
     def __init__(self, login: str, password: str, *, transport=None) -> None:
         self._auth = httpx.BasicAuth(login, password)
         self._transport = transport
 
-    async def _request(self, method: str, endpoint: str, payload: list | None = None) -> dict:
-        observation = await begin_observation("dataforseo", "tool", f"on_page/{endpoint}")
+    async def _request(
+        self, method: str, endpoint: str, payload: list | None = None, *, api: str = "on_page"
+    ) -> dict:
+        observation = await begin_observation("dataforseo", "tool", f"{api}/{endpoint}")
         try:
             async with (
                 asyncio.timeout(40),
@@ -48,7 +59,7 @@ class DataForSEO:
                     transport=self._transport,
                 ) as client,
                 client.stream(
-                    method, f"https://api.dataforseo.com/v3/on_page/{endpoint}", json=payload
+                    method, f"https://api.dataforseo.com/v3/{api}/{endpoint}", json=payload
                 ) as response,
             ):
                 response.raise_for_status()
@@ -65,7 +76,10 @@ class DataForSEO:
                 raise DataForSEOError("Provider returned an invalid task envelope.")
             task = tasks[0]
             await observe_tool(observation, task)
-            if task.get("status_code") not in {20000, 20100, 40601, 40602}:
+            code = task.get("status_code")
+            if code not in {20000, 20100, 40601, 40602}:
+                if type(code) is int and 40000 <= code < 50000 and not task.get("cost"):
+                    raise DataForSEORefused(code)
                 raise DataForSEOError("Provider task was not successful or pending.")
             cost = Decimal(str(task.get("cost", 0)))
             if not cost.is_finite() or cost < 0:
@@ -124,8 +138,13 @@ class DataForSEO:
                 or urlsplit(url).fragment
             ):
                 raise ValueError("Priority URLs must be HTTPS pages on the crawl target.")
+        # The provider refuses priority URLs whenever the target starts with www. (40501
+        # "Invalid Field: 'priority_urls'", checked live 10/16) and accepts them under the
+        # bare domain, still crawling from the www start URL. Requests without priority URLs
+        # keep the target they always had.
+        target = host.removeprefix("www.") if priority and host.startswith("www.") else host
         request = {
-            "target": host,
+            "target": target,
             "start_url": f"https://{host}/",
             "tag": tag,
             "max_crawl_pages": max_pages,
@@ -145,7 +164,7 @@ class DataForSEO:
 
     async def submit(self, request: dict) -> dict:
         expected = self.crawl_request(
-            host=request["target"],
+            host=urlsplit(request["start_url"]).hostname,
             tag=request["tag"],
             respect_sitemap=request.get("respect_sitemap", False),
             max_pages=request.get("max_crawl_pages", LEGACY_PAGE_CAP),
@@ -165,7 +184,9 @@ class DataForSEO:
         Account-wide metadata stays inside this trusted adapter.
         """
         start = datetime.fromisoformat(submitted_at) - timedelta(minutes=2)
-        finish = start + timedelta(minutes=15)
+        # The provider refuses a window that ends in the future (40501), so a recovery soon
+        # after the submission lists up to a few seconds ago.
+        finish = min(start + timedelta(minutes=15), datetime.now(UTC) - timedelta(seconds=5))
         matches: dict[str, dict] = {}
         for offset in range(0, 5000, 1000):
             task = await self._request(
@@ -258,3 +279,61 @@ class DataForSEO:
 
     async def stop(self, task_id: str) -> None:
         await self._request("POST", "force_stop", [{"id": str(UUID(task_id))}])
+
+    @staticmethod
+    def backlinks_request(*, host: str, domains: list[str], limit: int) -> dict:
+        """Live links to the site from the listed profile domains, or from a footer that
+        passes link equity: where official profiles and a parent company link from."""
+        if type(limit) is not int or not 1 <= limit <= 100 or not 1 <= len(domains) <= 60:
+            raise ValueError("The backlinks request is outside its bounds.")
+        return {
+            "target": host.removeprefix("www."),
+            "include_subdomains": True,
+            "mode": "one_per_domain",
+            "backlinks_status_type": "live",
+            "limit": limit,
+            "order_by": ["domain_from_rank,desc"],
+            "filters": [
+                ["domain_from", "in", sorted(domains)],
+                "or",
+                [["semantic_location", "=", "footer"], "and", ["dofollow", "=", True]],
+            ],
+        }
+
+    async def backlinks(self, request: dict) -> dict:
+        """The links, cut to the fields the audit keeps, with the reported cost."""
+        task = await self._request("POST", "backlinks/live", [request], api="backlinks")
+        results = task.get("result")
+        if task["status_code"] != 20000 or not isinstance(results, list) or len(results) != 1:
+            raise DataForSEOError("Backlinks are unavailable.")
+        items = results[0].get("items") or []
+        if not isinstance(items, list) or len(items) > request["limit"]:
+            raise DataForSEOError("Backlinks exceeded their collection contract.")
+        links = []
+        for item in items:
+            if not isinstance(item, dict) or not isinstance(item.get("url_from"), str):
+                continue
+            links.append(
+                {
+                    "url_from": item["url_from"][:500],
+                    "domain_from": str(item.get("domain_from") or "")[:200],
+                    "url_to": str(item.get("url_to") or "")[:500],
+                    "anchor": " ".join(str(item.get("anchor") or "").split())[:120],
+                    "dofollow": item.get("dofollow") is True,
+                    "semantic_location": str(item.get("semantic_location") or "")[:40] or None,
+                    "domain_rank": item.get("domain_from_rank")
+                    if type(item.get("domain_from_rank")) is int
+                    else None,
+                    "spam_score": item.get("backlink_spam_score")
+                    if type(item.get("backlink_spam_score")) is int
+                    else None,
+                    "first_seen": str(item.get("first_seen") or "")[:10] or None,
+                }
+            )
+        return {
+            "total": results[0].get("total_count")
+            if type(results[0].get("total_count")) is int
+            else None,
+            "links": links,
+            "reported_cost_usd": str(task.get("cost", 0)),
+        }
