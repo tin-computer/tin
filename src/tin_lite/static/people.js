@@ -229,6 +229,22 @@ window.TinPeople = (() => {
     </div>`;
   }
 
+  // In the bar's place when nobody on the list has a box, why (REQ-A4).
+  function nobodyLine(people) {
+    if (!picking() || !people.length || people.some((person) => person.requestable)) return "";
+    const why = new Set(people.map((person) => {
+      const relationship = field(person, "linkedin_relationship")?.value;
+      if (field(person, "customer")?.value === "yes") return "a customer";
+      if (relationship === "connected") return "connected to you";
+      if (relationship === "pending" || person.request === "queued") return "invited";
+      return "";
+    }));
+    const reasons = ["connected to you", "invited", "a customer"].filter((reason) => why.has(reason));
+    const listed = reasons.length > 1 ? `${reasons.slice(0, -1).join(", ")} or ${reasons.at(-1)}` : reasons[0];
+    const line = why.has("") ? "No one on this list can be asked right now." : `No one here to ask. Everyone on this list is already ${listed}.`;
+    return `<div class="people-picked people-nobody"><p>${escape(line)}</p></div>`;
+  }
+
   function renderBody() {
     const body = view.main.querySelector(".people-body");
     if (!body) return;
@@ -258,7 +274,7 @@ window.TinPeople = (() => {
       <div class="workflow-sections system-sections people-sections" role="tablist" aria-label="People segments">
         ${SEGMENTS.filter((segment) => segment.key !== "invited" || view.segment === "invited" || segmentPeople("invited").length).map((segment) => `<button class="workflow-section ${view.segment === segment.key ? "is-active" : ""}" type="button" role="tab" aria-selected="${view.segment === segment.key}" data-people-segment="${segment.key}">${segment.label} <span>${segmentPeople(segment.key).length}</span></button>`).join("")}
       </div>
-      ${pickedBar()}
+      ${pickedBar() || nobodyLine(people)}
       <div class="people-grid">
         <table class="tin-table people-table ${pick ? "has-pick" : ""}">
           <thead><tr>

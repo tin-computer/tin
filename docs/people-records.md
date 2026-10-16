@@ -105,6 +105,8 @@ tools share `people_service.People`.
     someone with a LinkedIn profile ID, not a customer, not their connection or invitee, and
     not asked by them before. Ticking shows a bar above the grid with the schedule and "Send N
     requests", which queues them at once (see [connection requests](linkedin-requests.md)).
+    When nobody on the list has a box, a line in the bar's place says why (REQ-A4): "Everyone
+    on this list is already connected to you or invited".
 - **Score hover:** the reason, the score, the ICP and when it was set.
   - A score computed under an earlier `strategy/ICP.md`, or by an earlier version of the
     scoring, reads "old": the view compares each value's `definition` with the current one
