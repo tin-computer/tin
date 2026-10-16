@@ -215,16 +215,53 @@
   padding-left: 12px;
 }
 
+/* Drawn as on the board (REQ-A), not the platform's box: an outline until ticked. */
 .people-table .is-pick input {
+  display: inline-grid;
   width: 14px;
   height: 14px;
   margin: 0;
+  appearance: none;
+  place-content: center;
   vertical-align: middle;
-  accent-color: var(--accent-deep);
+  background: transparent;
+  border: 1.5px solid rgb(var(--ink-rgb) / 32%);
+  border-radius: 3px;
   cursor: pointer;
 }
 
-.people-table .is-pick input:disabled { cursor: default; }
+.people-table .is-pick input:is(:checked, :indeterminate) {
+  background: var(--accent-deep);
+  border-color: var(--accent-deep);
+}
+
+.people-table .is-pick input:checked::after {
+  width: 7px;
+  height: 4px;
+  transform: translateY(-1px) rotate(-45deg);
+  border-bottom: 1.5px solid var(--checkbox-check);
+  border-left: 1.5px solid var(--checkbox-check);
+  content: "";
+}
+
+.people-table .is-pick input:indeterminate::after {
+  width: 6px;
+  height: 0;
+  transform: none;
+  border: 0;
+  border-top: 1.5px solid var(--checkbox-check);
+  content: "";
+}
+
+.people-table .is-pick input:focus-visible {
+  outline: 2px solid var(--accent-deep);
+  outline-offset: 2px;
+}
+
+.people-table .is-pick input:disabled {
+  cursor: default;
+  opacity: 0.4;
+}
 
 .people-table tbody tr.is-picked td { background-color: rgb(var(--accent-deep-rgb) / 7%); }
 
