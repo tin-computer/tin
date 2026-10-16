@@ -211,8 +211,17 @@ export async function serveApp({decisionCount = 4, people = syntheticPeople(), e
       // Ticking people in People queues them at once.
       if (rest === "/send") {
         if (!requests.sending.on) return refuse(409, "Turn on sending on the LinkedIn card first.");
-        for (const id of body.people) Object.assign(people.find(item => item.id === id) || {}, {requestable: false, request: "queued"});
+        const queued = {queued_at: new Date().toISOString(), sending: false, at: requests.next_open};
+        for (const id of body.people) Object.assign(people.find(item => item.id === id) || {}, {requestable: false, request: "queued", queued});
         return send({status: "approved", batch_id: "batch-people", queued: body.people.length, repeated: false, first_send: requests.next_open, last_send: requests.next_open});
+      }
+      // Taking a queued request back before it goes.
+      const cancelled = rest.match(/^\/people\/([^/]+)\/cancel$/);
+      if (cancelled) {
+        const found = people.find(item => item.id === cancelled[1]);
+        if (found?.request !== "queued") return refuse(404, "No request to them is waiting to go out.");
+        Object.assign(found, {requestable: true, request: null, queued: null});
+        return send({cancelled: 1});
       }
       const decided = rest.match(/^\/batches\/([^/]+)\/(approve|discard)$/);
       if (decided) {

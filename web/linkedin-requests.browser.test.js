@@ -192,6 +192,23 @@ test("the box above the grid ticks everyone you can ask on the page", {timeout: 
   });
 });
 
+test("a queued request says when it goes in the panel, and can be cancelled", {timeout: 120000}, async () => {
+  await open({url: "/people", state: requests({on: true}), people: syntheticPeople()}, async (page, served) => {
+    await page.locator('tr[data-person="p-daniel"] td.is-pick input').check();
+    await page.locator(".people-picked").getByRole("button", {name: "Send 1 request"}).click();
+    await page.locator('tr[data-person="p-daniel"] td.is-linkedin', {hasText: "Queued"}).waitFor();
+    await page.getByRole("row", {name: "Daniel Okafor"}).click();
+    const row = page.locator("#person-panel .person-field", {hasText: "LinkedIn"});
+    assert.match(await row.innerText(), /^LinkedIn\s*Queued\s*you · [a-z]{3} \d{1,2}\s*Tin sends it from your LinkedIn around \d+:\d\d (today|tomorrow), one at a time with your other requests\. No note\.\s*Cancel request$/);
+    await row.getByRole("button", {name: "Cancel request"}).click();
+    await page.locator(".toast", {hasText: "Request cancelled. Tin won’t send it."}).waitFor();
+    assert.deepEqual(served.requestWrites.at(-1), {method: "POST", path: "/people/p-daniel/cancel", body: {}});
+    assert.match(await row.innerText(), /^LinkedIn\s*Not connected/);
+    assert.equal(await page.locator('tr[data-person="p-daniel"] td.is-linkedin').innerText(), "Not connected");
+    assert.equal(await page.locator('tr[data-person="p-daniel"] td.is-pick input').count(), 1);
+  });
+});
+
 test("when nobody on the list can be asked, the bar's place says why", {timeout: 120000}, async () => {
   const relate = (people, value) => people.forEach(person => {
     person.fields.linkedin_relationship = {...person.fields.linkedin_relationship, value};

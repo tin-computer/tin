@@ -813,6 +813,96 @@ async def test_customers_and_people_you_asked_cant_be_chosen_and_a_failed_start_
         assert (await http.post(f"{base}/send", json=again)).status_code == 422
 
 
+async def test_you_can_cancel_a_request_before_it_goes(collection_db, monkeypatch):
+    f = await fixture(collection_db)
+    await ran(f, [person(1), person(3, headline="Designer"), person(4)])
+    known = await ids(f)
+    people_path = f"/api/projects/{f.project.id}/people"
+    base = f"/api/projects/{f.project.id}/linkedin-requests"
+    one, three, four = (known[member(n)] for n in (1, 3, 4))
+    async with client(f) as http:
+        await turn_on(http, f)
+        choice = {"request_id": str(uuid4()), "people": [str(three), str(one)]}
+        assert (await http.post(f"{base}/send", json=choice)).status_code == 200
+        # The panel says when it goes, after the request queued ahead of it.
+        detail = (await http.get(f"{people_path}/{one}")).json()
+        first = (await http.get(f"{people_path}/{three}")).json()
+        assert detail["request"] == "queued" and not detail["queued"]["sending"]
+        assert first["queued"]["at"] < detail["queued"]["at"]
+        cancelled = await http.post(f"{base}/people/{one}/cancel")
+        assert cancelled.status_code == 200 and cancelled.json() == {"cancelled": 1}
+        detail = (await http.get(f"{people_path}/{one}")).json()
+        # They can be chosen again.
+        assert detail["request"] is None and detail["requestable"]
+        again = await http.post(f"{base}/people/{one}/cancel")
+        assert again.status_code == 404 and "No request" in again.json()["detail"]
+    cancelled_id = await f.db.pool.fetchval(
+        "SELECT id FROM linkedin_requests WHERE record_id = $1", one
+    )
+    # The sending run passes over it, even if it read it as queued a moment before.
+    async with f.db.pool.acquire() as conn, conn.transaction():
+        assert await requests.reserve(conn, cancelled_id, MONDAY) == {"skip": True}
+    assert (
+        await f.db.pool.fetchval("SELECT status FROM linkedin_requests WHERE id = $1", cancelled_id)
+        == "declined"
+    )
+    # One LinkedIn is being asked right now can't be taken back.
+    await f.db.pool.execute(
+        "UPDATE linkedin_requests SET status = 'sending' WHERE record_id = $1", three
+    )
+    async with client(f) as http:
+        busy = await http.post(f"{base}/people/{three}/cancel")
+    assert busy.status_code == 409 and "sending this request right now" in busy.json()["detail"]
+
+    # Over MCP, the same.
+    server = mcp(f, monkeypatch)
+    project = str(f.project.id)
+    await server.call_tool(
+        "send_connection_requests",
+        {"project_id": project, "person_ids": [str(four)], "request_id": str(uuid4())},
+    )
+    answer = structured(
+        await server.call_tool(
+            "cancel_connection_request", {"project_id": project, "person_id": str(four)}
+        )
+    )
+    assert answer == {"cancelled": 1}
+    with pytest.raises(ToolError, match="not_found"):
+        await server.call_tool(
+            "cancel_connection_request", {"project_id": project, "person_id": str(four)}
+        )
+
+
+async def test_someone_marked_a_customer_after_they_were_queued_isnt_asked(collection_db):
+    f = await fixture(collection_db)
+    await ran(f, [person(1), person(4)])
+    known = await ids(f)
+    one, four = known[member(1)], known[member(4)]
+    base = f"/api/projects/{f.project.id}/linkedin-requests"
+    async with client(f) as http:
+        await turn_on(http, f)
+        choice = {"request_id": str(uuid4()), "people": [str(one), str(four)]}
+        assert (await http.post(f"{base}/send", json=choice)).status_code == 200
+        # Marking them a customer in People takes their request out of the queue at once.
+        marked = await http.patch(
+            f"/api/projects/{f.project.id}/people/{one}", json={"customer": True}
+        )
+        assert marked.status_code == 200 and marked.json()["request"] is None
+    status = "SELECT status FROM linkedin_requests WHERE record_id = $1"
+    assert await f.db.pool.fetchval(status, one) == "declined"
+    # However they became one, the sender checks again just before it sends.
+    async with f.db.pool.acquire() as conn:
+        await records.set_by_member(
+            conn, f.project.id, four, [records.Value("customer", "yes")], member=USER
+        )
+    request_id = await f.db.pool.fetchval(
+        "SELECT id FROM linkedin_requests WHERE record_id = $1", four
+    )
+    async with f.db.pool.acquire() as conn, conn.transaction():
+        assert await requests.reserve(conn, request_id, MONDAY) == {"skip": True}
+    assert await f.db.pool.fetchval(status, four) == "declined"
+
+
 async def test_mcp_lists_who_you_can_ask_and_sends_your_choice(collection_db, monkeypatch):
     f = await fixture(collection_db)
     await ran(f, [person(1), person(2, degree="1st")])

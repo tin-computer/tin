@@ -865,6 +865,19 @@ async def reserve(conn, request_id: UUID, now: datetime) -> dict:
         "SELECT pg_advisory_xact_lock(hashtextextended($1, 0))",
         f"linkedin-requests:{request['member']}",
     )
+    # Someone marked a customer since it was queued isn't asked.
+    if await conn.fetchval(
+        """SELECT EXISTS (SELECT 1 FROM records m JOIN record_values v
+                          ON v.record_id = COALESCE(m.merged_into, m.id)
+                          WHERE m.id = $1 AND v.field = 'customer' AND v.value_text = 'yes')""",
+        request["record_id"],
+    ):
+        await conn.execute(
+            """UPDATE linkedin_requests SET status = 'declined', settled_at = now()
+               WHERE id = $1 AND status = 'queued'""",
+            request_id,
+        )
+        return {"skip": True}
     settings = await sending(conn, request["project_id"], request["member"])
     if not settings["on"] or settings["held"]:
         return {"wait": 6 * 3600}
@@ -872,12 +885,87 @@ async def reserve(conn, request_id: UUID, now: datetime) -> dict:
     slot = next_slot(now, settings, attempts, request_id, first=first)
     if slot is None or slot > now + timedelta(seconds=60):
         return {"wait": _seconds((slot or now + timedelta(hours=6)) - now)}
-    await conn.execute(
-        "UPDATE linkedin_requests SET status = 'sending', attempted_at = $2 WHERE id = $1",
+    # Only a request still waiting goes: one cancelled meanwhile stays cancelled.
+    if not await conn.fetchval(
+        """UPDATE linkedin_requests SET status = 'sending', attempted_at = $2
+           WHERE id = $1 AND status = 'queued' RETURNING true""",
         request_id,
         now,
-    )
+    ):
+        return {"skip": True}
     return details
+
+
+async def cancel(conn, project_id: UUID, member: str, person_id: UUID) -> int:
+    """Take the member's request to this person out of the queue before it goes. It reads as
+    declined, so they can be chosen again; one LinkedIn is being asked right now can't be."""
+
+    cancelled = await conn.fetch(
+        """UPDATE linkedin_requests q SET status = 'declined', settled_at = now()
+           FROM records m
+           WHERE m.id = q.record_id AND q.project_id = $1 AND q.member = $2
+             AND COALESCE(m.merged_into, m.id) = $3 AND q.status = 'queued'
+           RETURNING q.id""",
+        project_id,
+        member,
+        person_id,
+    )
+    if cancelled:
+        return len(cancelled)
+    if person_id in await waiting(conn, project_id, member):
+        raise RequestError("conflict", "Tin is sending this request right now.")
+    raise RequestError("not_found", "No request to them is waiting to go out.")
+
+
+async def queued(conn, project_id: UUID, member: str, person_id: UUID, now: datetime):
+    """The member's request to this person waiting to go out: when they queued it and when it
+    would go (None while sending is off or paused), or None without one."""
+
+    row = await conn.fetchrow(
+        """SELECT q.id, q.status, q.queued_at FROM linkedin_requests q
+           JOIN records m ON m.id = q.record_id
+           WHERE q.project_id = $1 AND q.member = $2 AND COALESCE(m.merged_into, m.id) = $3
+             AND q.status IN ('queued', 'sending')
+           ORDER BY q.queued_at, q.id LIMIT 1""",
+        project_id,
+        member,
+        person_id,
+    )
+    if row is None:
+        return None
+    found = {"queued_at": row["queued_at"], "sending": row["status"] == "sending", "at": None}
+    settings = await sending(conn, project_id, member)
+    if found["sending"] or not settings["on"] or settings["held"]:
+        return found
+    attempts, first = await member_attempts(conn, member, now)
+    ahead = [
+        item["id"]
+        for item in await conn.fetch(
+            "SELECT id FROM linkedin_requests WHERE member = $1 AND status = 'queued' "
+            "AND (queued_at, id) <= ($2, $3) ORDER BY queued_at, id",
+            member,
+            row["queued_at"],
+            row["id"],
+        )
+    ]
+    slots = projection(now, settings, attempts, ahead, first=first)
+    found["at"] = slots[-1] if len(slots) == len(ahead) else None
+    return found
+
+
+async def drop_customer(conn, project_id: UUID, person_id: UUID) -> int:
+    """Someone just marked a customer isn't asked: every member's request to them that is
+    still waiting reads as declined."""
+
+    result = await conn.execute(
+        """UPDATE linkedin_requests q SET status = 'declined', settled_at = now()
+           FROM records m
+           WHERE m.id = q.record_id AND q.project_id = $1
+             AND COALESCE(m.merged_into, m.id) = $2 AND q.status = 'queued'""",
+        project_id,
+        person_id,
+    )
+    return int(result.split()[-1])
 
 
 async def settle(

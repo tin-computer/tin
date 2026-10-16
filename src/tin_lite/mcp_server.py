@@ -1681,6 +1681,24 @@ def create_mcp_app(
             raise ToolError(f"{code}: {error.message}") from None
 
     @server.tool()
+    async def cancel_connection_request(project_id: str, person_id: str) -> dict[str, Any]:
+        """Cancel the caller's connection request to this person before it goes out, only as
+        the founder asked. list_people shows it as `request_queued`. One LinkedIn is being
+        asked right now can't be cancelled. They can be chosen again later."""
+        from tin_lite.linkedin_requests_service import ConnectionRequests, RequestsRefused
+
+        token = await caller()
+        project = _mcp_uuid(project_id, field="project_id")
+        await require_project(project, token, tool_name="cancel_connection_request")
+        try:
+            return await ConnectionRequests(runtime(), settings).cancel(
+                project, token.subject, _mcp_uuid(person_id, field="person_id")
+            )
+        except RequestsRefused as error:
+            code = {404: "not_found", 409: "conflict"}.get(error.status, "invalid")
+            raise ToolError(f"{code}: {error.message}") from None
+
+    @server.tool()
     async def discard_connection_requests(
         project_id: str, batch_id: str, request_id: str
     ) -> dict[str, Any]:
