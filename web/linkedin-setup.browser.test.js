@@ -66,7 +66,15 @@ for (const named of [true, false]) test(named ? "LinkedIn guides installation, c
     await page.evaluate(()=>{window.extensionAvailable=true;});
     await dialog.getByRole("button",{name:"Check again"}).click();
     await dialog.getByText("Open LinkedIn and sign in, then check again.").waitFor();
-    await page.evaluate(()=>{window.linkedInSignedIn=true;});
+    // Chrome wouldn't let the extension read the LinkedIn tab: say so, and what to do.
+    await page.evaluate(()=>{window.setupFailure="browser_unavailable";});
+    await dialog.getByRole("button",{name:"Check again"}).click();
+    await dialog.getByText("Tin for Chrome couldn't read your LinkedIn tab. Reload LinkedIn in this Chrome profile, then check again.").waitFor();
+    // A reason Tin has no sentence for still names itself, so it can be reported.
+    await page.evaluate(()=>{window.setupFailure="something_new";});
+    await dialog.getByRole("button",{name:"Check again"}).click();
+    await dialog.getByText("LinkedIn could not connect (something_new). Check that it is open in this Chrome profile, then try again.").waitFor();
+    await page.evaluate(()=>{window.setupFailure="";window.linkedInSignedIn=true;});
     await dialog.getByRole("button",{name:"Check again"}).click();
     await dialog.getByText(`Account: ${named ? "Test Owner" : "your signed-in LinkedIn account"}`).waitFor();
     assert.equal(await dialog.getByRole("radio",{name:"Cloud with browser backup",exact:true}).isChecked(),true);

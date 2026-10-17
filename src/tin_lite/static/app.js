@@ -7466,7 +7466,10 @@ function linkedInSetupError(code) {
     cloud_setup_pending:"Cloud setup did not finish. Keep LinkedIn open and try again.",
     login_or_checkpoint:"LinkedIn needs your attention. Open LinkedIn and finish its sign-in check, then try again.",
     platform_limit:"LinkedIn asked us to wait. Try connecting again later.",
-  }[code] || "LinkedIn could not connect. Check that it is open in this Chrome profile, then try again.";
+    // Chrome found a LinkedIn tab but wouldn't let Tin for Chrome read it.
+    browser_unavailable:"Tin for Chrome couldn't read your LinkedIn tab. Reload LinkedIn in this Chrome profile, then check again.",
+    untrusted_origin:"Open Tin at app.tin.computer in Chrome, then check again.",
+  }[code] || `LinkedIn could not connect${/^[a-z_]{1,60}$/.test(code || "") ? ` (${code})` : ""}. Check that it is open in this Chrome profile, then try again.`;
 }
 
 async function chooseLinkedInConnection(context) {
