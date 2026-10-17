@@ -153,6 +153,37 @@ async def test_duplicate_and_approval_race_is_one_transaction(publication_db, mo
     )
 
 
+async def test_an_approval_that_lands_first_makes_the_revision_a_conflict(
+    publication_db, monkeypatch
+):
+    """The race above, in the order that lost it: the approval commits after the revision
+    read the review and before its run is admitted. The revision is a conflict (409), the
+    same as when it arrives later, never an input error."""
+
+    from tin_lite import run_service
+
+    f = await setup(publication_db, monkeypatch)
+    source = await save(f, await start(f))
+    view = await f.reviews.view(source.id, ACTOR)
+    original = run_service.start_workflow_run
+
+    async def approved_first(*args, **kwargs):
+        await f.reviews.approve(run_id=source.id, actor=ACTOR, token=view["review_token"])
+        return await original(*args, **kwargs)
+
+    monkeypatch.setattr(run_service, "start_workflow_run", approved_first)
+    with pytest.raises(ReviewConflict, match="already has a review decision"):
+        await f.reviews.request_changes(
+            run_id=source.id,
+            actor=ACTOR,
+            feedback="Keep the opening.",
+            request_id=uuid4(),
+            token=view["review_token"],
+        )
+    assert (await f.db.get_run(source.id)).review_decision == "approved"
+    assert await f.db.pool.fetchval("SELECT count(*) FROM workflow_review_commands") == 1
+
+
 async def test_duplicate_committed_during_view_replays_before_stale_rejection(
     publication_db, monkeypatch
 ):

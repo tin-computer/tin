@@ -672,6 +672,11 @@ async def start_workflow_run(
     try:
         run, created = await runtime.database.create_run(**create_arguments)
     except ValueError as exc:
+        from tin_lite.workflow_review_store import ReviewConflict
+
+        # A review decided while this request waited is a conflict, not bad input.
+        if isinstance(exc, ReviewConflict):
+            raise
         if workflow.key in {
             content_draft.KEY,
             "website.change",
