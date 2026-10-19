@@ -98,24 +98,27 @@ class ConnectionRequests:
             next_open = (await requests.plan(conn, project_id, member, ["next"], now) or [None])[0]
         offered = enabled(self.settings, project_id)
         reading = await self._reading(project_id, member) if offered else None
+        on = sending["on"] or (not sending["set"] and reading == "cloud")
         return {
             "offered": offered,
             "reading": reading == "cloud",
             "browser_only": reading == "browser",
             "sending": {
-                key: sending[key]
-                for key in (
-                    "on",
-                    "paused",
-                    "held",
-                    "paused_reason",
-                    "paused_until",
-                    "daily_cap",
-                    "weekly_cap",
-                    "start_minute",
-                    "end_minute",
-                    "timezone",
-                )
+                "on": on,
+                **{
+                    key: sending[key]
+                    for key in (
+                        "paused",
+                        "held",
+                        "paused_reason",
+                        "paused_until",
+                        "daily_cap",
+                        "weekly_cap",
+                        "start_minute",
+                        "end_minute",
+                        "timezone",
+                    )
+                },
             },
             "pause_text": requests.PAUSES.get(sending["paused_reason"] or "")
             if sending["paused_reason"] != "limit"
@@ -126,7 +129,7 @@ class ConnectionRequests:
                 "risk": RISK_TEXT,
             },
             "week": week,
-            "next_open": next_open if sending["on"] else None,
+            "next_open": next_open if on else None,
             "batches": batches,
         }
 
@@ -156,6 +159,21 @@ class ConnectionRequests:
             raise _refused(error) from None
         return await self.state(project_id, member)
 
+    async def _on_by_default(self, project_id: UUID, member: str) -> None:
+        """Sending is on for a member who never set it, once their LinkedIn reading runs in the
+        cloud. Their first approval records it, so a pause at LinkedIn's first warning has a
+        setting to hold; a member who turned sending off stays off."""
+
+        async with self.db.pool.acquire() as conn:
+            if (await requests.sending(conn, project_id, member))["set"]:
+                return
+        if await self._reading(project_id, member) != "cloud":
+            return
+        async with self.db.pool.acquire() as conn:
+            await requests.set_sending(
+                conn, project_id, member, enabled=True, consent_version=requests.CONSENT_VERSION
+            )
+
     async def resume(self, project_id: UUID, member: str) -> dict[str, Any]:
         await self._project(project_id, member)
         async with self.db.pool.acquire() as conn:
@@ -178,6 +196,8 @@ class ConnectionRequests:
         batch."""
 
         await self._project(project_id, member)
+        if approve:
+            await self._on_by_default(project_id, member)
         try:
             async with self.db.pool.acquire() as conn:
                 decided = await requests.decide(
@@ -222,6 +242,7 @@ class ConnectionRequests:
         Choosing is the approval; if sending can't start, nothing stays approved."""
 
         await self._project(project_id, member)
+        await self._on_by_default(project_id, member)
         try:
             async with self.db.pool.acquire() as conn:
                 picked = await requests.pick(

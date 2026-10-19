@@ -120,6 +120,31 @@ async def test_sending_needs_cloud_reading(collection_db):
         refused = await http.put(f"{base}/sending", json={"enabled": True, "consent_version": 1})
     assert state["reading"] is False and state["browser_only"] is True
     assert refused.status_code == 409 and "cloud reading" in refused.text
+    # Browser-only reading isn't on by default either: there is no saved session to send with.
+    assert state["sending"]["on"] is False
+
+
+async def test_sending_is_on_by_default_and_the_first_approval_records_it(collection_db):
+    f = await fixture(collection_db)
+    await ran(f, [person(1), person(4)])
+    known = await ids(f)
+    base = f"/api/projects/{f.project.id}/linkedin-requests"
+    async with client(f) as http:
+        state = (await http.get(base)).json()
+        assert state["sending"]["on"] is True and state["next_open"]
+        approve = f"{base}/batches/{state['batches'][0]['id']}/approve"
+        answer = await http.post(
+            approve, json={"request_id": str(uuid4()), "people": [str(known[member(1)])]}
+        )
+    assert answer.status_code == 200, answer.text
+    # A pause at LinkedIn's first warning needs a setting to hold, so approving writes it.
+    row = await f.db.pool.fetchrow(
+        "SELECT enabled, consent_version, consented_at FROM linkedin_sending "
+        "WHERE project_id = $1 AND member = $2",
+        f.project.id,
+        USER,
+    )
+    assert row["enabled"] and row["consent_version"] == 1 and row["consented_at"]
 
 
 async def test_people_who_fit_and_engaged_with_your_posts_are_proposed_once(collection_db):
@@ -135,7 +160,7 @@ async def test_people_who_fit_and_engaged_with_your_posts_are_proposed_once(coll
     async with client(f) as http:
         state = (await http.get(base)).json()
     assert state["offered"] is True and state["reading"] is True
-    assert state["sending"]["on"] is False
+    assert state["sending"]["on"] is True
     assert state["consent"]["version"] == 1 and "one at a time" in state["consent"]["text"]
     [batch] = state["batches"]
     assert sorted(p["name"] for p in batch["people"]) == ["Person 1", "Person 4"]
@@ -161,7 +186,7 @@ async def test_people_who_fit_and_engaged_with_your_posts_are_proposed_once(coll
         assert await requests.propose(conn, f.project.id, USER) == 1
 
 
-async def test_only_you_approve_and_only_with_sending_on(collection_db):
+async def test_only_you_approve_and_not_after_you_turn_sending_off(collection_db):
     f = await fixture(collection_db)
     await add_teammate(f)
     await ran(f, [person(1), person(4)])
@@ -171,6 +196,9 @@ async def test_only_you_approve_and_only_with_sending_on(collection_db):
         batch = (await http.get(base)).json()["batches"][0]
         approve = f"{base}/batches/{batch['id']}/approve"
         decision = {"request_id": str(uuid4()), "people": [str(known[member(1)])]}
+        # Sending is on by default; a member who turns it off stays off.
+        turned_off = await http.put(f"{base}/sending", json={"enabled": False})
+        assert turned_off.json()["sending"]["on"] is False
         off = await http.post(approve, json=decision)
         assert off.status_code == 409 and "Turn on sending" in off.json()["detail"]
     async with client(f, TEAMMATE) as http:
@@ -698,6 +726,8 @@ async def test_people_you_choose_in_people_are_queued_and_sent_by_the_same_run(
             "Person 3",
             "Person 4",
         }
+        # A member who turned sending off can't send from People until they turn it on.
+        await http.put(f"{base}/sending", json={"enabled": False})
         off = await http.post(f"{base}/send", json=choice)
         assert off.status_code == 409 and "Turn on sending" in off.json()["detail"]
         assert (await http.get(base)).json()["next_open"] is None
