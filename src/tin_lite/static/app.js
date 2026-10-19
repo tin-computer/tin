@@ -7464,6 +7464,7 @@ function linkedInSetupError(code) {
     search_setup_unavailable:"Tin could not prepare LinkedIn search. Keep LinkedIn open and try again.",
     ambiguous_search_contract:"Tin could not confirm LinkedIn search. Refresh LinkedIn and try again.",
     cloud_setup_pending:"Cloud setup did not finish. Keep LinkedIn open and try again.",
+    invalid_session:"Tin couldn't use the LinkedIn sign-in in this Chrome profile. Sign out of LinkedIn and back in, then try again.",
     login_or_checkpoint:"LinkedIn needs your attention. Open LinkedIn and finish its sign-in check, then try again.",
     platform_limit:"LinkedIn asked us to wait. Try connecting again later.",
     // Chrome found a LinkedIn tab but wouldn't let Tin for Chrome read it.
@@ -7554,7 +7555,7 @@ async function confirmLinkedInConnection() {
       choice.existing = {configuration:{actor:choice.account}};
     }
     await linkedInMessage("WAKE");
-    let ready = choice.mode === "local_only", cloudAvailable = true;
+    let ready = choice.mode === "local_only", cloudAvailable = true, reason = "";
     if (!ready) {
       confirm.textContent = "Preparing cloud access…";
       integrationProjectOptions.querySelector("[data-linkedin-account]").textContent = "Keep LinkedIn open for a moment while Tin finishes connecting.";
@@ -7563,7 +7564,8 @@ async function confirmLinkedInConnection() {
         let status;
         status = await linkedInMessage("DISCOVER", {}, 35000);
         if (status.project_id !== choice.context.projectId || status.account?.key !== choice.account.key) throw new Error("account_changed");
-        if (["session_expired","challenge","rate_limited","access_denied","unsupported_identity","refresh_linkedin_context","search_setup_unavailable","ambiguous_search_contract","login_or_checkpoint","platform_limit"].includes(status.reason)) throw new Error(status.reason);
+        if (["session_expired","challenge","rate_limited","access_denied","unsupported_identity","refresh_linkedin_context","search_setup_unavailable","ambiguous_search_contract","login_or_checkpoint","platform_limit","invalid_session"].includes(status.reason)) throw new Error(status.reason);
+        reason = status.reason || reason;
         ready = status.session_available === true;
         cloudAvailable = status.cloud_available === true;
         if (ready || !cloudAvailable) break;
@@ -7571,7 +7573,8 @@ async function confirmLinkedInConnection() {
       }
     }
     if (!isCurrentProjectContext(choice.context) || state.linkedInChoice !== choice) return;
-    if (!ready && cloudAvailable) throw new Error("cloud_setup_pending");
+    // Name what the extension last reported rather than a generic line.
+    if (!ready && cloudAvailable) throw new Error(reason || "cloud_setup_pending");
     integrationProjectDialog.close();
     showToast(ready ? "LinkedIn connected. Start collections from Tin." : cloudAvailable ? "LinkedIn connected. Keep Chrome open while cloud setup finishes." : "LinkedIn connected. Cloud collection is not available here yet.");
     await bootstrap();
