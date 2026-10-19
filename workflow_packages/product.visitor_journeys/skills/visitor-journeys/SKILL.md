@@ -80,7 +80,7 @@ Run `census` and `prior`, then `p = people(...)`. Every person has one tier:
 - **passer_by**: anonymous, one page, nothing else. Count only.
 - **account**: no email and no pageviews, only server events. It is a product account the
   website never saw, often a tenant or workspace ID. Count it apart from browsers; its failures
-  still count as frictions.
+  still count as frictions, but it gets no timeline read.
 - **team** and **bot**: left out and counted.
 
 You may move a user to lead when the ICP file or what they did shows strong fit or intent. Give

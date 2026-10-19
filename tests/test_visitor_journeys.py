@@ -332,14 +332,10 @@ def test_every_person_gets_one_tier_and_only_identified_people_are_named(j, peop
         "team": 1,
         "bot": 1,
     }
-    # New users and failures are read first, then anonymous browsers; the team, bots and
-    # passers-by never, and a server-only account only for a failure.
+    # New users and failures are read first, then anonymous browsers; the team, bots,
+    # passers-by and server-only accounts never, even with a failure.
     assert j.choose(people, 2)[:2] == [ANA, BROWSER]
-    assert set(j.choose(people, 30)) == {ANA, BEN, CARA, BROWSER, ACCOUNT}
-    quiet = [x for x in people if x["person_id"] != ACCOUNT] + [
-        {**next(x for x in people if x["person_id"] == ACCOUNT), "flags": []}
-    ]
-    assert ACCOUNT not in j.choose(quiet, 30)
+    assert set(j.choose(people, 30)) == {ANA, BEN, CARA, BROWSER}
     with pytest.raises(j.ContractError):
         j.named(next(p for p in people if p["person_id"] == BROWSER), "anonymous")
 

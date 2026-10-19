@@ -781,8 +781,9 @@ def counts(p):
 
 def choose(p, n):
     """Who gets a full journey read: new users and failures first, then the most engaged
-    anonymous browsers, so the report can show what visitors do, then by score."""
-    eligible = [x for x in p if x["tier"] in ("new_user", "lead", "user", "browser", "account")]
+    anonymous browsers, so the report can show what visitors do, then by score. Server-only
+    accounts are never read: their failures are already in `frictions`."""
+    eligible = [x for x in p if x["tier"] in ("new_user", "lead", "user", "browser")]
     must = [
         x
         for x in eligible
@@ -790,7 +791,7 @@ def choose(p, n):
     ]
     browsers = [x for x in eligible if x["tier"] == "browser" and x not in must]
     must += browsers[:ANONYMOUS_JOURNEYS]
-    rest = [x for x in eligible if x not in must and x["tier"] != "account"]
+    rest = [x for x in eligible if x not in must]
     picked = (must + rest)[: max(n, min(len(must), MAX_TIMELINE_PEOPLE * 2))]
     return [x["person_id"] for x in picked]
 
