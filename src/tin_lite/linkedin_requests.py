@@ -12,7 +12,8 @@ from the member's saved session:
 - only after a fresh read shows the person neither connected nor already invited.
 
 A member can also choose people in People: choosing them approves them, in a batch of their
-own that the same run sends.
+own. Either way, a member's requests on a project wait in one line, sent by one run: a batch
+approved while a run still sends theirs joins it, behind what it already holds.
 
 A request that may have gone out is never sent again. LinkedIn's warning, a signed-out session
 or a refusal pauses the member's sending until they resume; LinkedIn's weekly limit holds it
@@ -780,63 +781,121 @@ async def week(conn, project_id: UUID, member: str, now: datetime) -> dict:
     }
 
 
-# What a sending run does next.
+# One line per member: the run already sending a member's requests sends the next batch too.
 
 
-async def lapse(conn, batch_id: UUID, now: datetime) -> int:
+async def _line_lock(conn, project_id: UUID, member: str) -> None:
+    await conn.execute(
+        "SELECT pg_advisory_xact_lock(hashtextextended($1, 0))",
+        f"linkedin-line:{project_id}:{member}",
+    )
+
+
+async def sending_run(conn, batch_id: UUID, now: datetime) -> UUID | None:
+    """The run that sends this approved batch, or None when a new one should start.
+
+    A batch joins the member's run on the project while that run still has requests waiting,
+    so they go after the ones it holds. A run with none left only reads who accepted, and
+    would sleep through the new ones, so a new run starts instead. Call in a transaction and
+    record a new run on the batch before it commits: the member's line stays locked until
+    then, so two approvals at once still share one run."""
+
+    batch = await conn.fetchrow(
+        "SELECT * FROM linkedin_request_batches WHERE id = $1 FOR UPDATE", batch_id
+    )
+    if batch is None or batch["send_run_id"] is not None:
+        return batch["send_run_id"] if batch else None
+    await _line_lock(conn, batch["project_id"], batch["member"])
+    run_id = await conn.fetchval(
+        """SELECT b.send_run_id FROM linkedin_request_batches b
+           JOIN workflow_runs w ON w.id = b.send_run_id
+           JOIN linkedin_requests q ON q.batch_id = b.id
+           WHERE b.project_id = $1 AND b.member = $2 AND w.status IN ('pending', 'running')
+             AND q.status = 'queued' AND q.queued_at >= $3
+           ORDER BY w.created_at DESC LIMIT 1""",
+        batch["project_id"],
+        batch["member"],
+        now - timedelta(days=QUEUE_DAYS),
+    )
+    if run_id is not None:
+        await conn.execute(
+            "UPDATE linkedin_request_batches SET send_run_id = $2 WHERE id = $1", batch_id, run_id
+        )
+    return run_id
+
+
+# What a sending run does next. It sends every batch it holds (`send_run_id`).
+
+
+async def lapse(conn, run_id: UUID, now: datetime) -> int:
     result = await conn.execute(
-        """UPDATE linkedin_requests SET status = 'lapsed', settled_at = now()
-           WHERE batch_id = $1 AND status = 'queued' AND queued_at < $2""",
-        batch_id,
+        """UPDATE linkedin_requests q SET status = 'lapsed', settled_at = now()
+           FROM linkedin_request_batches b
+           WHERE b.id = q.batch_id AND b.send_run_id = $1 AND q.status = 'queued'
+             AND q.queued_at < $2""",
+        run_id,
         now - timedelta(days=QUEUE_DAYS),
     )
     return int(result.split()[-1])
 
 
-async def next_step(conn, batch_id: UUID, now: datetime) -> dict:
-    """Send the batch's next request, wait, read who accepted, or finish.
+async def next_step(conn, run_id: UUID, now: datetime) -> dict:
+    """Send the run's next request, wait, read who accepted, or finish.
 
     Returns {"action": "send", "request_id"}, {"action": "check"}, {"action": "wait",
-    "seconds"} or {"action": "done"}. Sending waits while the member's sending is off or
-    paused; a wait is never longer than six hours, so a change is noticed.
+    "seconds"} or {"action": "done"}. Requests go in the order they were queued. Sending waits
+    while the member's sending is off or paused; a wait is never longer than six hours, so a
+    change is noticed. Decided under the member's line lock, so a batch never joins a run that
+    has just finished.
     """
 
-    batch = await conn.fetchrow("SELECT * FROM linkedin_request_batches WHERE id = $1", batch_id)
-    if batch is None:
+    async with conn.transaction():
+        held = await conn.fetchrow(
+            """SELECT project_id, member, max(checked_at) AS checked_at
+               FROM linkedin_request_batches WHERE send_run_id = $1
+               GROUP BY project_id, member""",
+            run_id,
+        )
+        if held is None:
+            return {"action": "done"}
+        await _line_lock(conn, held["project_id"], held["member"])
+        await lapse(conn, run_id, now)
+        queued = await conn.fetchrow(
+            """SELECT q.id FROM linkedin_requests q
+               JOIN linkedin_request_batches b ON b.id = q.batch_id
+               WHERE b.send_run_id = $1 AND q.status = 'queued'
+               ORDER BY q.queued_at, q.id LIMIT 1""",
+            run_id,
+        )
+        # Who accepted is read about a day after the newest request, then about daily.
+        check_after = None
+        newest = await conn.fetchval(
+            """SELECT max(q.attempted_at) FROM linkedin_requests q
+               JOIN linkedin_request_batches b ON b.id = q.batch_id
+               WHERE b.send_run_id = $1 AND q.status IN ('sent', 'uncertain')
+                 AND q.settled_at IS NULL""",
+            run_id,
+        )
+        if newest is not None:
+            last = held["checked_at"]
+            check_after = max(newest, last or newest) + timedelta(hours=20)
+            if check_after <= now:
+                return {"action": "check"}
+        if queued is not None:
+            settings = await sending(conn, held["project_id"], held["member"])
+            if not settings["on"] or settings["held"]:
+                return {"action": "wait", "seconds": 6 * 3600}
+            attempts, first = await member_attempts(conn, held["member"], now)
+            slot = next_slot(now, settings, attempts, queued["id"], first=first)
+            if slot is None:
+                return {"action": "wait", "seconds": 6 * 3600}
+            if slot <= now + timedelta(seconds=30):
+                return {"action": "send", "request_id": str(queued["id"])}
+            until = min(slot, check_after) if check_after else slot
+            return {"action": "wait", "seconds": _seconds(until - now)}
+        if check_after is not None:
+            return {"action": "wait", "seconds": _seconds(check_after - now)}
         return {"action": "done"}
-    await lapse(conn, batch_id, now)
-    queued = await conn.fetchrow(
-        """SELECT id FROM linkedin_requests WHERE batch_id = $1 AND status = 'queued'
-           ORDER BY queued_at, id LIMIT 1""",
-        batch_id,
-    )
-    # Who accepted is read about a day after the newest request, then about daily.
-    check_after = None
-    newest = await conn.fetchval(
-        """SELECT max(attempted_at) FROM linkedin_requests WHERE batch_id = $1
-           AND status IN ('sent', 'uncertain') AND settled_at IS NULL""",
-        batch_id,
-    )
-    if newest is not None:
-        last = batch["checked_at"]
-        check_after = max(newest, last or newest) + timedelta(hours=20)
-        if check_after <= now:
-            return {"action": "check"}
-    if queued is not None:
-        settings = await sending(conn, batch["project_id"], batch["member"])
-        if not settings["on"] or settings["held"]:
-            return {"action": "wait", "seconds": 6 * 3600}
-        attempts, first = await member_attempts(conn, batch["member"], now)
-        slot = next_slot(now, settings, attempts, queued["id"], first=first)
-        if slot is None:
-            return {"action": "wait", "seconds": 6 * 3600}
-        if slot <= now + timedelta(seconds=30):
-            return {"action": "send", "request_id": str(queued["id"])}
-        until = min(slot, check_after) if check_after else slot
-        return {"action": "wait", "seconds": _seconds(until - now)}
-    if check_after is not None:
-        return {"action": "wait", "seconds": _seconds(check_after - now)}
-    return {"action": "done"}
 
 
 def _seconds(delta: timedelta) -> int:
@@ -865,6 +924,19 @@ async def reserve(conn, request_id: UUID, now: datetime) -> dict:
         "SELECT pg_advisory_xact_lock(hashtextextended($1, 0))",
         f"linkedin-requests:{request['member']}",
     )
+    # Someone marked a customer since it was queued isn't asked.
+    if await conn.fetchval(
+        """SELECT EXISTS (SELECT 1 FROM records m JOIN record_values v
+                          ON v.record_id = COALESCE(m.merged_into, m.id)
+                          WHERE m.id = $1 AND v.field = 'customer' AND v.value_text = 'yes')""",
+        request["record_id"],
+    ):
+        await conn.execute(
+            """UPDATE linkedin_requests SET status = 'declined', settled_at = now()
+               WHERE id = $1 AND status = 'queued'""",
+            request_id,
+        )
+        return {"skip": True}
     settings = await sending(conn, request["project_id"], request["member"])
     if not settings["on"] or settings["held"]:
         return {"wait": 6 * 3600}
@@ -872,12 +944,87 @@ async def reserve(conn, request_id: UUID, now: datetime) -> dict:
     slot = next_slot(now, settings, attempts, request_id, first=first)
     if slot is None or slot > now + timedelta(seconds=60):
         return {"wait": _seconds((slot or now + timedelta(hours=6)) - now)}
-    await conn.execute(
-        "UPDATE linkedin_requests SET status = 'sending', attempted_at = $2 WHERE id = $1",
+    # Only a request still waiting goes: one cancelled meanwhile stays cancelled.
+    if not await conn.fetchval(
+        """UPDATE linkedin_requests SET status = 'sending', attempted_at = $2
+           WHERE id = $1 AND status = 'queued' RETURNING true""",
         request_id,
         now,
-    )
+    ):
+        return {"skip": True}
     return details
+
+
+async def cancel(conn, project_id: UUID, member: str, person_id: UUID) -> int:
+    """Take the member's request to this person out of the queue before it goes. It reads as
+    declined, so they can be chosen again; one LinkedIn is being asked right now can't be."""
+
+    cancelled = await conn.fetch(
+        """UPDATE linkedin_requests q SET status = 'declined', settled_at = now()
+           FROM records m
+           WHERE m.id = q.record_id AND q.project_id = $1 AND q.member = $2
+             AND COALESCE(m.merged_into, m.id) = $3 AND q.status = 'queued'
+           RETURNING q.id""",
+        project_id,
+        member,
+        person_id,
+    )
+    if cancelled:
+        return len(cancelled)
+    if person_id in await waiting(conn, project_id, member):
+        raise RequestError("conflict", "Tin is sending this request right now.")
+    raise RequestError("not_found", "No request to them is waiting to go out.")
+
+
+async def queued(conn, project_id: UUID, member: str, person_id: UUID, now: datetime):
+    """The member's request to this person waiting to go out: when they queued it and when it
+    would go (None while sending is off or paused), or None without one."""
+
+    row = await conn.fetchrow(
+        """SELECT q.id, q.status, q.queued_at FROM linkedin_requests q
+           JOIN records m ON m.id = q.record_id
+           WHERE q.project_id = $1 AND q.member = $2 AND COALESCE(m.merged_into, m.id) = $3
+             AND q.status IN ('queued', 'sending')
+           ORDER BY q.queued_at, q.id LIMIT 1""",
+        project_id,
+        member,
+        person_id,
+    )
+    if row is None:
+        return None
+    found = {"queued_at": row["queued_at"], "sending": row["status"] == "sending", "at": None}
+    settings = await sending(conn, project_id, member)
+    if found["sending"] or not settings["on"] or settings["held"]:
+        return found
+    attempts, first = await member_attempts(conn, member, now)
+    ahead = [
+        item["id"]
+        for item in await conn.fetch(
+            "SELECT id FROM linkedin_requests WHERE member = $1 AND status = 'queued' "
+            "AND (queued_at, id) <= ($2, $3) ORDER BY queued_at, id",
+            member,
+            row["queued_at"],
+            row["id"],
+        )
+    ]
+    slots = projection(now, settings, attempts, ahead, first=first)
+    found["at"] = slots[-1] if len(slots) == len(ahead) else None
+    return found
+
+
+async def drop_customer(conn, project_id: UUID, person_id: UUID) -> int:
+    """Someone just marked a customer isn't asked: every member's request to them that is
+    still waiting reads as declined."""
+
+    result = await conn.execute(
+        """UPDATE linkedin_requests q SET status = 'declined', settled_at = now()
+           FROM records m
+           WHERE m.id = q.record_id AND q.project_id = $1
+             AND COALESCE(m.merged_into, m.id) = $2 AND q.status = 'queued'""",
+        project_id,
+        person_id,
+    )
+    return int(result.split()[-1])
 
 
 async def settle(
@@ -948,31 +1095,43 @@ async def _relationship(conn, request, value: str, run_id: UUID) -> None:
             raise
 
 
-async def checking(conn, batch_id: UUID, now: datetime) -> list[dict]:
-    """The batch's requests still waiting for an answer, at most 20, oldest first; those past
+async def checking(conn, run_id: UUID, now: datetime) -> list[dict]:
+    """The run's requests still waiting for an answer, at most 20, oldest first; those past
     three weeks stop being read."""
 
     await conn.execute(
-        """UPDATE linkedin_requests SET settled_at = now()
-           WHERE batch_id = $1 AND status IN ('sent', 'uncertain') AND settled_at IS NULL
-             AND attempted_at < $2""",
-        batch_id,
+        """UPDATE linkedin_requests q SET settled_at = now()
+           FROM linkedin_request_batches b
+           WHERE b.id = q.batch_id AND b.send_run_id = $1
+             AND q.status IN ('sent', 'uncertain') AND q.settled_at IS NULL
+             AND q.attempted_at < $2""",
+        run_id,
         now - timedelta(days=CHECK_DAYS),
     )
     rows = await conn.fetch(
-        """SELECT id, target, status FROM linkedin_requests
-           WHERE batch_id = $1 AND status IN ('sent', 'uncertain') AND settled_at IS NULL
-           ORDER BY attempted_at, id LIMIT 20""",
-        batch_id,
+        """SELECT q.id, q.target, q.status FROM linkedin_requests q
+           JOIN linkedin_request_batches b ON b.id = q.batch_id
+           WHERE b.send_run_id = $1 AND q.status IN ('sent', 'uncertain')
+             AND q.settled_at IS NULL
+           ORDER BY q.attempted_at, q.id LIMIT 20""",
+        run_id,
     )
     return [dict(row) for row in rows]
 
 
-async def checked(conn, batch_id: UUID, states: dict[str, str], *, run_id: UUID) -> dict:
+async def read_at(conn, run_id: UUID) -> None:
+    """Note that the run read who accepted, or tried to."""
+
+    await conn.execute(
+        "UPDATE linkedin_request_batches SET checked_at = now() WHERE send_run_id = $1", run_id
+    )
+
+
+async def checked(conn, run_id: UUID, states: dict[str, str]) -> dict:
     """Record a relationship read: accepted, still pending, or no longer pending."""
 
     counts = {"accepted": 0, "pending": 0, "ended": 0}
-    for row in await checking(conn, batch_id, datetime.now(UTC)):
+    for row in await checking(conn, run_id, datetime.now(UTC)):
         state = states.get(row["target"])
         request = await conn.fetchrow("SELECT * FROM linkedin_requests WHERE id = $1", row["id"])
         if state == "connected":
@@ -1016,7 +1175,5 @@ async def checked(conn, batch_id: UUID, states: dict[str, str], *, run_id: UUID)
             )
             await _relationship(conn, request, "none", run_id)
             counts["ended"] += 1
-    await conn.execute(
-        "UPDATE linkedin_request_batches SET checked_at = now() WHERE id = $1", batch_id
-    )
+    await read_at(conn, run_id)
     return counts

@@ -105,6 +105,11 @@ The source includes a dedicated read-only HTTP adapter. It reproduces the publis
 extension's cookie allowlist, user agent, language and LinkedIn request context. It does not
 launch a browser, run website JavaScript, follow authentication redirects, write cookies back,
 or call a logout endpoint. The extension uploads this material after the user enables cloud collection during setup.
+Chrome hands over every LinkedIn site's cookies, so the service keeps only what Chrome sends to
+www.linkedin.com: a copy for another LinkedIn site (Sales Navigator, Learning,
+business.linkedin.com) or for part of the site is left out, and of two copies it keeps the one
+set for www.linkedin.com. A login it still refuses (`invalid_session`) is logged with the check
+that failed and each cookie's name and domain, never a value, and the setup screen says so.
 The trusted service checks the transferred account with one bounded read of `/voyager/api/me`
 before reporting cloud access ready. Every E2B page checks it again. Tin encrypts the session
 with the existing integration cipher and binds it to the project, account,

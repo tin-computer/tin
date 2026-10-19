@@ -7095,8 +7095,11 @@ function renderXIntegrationExpanded(integration) {
   </div>`;
 }
 
-function linkedInPostingAccounts(integration) {
-  return (integration.configuration?.accounts || []).filter((account) => account.active);
+// The accounts this member can post as: the project's pages, and only their own profile. A
+// teammate's profile shows only under Manage, and in what disconnecting would stop.
+function linkedInPostingAccounts(integration, { everyone = false } = {}) {
+  return (integration.configuration?.accounts || [])
+    .filter((account) => account.active && (everyone || account.can_post !== false));
 }
 
 function linkedInPostingHealth(integration) {
@@ -7204,14 +7207,15 @@ function linkedInPostingPart(posting) {
     });
   }
   const accounts = posting.configuration?.accounts || [];
-  const active = accounts.filter((account) => account.active).map((account) => account.name);
-  const lapsed = accounts.filter((account) => !account.active).map((account) => account.name);
+  const yours = accounts.filter((account) => account.can_post !== false);
+  const active = yours.filter((account) => account.active).map((account) => account.name);
+  const lapsed = yours.filter((account) => !account.active).map((account) => account.name);
   const needs = posting.status === "needs_attention"
     ? "LinkedIn needs reconnecting. No connected account can post. Connect again and pick yourself or a page."
     : lapsed.length ? `${lapsed.join(", ")} ${lapsed.length === 1 ? "needs" : "need"} reconnecting.` : "";
   const managing = state.linkedInManaging;
   const manage = managing ? `<div class="linkedin-part-manage">
-      ${accounts.map((account) => `<span><code>${account.kind === "organization" ? "page" : "profile"}</code> ${escapeHtml(account.name)}${account.active ? "" : " · needs reconnecting"}</span>`).join("") || "<span>No account connected</span>"}
+      ${accounts.map((account) => `<span><code>${account.kind === "organization" ? "page" : "profile"}</code> ${escapeHtml(account.name)}${account.can_post === false ? ` · only ${escapeHtml(String(account.name || "").trim().split(/\s+/)[0] || "its owner")} posts as it` : account.active ? "" : " · needs reconnecting"}</span>`).join("") || "<span>No account connected</span>"}
       <p>Drafting never posts to LinkedIn. Tin publishes only the exact post you preview and confirm, as the account you choose for it.</p>
       <div>
         <button class="integration-reconnect" type="button" data-linkedin-posting-refresh>Check again</button>
@@ -7462,9 +7466,13 @@ function linkedInSetupError(code) {
     search_setup_unavailable:"Tin could not prepare LinkedIn search. Keep LinkedIn open and try again.",
     ambiguous_search_contract:"Tin could not confirm LinkedIn search. Refresh LinkedIn and try again.",
     cloud_setup_pending:"Cloud setup did not finish. Keep LinkedIn open and try again.",
+    invalid_session:"Tin couldn't use the LinkedIn sign-in in this Chrome profile. Sign out of LinkedIn and back in, then try again.",
     login_or_checkpoint:"LinkedIn needs your attention. Open LinkedIn and finish its sign-in check, then try again.",
     platform_limit:"LinkedIn asked us to wait. Try connecting again later.",
-  }[code] || "LinkedIn could not connect. Check that it is open in this Chrome profile, then try again.";
+    // Chrome found a LinkedIn tab but wouldn't let Tin for Chrome read it.
+    browser_unavailable:"Tin for Chrome couldn't read your LinkedIn tab. Reload LinkedIn in this Chrome profile, then check again.",
+    untrusted_origin:"Open Tin at app.tin.computer in Chrome, then check again.",
+  }[code] || `LinkedIn could not connect${/^[a-z_]{1,60}$/.test(code || "") ? ` (${code})` : ""}. Check that it is open in this Chrome profile, then try again.`;
 }
 
 async function chooseLinkedInConnection(context) {
@@ -7549,7 +7557,7 @@ async function confirmLinkedInConnection() {
       choice.existing = {configuration:{actor:choice.account}};
     }
     await linkedInMessage("WAKE");
-    let ready = choice.mode === "local_only", cloudAvailable = true;
+    let ready = choice.mode === "local_only", cloudAvailable = true, reason = "";
     if (!ready) {
       confirm.textContent = "Preparing cloud access…";
       integrationProjectOptions.querySelector("[data-linkedin-account]").textContent = "Keep LinkedIn open for a moment while Tin finishes connecting.";
@@ -7558,7 +7566,8 @@ async function confirmLinkedInConnection() {
         let status;
         status = await linkedInMessage("DISCOVER", {}, 35000);
         if (status.project_id !== choice.context.projectId || status.account?.key !== choice.account.key) throw new Error("account_changed");
-        if (["session_expired","challenge","rate_limited","access_denied","unsupported_identity","refresh_linkedin_context","search_setup_unavailable","ambiguous_search_contract","login_or_checkpoint","platform_limit"].includes(status.reason)) throw new Error(status.reason);
+        if (["session_expired","challenge","rate_limited","access_denied","unsupported_identity","refresh_linkedin_context","search_setup_unavailable","ambiguous_search_contract","login_or_checkpoint","platform_limit","invalid_session"].includes(status.reason)) throw new Error(status.reason);
+        reason = status.reason || reason;
         ready = status.session_available === true;
         cloudAvailable = status.cloud_available === true;
         if (ready || !cloudAvailable) break;
@@ -7566,7 +7575,8 @@ async function confirmLinkedInConnection() {
       }
     }
     if (!isCurrentProjectContext(choice.context) || state.linkedInChoice !== choice) return;
-    if (!ready && cloudAvailable) throw new Error("cloud_setup_pending");
+    // Name what the extension last reported rather than a generic line.
+    if (!ready && cloudAvailable) throw new Error(reason || "cloud_setup_pending");
     integrationProjectDialog.close();
     showToast(ready ? "LinkedIn connected. Start collections from Tin." : cloudAvailable ? "LinkedIn connected. Keep Chrome open while cloud setup finishes." : "LinkedIn connected. Cloud collection is not available here yet.");
     await bootstrap();
@@ -7631,7 +7641,7 @@ async function disconnectLinkedIn() {
   const posting = state.integrations.find((item) => item.key === "social.linkedin");
   const reading = state.integrations.find((item) => item.key === "network.linkedin");
   const keys = [posting, reading].filter((part) => part?.connection_id).map((part) => part.key);
-  const accounts = posting?.connection_id ? linkedInPostingAccounts(posting).map((account) => account.name).filter(Boolean) : [];
+  const accounts = posting?.connection_id ? linkedInPostingAccounts(posting, { everyone: true }).map((account) => account.name).filter(Boolean) : [];
   const removes = [
     posting?.connection_id ? `Tin stops posting${accounts.length ? ` as ${accounts.join(", ")}` : ""} for everyone in this project.` : "",
     reading?.connection_id ? "Tin deletes your saved LinkedIn session here." : "",

@@ -10,8 +10,10 @@ confirmation and a receipt around every write.
 Posting (`social.linkedin`) and reading (`network.linkedin`, through the browser extension and
 each member's own session) are two connections, but Integrations shows them as rows of one
 **LinkedIn** card (`app.js`, `renderLinkedInCard`; Paper INVITE-B and INVITE-B3):
-- **Posting** names the accounts Tin may post as. **Manage** lists them, with Check again, Add
-  accounts and Disconnect posting.
+- **Posting** names the accounts the viewer may post as: the pages, and their own profile, never
+  a teammate's. **Manage** lists every account, a teammate's profile marked "only <first name>
+  posts as it", with Check again, Add accounts and Disconnect posting, whose confirmation names
+  every account it stops.
 - **Reading** says where Tin reads (cloud with browser backup, cloud only, or this browser
   only) and when the session was checked. **Turn off** removes only your own reading
   connection.
@@ -54,6 +56,9 @@ posts as another member's profile, over the dashboard or MCP.
 - A connection from before `owners` was recorded gives its profiles to the member who
   connected it.
 - A mapped staging profile has no sign-in, so the member who connects it owns its profiles.
+- The dashboard and MCP get the connection as one member sees it
+  (`linkedin_posting.member_view`): each account carries `can_post` for that member, and
+  `owners` is left out, so no member IDs leave Tin.
 
 ## Drafts
 

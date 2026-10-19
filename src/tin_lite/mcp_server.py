@@ -415,11 +415,15 @@ def _project_task_result(run: Any, entries: list[Any] | None = None) -> dict[str
 
 
 def _mcp_integration_view(
-    definition: Any, connection: Any | None, *, configured: bool
+    definition: Any, connection: Any | None, *, configured: bool, viewer: str | None = None
 ) -> dict[str, Any]:
-    from tin_lite.integrations import connection_readiness
+    from tin_lite.integrations import LINKEDIN_POSTING_PROVIDER, connection_readiness
+    from tin_lite.linkedin_posting import member_view
 
     readiness = connection_readiness(connection)
+    configuration = connection.configuration if connection is not None else {}
+    if connection is not None and definition.key == LINKEDIN_POSTING_PROVIDER:
+        configuration = member_view(connection, viewer)
     return {
         "key": definition.key,
         "name": definition.name,
@@ -437,7 +441,7 @@ def _mcp_integration_view(
         "external_account_label": (
             connection.external_account_label if connection is not None else None
         ),
-        "configuration": connection.configuration if connection is not None else {},
+        "configuration": configuration,
         "last_checked_at": (
             connection.last_checked_at.isoformat()
             if connection is not None and connection.last_checked_at is not None
@@ -1214,7 +1218,7 @@ def create_mcp_app(
         token = await caller()
         parsed = _mcp_uuid(project_id, field="project_id")
         await require_project(parsed, token, tool_name=tool_name)
-        return parsed, token.subject, People(runtime().database, runtime().storage)
+        return parsed, token.subject, People(runtime().database, runtime().storage, auth)
 
     async def people_result(call):
         from tin_lite.people_service import PeopleError
@@ -1693,6 +1697,24 @@ def create_mcp_app(
                     trigger_source="mcp",
                     oauth_client_id=token.client_id,
                 )
+            )
+        except RequestsRefused as error:
+            code = {404: "not_found", 409: "conflict"}.get(error.status, "invalid")
+            raise ToolError(f"{code}: {error.message}") from None
+
+    @server.tool()
+    async def cancel_connection_request(project_id: str, person_id: str) -> dict[str, Any]:
+        """Cancel the caller's connection request to this person before it goes out, only as
+        the founder asked. list_people shows it as `request_queued`. One LinkedIn is being
+        asked right now can't be cancelled. They can be chosen again later."""
+        from tin_lite.linkedin_requests_service import ConnectionRequests, RequestsRefused
+
+        token = await caller()
+        project = _mcp_uuid(project_id, field="project_id")
+        await require_project(project, token, tool_name="cancel_connection_request")
+        try:
+            return await ConnectionRequests(runtime(), settings).cancel(
+                project, token.subject, _mcp_uuid(person_id, field="person_id")
             )
         except RequestsRefused as error:
             code = {404: "not_found", 409: "conflict"}.get(error.status, "invalid")
@@ -5245,6 +5267,7 @@ def create_mcp_app(
                 definition,
                 connections.get(definition.key),
                 configured=service.is_configured(definition.key),
+                viewer=clerk_user_id,
             )
             for definition in service.definitions(
                 connections.values(), project_id=parsed_project_id

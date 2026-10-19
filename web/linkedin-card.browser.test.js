@@ -108,6 +108,27 @@ test("both connected: Turn off removes reading only, Disconnect LinkedIn both, e
   });
 });
 
+test("a teammate sees the pages they can post as, not another member's profile", {timeout: 120000}, async () => {
+  const theirs = posting();
+  theirs.configuration.accounts = [
+    {name: "Avery Example", kind: "person", active: true, can_post: false},
+    {name: "Example Co", kind: "organization", active: true, can_post: true},
+  ];
+  await open([theirs, reading()], async (page, served) => {
+    await card(page).getByRole("button", {name: "Configure", exact: true}).click();
+    assert.match(await card(page).locator(".linkedin-part").nth(0).innerText(), /Posting\s*Example Co · approved posts only/);
+    // Manage still lists the profile, as only its owner can post as it.
+    await card(page).getByRole("button", {name: "Manage"}).click();
+    assert.match(await card(page).locator(".linkedin-part-manage").innerText(), /profile Avery Example · only Avery posts as it\s*page Example Co/);
+    // Disconnecting stops posting for everyone, so it names every account.
+    const asked = [];
+    page.on("dialog", dialog => {asked.push(dialog.message()); dialog.dismiss();});
+    await card(page).getByRole("button", {name: "Disconnect LinkedIn"}).click();
+    assert.match(asked[0], /Tin stops posting as Avery Example, Example Co for everyone in this project\./);
+    assert.deepEqual(served.removed, []);
+  });
+});
+
 test("a declined confirmation removes nothing", {timeout: 120000}, async () => {
   await open([posting(), reading()], async (page, served) => {
     page.on("dialog", dialog => dialog.dismiss());

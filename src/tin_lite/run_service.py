@@ -225,8 +225,8 @@ async def start_workflow_run(
         from tin_lite.connection_collection import enabled
 
         if not _linkedin_requests:
-            # Approving requests in Decisions, or choosing people in People, starts it, for
-            # exactly that batch.
+            # Approving requests in Decisions, or choosing people in People, starts it when no
+            # run of the member's still has requests waiting.
             raise WorkflowInputError("Approve connection requests in Decisions to send them.")
         if not enabled(settings, project_id):
             raise WorkflowExecutorUnavailableError(
@@ -672,6 +672,11 @@ async def start_workflow_run(
     try:
         run, created = await runtime.database.create_run(**create_arguments)
     except ValueError as exc:
+        from tin_lite.workflow_review_store import ReviewConflict
+
+        # A review decided while this request waited is a conflict, not bad input.
+        if isinstance(exc, ReviewConflict):
+            raise
         if workflow.key in {
             content_draft.KEY,
             "website.change",

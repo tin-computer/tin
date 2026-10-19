@@ -6,7 +6,9 @@ Tin's own workflows write the rest (#435). Anyone outside the project gets "proj
 
 from __future__ import annotations
 
+import asyncio
 import logging
+from datetime import UTC, datetime
 from typing import Any
 from uuid import UUID
 
@@ -55,9 +57,51 @@ async def _requests(conn, project_id: UUID, viewer: str, people: list[dict], onl
         person["request"] = "queued" if person["id"] in queued else None
 
 
+def _first_name(profile: dict) -> str | None:
+    """A teammate's first name, from their Tin account; none for an email or placeholder."""
+
+    name = str(profile.get("display_name") or "").strip()
+    if not name or "@" in name or name == "Project member":
+        return None
+    return name.split()[0][:40]
+
+
 class People:
-    def __init__(self, database, storage):
-        self.db, self.storage = database, storage
+    def __init__(self, database, storage, profiles=None):
+        # Clerk's member profiles, for teammates' first names; without them, "a teammate".
+        self.db, self.storage, self.profiles = database, storage, profiles
+
+    async def _named(self, viewer: str, people: list[dict]) -> None:
+        """Say who was behind each person's last touch, timeline events and notes: "you", a
+        teammate's first name, or "a teammate". Member IDs never leave Tin."""
+
+        items = [person["last_touch"] for person in people if person.get("last_touch")]
+        items += [person["note"] for person in people if person.get("note")]
+        items += [item for person in people for item in person.get("events", [])]
+        items += [item for person in people for item in person.get("notes", [])]
+        teammates = {item["member"] for item in items if item.get("member")} - {viewer}
+        names: dict[str, str] = {}
+        if self.profiles is not None and teammates:
+
+            async def name(member):
+                try:
+                    found = _first_name(await self.profiles.member_profile(member))
+                except Exception as error:  # noqa: BLE001
+                    logger.info("People couldn't read a teammate's name: %s", type(error))
+                    return
+                if found:
+                    names[member] = found
+
+            await asyncio.gather(*(name(member) for member in sorted(teammates)))
+        for item in items:
+            member = item.pop("member", None)
+            item["who"] = (
+                None
+                if not member
+                else "you"
+                if member == viewer
+                else names.get(member, "a teammate")
+            )
 
     async def _project(self, project_id: UUID, viewer: str):
         if not await self.db.has_project_access(project_id=project_id, clerk_user_id=viewer):
@@ -87,6 +131,7 @@ class People:
                 limit=LIMIT + 1,
             )
             await _requests(conn, project.id, viewer, people)
+        await self._named(viewer, people[:LIMIT])
         return {
             "people": people[:LIMIT],
             "truncated": len(people) > LIMIT,
@@ -108,8 +153,13 @@ class People:
             )
             if found is not None:
                 await _requests(conn, project.id, viewer, [found], only=[found["id"]])
+                if found["request"]:
+                    found["queued"] = await requests.queued(
+                        conn, project.id, viewer, found["id"], datetime.now(UTC)
+                    )
         if found is None:
             raise PeopleError(404, GONE)
+        await self._named(viewer, [found])
         return found
 
     async def update(
@@ -145,6 +195,9 @@ class People:
             async with self.db.pool.acquire() as conn:
                 if values:
                     await records.set_by_member(conn, project.id, person_id, values, member=viewer)
+                if customer:
+                    # A customer isn't asked to connect, even if a request already waits.
+                    await requests.drop_customer(conn, project.id, person_id)
                 if fit is None:
                     await records.restore_run_values(conn, project.id, person_id, FIT_FIELDS)
         except records.RecordError as error:

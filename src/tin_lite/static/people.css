@@ -45,7 +45,8 @@
 .people-table th.is-icp { width: 100px; }
 .people-table th.is-fit { width: 96px; }
 .people-table th.is-linkedin { width: 128px; }
-.people-table th.is-touch { width: 152px; }
+/* Last touch names who: "oct 16 · invited by Mira" (TEAM-A). */
+.people-table th.is-touch { width: 212px; }
 
 .people-table th,
 .people-table td {
@@ -697,6 +698,14 @@ body.has-person-panel .main {
 }
 
 .person-field-action:hover { text-decoration: underline; }
+
+/* Taking back a queued request is quiet beside the line about when it goes (REQ-C2). */
+.person-field-action.is-quiet {
+  color: var(--ink-secondary);
+  font-weight: 400;
+}
+
+.person-field-action.is-quiet:hover { color: var(--ink); }
 
 .person-field-action:disabled { cursor: wait; opacity: 0.6; }
 

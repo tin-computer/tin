@@ -7,6 +7,7 @@ activities use a fake sandbox that answers each request as told.
 
 from __future__ import annotations
 
+import asyncio
 import json
 from datetime import UTC, datetime, timedelta
 from types import SimpleNamespace
@@ -63,17 +64,17 @@ def client(f, user=USER):
     return httpx.AsyncClient(transport=httpx.ASGITransport(app=app), base_url="https://tin.test")
 
 
+async def recorded_start(self, project_id, batch_id, member, trigger_source, oauth_client_id):
+    """Approving starts the sending run; here a pending run is recorded instead."""
+
+    STARTED.append((project_id, batch_id, member, trigger_source))
+    return await run_row(self.db, project_id, batch_id, member)
+
+
 @pytest.fixture(autouse=True)
 def no_temporal(monkeypatch):
-    """Approving starts the sending run; here it is recorded instead."""
-
     STARTED.clear()
-
-    async def start(self, project_id, batch_id, member, trigger_source, oauth_client_id):
-        STARTED.append((project_id, batch_id, member, trigger_source))
-        return uuid4()
-
-    monkeypatch.setattr(ConnectionRequests, "_start", start)
+    monkeypatch.setattr(ConnectionRequests, "_start", recorded_start)
 
 
 async def ran(f, people, *, by=None, n=1):
@@ -249,7 +250,7 @@ async def test_approving_starts_one_real_run_and_a_failed_start_reopens_the_batc
     assert [b["id"] for b in again] == [batch["id"]]
     assert sorted(p["name"] for p in again[0]["people"]) == ["Person 1", "Person 4"]
 
-    # The real start: a dashboard approval records a manual run, one per batch.
+    # The real start: a dashboard approval records a manual run, recorded on the batch.
     monkeypatch.setattr(ConnectionRequests, "_start", REAL_START)
     app_client = client(f)
     app_client._transport.app.state.runtime = f.runtime
@@ -345,10 +346,19 @@ async def approved(f, *people_indexes, run_people=(1, 4)):
 
 
 async def requests_run(f, batch_id: UUID, *, by=USER) -> str:
-    workflow_id = await f.db.pool.fetchval("SELECT id FROM workflows WHERE key=$1", requests.KEY)
+    """The run sending the batch: the one its approval started, else a new one."""
+
+    held = await f.db.pool.fetchval(
+        "SELECT send_run_id FROM linkedin_request_batches WHERE id = $1", batch_id
+    )
+    return str(held or await run_row(f.db, f.project.id, batch_id, by))
+
+
+async def run_row(db, project_id, batch_id: UUID, by: str) -> UUID:
+    workflow_id = await db.pool.fetchval("SELECT id FROM workflows WHERE key=$1", requests.KEY)
     if workflow_id is None:
         workflow_id = uuid4()
-        await f.db.pool.execute(
+        await db.pool.execute(
             """INSERT INTO workflows (id,key,title,executor,definition_repo_id,
                     definition_path,current_commit_sha,version_label,definition)
                VALUES ($1,$2,$2,$2,'registry/workflows','r.json',$3,'1','{}')""",
@@ -357,22 +367,22 @@ async def requests_run(f, batch_id: UUID, *, by=USER) -> str:
             "e" * 40,
         )
     run_id = uuid4()
-    await f.db.pool.execute(
+    await db.pool.execute(
         """INSERT INTO workflow_runs
            (id,project_id,workflow_id,executor,definition_commit_sha,temporal_workflow_id,
             thread_id,generation,fencing_token,status,lease_active,started_by_clerk_user_id,input)
            VALUES ($1,$2,$3,$4,$5,$6,$7,1,1,'pending',false,$8,$9::jsonb)""",
         run_id,
-        f.project.id,
+        project_id,
         workflow_id,
         requests.KEY,
         "e" * 40,
         f"{requests.KEY}:{run_id}",
         str(run_id),
         by,
-        json.dumps({"project_id": str(f.project.id), "batch_id": str(batch_id)}),
+        json.dumps({"project_id": str(project_id), "batch_id": str(batch_id)}),
     )
-    return str(run_id)
+    return run_id
 
 
 def sender(f, cloud):
@@ -802,15 +812,100 @@ async def test_customers_and_people_you_asked_cant_be_chosen_and_a_failed_start_
         # The same choice works once sending starts, and then Person 1 can't be chosen again.
         monkeypatch.undo()
         STARTED.clear()
-
-        async def start(self, project_id, batch_id, member, trigger_source, oauth_client_id):
-            STARTED.append((project_id, batch_id, member, trigger_source))
-            return uuid4()
-
-        monkeypatch.setattr(ConnectionRequests, "_start", start)
+        monkeypatch.setattr(ConnectionRequests, "_start", recorded_start)
         assert (await http.post(f"{base}/send", json=choice)).status_code == 200
         again = {"request_id": str(uuid4()), "people": [str(known[member(1)])]}
         assert (await http.post(f"{base}/send", json=again)).status_code == 422
+
+
+async def test_you_can_cancel_a_request_before_it_goes(collection_db, monkeypatch):
+    f = await fixture(collection_db)
+    await ran(f, [person(1), person(3, headline="Designer"), person(4)])
+    known = await ids(f)
+    people_path = f"/api/projects/{f.project.id}/people"
+    base = f"/api/projects/{f.project.id}/linkedin-requests"
+    one, three, four = (known[member(n)] for n in (1, 3, 4))
+    async with client(f) as http:
+        await turn_on(http, f)
+        choice = {"request_id": str(uuid4()), "people": [str(three), str(one)]}
+        assert (await http.post(f"{base}/send", json=choice)).status_code == 200
+        # The panel says when it goes, after the request queued ahead of it.
+        detail = (await http.get(f"{people_path}/{one}")).json()
+        first = (await http.get(f"{people_path}/{three}")).json()
+        assert detail["request"] == "queued" and not detail["queued"]["sending"]
+        assert first["queued"]["at"] < detail["queued"]["at"]
+        cancelled = await http.post(f"{base}/people/{one}/cancel")
+        assert cancelled.status_code == 200 and cancelled.json() == {"cancelled": 1}
+        detail = (await http.get(f"{people_path}/{one}")).json()
+        # They can be chosen again.
+        assert detail["request"] is None and detail["requestable"]
+        again = await http.post(f"{base}/people/{one}/cancel")
+        assert again.status_code == 404 and "No request" in again.json()["detail"]
+    cancelled_id = await f.db.pool.fetchval(
+        "SELECT id FROM linkedin_requests WHERE record_id = $1", one
+    )
+    # The sending run passes over it, even if it read it as queued a moment before.
+    async with f.db.pool.acquire() as conn, conn.transaction():
+        assert await requests.reserve(conn, cancelled_id, MONDAY) == {"skip": True}
+    assert (
+        await f.db.pool.fetchval("SELECT status FROM linkedin_requests WHERE id = $1", cancelled_id)
+        == "declined"
+    )
+    # One LinkedIn is being asked right now can't be taken back.
+    await f.db.pool.execute(
+        "UPDATE linkedin_requests SET status = 'sending' WHERE record_id = $1", three
+    )
+    async with client(f) as http:
+        busy = await http.post(f"{base}/people/{three}/cancel")
+    assert busy.status_code == 409 and "sending this request right now" in busy.json()["detail"]
+
+    # Over MCP, the same.
+    server = mcp(f, monkeypatch)
+    project = str(f.project.id)
+    await server.call_tool(
+        "send_connection_requests",
+        {"project_id": project, "person_ids": [str(four)], "request_id": str(uuid4())},
+    )
+    answer = structured(
+        await server.call_tool(
+            "cancel_connection_request", {"project_id": project, "person_id": str(four)}
+        )
+    )
+    assert answer == {"cancelled": 1}
+    with pytest.raises(ToolError, match="not_found"):
+        await server.call_tool(
+            "cancel_connection_request", {"project_id": project, "person_id": str(four)}
+        )
+
+
+async def test_someone_marked_a_customer_after_they_were_queued_isnt_asked(collection_db):
+    f = await fixture(collection_db)
+    await ran(f, [person(1), person(4)])
+    known = await ids(f)
+    one, four = known[member(1)], known[member(4)]
+    base = f"/api/projects/{f.project.id}/linkedin-requests"
+    async with client(f) as http:
+        await turn_on(http, f)
+        choice = {"request_id": str(uuid4()), "people": [str(one), str(four)]}
+        assert (await http.post(f"{base}/send", json=choice)).status_code == 200
+        # Marking them a customer in People takes their request out of the queue at once.
+        marked = await http.patch(
+            f"/api/projects/{f.project.id}/people/{one}", json={"customer": True}
+        )
+        assert marked.status_code == 200 and marked.json()["request"] is None
+    status = "SELECT status FROM linkedin_requests WHERE record_id = $1"
+    assert await f.db.pool.fetchval(status, one) == "declined"
+    # However they became one, the sender checks again just before it sends.
+    async with f.db.pool.acquire() as conn:
+        await records.set_by_member(
+            conn, f.project.id, four, [records.Value("customer", "yes")], member=USER
+        )
+    request_id = await f.db.pool.fetchval(
+        "SELECT id FROM linkedin_requests WHERE record_id = $1", four
+    )
+    async with f.db.pool.acquire() as conn, conn.transaction():
+        assert await requests.reserve(conn, request_id, MONDAY) == {"skip": True}
+    assert await f.db.pool.fetchval(status, four) == "declined"
 
 
 async def test_mcp_lists_who_you_can_ask_and_sends_your_choice(collection_db, monkeypatch):
@@ -881,3 +976,204 @@ async def test_the_migration_gives_each_run_s_reading_to_the_member_who_started_
         known[member(1)]: ("none", str(run_id)),
         known[member(2)]: ("connected", str(run_id)),
     }
+
+
+async def sent_by(f, batch_id) -> str:
+    return str(
+        await f.db.pool.fetchval(
+            "SELECT send_run_id FROM linkedin_request_batches WHERE id = $1", UUID(str(batch_id))
+        )
+    )
+
+
+async def test_a_member_s_requests_wait_in_one_line_sent_by_one_run(collection_db, monkeypatch):
+    f = await fixture(collection_db)
+    batch, known = await approved(f, 1, 4)
+    first_run = await requests_run(f, batch)
+    await ran(f, [person(5), person(6)], n=2)
+    known = await ids(f)
+    base = f"/api/projects/{f.project.id}/linkedin-requests"
+    people_path = f"/api/projects/{f.project.id}/people"
+    choice = {"request_id": str(uuid4()), "people": [str(known[member(5)])]}
+    async with client(f) as http:
+        picked = await http.post(f"{base}/send", json=choice)
+        assert picked.status_code == 200, picked.text
+        # Chosen in People while approved ones still wait: they join the same run, behind them.
+        assert len(STARTED) == 1
+        assert await sent_by(f, picked.json()["batch_id"]) == first_run
+        repeated = await http.post(f"{base}/send", json=choice)
+        assert repeated.json()["repeated"] and len(STARTED) == 1
+        ahead = [
+            (await http.get(f"{people_path}/{known[member(n)]}")).json()["queued"]["at"]
+            for n in (1, 4)
+        ]
+        five = (await http.get(f"{people_path}/{known[member(5)]}")).json()["queued"]["at"]
+    assert max(ahead) < five
+
+    # The one run sends them in the order they were queued.
+    clock = Clock(MONDAY)
+    cloud = InviteCloud(f.db)
+    acts = sender(f, cloud)
+    await acts.prepare(first_run)
+    for hour in range(3):
+        clock.now = MONDAY + timedelta(hours=hour)
+        monkeypatch.setattr(linkedin_requests_activities, "datetime", clock())
+        step = await acts.next(first_run)
+        assert step["action"] == "send"
+        await acts.send({"run_id": first_run, "request_id": step["request_id"]})
+    sent = [call["member"] for call in cloud.calls]
+    assert sorted(sent[:2]) == [member(1), member(4)] and sent[2] == member(5)
+
+    # With nothing left to send, the run only reads who accepted: a new choice starts a run.
+    async with client(f) as http:
+        later = {"request_id": str(uuid4()), "people": [str(known[member(6)])]}
+        answer = await http.post(f"{base}/send", json=later)
+        assert answer.status_code == 200, answer.text
+    assert len(STARTED) == 2
+    assert await sent_by(f, answer.json()["batch_id"]) != first_run
+    async with f.db.pool.acquire() as conn:
+        assert len(await requests.checking(conn, UUID(first_run), clock.now)) == 3
+
+
+async def test_two_choices_at_once_share_one_run(collection_db, monkeypatch):
+    f = await fixture(collection_db)
+
+    # The first start is slow, so the second choice arrives while it is still starting.
+    async def slow_start(self, *args):
+        await asyncio.sleep(0.3)
+        return await recorded_start(self, *args)
+
+    monkeypatch.setattr(ConnectionRequests, "_start", slow_start)
+    await ran(f, [person(1), person(4)])
+    known = await ids(f)
+    base = f"/api/projects/{f.project.id}/linkedin-requests"
+    async with client(f) as http:
+        await turn_on(http, f)
+        answers = await asyncio.gather(
+            *(
+                http.post(
+                    f"{base}/send",
+                    json={"request_id": str(uuid4()), "people": [str(known[member(n)])]},
+                )
+                for n in (1, 4)
+            )
+        )
+    assert [a.status_code for a in answers] == [200, 200]
+    assert len(STARTED) == 1
+    runs = {await sent_by(f, a.json()["batch_id"]) for a in answers}
+    assert len(runs) == 1
+
+
+async def test_a_failed_run_lapses_every_batch_it_held(collection_db):
+    f = await fixture(collection_db)
+    batch, known = await approved(f, 1)
+    run_id = await requests_run(f, batch)
+    await ran(f, [person(5)], n=2)
+    known = await ids(f)
+    async with client(f) as http:
+        choice = {"request_id": str(uuid4()), "people": [str(known[member(5)])]}
+        assert (
+            await http.post(f"/api/projects/{f.project.id}/linkedin-requests/send", json=choice)
+        ).status_code == 200
+    assert len(STARTED) == 1
+    await sender(f, InviteCloud(f.db)).failure(run_id)
+    assert [await status(f, known[member(n)]) for n in (1, 5)] == ["lapsed", "lapsed"]
+    async with client(f) as http:
+        listed = {
+            p["name"]: p
+            for p in (await http.get(f"/api/projects/{f.project.id}/people")).json()["people"]
+        }
+    assert listed["Person 5"]["requestable"] and listed["Person 5"]["request"] is None
+
+
+@pytest.mark.parametrize("new_history", [False, True])
+async def test_a_long_line_carries_on_as_the_same_run(monkeypatch, new_history):
+    from temporalio import workflow
+
+    from tin_lite.domain import LINKEDIN_REQUESTS_STEPS
+    from tin_lite.workflows import LinkedInRequestsWorkflow
+
+    class Continued(workflow.ContinueAsNewError):
+        pass
+
+    calls = []
+    run_id = str(uuid4())
+
+    async def execute(name, argument, **_):
+        calls.append(name)
+        if name == "linkedin_requests_next":
+            return {"action": "wait", "seconds": 60}
+
+    async def sleep(_duration):
+        pass
+
+    def carry_on(argument):
+        assert argument == run_id
+        raise Continued()
+
+    monkeypatch.setattr(workflow, "execute_activity", execute)
+    monkeypatch.setattr(workflow, "sleep", sleep)
+    monkeypatch.setattr(workflow, "patched", lambda name: new_history)
+    monkeypatch.setattr(workflow, "continue_as_new", carry_on)
+    if new_history:
+        with pytest.raises(Continued):
+            await LinkedInRequestsWorkflow().run(run_id)
+        assert "linkedin_requests_finish" not in calls
+    else:
+        # Older histories finished when the steps ran out.
+        await LinkedInRequestsWorkflow().run(run_id)
+        assert calls[-1] == "linkedin_requests_finish"
+    assert calls.count("linkedin_requests_next") == LINKEDIN_REQUESTS_STEPS
+    assert "linkedin_requests_failure" not in calls
+
+
+async def test_people_name_whose_post_and_whose_request(collection_db):
+    f = await fixture(collection_db)
+    await add_teammate(f)
+    await ran(f, [person(1)])
+    await ran(f, [person(2)], by=TEAMMATE, n=2)
+    known = await ids(f)
+    async with f.db.pool.acquire() as conn:
+        await records.add_note(
+            conn, f.project.id, known[member(2)], "Met at a meetup.", author=TEAMMATE
+        )
+    path = f"/api/projects/{f.project.id}/people"
+    looked_up = []
+
+    class Profiles:
+        async def member_profile(self, member):
+            looked_up.append(member)
+            return {"display_name": "Mira Jones", "email": "mira@example.com"}
+
+    async def read(profiles):
+        http = client(f)
+        http._transport.app.state.auth = profiles
+        async with http:
+            listed = {p["name"]: p for p in (await http.get(path)).json()["people"]}
+            one = (await http.get(f"{path}/{known[member(2)]}")).json()
+        return listed, one
+
+    listed, one = await read(Profiles())
+    # Your own posts read as yours; a teammate's by their first name. Only teammates are
+    # looked up, and no member ID leaves Tin.
+    assert listed["Person 1"]["last_touch"]["who"] == "you"
+    assert listed["Person 2"]["last_touch"] == {
+        "kind": "reacted",
+        "at": listed["Person 2"]["last_touch"]["at"],
+        "who": "Mira",
+    }
+    assert [event["who"] for event in one["events"]] == ["Mira"]
+    # Notes say whose too.
+    assert listed["Person 2"]["note"]["who"] == "Mira"
+    assert [(note["by"], note["who"]) for note in one["notes"]] == [("a teammate", "Mira")]
+    assert set(looked_up) == {TEAMMATE}
+    assert TEAMMATE not in json.dumps([listed, one])
+
+    # Without a name to read, they stay "a teammate".
+    class Unnamed:
+        async def member_profile(self, member):
+            raise httpx.ConnectError("no Clerk")
+
+    listed, one = await read(Unnamed())
+    assert listed["Person 2"]["last_touch"]["who"] == "a teammate"
+    assert one["events"][0]["who"] == "a teammate"

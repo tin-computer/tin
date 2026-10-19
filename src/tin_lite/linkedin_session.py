@@ -9,6 +9,7 @@ from __future__ import annotations
 import asyncio
 import base64
 import json
+import logging
 import re
 import secrets
 from urllib.parse import parse_qs, quote, unquote, urlsplit
@@ -17,7 +18,12 @@ import httpx
 
 from tin_lite.connection_collection import CollectionError, CollectionSource, Person, profile_url
 
+logger = logging.getLogger(__name__)
+
 COOKIE_NAMES = frozenset({"li_at", "JSESSIONID", "bcookie", "bscookie", "lidc", "lang"})
+LOGIN_COOKIES = frozenset({"li_at", "JSESSIONID"})
+# The domains accepted for www.linkedin.com's cookies, most specific first.
+COOKIE_DOMAINS = (".www.linkedin.com", "www.linkedin.com", ".linkedin.com", "linkedin.com")
 TRACK_STRINGS = {"clientVersion", "mpVersion", "osName", "timezone", "deviceFormFactor", "mpName"}
 TRACK_NUMBERS = {"timezoneOffset", "displayDensity", "displayWidth", "displayHeight"}
 TRACK_REQUIRED = {
@@ -30,25 +36,50 @@ TRACK_REQUIRED = {
 }
 
 
-def header(value, maximum):
-    if (
-        not isinstance(value, str)
-        or not 1 <= len(value) <= maximum
-        or any(ord(c) < 32 or ord(c) > 126 for c in value)
-    ):
-        raise CollectionError("invalid_session")
+def printable(value, maximum):
+    return (
+        isinstance(value, str)
+        and 1 <= len(value) <= maximum
+        and all(32 <= ord(c) <= 126 for c in value)
+    )
+
+
+def header(value, maximum, check="header"):
+    if not printable(value, maximum):
+        raise refused(check)
     return value
+
+
+def places(cookies):
+    """Each cookie's name, domain and path for the log, never its value."""
+
+    def clean(item):
+        return "".join(c for c in str(item)[:60] if 32 <= ord(c) <= 126)
+
+    return ", ".join(
+        f"{clean(c.get('name'))}@{clean(c.get('domain'))}{clean(c.get('path'))}"
+        if isinstance(c, dict)
+        else "?"
+        for c in cookies[:64]
+    )
+
+
+def refused(check, cookies=()):
+    """Log which check a transferred session failed, so a founder's failed setup has a cause."""
+    logger.warning("LinkedIn session refused (%s); cookies: %s", check, places(cookies) or "none")
+    return CollectionError("invalid_session")
 
 
 def validate_session(value):
     """Return a fresh bounded envelope; callers must encrypt it before persistence."""
     if not isinstance(value, dict) or set(value) != {"cookies", "user_agent", "browser_context"}:
-        raise CollectionError("invalid_session")
-    ua = header(value["user_agent"], 1024)
+        raise refused("envelope")
+    ua = header(value["user_agent"], 1024, "user_agent")
     raw = value["cookies"]
-    if not isinstance(raw, list) or not 2 <= len(raw) <= 12:
-        raise CollectionError("invalid_session")
-    cookies, names = [], set()
+    # Chrome hands over the cookies of every LinkedIn site, not only www.linkedin.com's.
+    if not isinstance(raw, list) or not 2 <= len(raw) <= 64:
+        raise refused("cookie_count", raw if isinstance(raw, list) else ())
+    kept = {}
     fields = {
         "name",
         "value",
@@ -60,51 +91,67 @@ def validate_session(value):
         "expiration_date",
     }
     for cookie in raw:
-        if not isinstance(cookie, dict) or set(cookie) - fields:
-            raise CollectionError("invalid_session")
-        name = cookie.get("name")
         if (
-            name not in COOKIE_NAMES
-            or name in names
-            or cookie.get("domain")
-            not in {".linkedin.com", "linkedin.com", ".www.linkedin.com", "www.linkedin.com"}
-            or cookie.get("path") != "/"
-            or type(cookie.get("secure")) is not bool
+            not isinstance(cookie, dict)
+            or set(cookie) - fields
+            or cookie.get("name") not in COOKIE_NAMES
+        ):
+            raise refused("cookie_shape", raw)
+        name, domain = cookie["name"], cookie.get("domain")
+        # Another LinkedIn site's copy, or one for part of the site, is not what Chrome
+        # sends to www.linkedin.com: leave it out rather than refuse the login.
+        if domain not in COOKIE_DOMAINS or cookie.get("path") != "/":
+            continue
+        if (
+            type(cookie.get("secure")) is not bool
             or type(cookie.get("http_only")) is not bool
             or cookie.get("same_site") not in {"lax", "strict", "unspecified", "no_restriction"}
         ):
-            raise CollectionError("invalid_session")
-        secret = header(cookie.get("value"), 16384)
-        if ";" in secret:
-            raise CollectionError("invalid_session")
-        names.add(name)
-        # Cookie domain/expiry are checked at capture; the trusted HTTP jar is read-only.
-        cookies.append({"name": name, "value": secret})
-    if not {"li_at", "JSESSIONID"} <= names:
-        raise CollectionError("invalid_session")
+            raise refused("cookie_flags", raw)
+        secret = cookie.get("value")
+        if not printable(secret, 16384) or ";" in secret:
+            if name in LOGIN_COOKIES:
+                raise refused("login_cookie_value", raw)
+            continue
+        rank = COOKIE_DOMAINS.index(domain)
+        if name in kept and kept[name][0] == rank:
+            raise refused("duplicate_cookie", raw)
+        # Two copies of one cookie: keep the one set for www.linkedin.com itself.
+        if name not in kept or rank < kept[name][0]:
+            kept[name] = (rank, cookie)
+    if not LOGIN_COOKIES <= set(kept):
+        raise refused("login_cookie_missing", raw)
+    if len(kept) < len(raw):
+        chosen = [cookie for _, cookie in kept.values()]
+        logger.info(
+            "LinkedIn session left out other sites' cookies and duplicates: %s",
+            places([c for c in raw if not any(c is k for k in chosen)]),
+        )
+    # Cookie domain/expiry are checked at capture; the trusted HTTP jar is read-only.
+    cookies = [{"name": name, "value": cookie["value"]} for name, (_, cookie) in kept.items()]
     context = value["browser_context"]
     if not isinstance(context, dict) or set(context) != {"accept_language", "li_lang", "li_track"}:
-        raise CollectionError("invalid_session")
-    lang = header(context["li_lang"], 16)
+        raise refused("browser_context")
+    lang = header(context["li_lang"], 16, "li_lang")
     if not re.fullmatch(r"[A-Za-z]{2,3}_[A-Za-z]{2,3}", lang):
-        raise CollectionError("invalid_session")
+        raise refused("li_lang")
     track = context["li_track"]
     if (
         not isinstance(track, dict)
         or not TRACK_REQUIRED <= set(track)
         or set(track) - TRACK_STRINGS - TRACK_NUMBERS
     ):
-        raise CollectionError("invalid_session")
+        raise refused("li_track")
     for key, item in track.items():
         if key in TRACK_STRINGS:
-            header(item, 128)
+            header(item, 128, "li_track")
         elif type(item) not in {int, float} or not -100000 <= item <= 100000:
-            raise CollectionError("invalid_session")
+            raise refused("li_track")
     return {
         "cookies": sorted(cookies, key=lambda c: c["name"]),
         "user_agent": ua,
         "browser_context": {
-            "accept_language": header(context["accept_language"], 256),
+            "accept_language": header(context["accept_language"], 256, "accept_language"),
             "li_lang": lang,
             "li_track": dict(track),
         },

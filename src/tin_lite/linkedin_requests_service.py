@@ -2,8 +2,9 @@
 
 A member sees and decides only requests their own LinkedIn would send; turning sending on takes
 their own tick of the consent box, so it happens on the LinkedIn card, never over MCP.
-Approving a batch, or choosing people in People, starts the `social.linkedin_requests` run for
-that batch.
+Approving a batch, or choosing people in People, hands it to the member's
+`social.linkedin_requests` run on the project, which sends their requests in one line; a new
+run starts when none still has requests waiting.
 """
 
 from __future__ import annotations
@@ -173,7 +174,8 @@ class ConnectionRequests:
         trigger_source: str = "manual",
         oauth_client_id: str | None = None,
     ) -> dict[str, Any]:
-        """Approve the chosen people, which starts the sending run, or discard the batch."""
+        """Approve the chosen people, who join the member's line to be sent, or discard the
+        batch."""
 
         await self._project(project_id, member)
         try:
@@ -191,7 +193,7 @@ class ConnectionRequests:
             raise _refused(error) from None
         if decided["status"] == "approved":
             try:
-                run_id = await self._start(
+                run_id = await self._sending(
                     project_id, batch_id, member, trigger_source, oauth_client_id
                 )
             except RequestsRefused:
@@ -228,21 +230,17 @@ class ConnectionRequests:
         except requests.RequestError as error:
             raise _refused(error) from None
         batch_id = picked["batch_id"]
-        start_key = f"linkedin-requests:{batch_id}"
-        if not await self.db.get_run_by_start_key(
-            project_id=project_id, start_idempotency_key=start_key
-        ):
-            try:
-                await self._start(project_id, batch_id, member, trigger_source, oauth_client_id)
-            except RequestsRefused:
-                await self._unpick(project_id, batch_id)
-                raise
-            except Exception:
-                logger.exception("connection requests: the sending run did not start")
-                await self._unpick(project_id, batch_id)
-                raise RequestsRefused(
-                    503, "Tin couldn't start sending, so nothing was queued. Try again shortly."
-                ) from None
+        try:
+            await self._sending(project_id, batch_id, member, trigger_source, oauth_client_id)
+        except RequestsRefused:
+            await self._unpick(project_id, batch_id)
+            raise
+        except Exception:
+            logger.exception("connection requests: the sending run did not start")
+            await self._unpick(project_id, batch_id)
+            raise RequestsRefused(
+                503, "Tin couldn't start sending, so nothing was queued. Try again shortly."
+            ) from None
         async with self.db.pool.acquire() as conn:
             ids = [
                 row["id"]
@@ -257,6 +255,17 @@ class ConnectionRequests:
             "first_send": slots[0] if slots else None,
             "last_send": slots[-1] if slots else None,
         }
+
+    async def cancel(self, project_id: UUID, member: str, person_id: UUID) -> dict[str, Any]:
+        """Take the member's request to this person out of the queue before it goes."""
+
+        await self._project(project_id, member)
+        try:
+            async with self.db.pool.acquire() as conn:
+                cancelled = await requests.cancel(conn, project_id, member, person_id)
+        except requests.RequestError as error:
+            raise _refused(error) from None
+        return {"cancelled": cancelled}
 
     async def _unpick(self, project_id: UUID, batch_id: UUID) -> None:
         if await self.db.get_run_by_start_key(
@@ -276,6 +285,24 @@ class ConnectionRequests:
             return
         async with self.db.pool.acquire() as conn, conn.transaction():
             await requests.reopen(conn, batch_id)
+
+    async def _sending(self, project_id, batch_id, member, trigger_source, oauth_client_id):
+        """The run that sends the batch: the member's run on the project that still has
+        requests waiting, or a new one, recorded on the batch before the member's line is
+        unlocked."""
+
+        async with self.db.pool.acquire() as conn, conn.transaction():
+            run_id = await requests.sending_run(conn, batch_id, datetime.now(UTC))
+            if run_id is None:
+                run_id = await self._start(
+                    project_id, batch_id, member, trigger_source, oauth_client_id
+                )
+                await conn.execute(
+                    "UPDATE linkedin_request_batches SET send_run_id = $2 WHERE id = $1",
+                    batch_id,
+                    run_id,
+                )
+        return run_id
 
     async def _start(self, project_id, batch_id, member, trigger_source, oauth_client_id):
         from tin_lite.run_service import start_workflow_run

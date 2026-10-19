@@ -422,6 +422,65 @@ async def test_session_cookie_context_validation_and_no_redirects():
         validate_session(bad)
 
 
+def test_a_login_keeps_what_chrome_sends_to_www_linkedin_and_leaves_other_sites_out(caplog):
+    from tin_lite.linkedin_session import validate_session
+
+    def cookie(name, value, domain, path="/"):
+        return {
+            **session_envelope()["cookies"][0],
+            "name": name,
+            "value": value,
+            "domain": domain,
+            "path": path,
+        }
+
+    captured = session_envelope()
+    # Chrome hands over every LinkedIn site's cookies: Sales Navigator, Learning, an
+    # older copy for the whole domain. Only what it sends to www.linkedin.com is the login.
+    captured["cookies"] = [
+        cookie("li_at", "synthetic-root-login", ".linkedin.com"),
+        cookie("li_at", "synthetic-www-login", ".www.linkedin.com"),
+        cookie("JSESSIONID", "synthetic-www-csrf", ".www.linkedin.com"),
+        cookie("JSESSIONID", "synthetic-business-csrf", "business.linkedin.com"),
+        cookie("lang", "v=2&lang=en-us", ".linkedin.com"),
+        cookie("lang", "v=2&lang=en-us", ".www.linkedin.com", "/learning"),
+        cookie("lidc", "", ".linkedin.com"),
+        *(
+            cookie("bcookie", "synthetic-b", f".{site}.linkedin.com")
+            for site in ["business", "learning", "help", "ads", "developer", "training", "news"]
+        ),
+        cookie("bcookie", "synthetic-b", ".linkedin.com"),
+    ]
+    with caplog.at_level("INFO", logger="tin_lite.linkedin_session"):
+        envelope = validate_session(captured)
+    assert envelope["cookies"] == [
+        {"name": "JSESSIONID", "value": "synthetic-www-csrf"},
+        {"name": "bcookie", "value": "synthetic-b"},
+        {"name": "lang", "value": "v=2&lang=en-us"},
+        {"name": "li_at", "value": "synthetic-www-login"},
+    ]
+    # The log names what was left out, by name and place, never by value.
+    assert "JSESSIONID@business.linkedin.com/" in caplog.text
+    assert "li_at@.linkedin.com/" in caplog.text
+    assert "synthetic" not in caplog.text
+
+    # What is still refused says which check failed, so a stuck setup has a cause.
+    caplog.clear()
+    only_elsewhere = session_envelope()
+    for item in only_elsewhere["cookies"]:
+        item["domain"] = ".sales.linkedin.com"
+    with caplog.at_level("WARNING", logger="tin_lite.linkedin_session"):
+        with pytest.raises(CollectionError, match="invalid_session"):
+            validate_session(only_elsewhere)
+    assert "(login_cookie_missing)" in caplog.text and "li_at@.sales.linkedin.com/" in caplog.text
+    twice = session_envelope()
+    twice["cookies"].append(cookie("li_at", "synthetic-other", ".linkedin.com"))
+    with pytest.raises(CollectionError, match="invalid_session"):
+        validate_session(twice)
+    assert "(duplicate_cookie)" in caplog.text
+    assert "synthetic" not in caplog.text
+
+
 def test_graphql_parser_excludes_unreferenced_people_and_checks_page_scope():
     from tin_lite.linkedin_session import search_page, search_request
 

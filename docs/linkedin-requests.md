@@ -27,24 +27,46 @@ member's LinkedIn would send it, so nobody else sees or decides it. Over MCP,
 Approving (`POST /api/projects/{project_id}/linkedin-requests/batches/{id}/approve`, or
 `approve_connection_requests`) queues the people the member ticked and declines the rest;
 discarding declines everyone. Nobody declined is proposed again. The same `request_id`
-repeats the same decision. Approving needs sending to be on, and starts the batch's
-`social.linkedin_requests` run with the start key `linkedin-requests:<batch>`; nothing else
-can start it. Nothing is sent at the moment of approval. If the run can't start, the batch goes
-back to Decisions as it was and the member reads why.
+repeats the same decision. Approving needs sending to be on, and hands the batch to the
+member's sending run (see [One line per member](#one-line-per-member)); nothing else can start
+one. Nothing is sent at the moment of approval. If a new run can't start, the batch goes back
+to Decisions as it was and the member reads why.
 
 ## Chosen in People
 
 A member can tick people in People and press "Send N requests"
 (`POST /api/projects/{project_id}/linkedin-requests/send`, or `send_connection_requests`).
 Choosing is the approval: `linkedin_requests.pick` queues them, in the order sent, in a batch
-of their own that is approved at once, and starts its `social.linkedin_requests` run like an
+of their own that is approved at once, and hands it to the member's sending run like an
 approved batch. Anyone chosen must be someone the member can ask (`pickable`): with a LinkedIn
 profile ID, not a customer, not the member's connection or invitee as far as Tin knows, and
 with no request from the member that went out or waits. A request that lapsed, was declined in
 Decisions or never went out doesn't stop them; someone waiting in the member's batch in
 Decisions moves to the new one. The fit doesn't matter: the member chose them. Up to 100 at a
-time; the same `request_id` repeats the same choice. If the run can't start, the batch is
+time; the same `request_id` repeats the same choice. If a new run can't start, the batch is
 removed, anyone it took from Decisions waits there again, and the member reads why.
+
+## One line per member
+
+A member's requests on a project wait in one line, whichever way they were approved, and one
+`social.linkedin_requests` run sends them in the order they were queued. Each member has their
+own line, so two members can each ask the same person.
+
+`linkedin_requests.sending_run` decides which run sends an approved batch. A batch joins the
+member's run on the project (`send_run_id`) while that run still has requests waiting, behind
+them. A run with none left only reads who accepted and would sleep through new ones, so a new
+run starts, with the start key `linkedin-requests:<batch>`. Joining, starting and a run's
+decision to finish all take the member's line lock, and a new run is recorded on its batch
+before the lock is released, so two approvals at once share one run and no batch joins a run
+that is finishing. A run that reaches its step limit carries on as the same run (continue as
+new) rather than finish with requests waiting.
+
+Before it goes, the member can cancel a request of theirs from the person's panel ("Cancel
+request", `POST …/linkedin-requests/people/{person_id}/cancel`, or
+`cancel_connection_request`). It reads as declined, so they can be chosen again; one being
+sent right now can't be cancelled. Marking someone a customer declines every member's request
+to them that still waits, and the sender checks again just before each send. The panel's
+LinkedIn row says when a queued request would go (`linkedin_requests.queued`).
 
 People and `list_people` say who the viewer can ask (`requestable`, `can_request`) and whose
 request of theirs waits to go out (`request`, `request_queued`). The requests state carries
@@ -59,7 +81,7 @@ keeps the switch off. MCP can't turn it on. The card says plainly that LinkedIn'
 and that pacing lowers the risk to the account without removing it.
 
 The run asks `linkedin_requests_next` what to do and follows: send, wait, read who accepted,
-or finish. Every decision about time is made from Postgres, so history holds only request IDs,
+or finish. It sends every batch it holds. Every decision about time is made from Postgres, so history holds only request IDs,
 waits and outcomes. A request may go when, for the member across all their projects:
 
 - it's a weekday inside the window (09:00–17:00 by default) in the founder's time zone: the one
@@ -97,8 +119,8 @@ weeks after they were sent. Withdrawing old requests isn't built yet: no LinkedI
 it has been verified.
 
 When nothing is queued or waiting, the run writes `people/connection-requests.md` (who, and
-what happened) and finishes with a one-line summary. A run that fails lapses what it had
-queued.
+what happened, for every batch it held) and finishes with a one-line summary. A run that fails
+lapses what it had queued, from every batch it held; those people can be chosen again.
 
 ## Where it shows
 
@@ -108,7 +130,7 @@ queued.
   This week (sent, accepted, queued, pending, next send). A held sending makes the card need
   you.
 - **People:** the tick lane and its bar; "Queued", then "Invited oct 16", in the LinkedIn
-  column; an Invited segment once someone is invited; and "Connection request sent" /
+  column; in the panel, when a queued request goes and "Cancel request" (Paper REQ-C2); an Invited segment once someone is invited; and "Connection request sent" /
   "Accepted your connection request" on the timeline ("A teammate sent a connection request"
   for someone else's).
 

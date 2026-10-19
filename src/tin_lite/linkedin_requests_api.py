@@ -123,3 +123,8 @@ async def send(project_id: UUID, choice: Choice, request: Request, user: AuthCon
             project_id, user.clerk_user_id, request_id=choice.request_id, people=choice.people
         )
     )
+
+
+@router.post("/people/{person_id}/cancel")
+async def cancel(project_id: UUID, person_id: UUID, request: Request, user: AuthContext = USER):
+    return await _answer(_service(request).cancel(project_id, user.clerk_user_id, person_id))
