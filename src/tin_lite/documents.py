@@ -41,6 +41,18 @@ _FIELD = re.compile(r"([a-z]+)[ \t]*:[ \t]*(.+)")
 # bare URL are Markdown, not part of the address: older plans escaped every dot and hyphen.
 _BARE_URL = r"""https?:\/\/[^\s<]+[^<.,:;"')\]\s\\]"""
 _URL_ESCAPE = re.compile(r"\\([!-/:-@\[-`{-~])")
+# Machine-readable data in a report, which workflows and Tin read from the raw file and the
+# reader folds away: a JSON block after a versioned Tin marker at the very end, a JSON block
+# between `<!-- name.json:start -->` and `:end -->` comments, or a fence tagged ```json name.
+_EVIDENCE = re.compile(
+    r"\n[ \t]*<!-- tin-[a-z0-9-]{1,60}-v\d{1,3} -->[ \t]*\n\s*```json\n([\s\S]*?)\n```\s*\Z"
+)
+_PAIRED_DATA = re.compile(
+    r"^<!-- ([a-z0-9][a-z0-9.-]{0,60}\.json):start -->[ \t]*\n"
+    r"```json[ \t]*\n([\s\S]*?)\n```[ \t]*\n<!-- \1:end -->[ \t]*$",
+    re.M,
+)
+_DATA_TAG = re.compile(r"[A-Za-z0-9][\w.-]{0,60}")
 
 
 class _TinHTMLRenderer(HTMLRenderer):
@@ -134,6 +146,13 @@ class _TinHTMLRenderer(HTMLRenderer):
                     f'{poster_attr}><a href="{link}" rel="noreferrer">'
                     f"{title or escape_text(url)}</a></figure>\n"
                 )
+        tag = info.strip().split(None, 1)[1].strip() if info and len(info.split()) > 1 else ""
+        if language == "json" and _DATA_TAG.fullmatch(tag):
+            return (
+                '<details class="md-document-metadata md-document-data">'
+                f"<summary>{safe_entity(tag)}</summary><pre><code>{escape_text(code)}</code></pre>"
+                "</details>\n"
+            )
         language_attr = f' data-language="{safe_entity(language)}"' if language else ""
         code_class = f' class="language-{safe_entity(language)}"' if language else ""
         return (
@@ -165,12 +184,22 @@ class _TinHTMLRenderer(HTMLRenderer):
 
 
 class _VisibleText(HTMLParser):
+    """The words a reader sees, leaving out folded data."""
+
     def __init__(self) -> None:
         super().__init__(convert_charrefs=True)
         self.parts: list[str] = []
+        self._folded = 0
+
+    def handle_starttag(self, tag: str, attrs) -> None:
+        self._folded += tag == "details"
+
+    def handle_endtag(self, tag: str) -> None:
+        self._folded -= tag == "details" and self._folded > 0
 
     def handle_data(self, data: str) -> None:
-        self.parts.append(data)
+        if not self._folded:
+            self.parts.append(data)
 
 
 def _parse_bare_url(inline, match, state) -> int:
@@ -220,6 +249,11 @@ def render_markdown(markdown: str, *, asset_folder: str | None = None) -> Render
             f"<pre><code>{escape_text(match[1])}</code></pre></details>\n"
         )
         body = markdown[match.end() :]
+    if "<!-- " in body:
+        body = body.replace("\r\n", "\n")
+        if found := _EVIDENCE.search(body):
+            body = body[: found.start()] + f"\n\n```json Evidence\n{found[1]}\n```\n"
+        body = _PAIRED_DATA.sub(lambda m: f"```json {m[1]}\n{m[2]}\n```", body)
     rendered = parser(body)
     visible = _VisibleText()
     visible.feed(rendered)

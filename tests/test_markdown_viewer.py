@@ -363,3 +363,60 @@ def test_bare_urls_drop_markdown_escapes_from_address_and_text() -> None:
     ) in html
     assert 'href="https://imagetextedit.com/"' in html and "</a>.</p>" in html
     assert 'href="https://example.com/a-b?x=1&amp;y=2"' in html
+
+
+@pytest.mark.parametrize(
+    "marker",
+    [
+        "<!-- tin-visitor-journal-v1 -->",
+        "<!-- tin-analytics-evidence-v1 -->",
+        "<!-- tin-paying-segment-evidence-v1 -->",
+    ],
+)
+@pytest.mark.parametrize("newline", ["\n", "\r\n"])
+def test_a_reports_trailing_evidence_is_folded_away_and_not_counted(marker, newline):
+    body = "# Visitors\n\nStatus: complete\n\n## Numbers\n\nTwelve people came.\n"
+    evidence = '{\n "status": "complete",\n "note": "<script>bad()</script> many words here"\n}'
+    source = (body + "\n" + marker + "\n```json\n" + evidence + "\n```\n").replace("\n", newline)
+    document = render_markdown(source)
+    assert document.markdown == source
+    assert document.html.startswith(render_markdown(body).html)
+    assert '<details class="md-document-metadata md-document-data">' in document.html
+    assert "<summary>Evidence</summary>" in document.html and "<details open" not in document.html
+    assert "&quot;status&quot;" in document.html or '"status"' in document.html
+    assert "<script>" not in document.html and "tin-" not in document.html.split("<details")[0]
+    assert document.word_count == render_markdown(body).word_count
+    assert [heading.title for heading in document.headings] == ["Numbers"]
+
+
+@pytest.mark.parametrize(
+    "source",
+    [
+        # Not at the end, no Tin marker, or not JSON: ordinary Markdown as before.
+        "# R\n\n<!-- tin-visitor-journal-v1 -->\n```json\n{}\n```\n\nMore copy.\n",
+        "# R\n\n<!-- a comment -->\n```json\n{}\n```\n",
+        "# R\n\n<!-- tin-visitor-journal-v1 -->\n```python\nx = 1\n```\n",
+    ],
+)
+def test_other_trailing_code_is_not_evidence(source):
+    assert "md-document-data" not in render_markdown(source).html
+
+
+def test_paired_and_tagged_json_blocks_fold_in_place_and_are_not_counted():
+    body = "# Plan\n\n## Patch\n\nOne file changes.\n"
+    data = '{"schema": "feedback-fix-patch/1", "files": ["<script>x()</script> lots of words"]}'
+    paired = (
+        f"{body}\n<!-- feedback-fix-patch.json:start -->\n```json\n{data}\n```\n"
+        "<!-- feedback-fix-patch.json:end -->\n\n## After\n\nDone.\n"
+    )
+    document = render_markdown(paired)
+    assert "<summary>feedback-fix-patch.json</summary>" in document.html
+    assert "&lt;!--" not in document.html and "<script>" not in document.html
+    assert document.html.index("</details>") < document.html.index("After")
+    assert document.word_count == render_markdown(body + "\n## After\n\nDone.\n").word_count
+    tagged = render_markdown(f"{body}\n```json awesome-submissions\n{data}\n```\n")
+    assert "<summary>awesome-submissions</summary>" in tagged.html
+    assert tagged.word_count == render_markdown(body).word_count
+    # A plain JSON block may be copy the founder reads, so it stays visible.
+    plain = render_markdown(f"{body}\n```json\n{data}\n```\n")
+    assert "md-document-data" not in plain.html and 'data-language="json"' in plain.html
