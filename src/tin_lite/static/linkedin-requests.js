@@ -3,14 +3,14 @@
 // Connection requests (#450, Paper INVITE-A to INVITE-C, REQ-A): the batch waiting in
 // Decisions, the Sending row on the LinkedIn card, and what People says when people are ticked.
 // Approving queues people; Tin sends them one at a time on its own schedule from the member's
-// own session. Sending is turned on only here, with the member's own tick of the consent box.
+// own session. Sending is on by default once reading runs in the cloud; off stays off.
 window.TinRequests = (() => {
   const MONTHS = ["jan", "feb", "mar", "apr", "may", "jun", "jul", "aug", "sep", "oct", "nov", "dec"];
   const DAYS = ["Sunday", "Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday"];
   const escape = (value) => String(value ?? "").replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
   // What the member has unticked in the open batch, by person; kept while they look around.
   const skipped = new Set();
-  const ui = { consenting: false, consentTicked: false, editingLimits: false, saving: false };
+  const ui = { consenting: false, consentTicked: true, editingLimits: false, saving: false };
 
   function day(value) {
     const date = new Date(value);
@@ -242,7 +242,8 @@ window.TinRequests = (() => {
         save(`${base}/sending`, { method: "PUT", body: JSON.stringify({ enabled: false }) }, "Sending is off. Approved requests not sent yet wait until you turn it on.");
       } else {
         ui.consenting = !ui.consenting;
-        ui.consentTicked = false;
+        // Members agreed to sending when they joined Tin; the box starts ticked.
+        ui.consentTicked = true;
         ctx.render();
       }
     });

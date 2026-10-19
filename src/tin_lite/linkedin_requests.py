@@ -120,7 +120,9 @@ async def sending(conn, project_id: UUID, member: str) -> dict[str, Any]:
     if row is None:
         raise RequestError("not_found", "project not found")
     result = dict(DEFAULTS)
-    if row["member"] is not None:
+    # Whether the member ever set sending here; one who never did is on by default.
+    result["set"] = row["member"] is not None
+    if result["set"]:
         result.update({key: row[key] for key in DEFAULTS})
     result["timezone"] = await founder_timezone(conn, project_id)
     result["on"] = bool(result["enabled"] and result["consent_version"] == CONSENT_VERSION)

@@ -89,16 +89,21 @@ test("with sending off, the batch asks you to turn it on first", {timeout: 12000
   });
 });
 
-test("sending turns on only with the consent box ticked, then shows the week", {timeout: 120000}, async () => {
+test("turning sending back on starts with the consent box ticked, then shows the week", {timeout: 120000}, async () => {
   await open({url: "/integrations", state: requests({on: false})}, async (page, served) => {
     await page.locator(".linkedin-card").getByRole("button", {name: "Configure"}).click();
     const row = page.locator(".requests-sending");
     await row.waitFor();
     assert.match(await row.innerText(), /Sending\s*Send connection requests you approve, one at a time/);
     await row.getByRole("switch").click();
+    // Members agreed to sending when they joined Tin: the box starts ticked, and unticking it
+    // still holds the button.
     const turnOn = row.getByRole("button", {name: "Turn on sending"});
-    assert.equal(await turnOn.isDisabled(), true);
+    assert.equal(await row.getByRole("checkbox").isChecked(), true);
+    assert.equal(await turnOn.isDisabled(), false);
     assert.match(await row.innerText(), /LinkedIn’s terms don’t allow automated requests\./);
+    await row.getByRole("checkbox").uncheck();
+    assert.equal(await turnOn.isDisabled(), true);
     await row.getByRole("checkbox").check();
     await row.getByRole("button", {name: "Turn on sending"}).click();
     await page.locator(".toast", {hasText: "Sending is on."}).waitFor();
