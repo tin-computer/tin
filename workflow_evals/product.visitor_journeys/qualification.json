@@ -22,7 +22,7 @@
       "description": "A day with two hackathon signups who stall at connecting GitHub, one returning user, one anonymous visitor whose estimate fails four times with a rage click, the team on a personal address, and one-page bot visits from one country.",
       "inputs": {"lookback_hours": 24, "internal_people": ["cofounder@gmail.com"]},
       "expect": {
-        "contains": ["Status: complete", "## People to act on today", "## Frictions", "## Numbers", "Suggested:", "<!-- tin-visitor-journal-v1 -->"],
+        "contains": ["Status: complete", "## People to act on today", "## Frictions", "## How visitors use the site", "## Numbers", "Suggested:", "<!-- tin-visitor-journal-v1 -->"],
         "excludes": ["cofounder@gmail.com", "Status: incomplete"]
       }
     },

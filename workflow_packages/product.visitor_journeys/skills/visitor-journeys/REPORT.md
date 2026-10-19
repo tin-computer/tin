@@ -34,6 +34,11 @@ Connect GitHub; the pricing calculator failed four times for one visitor.">
 ## Delights
 - <Person, the moment, and why it matters.>
 
+## How visitors use the site
+<Sessions on the website and how many were anonymous. Where they come in, the common routes, where
+browsing visitors leave, how many reached intent or signup, and what changed since the last run.>
+- <Anonymous journey in one line: where they came from, the pages, where they left.>
+
 ## Product changes
 1. **<Change>** — <evidence>, <cause>, <file if known>, <the smallest fix>.
 
@@ -47,6 +52,7 @@ Connect GitHub; the pricing calculator failed four times for one visitor.">
 | Identified | <n> |
 | Leads / new users / users | <n> / <n> / <n> |
 | Anonymous browsers / passers-by | <n> / <n> |
+| Accounts seen only in server events | <n> |
 | Team / bots left out | <n> / <n> |
 
 Sources: <top referrers and campaigns>. Countries: <top five>.

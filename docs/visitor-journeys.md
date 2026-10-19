@@ -9,6 +9,8 @@ of the people who used the site and product in the window. It covers:
   pages opened again and again in one session, each with who hit it and the code behind it when
   a repository is connected;
 - delights: moments that show the product worked for someone;
+- how visitors use the site, most of them anonymous: where they come in, the common routes, where
+  they leave, how many reach pricing, booking or signup, and a few anonymous journeys;
 - up to five product changes, most costly first;
 - tracking problems, such as a renamed key event or signups without an email.
 
@@ -27,7 +29,8 @@ Only people who told the product who they are, by an email on their PostHog pers
 up, or a form that calls `identify`). Anonymous visitors appear as counts and as anonymous
 journeys, never with a guessed identity: no company from an IP address, network, city or device.
 Team members (by `exclude_email_domains`, `internal_people`, or the map's `internal` list) and
-bots are counted and left out. Replay links open the session in PostHog; the report never
+bots are counted and left out. A product account seen only in server events, with no email and
+no pageviews (often a tenant ID), is counted apart from website visitors. Replay links open the session in PostHog; the report never
 quotes what a person typed.
 
 ## Set it up
@@ -54,6 +57,8 @@ A procedure writes one file, so the memory lives in the report's evidence block:
   key events by kind (intent, booking, signup, activation, payment, failure, feedback), the
   main path as ordered steps, team people, bot patterns, the replay link base and the capture
   settings, and a dated list of changes.
+- **site**: the last run's landing pages, routes and exits, so the next report can say what
+  changed.
 - **ledger**: each reportable friction with the days it was seen, and each named person with
   when they were first and last surfaced and whether they came back. A friction is `new`, then
   `ongoing`, and `fixed` once it has been seen on two or more days and then not for five. Entries
@@ -65,7 +70,7 @@ ledger. When a mapped key event stops firing, or a new event looks like its rena
 
 ## Queries
 
-All go through `call_service` (service `analytics`, at most 16 calls). A normal run uses 8 to 10:
+All go through `call_service` (service `analytics`, at most 16 calls). A normal run uses 9 to 11:
 
 | Step | Operation | Reads |
 |---|---|---|
@@ -74,6 +79,7 @@ All go through `call_service` (service `analytics`, at most 16 calls). A normal 
 | `census` | `query.hogql` | one row per person in the window (up to 1000, most engaged first) |
 | `prior` | `query.hogql` | those people's sessions and days in the 90 days before |
 | `frictions`, `loops` | `query.hogql` | rage and dead clicks, exceptions, failure events; pages opened 3+ times in a session |
+| `paths` | `query.hogql` | website sessions grouped by landing page, first four pages and exit page |
 | `timelines<n>` | `query.hogql` | up to 15 people per batch, 60 events each, in order |
 
 A refused or truncated census or friction query makes the report `incomplete`, never zero. If
@@ -105,6 +111,8 @@ LinkedIn invitations, which need a LinkedIn member ID.
   are read only to find the code behind a friction.
 - Replays are linked, not read: PostHog keeps recording contents out of its query API for Tin's
   read-only scopes.
+- `paths` counts signup only when the signup event carries the browser session. A signup on
+  another host, such as the app, shows as none there; the report says so.
 - Element text exists only where PostHog captures it. Many sites mask it, so rage clicks often
   name only the page.
 - The cost ceiling is $5 per run; the estimate ($1.00) is judged, not measured.

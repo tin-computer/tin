@@ -139,7 +139,7 @@
           {"id": "map", "kind": "step", "label": "Check the map against the events", "fact": "re-maps renamed or silent key events"},
           {"id": "census", "kind": "step", "label": "Everyone active in the window", "fact": "team and bots left out, one tier each"},
           {"id": "nothing", "kind": "ghost", "label": "PostHog answered nothing", "fact": "run fails, the diagnostic stays readable"},
-          {"id": "read", "kind": "step", "label": "Journeys, frictions, delights", "fact": "up to 30 people, repositories name the file"},
+          {"id": "read", "kind": "step", "label": "Journeys, site paths, frictions", "fact": "up to 30 people, repositories name the file"},
           {"id": "report", "kind": "receipt", "label": "Visitor journal in Files", "fact": "people to act on, fixes, tracking gaps"},
           {"id": "people", "kind": "receipt", "label": "People", "fact": "only people who signed up or gave an email"}
         ],

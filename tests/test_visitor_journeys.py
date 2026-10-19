@@ -27,7 +27,7 @@ RESOURCE = PACKAGE / "skills/visitor-journeys/JOURNEYS.md"
 NOW = datetime(2026, 10, 16, 14, 0, tzinfo=UTC)
 REPLAY = "https://us.posthog.com/project/412951/replay/"
 ANA, BEN, CARA = (str(UUID(int=n)) for n in (1, 2, 3))
-TEAM, BOT, PASSER, BROWSER = (str(UUID(int=n)) for n in (4, 5, 6, 7))
+TEAM, BOT, PASSER, BROWSER, ACCOUNT = (str(UUID(int=n)) for n in (4, 5, 6, 7, 8))
 
 
 @pytest.fixture(scope="module")
@@ -133,6 +133,16 @@ def census(j):
             key_events=["estimate_failed", "$rageclick"],
             rage_clicks=2,
         ),
+        census_row(
+            ACCOUNT,
+            pageviews=0,
+            paths=0,
+            path_sample=[],
+            key_events=["estimate_failed"],
+            referrer=None,
+            browser=None,
+            hosts=[],
+        ),
     ]
 
 
@@ -186,7 +196,7 @@ def test_the_map_refuses_names_a_query_would_quote_unsafely(j, m):
 
 
 def test_every_request_passes_tins_hogql_guard_and_scopes_hosts_and_the_team(j, c, m):
-    steps = ["project", "inventory", "hosts", "census", "prior", "frictions", "loops"]
+    steps = ["project", "inventory", "hosts", "census", "prior", "frictions", "loops", "paths"]
     payloads = [j.request(c, m, step) for step in steps]
     payloads.append(j.request(c, m, "timelines1", [ANA, BEN]))
     assert payloads[0] == {
@@ -205,6 +215,11 @@ def test_every_request_passes_tins_hogql_guard_and_scopes_hosts_and_the_team(j, 
     )
     assert "'account_created'" in census and "HAVING pageviews > 0" in census
     assert "toDateTime('2026-10-15 14:00:00')" in census
+    paths = payloads[7]["arguments"]["query"]
+    # Website pages only, the team and bot countries out, and key events joined by session.
+    assert "properties.$host IN ('example.com')" in paths and "'app.example.com'" not in paths
+    assert "NOT IN ('cn')" in paths and "@example.com" in paths
+    assert "countIf(event IN ('account_created')) > 0 AS signup" in paths
     with pytest.raises(j.ContractError):
         j.request(c, m, "timelines1", ["not-a-uuid"])
     with pytest.raises(j.ContractError):
@@ -229,6 +244,64 @@ def test_drift_names_silent_key_events_and_likely_renames(j, m):
     }
 
 
+def path_row(entry, route, exit_, sessions, **values):
+    return {
+        "entry": entry,
+        "route": route,
+        "exit": exit_,
+        "sessions": sessions,
+        "people": sessions,
+        "known": 0,
+        "pageviews": 1.0,
+        "bounced": 0,
+        "intent": 0,
+        "signup": 0,
+        "rage": 0,
+        **values,
+    }
+
+
+def test_site_paths_show_where_visitors_come_in_and_leave(j):
+    columns = list(j.PATHS)
+    rows = [
+        path_row("/", "/", "/", 40, bounced=38, known=2),
+        path_row("/", "/ > /about", "/about", 9, pageviews=2.2),
+        path_row("/", "/ > /pricing", "/pricing", 5, intent=3, pageviews=2.0),
+        path_row("/blog/a", "/blog/a", "/blog/a", 6, bounced=6),
+        path_row("/blog/a", "/blog/a > /", "/", 1, rage=1),
+        path_row("/", "/ > /pricing > /sign-up", "/sign-up", 2, intent=2, signup=2),
+    ]
+    found = j.path_rows({"columns": columns, "rows": [[r[k] for k in columns] for r in rows]})
+    site = j.site_paths(found, has_more=True)
+    assert {k: site[k] for k in ("sessions", "known", "bounced", "intent", "signup", "rage")} == {
+        "sessions": 63,
+        "known": 2,
+        "bounced": 44,
+        "intent": 5,
+        "signup": 2,
+        "rage": 1,
+    }
+    assert site["landing"][:2] == [
+        {"path": "/", "sessions": 56, "bounced": 38},
+        {"path": "/blog/a", "sessions": 7, "bounced": 6},
+    ]
+    # Exits count browsing sessions that never reached intent or signup; one-page visits and
+    # sessions that went on to sign up are not leaving from where they ended.
+    assert site["exits"] == [
+        {"path": "/about", "sessions": 9},
+        {"path": "/pricing", "sessions": 2},
+        {"path": "/", "sessions": 1},
+    ]
+    assert [(r["route"], r["reached"]) for r in site["routes"]] == [
+        ("/ > /about", None),
+        ("/ > /pricing", "intent"),
+        ("/ > /pricing > /sign-up", "signup"),
+    ]
+    assert site["truncated"] is True
+    with pytest.raises(j.ContractError):
+        j.path_rows({"columns": columns[:-1], "rows": []})
+
+
 # ---------------------------------------------------------------- people, journeys, frictions
 
 
@@ -242,24 +315,31 @@ def test_every_person_gets_one_tier_and_only_identified_people_are_named(j, peop
         BOT: "bot",
         PASSER: "passer_by",
         BROWSER: "browser",
+        ACCOUNT: "account",
     }
     ana = next(p for p in people if p["person_id"] == ANA)
     assert ana["email"] == "ana@fieldnotes.dev" and "intent" in ana["flags"]
     assert next(p for p in people if p["person_id"] == CARA)["flags"] == ["returning"]
     assert j.counts(people) == {
-        "people": 7,
+        "people": 8,
         "identified": 4,
         "lead": 1,
         "new_user": 1,
         "user": 1,
         "browser": 1,
         "passer_by": 1,
+        "account": 1,
         "team": 1,
         "bot": 1,
     }
-    # New users and failures are read first; the team, bots and passers-by never.
+    # New users and failures are read first, then anonymous browsers; the team, bots and
+    # passers-by never, and a server-only account only for a failure.
     assert j.choose(people, 2)[:2] == [ANA, BROWSER]
-    assert not {TEAM, BOT, PASSER} & set(j.choose(people, 30))
+    assert set(j.choose(people, 30)) == {ANA, BEN, CARA, BROWSER, ACCOUNT}
+    quiet = [x for x in people if x["person_id"] != ACCOUNT] + [
+        {**next(x for x in people if x["person_id"] == ACCOUNT), "flags": []}
+    ]
+    assert ACCOUNT not in j.choose(quiet, 30)
     with pytest.raises(j.ContractError):
         j.named(next(p for p in people if p["person_id"] == BROWSER), "anonymous")
 
@@ -446,7 +526,8 @@ def report(j, c, m, people, *, status="complete", reason="", requests=None, name
         ]
     )
     ledger = j.carry({"frictions": [], "people": []}, people, [], c)
-    evidence = j.assemble(c, status, reason, requests, people, named, [], ledger, m)
+    site = j.site_paths([path_row("/", "/", "/", 4, bounced=4)])
+    evidence = j.assemble(c, status, reason, requests, people, named, [], ledger, m, site=site)
     text = (
         body
         if body is not None
@@ -469,7 +550,7 @@ def test_the_resource_and_tin_agree_on_the_contract(j):
 
 def test_a_complete_report_passes_both_checks_and_names_its_people(j, c, m, people):
     text = report(j, c, m, people)
-    assert j.check(text)["counts"]["people"] == 7
+    assert j.check(text)["counts"]["people"] == 8
     outcome = visitor_journal.read(text)
     assert (outcome.status, outcome.measured_nothing, outcome.window_end) == (
         "complete",
@@ -482,8 +563,9 @@ def test_a_complete_report_passes_both_checks_and_names_its_people(j, c, m, peop
         ("cara@studio.design", "user"),
     ]
     assert outcome.people[0].replay_url == REPLAY + "01a1-session-0001"
-    assert visitor_journal.summary(outcome) == "1 new user, 1 lead, 1 user among 7 visitors."
+    assert visitor_journal.summary(outcome) == "1 new user, 1 lead, 1 user among 8 visitors."
     assert j.previous(text)["map"] == m
+    assert j.previous(text)["site"]["landing"] == [{"path": "/", "sessions": 4, "bounced": 4}]
 
 
 def test_the_check_refuses_what_tin_would_not_publish_or_trust(j, c, m, people):

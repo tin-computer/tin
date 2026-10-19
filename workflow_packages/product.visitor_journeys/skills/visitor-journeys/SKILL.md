@@ -20,8 +20,8 @@ folder, and read it back through the matching resource function. Record every ca
 refused, with `outcome()`. A refused or truncated call is missing evidence, never zero. Do not
 retry a refused query under a new step; say what it would have shown.
 
-The call budget is 16. A normal run uses 8 to 10: project, inventory and hosts (on the first run
-or on drift), census, prior, frictions, loops, and one or two timeline batches.
+The call budget is 16. A normal run uses 9 to 11: project, inventory and hosts (on the first run
+or on drift), census, prior, frictions, loops, paths, and one or two timeline batches.
 
 ## 1. Settings and memory
 
@@ -78,6 +78,9 @@ Run `census` and `prior`, then `p = people(...)`. Every person has one tier:
 - **user**: identified, and signed up before.
 - **browser**: anonymous, with more than one page or a key event.
 - **passer_by**: anonymous, one page, nothing else. Count only.
+- **account**: no email and no pageviews, only server events. It is a product account the
+  website never saw, often a tenant or workspace ID. Count it apart from browsers; its failures
+  still count as frictions.
 - **team** and **bot**: left out and counted.
 
 You may move a user to lead when the ICP file or what they did shows strong fit or intent. Give
@@ -94,10 +97,31 @@ each journey as 3 to 6 plain steps that end with where they stopped and the most
 For example: "picked the Growth plan, opened Connect GitHub three times, left after 40 seconds
 without connecting". Note the time between steps when it matters.
 
+`choose()` also reads the three most engaged anonymous browsers. Write each of them in one line
+under "How visitors use the site", without a name, a city or a company.
+
 Use `replay(m, session_id)` for replay links. Never write a link by hand. Never quote what a
 person typed. Element text is button and link labels only.
 
-## 5. Frictions
+## 5. How visitors use the site
+
+Run `paths` and keep `s = site_paths(path_rows(result), has_more)`; pass it to `assemble()` as
+`site`. It counts website sessions, mostly anonymous, by where they came in, the route of their
+first pages, and where they left. Write:
+- where visitors come in: the top landing pages, with how many left after that one page;
+- the common routes of two or more pages, and where visitors who browsed left without reaching
+  intent or signup;
+- how many sessions reached intent or signup. Signup counts only when the signup event carries
+  the browser session. When people sign up on another host, such as the app, `signup` is 0; say
+  so instead of calling it zero conversions, and use the identified tiers;
+- what changed since the previous run's `site` from `previous()`, only when it matters: a page's
+  share of one-page visits moving by 10 points or more on 20 or more sessions;
+- the anonymous journeys from section 4.
+
+A page most people leave is an observation. It becomes a product change only with a cause you
+can see on the page or in its code, such as a broken link, a missing next step or a slow load.
+
+## 6. Frictions
 
 `frictions(friction_rows, loop_rows, stalls(p, m), p)` groups rage clicks, dead clicks, errors,
 failure events, loops (the same page opened three or more times in one session) and stalls (a
@@ -119,7 +143,7 @@ For each reportable friction:
 - if the founder stopped it themselves, as "stopped by user" in a failure message, it is not
   a friction.
 
-## 6. Delights
+## 7. Delights
 
 Report moments that show the product gave someone value:
 - a key action finished within the first session;
@@ -130,7 +154,7 @@ Report moments that show the product gave someone value:
 Name the person and the moment. These people are the best to ask for a testimonial or a
 case study; say so when it fits.
 
-## 7. People to act on
+## 8. People to act on
 
 For each lead, each new user and any user with a friction or a delight, call `named()` with:
 - `summary`: who they are, from their own data only (name, email domain, company if their domain
@@ -145,7 +169,7 @@ Never suggest contacting a passer-by or an anonymous browser. Never infer a comp
 address, a network, a city or a device. At most 60 named people; when there are more, name those
 with the highest scores and count the rest.
 
-## 8. Product changes and tracking
+## 9. Product changes and tracking
 
 Collect reportable frictions and stalls into at most 5 proposed changes, most costly first. Cost
 means people lost before signup, booking or payment, then people affected. Each change gives the
@@ -158,9 +182,10 @@ Keep tracking problems apart, each with its exact fix:
 - team members who are not excluded;
 - capture settings that hide frictions, such as dead clicks or exceptions switched off.
 
-## 9. Write
+## 10. Write
 
-Build the ledger with `carry(prev["ledger"], p, f, c)`. Build the evidence with `assemble()`.
+Build the ledger with `carry(prev["ledger"], p, f, c)`. Build the evidence with `assemble()`,
+passing `site=s`.
 Write the report in REPORT.md's order, append `render_evidence(evidence)`, and run `check()` on
 the whole text. Fix what it raises, then save the report to context.output.path.
 

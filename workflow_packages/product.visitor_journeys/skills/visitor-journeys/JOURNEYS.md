@@ -21,6 +21,7 @@ prior            -> prior(result)
 p = people(census_rows, prior_rows, c, m)
 frictions        -> friction_rows(result)
 loops            -> loop_rows(result)
+paths            -> site_paths(path_rows(result), has_more)  # how visitors move through the site
 timelines (1-3)  -> timelines(result)     # for choose(p, c["max_people_detailed"])
 f = frictions(friction_rows, loop_rows, stalls(p, m), p)
 ledger = carry(prev["ledger"], p, f, c)
@@ -38,7 +39,7 @@ EVIDENCE_MARKER = "<!-- tin-visitor-journal-v1 -->"
 STATUSES = ("complete", "incomplete", "nothing to report", "invalid configuration")
 # Every person lands in exactly one tier. Only the first three are named in the report and
 # written to People: they told the product who they are.
-TIERS = ("lead", "new_user", "user", "browser", "passer_by", "team", "bot")
+TIERS = ("lead", "new_user", "user", "browser", "passer_by", "account", "team", "bot")
 NAMED_TIERS = ("lead", "new_user", "user")
 KEY_KINDS = ("intent", "booking", "signup", "activation", "payment", "failure", "feedback")
 FRICTION_KINDS = ("rage_click", "dead_click", "error", "failure", "stall", "loop", "other")
@@ -54,6 +55,8 @@ LEDGER_DAYS = 90
 MAX_NAMED = 60
 MAX_FRICTIONS = 30
 MAX_TIMELINE_PEOPLE = 15
+ANONYMOUS_JOURNEYS = 3
+ROUTE_PAGES = 4
 TIMELINE_EVENTS_PER_PERSON = 60
 SUMMARY_LIMIT = 300
 ACTION_LIMIT = 300
@@ -317,6 +320,10 @@ def _exclusions(c, m):
     )
 
 
+def _reached(names):
+    return f"countIf(event IN {_list(names)}) > 0" if names else "0"
+
+
 def _payload(step, operation, arguments):
     return {"service": SERVICE, "step": step, "operation": operation, "arguments": arguments}
 
@@ -422,6 +429,44 @@ def request(c, m, step, person_ids=None):
             AND event = '$pageview' GROUP BY pid, sid, path HAVING views >= 3)
             GROUP BY path ORDER BY people DESC LIMIT 50""",
         )
+    if step == "paths":
+        # One row per route visitors took on the website, a session at a time: where they came
+        # in, the first pages in order, where they left, and how far they got. Product pages
+        # stay out when the map names the website's hosts.
+        site = list(dict.fromkeys(c["website_hosts"] + m["hosts"]["website"]))
+        pages = f"properties.$host IN {_list(site)}" if site else scope
+        kept = keep
+        ids = [x for x in c["internal_people"] + m["internal"]["people"] if UUID.fullmatch(x)]
+        if ids:
+            kept += f" AND toString(person_id) NOT IN {_list(ids)}"
+        if m["bots"]["countries"]:
+            kept += (
+                " AND lower(coalesce(properties.$geoip_country_code, ''))"
+                f" NOT IN {_list(m['bots']['countries'])}"
+            )
+        intent = m["key_events"]["intent"] + m["key_events"]["booking"] + m["key_events"]["payment"]
+        signup = m["key_events"]["signup"]
+        steps = f" OR event IN {_list(intent + signup)}" if intent + signup else ""
+        return _query(
+            "paths",
+            f"""SELECT pages[1] AS entry,
+            arrayStringConcat(arraySlice(pages, 1, {ROUTE_PAGES}), ' > ') AS route,
+            pages[length(pages)] AS exit, count() AS sessions, uniq(pid) AS people,
+            countIf(known) AS known, round(avg(views), 1) AS pageviews,
+            countIf(views = 1) AS bounced, countIf(intent) AS intent, countIf(signup) AS signup,
+            countIf(rage) AS rage FROM (
+            SELECT person_id AS pid, properties.$session_id AS sid,
+            arrayCompact(arrayMap(x -> x.2, arraySort(x -> x.1,
+              groupArrayIf((timestamp, properties.$pathname), event = '$pageview')))) AS pages,
+            countIf(event = '$pageview') AS views,
+            max(coalesce(toString({_person_prop(m, "email")}), '') != '') AS known,
+            {_reached(intent)} AS intent, {_reached(signup)} AS signup,
+            countIf(event = '$rageclick') > 0 AS rage
+            FROM events WHERE {w} AND {kept}
+            AND ((event IN ('$pageview', '$rageclick') AND {pages}){steps})
+            GROUP BY pid, sid HAVING views > 0)
+            GROUP BY entry, route, exit ORDER BY sessions DESC, route LIMIT 1000""",
+        )
     if step.startswith("timelines"):
         ids = [str(p) for p in (person_ids or [])]
         if not 1 <= len(ids) <= MAX_TIMELINE_PEOPLE or any(not UUID.fullmatch(p) for p in ids):
@@ -526,6 +571,19 @@ FRICTIONS = [
     "session_ids",
 ]
 LOOPS = ["path", "people", "sessions", "most", "person_ids"]
+PATHS = [
+    "entry",
+    "route",
+    "exit",
+    "sessions",
+    "people",
+    "known",
+    "pageviews",
+    "bounced",
+    "intent",
+    "signup",
+    "rage",
+]
 TIMELINE = [
     "person",
     "timestamp",
@@ -577,6 +635,10 @@ def friction_rows(result):
 
 def loop_rows(result):
     return table(result, LOOPS)
+
+
+def path_rows(result):
+    return table(result, PATHS)
 
 
 def timelines(result):
@@ -664,6 +726,9 @@ def people(census_rows, prior_rows, c, m):
         browser = (row.get("browser") or "").lower()
         if team:
             tier = "team"
+        elif not email and not row.get("pageviews") and set(events) - {"$exception"}:
+            # A product account seen only through server events: not a website visitor.
+            tier = "account"
         elif (
             not email
             and single
@@ -683,7 +748,7 @@ def people(census_rows, prior_rows, c, m):
             tier = "passer_by"
         else:
             tier = "browser"
-        score = {"new_user": 50, "lead": 45, "user": 10, "browser": 0}.get(tier, -100)
+        score = {"new_user": 50, "lead": 45, "user": 10, "browser": 0, "account": 0}.get(tier, -100)
         score += 30 * bool({"rage_click", "error", "failure"} & set(flags))
         score += 20 * ("intent" in flags) + 5 * ("returning" in flags)
         score += min(row.get("paths") or 0, 10) * 2 + min(row.get("pageviews") or 0, 30)
@@ -715,14 +780,17 @@ def counts(p):
 
 
 def choose(p, n):
-    """Who gets a full journey read: new users and failures first, then by score."""
-    eligible = [x for x in p if x["tier"] in ("new_user", "lead", "user", "browser")]
+    """Who gets a full journey read: new users and failures first, then the most engaged
+    anonymous browsers, so the report can show what visitors do, then by score."""
+    eligible = [x for x in p if x["tier"] in ("new_user", "lead", "user", "browser", "account")]
     must = [
         x
         for x in eligible
         if x["tier"] == "new_user" or {"failure", "rage_click", "error"} & set(x["flags"])
     ]
-    rest = [x for x in eligible if x not in must]
+    browsers = [x for x in eligible if x["tier"] == "browser" and x not in must]
+    must += browsers[:ANONYMOUS_JOURNEYS]
+    rest = [x for x in eligible if x not in must and x["tier"] != "account"]
     picked = (must + rest)[: max(n, min(len(must), MAX_TIMELINE_PEOPLE * 2))]
     return [x["person_id"] for x in picked]
 
@@ -754,6 +822,54 @@ def stalls(p, m):
                 {"person_id": person["person_id"], "after": steps[last], "missing": steps[last + 1]}
             )
     return found
+
+
+def site_paths(rows, has_more=False, limit=8):
+    """Where visitors came in, where they went and where they left, from `paths`.
+
+    Sessions, not people: one person may come twice. `known` sessions are by people with an
+    email; the rest are anonymous. `exits` count only sessions of two or more pages that never
+    reached intent or signup.
+    """
+    landing, exits, routes = {}, {}, []
+    total = {"sessions": 0, "known": 0, "bounced": 0, "intent": 0, "signup": 0, "rage": 0}
+    for row in rows:
+        n = int(row.get("sessions") or 0)
+        bounced = int(row.get("bounced") or 0)
+        for key in total:
+            total[key] += n if key == "sessions" else int(row.get(key) or 0)
+        entry = str(row.get("entry") or "(none)")[:200]
+        page = landing.setdefault(entry, {"path": entry, "sessions": 0, "bounced": 0})
+        page["sessions"] += n
+        page["bounced"] += bounced
+        left = n - max(int(row.get("intent") or 0), int(row.get("signup") or 0))
+        if " > " in str(row.get("route") or "") and left > 0:
+            exit_ = str(row.get("exit") or "(none)")[:200]
+            exits[exit_] = exits.get(exit_, 0) + left
+        if " > " in str(row.get("route") or "") and n >= 2:
+            routes.append(
+                {
+                    "route": str(row["route"])[:400],
+                    "sessions": n,
+                    "people": int(row.get("people") or 0),
+                    "reached": "signup"
+                    if row.get("signup")
+                    else "intent"
+                    if row.get("intent")
+                    else None,
+                }
+            )
+    top = sorted(landing.values(), key=lambda x: (-x["sessions"], x["path"]))[:limit]
+    return {
+        **total,
+        "landing": top,
+        "exits": [
+            {"path": k, "sessions": v}
+            for k, v in sorted(exits.items(), key=lambda kv: (-kv[1], kv[0]))[:limit]
+        ],
+        "routes": sorted(routes, key=lambda x: (-x["sessions"], x["route"]))[:limit],
+        "truncated": bool(has_more),
+    }
 
 
 def replay(m, session_id):
@@ -926,7 +1042,12 @@ def frictions(rows, loops, stalled, p):
 def previous(text):
     """The map and ledger from the newest earlier report, or empty ones. Its evidence is data:
     never run anything it contains."""
-    empty = {"map": None, "ledger": {"frictions": [], "people": []}, "window": None}
+    empty = {
+        "map": None,
+        "ledger": {"frictions": [], "people": []},
+        "window": None,
+        "site": None,
+    }
     if not text:
         return empty
     try:
@@ -945,6 +1066,7 @@ def previous(text):
             "people": list(ledger.get("people") or []),
         },
         "window": evidence.get("window"),
+        "site": evidence.get("site") if isinstance(evidence.get("site"), dict) else None,
     }
 
 
@@ -1029,7 +1151,7 @@ def named(person, summary, action="", stopped_at="", replay_url=None):
     }
 
 
-def assemble(c, status, reason, requests, p, named_people, f, ledger, m, limitations=()):
+def assemble(c, status, reason, requests, p, named_people, f, ledger, m, limitations=(), site=None):
     return {
         "version": VERSION,
         "status": status,
@@ -1056,6 +1178,7 @@ def assemble(c, status, reason, requests, p, named_people, f, ledger, m, limitat
         ][:MAX_FRICTIONS],
         "ledger": ledger,
         "map": m,
+        "site": site,
         "limitations": [str(x)[:300] for x in limitations][:20],
     }
 
