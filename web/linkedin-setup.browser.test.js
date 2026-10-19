@@ -115,6 +115,10 @@ for (const named of [true, false]) test(named ? "LinkedIn guides installation, c
     await dialog.getByText("Tin could not prepare LinkedIn search. Keep LinkedIn open and try again.").waitFor();
     assert.equal(await dialog.isVisible(),true,"a saved preference is not reported as finished cloud setup");
     assert.equal(await dialog.getByRole("button",{name:"Try again",exact:true}).isEnabled(),true);
+    // Tin refused the login the extension sent: say so at once, not after the wait.
+    await page.evaluate(()=>{window.setupFailure="invalid_session";});
+    await dialog.getByRole("button",{name:"Try again",exact:true}).click();
+    await dialog.getByText("Tin couldn't use the LinkedIn sign-in in this Chrome profile. Sign out of LinkedIn and back in, then try again.").waitFor({timeout:5000});
     await page.evaluate(()=>{window.setupFailure="";window.breakBridgeOnWake=true;});
     await dialog.getByRole("button",{name:"Try again",exact:true}).click();
     await dialog.getByText("Install or update the Tin extension, then refresh this Tin tab.").waitFor();
