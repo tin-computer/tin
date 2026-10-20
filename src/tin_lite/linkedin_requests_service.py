@@ -159,6 +159,14 @@ class ConnectionRequests:
             raise _refused(error) from None
         return await self.state(project_id, member)
 
+    async def _refusal(self, error, project_id: UUID, member: str) -> RequestsRefused:
+        """Sending is off only for a member who turned it off or reads in this browser only;
+        the second needs cloud reading, not the switch."""
+
+        if error.code == "sending_off" and await self._reading(project_id, member) != "cloud":
+            return RequestsRefused(409, "Turn on cloud reading on the LinkedIn card first.")
+        return _refused(error)
+
     async def _on_by_default(self, project_id: UUID, member: str) -> None:
         """Sending is on for a member who never set it, once their LinkedIn reading runs in the
         cloud. Their first approval records it, so a pause at LinkedIn's first warning has a
@@ -210,7 +218,7 @@ class ConnectionRequests:
                     people=people,
                 )
         except requests.RequestError as error:
-            raise _refused(error) from None
+            raise await self._refusal(error, project_id, member) from None
         if decided["status"] == "approved":
             try:
                 run_id = await self._sending(
@@ -249,7 +257,7 @@ class ConnectionRequests:
                     conn, project_id, member, people, request_id=request_id
                 )
         except requests.RequestError as error:
-            raise _refused(error) from None
+            raise await self._refusal(error, project_id, member) from None
         batch_id = picked["batch_id"]
         try:
             await self._sending(project_id, batch_id, member, trigger_source, oauth_client_id)

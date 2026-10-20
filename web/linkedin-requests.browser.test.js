@@ -89,6 +89,14 @@ test("with sending off, the batch asks you to turn it on first", {timeout: 12000
   });
 });
 
+test("reading in this browser only asks for cloud reading, not the switch", {timeout: 120000}, async () => {
+  await open({url: "/decisions", state: {...requests({on: false}), reading: false, browser_only: true}}, async page => {
+    const card = page.locator(".requests-card");
+    await card.waitFor();
+    assert.match(await card.innerText(), /Turn on cloud reading on the LinkedIn card first\./);
+  });
+});
+
 test("turning sending back on starts with the consent box ticked, then shows the week", {timeout: 120000}, async () => {
   await open({url: "/integrations", state: requests({on: false})}, async (page, served) => {
     await page.locator(".linkedin-card").getByRole("button", {name: "Configure"}).click();

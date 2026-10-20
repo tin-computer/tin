@@ -100,7 +100,7 @@ window.TinRequests = (() => {
         <p class="decision-note">${escape(terms)}</p>
         ${sending.on
           ? '<button class="requests-settings-link" type="button" data-requests-open-settings>Sending settings</button>'
-          : '<p class="decision-note requests-off">Turn on sending on the LinkedIn card first. <button class="requests-settings-link" type="button" data-requests-open-settings>Open the LinkedIn card</button></p>'}
+          : `<p class="decision-note requests-off">${escape(offLine(data))} <button class="requests-settings-link" type="button" data-requests-open-settings>Open the LinkedIn card</button></p>`}
       </div>
       <footer>
         <button class="decision-discard" type="button" data-requests-action="discard">Discard</button>
@@ -286,10 +286,16 @@ window.TinRequests = (() => {
     });
   }
 
+  // Sending is on by default with cloud reading: off means the member turned it off, or reads
+  // in this browser only, with no saved session to send with.
+  function offLine(data) {
+    return data?.reading ? "Turn on sending on the LinkedIn card first." : "Turn on cloud reading on the LinkedIn card first.";
+  }
+
   // People (Paper REQ-A): what the bar above the grid says about sending to the people ticked.
   function picked(data) {
     const sending = data?.sending || {};
-    if (!sending.on) return { ready: false, line: "Turn on sending on the LinkedIn card first." };
+    if (!sending.on) return { ready: false, line: offLine(data) };
     if (sending.held) return { ready: true, line: `Sending is paused: ${data.pause_text || "LinkedIn refused a request"}. They wait until you resume it.` };
     const where = zone(sending);
     const window = `weekdays ${clock(sending.start_minute)}–${clock(sending.end_minute)}${where === "your time" ? "" : ` ${where}`}`;
