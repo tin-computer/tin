@@ -88,7 +88,7 @@ test("both connected: Turn off removes reading only, Disconnect LinkedIn both, e
     await card(page).getByRole("button", {name: "Configure", exact: true}).click();
     const rows = card(page).locator(".linkedin-part");
     assert.match(await rows.nth(1).innerText(), /Reading\s*Your posts and who engaged · cloud with browser backup\s*Tin for Chrome · your own session · checked/);
-    assert.match(await card(page).locator(".integration-control-footer").innerText(), /Reading and sending use your own LinkedIn; each teammate turns on theirs\.\s*Settings\s*Disconnect LinkedIn\s*Done/);
+    assert.match(await card(page).locator(".integration-control-footer").innerText(), /Reading and sending use your own LinkedIn; each teammate connects their own\.\s*Settings\s*Disconnect LinkedIn\s*Done/);
 
     const asked = [];
     page.on("dialog", dialog => {asked.push(dialog.message()); dialog.accept();});

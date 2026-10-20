@@ -1641,9 +1641,10 @@ def create_mcp_app(
         """Approve LinkedIn connection requests the founder chose, only as they said in their
         words: list_open_decisions shows the batch. Approving queues them; Tin sends them one
         at a time on its own schedule from the founder's own LinkedIn session and stops at
-        LinkedIn's first warning. Only the member whose LinkedIn sends them can approve, and
-        sending must be on (the founder ticks it on the LinkedIn card). `request_id` is a fresh
-        UUID; the same one repeats the same approval."""
+        LinkedIn's first warning. Only the member whose LinkedIn sends them can approve.
+        Sending is on by default once their LinkedIn reading runs in the cloud; only a founder
+        who turned it off turns it back on, on the LinkedIn card. `request_id` is a fresh UUID;
+        the same one repeats the same approval."""
         return await _decide_requests(
             "approve_connection_requests",
             project_id,
@@ -1661,9 +1662,10 @@ def create_mcp_app(
         their words. list_people shows who `can_request` (someone Tin can name on LinkedIn, not
         a customer, not already connected to or asked by the caller). Choosing them is the
         approval: Tin queues them and sends them one at a time on its own schedule from the
-        caller's own LinkedIn session, and stops at LinkedIn's first warning. Sending must be
-        on (the founder ticks it on the LinkedIn card). `request_id` is a fresh UUID; the same
-        one repeats the same choice."""
+        caller's own LinkedIn session, and stops at LinkedIn's first warning. Sending is on by
+        default once their LinkedIn reading runs in the cloud; only a founder who turned it off
+        turns it back on, on the LinkedIn card. `request_id` is a fresh UUID; the same one
+        repeats the same choice."""
         from tin_lite.linkedin_requests_service import ConnectionRequests, RequestsRefused
 
         token = await caller()

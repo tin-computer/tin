@@ -107,6 +107,8 @@ async def test_sending_needs_cloud_reading(collection_db):
     """Sending uses the session cloud reading saves: browser-only reading can't turn it on."""
 
     f = await fixture(collection_db)
+    await ran(f, [person(1)])
+    known = await ids(f)
     await f.db.pool.execute(
         """UPDATE integration_connections
            SET configuration = jsonb_set(configuration, '{collection_permission,mode}',
@@ -120,8 +122,14 @@ async def test_sending_needs_cloud_reading(collection_db):
         refused = await http.put(f"{base}/sending", json={"enabled": True, "consent_version": 1})
     assert state["reading"] is False and state["browser_only"] is True
     assert refused.status_code == 409 and "cloud reading" in refused.text
-    # Browser-only reading isn't on by default either: there is no saved session to send with.
+    # Browser-only reading isn't on by default either: there is no saved session to send with,
+    # and choosing someone says what to turn on.
     assert state["sending"]["on"] is False
+    async with client(f) as http:
+        chosen = await http.post(
+            f"{base}/send", json={"request_id": str(uuid4()), "people": [str(known[member(1)])]}
+        )
+    assert chosen.status_code == 409 and "Turn on cloud reading" in chosen.json()["detail"]
 
 
 async def test_sending_is_on_by_default_and_the_first_approval_records_it(collection_db):

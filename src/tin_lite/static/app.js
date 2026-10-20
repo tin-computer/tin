@@ -7267,7 +7267,7 @@ function renderLinkedInExpanded(card) {
   return `<div class="integration-expanded linkedin-expanded">
     ${rows.join("")}
     ${connected ? `<div class="integration-control-footer">
-      <span class="linkedin-footnote">${reading ? "Reading and sending use your own LinkedIn; each teammate turns on theirs." : ""}</span>
+      <span class="linkedin-footnote">${reading ? "Reading and sending use your own LinkedIn; each teammate connects their own." : ""}</span>
       ${reading?.connection_id ? `<button type="button" class="integration-reconnect" data-integration-connect="network.linkedin">${linkedInSetupReady(reading) ? "Settings" : "Finish setup"}</button>` : ""}
       <button type="button" class="integration-disconnect" data-linkedin-disconnect>Disconnect LinkedIn</button>
       <button type="button" class="integration-done" data-integration-expand="linkedin">Done</button>
