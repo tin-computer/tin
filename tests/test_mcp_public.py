@@ -601,6 +601,7 @@ ADDED_INPUTS = {
     "qa.buyer_trust": {"product_url": "https://product.example"},
     "outreach.paying_segment": {"retention_days": 60},
     "outreach.speaking_shortlist": {},
+    "outreach.podcast_guest": {"founder_profile": "Founder and CEO; built two developer tools."},
     "outreach.syllabus_placement": {},
     "outreach.marketplace_listings": {},
     "outreach.campus_events": {},
