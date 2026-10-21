@@ -490,3 +490,29 @@ def test_without_long_shots_every_pick_is_a_likely_show(scoring):
     assert [row["name"] for row in result["picks"]] == ["Likely 1", "Likely 2", "Likely 3"]
     with pytest.raises(ValueError, match="tier"):
         plan(scoring, ARENAS, [show(tier="dream")], AS_OF)
+
+
+def test_a_quoted_draft_renders_as_written_with_its_list_and_sign_off(scoring):
+    from tin_lite.documents import render_markdown
+
+    draft = (
+        "Five offices, one security policy, five ways to drift.\n"
+        "I ran the same standards across five sites.\n"
+        "- What the auditor never sees.\n"
+        "- Who approves the fix.\n"
+        "Open to it?\n"
+        "\n"
+        "Ravi Mandal, founder, ZeroTB\n"
+        "https://zerotb.example.com\n"
+    )
+    text = scoring["quote"](draft)
+    assert all(line == ">" or line.startswith("> ") for line in text.split("\n"))
+    html = render_markdown(text).html
+    assert html.count("<blockquote>") == 1 and "https://zerotb.example.com" in html
+    body = html.split("<blockquote>", 1)[1].split("</blockquote>", 1)[0]
+    assert "https://zerotb.example.com" in body
+    assert "five ways to drift.<br />" in body
+    assert body.count("<li>") == 2 and "<li>Who approves the fix.</li>" in body
+    assert "Ravi Mandal, founder, ZeroTB<br />" in body
+    with pytest.raises(ValueError):
+        scoring["quote"]("   ")
