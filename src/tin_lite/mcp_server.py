@@ -28,7 +28,7 @@ from tin_lite.billing_contracts import BillingError
 from tin_lite.brand_capture import preparation as brand_capture_preparation
 from tin_lite.campaign_revisions import request_email_campaign_revision
 from tin_lite.capture_revisions import ProposalFile
-from tin_lite.connection_collection import NOT_YOURS, owns
+from tin_lite.connection_collection import NOT_YOURS, owns, viewed_by
 from tin_lite.connection_collection import validate_inputs as validate_collection_inputs
 from tin_lite.connection_collection import visible as collection_visible
 from tin_lite.content_delivery import DRAFT_WORKFLOW_ID, DeliverySettings
@@ -499,6 +499,13 @@ def _first_run_message(first_run: dict[str, Any]) -> str:
     if first_run.get("status") == "waits_for_start":
         return "Its first run waits for the start date you chose; nothing runs before then."
     return f"Its first run could not start now: {first_run.get('reason', 'unknown reason')}"
+
+
+def _teammates(key: str | None, owner: str | None, viewer: str | None) -> bool:
+    """A teammate's personal run or saved workflow: My system and its MCP lists leave it out."""
+
+    seen = viewed_by(key, owner, viewer or "")
+    return seen["personal"] and not seen["mine"]
 
 
 def _mcp_project_workflow_view(configured: Any) -> dict[str, Any]:
@@ -2727,12 +2734,18 @@ def create_mcp_app(
 
     @server.tool()
     async def list_project_workflows(project_id: str) -> list[dict[str, Any]]:
-        """List reusable workflow configurations saved in one accessible Tin project."""
+        """List reusable workflow configurations saved in one accessible Tin project. A
+        teammate's personal ones (those that use their own LinkedIn) are left out, as in My
+        system."""
         token = await caller()
         parsed_project_id = _mcp_uuid(project_id, field="project_id")
         await require_project(parsed_project_id, token, tool_name="list_project_workflows")
         configured = await runtime().database.list_project_workflows(project_id=parsed_project_id)
-        return [_mcp_project_workflow_view(item) for item in configured]
+        return [
+            _mcp_project_workflow_view(item)
+            for item in configured
+            if not _teammates(item.workflow_key, item.created_by_clerk_user_id, token.subject)
+        ]
 
     @server.tool()
     async def get_code_workflow_setup(
@@ -4804,7 +4817,8 @@ def create_mcp_app(
 
     @server.tool()
     async def list_project_runs(project_id: str, limit: int = 50) -> list[dict[str, Any]]:
-        """List Postgres-projected runs for one accessible project."""
+        """List Postgres-projected runs for one accessible project. A teammate's personal runs
+        (those that use their own LinkedIn) are left out, as in My system."""
         token = await caller()
         clerk_user_id = token.subject
         assert clerk_user_id is not None
@@ -4812,7 +4826,11 @@ def create_mcp_app(
         await require_project(parsed_project_id, token, tool_name="list_project_runs")
         if limit < 1 or limit > 200:
             raise ValueError("limit must be between 1 and 200")
-        runs = await runtime().database.list_runs(project_id=parsed_project_id, limit=limit)
+        runs = [
+            run
+            for run in await runtime().database.list_runs(project_id=parsed_project_id, limit=limit)
+            if not _teammates(run.executor, run.started_by_clerk_user_id, clerk_user_id)
+        ]
         return [
             {
                 "id": str(run.id),

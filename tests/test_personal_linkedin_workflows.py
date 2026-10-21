@@ -6,7 +6,7 @@ who saved it, with their LinkedIn. The ICP file and People stay the project's.
 from __future__ import annotations
 
 import json
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from types import SimpleNamespace
 from unittest.mock import AsyncMock
 from uuid import UUID, uuid4
@@ -21,8 +21,8 @@ from test_connection_collection import USER
 from test_connection_collection import collection_db as collection_db
 from test_linkedin_engagers import fixture
 from test_linkedin_per_member import TEAMMATE, add_teammate
-from test_linkedin_profile_viewers import Cloud, work
-from test_people_view import mcp
+from test_linkedin_profile_viewers import Cloud, viewers_run, work
+from test_people_view import mcp, structured
 
 from tin_lite import linkedin_profile_viewers as viewers
 from tin_lite.activities import AUTHOR_LEFT, TinActivities
@@ -43,13 +43,14 @@ async def saved_viewers(f, *, by=USER):
         """INSERT INTO workflows (id,key,title,executor,definition_repo_id,
                 definition_path,current_commit_sha,version_label,definition)
            VALUES ($1,$2,$2,$2,'registry/workflows',$3,$4,'1',$5::jsonb)
-           ON CONFLICT (id) DO NOTHING""",
+           ON CONFLICT DO NOTHING""",
         viewers.WORKFLOW_ID,
         viewers.KEY,
         builtin.definition_path,
         "e" * 40,
         json.dumps(definition),
     )
+    workflow_id = await f.db.pool.fetchval("SELECT id FROM workflows WHERE key=$1", viewers.KEY)
     configured = uuid4()
     await f.db.pool.execute(
         """INSERT INTO project_workflows
@@ -58,7 +59,7 @@ async def saved_viewers(f, *, by=USER):
            VALUES ($1,$2,$3,$4,$5,'{}'::jsonb,$6::jsonb,$7::jsonb,'active',$8,$9)""",
         configured,
         f.project.id,
-        viewers.WORKFLOW_ID,
+        workflow_id,
         "e" * 40,
         builtin.title,
         json.dumps(definition["input_schema"]),
@@ -245,3 +246,76 @@ async def test_each_member_saves_their_own_copy_once(collection_db):
         )
         == 2
     )
+
+
+async def personal_run(f, *, by, status="running"):
+    """A profile viewers run on the project, started by `by`, with one Activity line."""
+
+    run_id = UUID(await viewers_run(f, by=by))
+    await f.db.pool.execute(
+        "UPDATE workflow_runs SET status = $2, started_at = now() WHERE id = $1", run_id, status
+    )
+    await f.db.pool.execute(
+        """INSERT INTO activity_events (project_id, run_id, event_type, details, summary, audience)
+           VALUES ($1, $2, 'run_succeeded', '{}'::jsonb, '4 new profile views.', 'product')""",
+        f.project.id,
+        run_id,
+    )
+    return run_id
+
+
+class Profiles:
+    """Clerk's member profiles: teammates' names."""
+
+    async def member_profile(self, member):
+        return {"display_name": "Emre Example" if member == TEAMMATE else "Ege Example"}
+
+
+async def test_my_system_shows_your_own_personal_workflows_and_activity_names_a_teammate_s(
+    collection_db, monkeypatch
+):
+    f = await fixture(collection_db)
+    await add_teammate(f)
+    mine = await personal_run(f, by=USER)
+    theirs = await personal_run(f, by=TEAMMATE)
+    mine_saved = await saved_viewers(f)
+    theirs_saved = await saved_viewers(f, by=TEAMMATE)
+    project = f"/api/projects/{f.project.id}"
+    client = http(f)
+    client._transport.app.state.auth = Profiles()
+    async with client as ege:
+        runs = {item["id"]: item for item in (await ege.get(f"{project}/runs")).json()}
+        saved = {item["id"]: item for item in (await ege.get(f"{project}/workflows")).json()}
+        today = datetime.now(UTC).date()
+        monday = today - timedelta(days=today.weekday())
+        week_answer = await ege.get(f"{project}/week", params={"start": monday.isoformat()})
+        assert week_answer.status_code == 200, week_answer.text
+        week = week_answer.json()
+        summary = (await ege.get(f"{project}/system")).json()
+        activity = (await ege.get(f"{project}/activity")).json()
+    # Both are listed, marked: the dashboard keeps only yours in My system.
+    assert (runs[str(mine)]["personal"], runs[str(mine)]["mine"]) == (True, True)
+    assert (runs[str(theirs)]["personal"], runs[str(theirs)]["mine"]) == (True, False)
+    assert saved[str(mine_saved)]["mine"] and not saved[str(theirs_saved)]["mine"]
+    # The calendar and the running count are yours alone.
+    calendar = {run["id"] for run in week["runs"]}
+    assert str(mine) in calendar and str(theirs) not in calendar
+    assert {item["project_workflow_id"] for item in week["occurrences"]} <= {str(mine_saved)}
+    running = [run for run in runs.values() if run["status"] in {"pending", "running"}]
+    assert summary["running_count"] == len(running) - 1
+    # Activity keeps both; a teammate's says whose LinkedIn, by first name only.
+    by_run = {item["run_id"]: item for item in activity}
+    assert by_run[str(mine)]["teammate"] is None
+    assert by_run[str(theirs)]["teammate"] == "Emre"
+    assert TEAMMATE not in json.dumps(activity)
+    # Over MCP, the lists are My system's.
+    server = mcp(f, monkeypatch)
+    listed = structured(
+        await server.call_tool("list_project_runs", {"project_id": str(f.project.id)})
+    )
+    assert str(mine) in {run["id"] for run in listed["result"]}
+    assert str(theirs) not in {run["id"] for run in listed["result"]}
+    workflows = structured(
+        await server.call_tool("list_project_workflows", {"project_id": str(f.project.id)})
+    )
+    assert [item["id"] for item in workflows["result"]] == [str(mine_saved)]

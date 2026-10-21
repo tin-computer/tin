@@ -167,7 +167,7 @@ async def test_product_ui_reads_projects_runs_and_activity_from_postgres() -> No
             assert project_id == project.id
             return []
 
-        async def get_project_system_summary(self, *, project_id):
+        async def get_project_system_summary(self, *, project_id, viewer=None):
             assert project_id == project.id
             return {
                 "workflow_count": 2,

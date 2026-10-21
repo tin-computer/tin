@@ -45,6 +45,9 @@ const projectInviteUrl = document.querySelector("#project-invite-url");
 const copyProjectInvite = document.querySelector("#copy-project-invite");
 
 const RUNNING_STATES = new Set(["pending", "running"]);
+// A teammate's personal run or saved workflow (one that uses their own LinkedIn) stays out of
+// your My system and counts (Paper PW-A); Activity keeps it and says whose it was.
+const yoursOrShared = (item) => !(item.personal && !item.mine);
 const ACTIVE_TASK_STATES = new Set(["pending", "running", "needs_input", "paused"]);
 const BILLING_ENABLED = document.documentElement.dataset.billingEnabled === "true";
 // Browser sign-ups see a locked dashboard until their coding agent sets up the first
@@ -890,14 +893,14 @@ function registrySystemGroups(workflows) {
 function workflowHasRegistryState(workflow, status) {
   if (status === "paused") {
     return state.projectWorkflows.some(
-      (configured) => configured.workflow_id === workflow.id && configured.status === "paused",
+      (configured) => configured.workflow_id === workflow.id && configured.status === "paused" && yoursOrShared(configured),
     ) || state.runs.some(
-      (run) => run.workflow_id === workflow.id && run.status === "paused",
+      (run) => run.workflow_id === workflow.id && run.status === "paused" && yoursOrShared(run),
     );
   }
   if (status === "running") {
     return state.runs.some(
-      (run) => run.workflow_id === workflow.id && RUNNING_STATES.has(run.status),
+      (run) => run.workflow_id === workflow.id && RUNNING_STATES.has(run.status) && yoursOrShared(run),
     );
   }
   return state.runs.some(
@@ -1188,6 +1191,7 @@ function workflowSearchProjection(registry = registryWorkflows()) {
     `${workflow.title} ${workflow.key}`.toLowerCase().includes(query),
   );
   const visibleConfigured = state.projectWorkflows.filter((configured) => {
+    if (!yoursOrShared(configured)) return false;
     const run = state.runs.find((item) => item.id === configured.last_run_id);
     const runStatus = run?.status || configured.last_run_status;
     const matchesSearch = `${configured.name} ${configured.workflow_key} ${configured.workflow_description}`
@@ -1300,11 +1304,11 @@ function updateRail() {
   if (!state.project) return;
   projectName.textContent = state.project.name;
   projectSwitcher.setAttribute("aria-label", `Current project: ${state.project.name}`);
-  const active = state.runs.filter((run) => RUNNING_STATES.has(run.status)).length;
+  const active = state.runs.filter((run) => RUNNING_STATES.has(run.status) && yoursOrShared(run)).length;
   // What waits for you is counted once, on the Decisions badge.
   projectSummary.textContent = [state.project.workspace_name, `${active} running`].filter(Boolean).join(" · ");
   const runningCount = state.systemSummary?.running_count ?? state.runs.filter(
-    (run) => run.workflow_name !== "project.task" && RUNNING_STATES.has(run.status),
+    (run) => run.workflow_name !== "project.task" && RUNNING_STATES.has(run.status) && yoursOrShared(run),
   ).length;
   workflowCount.textContent = runningCount ? String(runningCount) : "";
   const waiting = decisionItems().length;
@@ -2412,7 +2416,7 @@ function renderWorkflows({ preserveEditor = false } = {}) {
   const projection = workflowSearchProjection(registry);
   const query = projection.query;
   const runningCount = state.systemSummary?.running_count ?? state.runs.filter(
-    (run) => run.workflow_name !== "project.task" && RUNNING_STATES.has(run.status),
+    (run) => run.workflow_name !== "project.task" && RUNNING_STATES.has(run.status) && yoursOrShared(run),
   ).length;
   const sectionContent = state.workflowSection === "yours"
     ? `<div id="workflow-results" class="system-workflow-list">${systemMySystemHtml()}</div>`
@@ -2971,12 +2975,13 @@ function systemWorkflowGroup(title, cards) {
 // rest fold into one row per group.
 function systemMySystemHtml() {
   const activeRuns = state.runs.filter(
-    (run) => RUNNING_STATES.has(run.status) && run.workflow_name !== "project.task",
+    (run) => RUNNING_STATES.has(run.status) && run.workflow_name !== "project.task" && yoursOrShared(run),
   );
   const query = state.workflowSearch.trim().toLowerCase();
-  const configuredById = new Map(state.projectWorkflows.map((item) => [item.id, item]));
+  const configured = state.projectWorkflows.filter(yoursOrShared);
+  const configuredById = new Map(configured.map((item) => [item.id, item]));
   const matching = new Set(
-    state.projectWorkflows.filter((item) => systemWorkflowMatches(item, activeRuns, query)),
+    configured.filter((item) => systemWorkflowMatches(item, activeRuns, query)),
   );
   const runningCards = activeRuns
     .filter((run) => {
@@ -5857,8 +5862,10 @@ function activityItem(event) {
     trigger_source: event.details?.trigger_source,
     trigger_client: event.details?.trigger_client,
   }) : null;
-  const summary = startedBy
-    ? `${plainSummary.replace(/[.\s]+$/, "")}. ${humanize(startedBy)}.`
+  // A teammate's personal run says whose LinkedIn it used, where the start's source sits.
+  const from = event.teammate ? `From ${event.teammate}’s LinkedIn` : startedBy && humanize(startedBy);
+  const summary = from
+    ? `${plainSummary.replace(/[.\s]+$/, "")}. ${from}.`
     : plainSummary;
   const run = event.run_id ? state.runs.find((item) => item.id === event.run_id) : null;
   const expanded = run && state.expandedRun?.runId === run.id && state.expandedRun?.eventId === event.id;

@@ -139,3 +139,83 @@ test("My system keeps live runs and failures open and folds the healthy rest", a
     server.close();
   }
 });
+
+test("A teammate's personal workflows stay out of My system; Activity says whose LinkedIn", async () => {
+  const sending = {...workflow, id: "requests", key: "social.linkedin_requests", title: "Send the connection requests you approve", executor: "social.linkedin_requests"};
+  const viewers = {...workflow, id: "viewers", key: "social.linkedin_profile_viewers", title: "People who viewed your LinkedIn profile", executor: "social.linkedin_profile_viewers"};
+  const yours = [
+    saved("article", "Weekly article", {schedule: weekly("tuesday", "10:00"), next_run_at: "2026-10-13T17:00:00Z"}),
+    saved("mine", "People who viewed your LinkedIn profile", {workflow_id: "viewers", workflow_key: viewers.key, personal: true, mine: true}),
+    saved("theirs", "People who viewed your LinkedIn profile", {workflow_id: "viewers", workflow_key: viewers.key, personal: true, mine: false}),
+  ];
+  const live = [
+    {...runs[0]},
+    {id: "their-send", project_id: "project", workflow_id: "requests", workflow_name: sending.key, project_workflow_id: null, status: "running", trigger_source: "manual", created_at: "2026-10-10T20:39:00Z", started_at: "2026-10-10T20:39:00Z", progress_summary: "Sending your approved connection requests, one at a time.", personal: true, mine: false},
+  ];
+  const activity = [
+    {id: 2, project_id: "project", run_id: "their-send", event_type: "run_succeeded", details: {trigger_source: "manual"}, summary: "13 connection requests sent, 9 accepted.", audience: "product", created_at: "2026-10-10T23:02:00Z", workflow_key: sending.key, workflow_title: sending.title, teammate: "Emre"},
+    {id: 1, project_id: "project", run_id: "article-run", event_type: "run_started", details: {trigger_source: "api"}, summary: "Writing the draft.", audience: "product", created_at: "2026-10-10T23:20:00Z", workflow_key: workflow.key, workflow_title: workflow.title, teammate: null},
+  ];
+  const server = http.createServer(async (request, response) => {
+    const url = new URL(request.url, "http://localhost");
+    const send = (data) => {response.setHeader("Content-Type", "application/json"); response.end(JSON.stringify(data));};
+    if (url.pathname === "/" || url.pathname === "/activity") {
+      response.setHeader("Content-Type", "text/html");
+      return response.end((await fs.readFile(path.join(assets, "index.html"), "utf8")).replaceAll("{{ASSET_VERSION}}", "test").replaceAll("{{CLERK_PUBLISHABLE_KEY}}", "").replaceAll("{{BILLING_ENABLED}}", "false"));
+    }
+    if (url.pathname.startsWith("/assets/")) {
+      const file = path.join(assets, url.pathname.slice(8));
+      response.setHeader("Content-Type", file.endsWith(".js") ? "text/javascript" : file.endsWith(".css") ? "text/css" : "application/octet-stream");
+      return response.end(await fs.readFile(file));
+    }
+    if (url.pathname === "/api/projects") return send([project]);
+    if (url.pathname === "/api/workflows") return send([workflow, sending, viewers]);
+    if (url.pathname === "/api/projects/project/workflows") return send(yours);
+    if (url.pathname === "/api/projects/project/runs") return send(live);
+    if (url.pathname === "/api/projects/project/activity") return send(activity);
+    if (url.pathname === "/api/projects/project/week") return send({start: url.searchParams.get("start"), timezone: LA, runs: [], occurrences: []});
+    // The server counts only your runs and shared ones.
+    if (url.pathname.endsWith("/system")) return send({workflow_count: 2, running_count: 1, waiting_count: 0, runs_this_month: 9});
+    if (url.pathname.startsWith("/api/")) return send([]);
+    response.writeHead(404).end();
+  });
+  await new Promise((resolve) => server.listen(0, "127.0.0.1", resolve));
+  const base = `http://127.0.0.1:${server.address().port}`;
+  const browser = await chromium.launch({headless: true});
+  const errors = [];
+  try {
+    const context = await browser.newContext({viewport: {width: 1440, height: 1000}, timezoneId: LA, colorScheme: "dark"});
+    await context.route("**/*", (route) => route.request().url().startsWith(base) ? route.continue() : route.abort());
+    await context.addInitScript(() => {
+      window.Clerk = {load: async () => {}, isSignedIn: true, user: {id: "member"}, session: {getToken: async () => "synthetic-only"}};
+    });
+    const page = await context.newPage();
+    page.setDefaultTimeout(10000);
+    page.on("pageerror", (error) => errors.push(error.message));
+    await page.clock.setFixedTime(NOW);
+    await page.goto(`${base}/?project=project#workflows`);
+    await page.locator(".system-workflow-group").first().waitFor();
+    // Only your run is Running; the teammate's saved copy isn't among the groups.
+    const titles = await page.locator(".system-workflow-group").evaluateAll((groups) => groups.map((group) => [
+      group.querySelector(":scope > header strong")?.innerText || group.querySelector(".system-group-fold .system-card-identity strong")?.innerText,
+      [...group.querySelectorAll(".system-card-identity strong")].map((title) => title.innerText),
+    ]));
+    assert.deepEqual(titles.find(([name]) => name === "Running")[1], ["Weekly article"]);
+    assert.ok(!(await page.locator("#workflow-results").innerText()).includes("Send the connection requests"));
+    assert.match(await page.locator("#project-summary").innerText(), /1 running/);
+    await page.locator("#workflow-search").fill("profile");
+    await page.waitForFunction(() => !document.querySelector(".system-group-fold"));
+    assert.equal(await page.locator("#workflow-results .system-card-identity strong").count(), 1);
+
+    // Activity keeps the teammate's run and says whose LinkedIn it used.
+    await page.goto(`${base}/activity?project=project`);
+    const theirs = page.locator(".activity-ledger-row", {hasText: "13 connection requests sent"});
+    await theirs.waitFor();
+    assert.equal(await theirs.locator("p").innerText(), "13 connection requests sent, 9 accepted. From Emre’s LinkedIn.");
+    assert.equal(await page.locator(".activity-ledger-row", {hasText: "Writing the draft"}).locator("p").innerText(), "Writing the draft. From the API.");
+    assert.deepEqual(errors, []);
+  } finally {
+    await browser.close();
+    server.close();
+  }
+});

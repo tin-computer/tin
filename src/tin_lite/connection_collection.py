@@ -357,6 +357,15 @@ NOT_YOURS = (
 ALREADY_SAVED = "You already saved this workflow on this project. Change that one instead."
 
 
+def viewed_by(key: str | None, owner: str | None, viewer: str) -> dict[str, bool]:
+    """How a member sees a run or saved workflow: whether it's personal and, if so, whether it's
+    theirs. My system shows a member only their own personal ones; Activity keeps everyone's
+    and says whose LinkedIn a teammate's used."""
+
+    personal = key in SESSION_EXECUTORS
+    return {"personal": personal, "mine": personal and owner == viewer}
+
+
 def owns(configured, clerk_user_id: str) -> bool:
     """Whether a member may change, pause, run or remove a saved workflow: anyone on the
     project may, except for a personal one, which only the member who saved it may."""

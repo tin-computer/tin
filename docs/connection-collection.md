@@ -47,6 +47,12 @@ The project's ICP file and People stay shared; who runs them, and with whose Lin
   more than once.
 - **A schedule runs as the member who saved it**, with their LinkedIn, as code schedules do. If
   they leave the project, the schedule pauses and says so; a current member saves their own.
+- **My system shows each member their own** (Paper PW-A). Runs and saved workflows carry
+  `personal` and `mine`; a teammate's personal ones stay out of your My system, the week
+  calendar, the running counts (`get_project_system_summary(viewer=)`) and the MCP lists of
+  runs and saved workflows. Activity keeps everyone's runs: a teammate's ends its line with
+  "From Emre's LinkedIn." (`teammate`, a first name from their Tin account, or "a teammate"; no
+  member ID reaches the browser).
 
 ![First-time installation with synthetic content](images/linkedin-install.png)
 
