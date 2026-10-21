@@ -345,6 +345,7 @@
           "content.diagram",
           "content.release_announce",
           "outreach.speaking_shortlist",
+          "outreach.podcast_guest",
           "outreach.newsletter_placements"
         ],
         "integrations": [],
@@ -411,6 +412,7 @@
         "workflows": [
           "research.deep_dive",
           "outreach.speaking_shortlist",
+          "outreach.podcast_guest",
           "outreach.campus_events",
           "outreach.community_threads"
         ],
@@ -595,6 +597,7 @@
     "outreach.paying_segment": "Find who pays and stays",
     "outreach.campus_events": "Find campus events to reach student buyers",
     "outreach.speaking_shortlist": "Find the talks and podcasts worth pitching",
+    "outreach.podcast_guest": "Find the podcasts to go on as a guest",
     "outreach.syllabus_placement": "Get your product taught in the courses that pick students' tools",
     "outreach.marketplace_listings": "Get listed where your integrations' users already shop",
     "content.release_announce": "Announce a new release",
@@ -654,6 +657,7 @@
     "outreach.paying_segment": "Reads Stripe subscriptions (the Stripe connection, a read-only restricted key) and names the customer segment that keeps paying, with exact inputs for the outreach shortlist, keyword plan and ads assessment; read-only, no model calls, never starts workflows or writes to Stripe.",
     "outreach.campus_events": "For businesses whose buyers are students, finds or compares upcoming campus events, ranks them on cited evidence and drafts one permission-dependent activation; never contacts organizers or students, registers, pays or collects student data.",
     "outreach.speaking_shortlist": "Find conferences, meetups and podcasts with an open call that fit the business, verify deadlines and requirements, and draft one pitch per venue; skips venues pitched before; never submits, applies or emails.",
+    "outreach.podcast_guest": "Find the podcasts worth going on as a guest across the founder's buyers, craft, home country and topic, verify each show is active and hosts guests like the founder, and draft one pitch per show in its language; needs the founder's bio; skips shows pitched before; never sends.",
     "outreach.syllabus_placement": "Find public courses where students do the product's job, rank them by when instructors pick tools, and draft a teaching kit and notes; never guesses addresses, contacts anyone or promises offers.",
     "outreach.marketplace_listings": "Map the Code map's integrations to partner app marketplaces, check presence and listing rules, and fill in the forms for up to three listings to submit; needs the Code map first; never repeats a prepared listing, signs up or submits.",
     "content.release_announce": "Drafts posts for X, LinkedIn, Reddit and Hacker News plus a newsletter email from one release's changelog, announcing only listed changes; never posts, sends or adds claims or links beyond the changelog and release link.",
