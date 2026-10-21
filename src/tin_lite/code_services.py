@@ -338,14 +338,16 @@ class CodeServices:
                 raise CodeServiceError(
                     "An earlier service request is unresolved; a new step cannot retry it."
                 )
-            count = await conn.fetchval(
-                "SELECT count(*) FROM effect_receipts WHERE operation=$1 "
-                "AND execution_key LIKE $2 AND result->>'service'=$3",
+            earlier = await conn.fetch(
+                "SELECT result->>'operation' AS operation FROM effect_receipts "
+                "WHERE operation=$1 AND execution_key LIKE $2 AND result->>'service'=$3",
                 OPERATION,
                 prefix + "%",
                 service.name,
             )
-            if count >= service.max_calls:
+            weight = managed_services.CALL_WEIGHT
+            used = sum(weight.get(row["operation"], 1) for row in earlier)
+            if used + weight.get(payload["operation"], 1) > service.max_calls:
                 raise CodeServiceError("The workflow reached its declared service-call limit.")
             secret = None
             if custom:
@@ -360,6 +362,7 @@ class CodeServices:
                 "step": step,
                 "service": service.name,
                 "provider": service.provider_key,
+                "operation": payload["operation"],
                 "binding": binding,
                 "fingerprint": fingerprint,
             }

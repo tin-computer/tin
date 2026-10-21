@@ -96,6 +96,9 @@ USAGE_PROVIDER = {
 # overrun is Tin's loss, not a larger customer charge. At the argument bounds below every
 # live read costs well under this ($0.03 at most at DataForSEO's September 2026 prices).
 CALL_CEILING_USD = {DATAFORSEO_PROVIDER: "0.05"}
+# Operations that make several upstream reads count as this many of a binding's calls, so
+# `max_calls` still bounds what one run can spend from Tin's shared provider allowance.
+CALL_WEIGHT = {"podcasts.sweep": 5}
 # Tin's own wait for Google, under the gateway's 60-second per-call limit, so a slow
 # Lighthouse run comes back as a "timed_out" result rather than an unresolved request.
 GOOGLE_SECONDS = 55

@@ -48,7 +48,7 @@ exclusions, balance, memory and the pitch block.
    checked`. Add the arena of any show named in `include_shows`.
 
 4. **Search each arena** with the methods SEARCH.md lists for it, at least two per arena,
-   inside the 30-call Podscan budget, plus web searches. Record on each arena every method
+   inside the 32-call Podscan budget (a sweep counts as five), plus web searches. Record on each arena every method
    you tried, including ones that found nothing (`tried`).
    - Start every arena except `home` with `podcasts.sweep` (SEARCH.md, "The sweep comes
      first"): one call per group of arenas, with topics in the field's own words. Read every

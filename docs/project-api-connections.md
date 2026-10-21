@@ -313,7 +313,7 @@ serp = await ctx.services.call(
 | `managed.podscan` | `podcasts.get`, `podcasts.episodes` (`podcasts.read`) | `podcast_id`; for episodes `per_page`, `page` | one show in full (description, style, website, social links, unverified `listed_email`), or its newest episodes with guests | $0 |
 | `managed.podscan` | `people.search`, `people.appearances` (`podcasts.read`) | `query` and `search_fields` (`name`, `company`, `occupation`, `industry`); or `entity_id`, `role`, `since`/`before` | people with company, occupation and appearance counts; or a person's episodes with their shows | $0 |
 | `managed.podscan` | `charts.top` (`podcasts.read`) | `platform` `apple` or `spotify`; `country`; `category` slug; `limit` | ranked shows with `podcast_id` | $0 |
-| `managed.podscan` | `podcasts.sweep` (`podcasts.read`) | `topics` (1-10 phrases); `language`; `region`; `active_since`; `limit` 10-100 | four reads a topic (best matches, biggest matches, matching recent episodes) in one call, merged by show and ranked: what each show is, its size and cadence, which topics found it, feed networks marked, and any read that did not answer | $0 |
+| `managed.podscan` | `podcasts.sweep` (`podcasts.read`) | `topics` (1-10 phrases); `language`; `region`; `active_since`; `limit` 10-100 | four reads a topic (best matches, biggest matches, matching recent episodes) in one call that counts as five of the binding's `max_calls`, merged by show and ranked: what each show is, its size and cadence, which topics found it, feed networks marked, and any read that did not answer | $0 |
 
 Podscan reads are free to runs because Tin pays Podscan a flat subscription; a binding's
 `max_calls` is the guard. Podscan's own rate limit comes back as a rate-limit error: wait and

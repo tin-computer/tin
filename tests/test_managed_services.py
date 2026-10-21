@@ -690,6 +690,33 @@ async def test_pagespeed_alone_is_included_and_a_timeout_does_not_block_later_re
     assert charge["charged_usd"] == "0.00" and charge["reason"] == "bounded-code-v1"
 
 
+async def test_an_operation_that_reads_several_times_counts_as_several_calls(billed, monkeypatch):
+    f = billed
+    # A sweep-like read counts twice against the binding's three calls.
+    monkeypatch.setattr(managed_services, "CALL_WEIGHT", {"pagespeed.run": 2})
+    provider = Provider(
+        runPagespeed=lambda r: httpx.Response(200, json=load("pagespeed_mobile.json")),
+        **{"records:queryRecord": lambda r: httpx.Response(404, json=load("crux_not_found.json"))},
+    )
+    calls = [
+        ("pagespeed", "lab", "pagespeed.run", {"url": "https://example.com/"}),
+        ("pagespeed", "field", "crux.query", {"origin": "https://example.com"}),
+        ("pagespeed", "lab", "pagespeed.run", {"url": "https://example.com/"}),
+        ("pagespeed", "lab_2", "pagespeed.run", {"url": "https://example.com/a"}),
+    ]
+    manifest = definition((PAGESPEED_PROVIDER, 3))
+    server, code, active, compute = await prepare(
+        f, monkeypatch, manifest, calls, provider, policy="bounded-code-v1"
+    )
+    run_id = (await start(f, server, active))["id"]
+    await finish(code, run_id)
+    lab, field, replay, refused = compute.results
+    assert lab["scores"] == {"performance": 68} and replay == lab
+    assert field["status"] == "no_field_data"
+    assert "service-call limit" in refused["error"]
+    assert len(provider.requests) == 2
+
+
 async def test_an_unset_key_refuses_the_start_and_a_removed_key_refuses_the_call(
     billed, monkeypatch
 ):

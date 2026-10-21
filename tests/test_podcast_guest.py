@@ -107,7 +107,7 @@ def test_manifest_binds_podscan_and_declares_context_and_a_run_owned_report():
     assert procedure["services"] == {
         "podcasts": {
             "provider_key": "managed.podscan",
-            "max_calls": 30,
+            "max_calls": 32,
             "max_response_bytes": 100000,
         }
     }

@@ -5,9 +5,10 @@
 The `podcasts` service is Tin's Podscan account (`managed.podscan`). Call it with
 `call_service(service="podcasts", step=..., operation=..., arguments={...})`. Keep each
 `step` id stable and unique (`sweep_grc`, `chart_tr_technology`); a completed step
-replays, so never reuse one for a different request. The run has **30 calls**. Plan them
-before the first call: one to three sweeps first, then about ten calls on the shows that
-carry weight and the home arenas, and about ten for reading finalists' episodes.
+replays, so never reuse one for a different request. The run has **32 calls**, and a
+sweep counts as five of them. Plan them before the first call: one or two sweeps first, then
+about ten calls on the shows that carry weight and the home arenas, and about ten for
+reading finalists' episodes.
 
 | Operation | Arguments | Returns |
 |---|---|---|
@@ -17,13 +18,13 @@ carry weight and the home arenas, and about ten for reading finalists' episodes.
 | `podcasts.search` | `query`; `language`; `region`; `has_guests`; `min_audience`; `active_since`; `search_fields` from `name`, `description`, `website`, `publisher_name`; `order_by` `best_match`, `audience_size`, `rating`, `last_posted_at` | shows with audience numbers and `last_posted` |
 | `podcasts.get` | `podcast_id` | one show in full: description, `style`, website, social links, `listed_email` |
 | `podcasts.episodes` | `podcast_id`; `per_page`; `page` | the show's newest episodes with their guests |
-| `podcasts.sweep` | `topics` (1-10 search phrases); `language` (default `en`); `region`; `active_since` (default 120 days ago); `limit` 10-100 (default 60) | one call that runs four reads a topic (best matches, two pages; biggest matches; shows whose recent episodes match) and returns the active shows merged and ranked: `topics` that found each, `episode_matches` and a `matching_episode`, `about` and `style` (what the show is), `episode_count`, `release_frequency`, `avg_episode_minutes`, `last_posted`, audience numbers, `other_feeds`, and `feed_network` for a publisher with many near-identical shows. `failed_reads` names any read that did not answer |
+| `podcasts.sweep` | `topics` (1-10 search phrases); `language` (default `en`); `region`; `active_since` (default 120 days ago); `limit` 10-100 (default 60) | one call (counted as five) that runs four reads a topic (best matches, two pages; biggest matches; shows whose recent episodes match) and returns the active shows merged and ranked: `topics` that found each, `episode_matches` and a `matching_episode`, `about` and `style` (what the show is), `episode_count`, `release_frequency`, `avg_episode_minutes`, `last_posted`, audience numbers, `other_feeds`, and `feed_network` for a publisher with many near-identical shows. `failed_reads` names any read that did not answer |
 | `charts.top` | `platform` `apple` or `spotify`; `country` (`us`, `tr`); `category` (`technology`, `business`, `entrepreneurship`, `marketing`, `all`); `limit` | ranked shows with `podcast_id` |
 
 Results come back as `records` that fit the response bound, with `total`, `truncated` and
 `next_page`. When `truncated` is true, ask again with a smaller `per_page` rather than the next
 page. A result with `status: "unavailable"` (timed out, or Podscan failed) or `"not_found"` is
-an answer: note it and move on. A failed call still counts against the 30. A rate-limit error
+an answer: note it and move on. A failed call still counts against the 32. A rate-limit error
 means wait a minute and call once more under a new step; after a second rate limit in a row,
 or a `provider_quota` error (Tin's daily Podscan allowance is used up), stop calling Podscan
 for this run, continue with the web, and say in `## What could not be checked`, in plain
