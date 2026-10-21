@@ -119,9 +119,9 @@
           {"id": "arenas", "kind": "step", "label": "Choose the audiences", "fact": "3 to 6: buyers, craft, home country, topic"},
           {"id": "search", "kind": "surface", "label": "Podscan and the web", "fact": "at most 30 Podscan calls, 2 methods an arena"},
           {"id": "verify", "kind": "step", "label": "Verify each finalist", "fact": "active, listened to, hosted guests like you"},
-          {"id": "plan", "kind": "step", "label": "Balance the picks in code", "fact": "10 by default, skips shows pitched before"},
+          {"id": "plan", "kind": "step", "label": "Balance the picks in code", "fact": "10 by default, a third long shots"},
           {"id": "draft", "kind": "step", "label": "Draft one pitch per show", "fact": "in its language, or a first step to get in"},
-          {"id": "report", "kind": "receipt", "label": "Pitches to send yourself", "fact": "reports/outreach/podcasts, Tin sends nothing"},
+          {"id": "report", "kind": "receipt", "label": "Pitches to send yourself", "fact": "summary first, Tin sends nothing"},
           {"id": "thin", "kind": "ghost", "label": "Needs more about you", "fact": "a profile with no role or background"}
         ],
         "edges": [

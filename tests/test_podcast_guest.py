@@ -130,6 +130,7 @@ def test_skill_report_labels_and_blocks_agree():
         "## Next steps",
         "## Picks",
         "**Why this show:**",
+        "**Odds:**",
         "**Guest like you:**",
         "**How to reach them:**",
         "## Ladder",
@@ -468,3 +469,23 @@ def test_the_report_reads_as_separate_lines_with_its_data_folded_away():
     # The founder-facing part names no method or arena ids.
     readable = text.split("## About this run", 1)[0]
     assert not re.search(r"buyer_guests|lookalike_|transcript_topic|Searched with", readable)
+
+
+def test_long_shots_take_about_a_third_of_the_picks_and_never_crowd_out_likely_shows(scoring):
+    likely = [show(f"Likely {n}", "buyers", n) for n in range(1, 9)]
+    reach = [show(f"Big {n}", "craft", n, tier="reach") for n in range(1, 6)]
+    result = plan(scoring, ARENAS, likely + reach, AS_OF, max_pitches=10)
+    names = [row["name"] for row in result["picks"]]
+    assert names[-3:] == ["Big 1", "Big 2", "Big 3"] and len(names) == 10
+    assert sum(name.startswith("Likely") for name in names) == 7
+    left = {row["name"]: row["reason"] for row in result["excluded"]}
+    assert left["Big 4"].startswith("more long shots than one run tries")
+    assert left["Likely 8"].startswith("more shows than the pitches you asked for")
+
+
+def test_without_long_shots_every_pick_is_a_likely_show(scoring):
+    shows = [show(f"Likely {n}", "buyers", n) for n in range(1, 6)]
+    result = plan(scoring, ARENAS, shows, AS_OF, max_pitches=3)
+    assert [row["name"] for row in result["picks"]] == ["Likely 1", "Likely 2", "Likely 3"]
+    with pytest.raises(ValueError, match="tier"):
+        plan(scoring, ARENAS, [show(tier="dream")], AS_OF)

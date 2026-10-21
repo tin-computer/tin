@@ -51,8 +51,10 @@ exclusions, balance, memory and the pitch block.
    inside the 30-call Podscan budget, plus web searches. Record on each arena every method
    you tried, including ones that found nothing (`tried`). Seed searches from the profile:
    companies like the founder's, the founder's title, the buyers' titles, the topics, the
-   home country's charts. Skip shows already pitched (state, `already_pitched`) before
-   spending calls on them.
+   home country's charts. In every arena also look for the shows that carry weight there
+   (SEARCH.md, "Finding the shows that carry weight"), starting from its `category_chart`,
+   so the plan has long shots as well as likely yeses. Skip shows already pitched (state,
+   `already_pitched`) before spending calls on them.
 
 5. **Verify the finalists** on their own pages, as SEARCH.md says, and write a show record
    for each one, verified or rejected. A show that is big but has never hosted anyone like
@@ -63,8 +65,10 @@ exclusions, balance, memory and the pitch block.
    you read: the `similar_guest` episode, or another recent one recorded as `hook_episode`
    with what it actually says in `detail`.
 
-6. **Rank within each arena** by your judgment of fit, audience and reachability, and write
-   the reason. Do not compare shows across arenas; `plan()` balances them.
+6. **Set each show's tier and rank.** `likely` when it books people like the founder, `reach`
+   when it books guests a step above them. Rank within each arena and tier by your judgment
+   of fit, audience and reachability, and write the reason. Do not compare shows across
+   arenas; `plan()` balances them and keeps about a third of the picks for long shots.
 
 7. **Call `plan()`** with the arenas, the records, today's UTC date, `max_pitches`,
    `already_pitched`, `include_shows`, the merged state, the growth plan's hard no's and the
@@ -103,6 +107,9 @@ exclusions, balance, memory and the pitch block.
    - `direct_message`: under 70 words, written for the host's channel; no sign-off dash.
    - `warm_intro`: a three-sentence blurb a contact can forward.
    - `ladder`: the step's draft (a talk title and abstract, a guest post outline) and its date.
+   - For a `reach` show, pitch the topic, not the company: the contested view or hands-on data
+     the founder brings to a question that show covers, in the format it books (a topic
+     proposal, a panel argument, comment on a story).
    Then call `pitch_block()` with the picks and one draft per `published_email` pick.
 
 9. **Write the report** to the declared output path. The founder should understand it in ten
@@ -111,9 +118,9 @@ exclusions, balance, memory and the pitch block.
    this run`. Every label below is its own line or bullet, never several in one paragraph
    (consecutive Markdown lines join into one). In this order:
    - `# Podcasts for <founder name> to go on`
-   - Two to four sentences of summary: how many shows are worth pitching now and the one to
-     start with and why; what it asks of the founder (for example "two emails, two messages
-     and one form, drafted below"); the main caveat (small audiences, pitches that lean on
+   - Two to four sentences of summary: how many shows are worth pitching now, how many of them
+     are long shots, and the one to start with and why; what it asks of the founder (for
+     example "two emails, two messages and one form, drafted below"); the main caveat (small audiences, pitches that lean on
      the profile because the project has no growth plan, fewer picks than asked for).
    - `## Next steps`: one numbered line per pick and ladder step, in the order to do them:
      the action, the show, and where (`Email podcast@… with the draft below`).
@@ -121,6 +128,9 @@ exclusions, balance, memory and the pitch block.
      paragraph, `**Why this show:**`, of two or three sentences: who listens, which past guest
      shows they book people like the founder, and why this founder fits that room, from the
      record's `reason` and the arena's `why`. Then a bullet list:
+     - `**Odds:**` `likely` with the reason, or `long shot` with what makes it one (for
+       example "on the US Apple Technology chart; founder interviews are sponsored, so this
+       pitches its panel")
      - `**Show:**` the link
      - `**Listeners:**` the numbers you relied on, their source, and the language when it is
        not English

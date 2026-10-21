@@ -1,6 +1,6 @@
 # Podcasts for Example Founder to go on
 
-Seven shows are worth pitching now. Start with Bootstrapped Builders: its listeners are the product's buyers and it booked a founder running a company with agents in August. Four emails, one form, one message and one intro are drafted below, and one bigger show needs a conference talk first.
+Seven shows are worth pitching now, one of them a long shot. Start with Bootstrapped Builders: its listeners are the product's buyers and it booked a founder running a company with agents in August. Four emails, one form, one message and one intro are drafted below, and one bigger show needs a conference talk first.
 
 ## Next steps
 
@@ -19,6 +19,7 @@ Seven shows are worth pitching now. Start with Bootstrapped Builders: its listen
 
 **Why this show:** Its listeners run small SaaS companies, the people who buy the product. In August it booked Riley Example to talk about running a company with agents, which is the room this founder speaks to.
 
+- **Odds:** likely: it booked a founder running a company with agents in August
 - **Show:** https://bootstrappedbuilders.example.com
 - **Listeners:** about 6,000 per episode, reach score 61, 140 Apple ratings (Podscan estimates)
 - **Guest like you:** Riley Example, ["Running a company with agents"](https://example.com/ep/42), 2026-08-14
@@ -47,6 +48,7 @@ Seven shows are worth pitching now. Start with Bootstrapped Builders: its listen
 
 **Why this show:** Engineers who build agent systems listen to it for production stories. It booked Riley Example on running a company with agents; few guests run a fleet of coding agents on real businesses every day.
 
+- **Odds:** likely: it hosts guests like the founder
 - **Show:** https://agentopsweekly.example.com
 - **Listeners:** about 6,000 per episode, reach score 61 (Podscan estimates)
 - **Guest like you:** Riley Example, ["Running a company with agents"](https://example.com/ep/42), 2026-08-14
@@ -67,6 +69,7 @@ Seven shows are worth pitching now. Start with Bootstrapped Builders: its listen
 
 **Why this show:** Turkish founders and engineers listen to it, and a Turkish engineer at a US venture-backed AI startup is rare in that scene.
 
+- **Odds:** likely: it hosts guests like the founder
 - **Show:** https://giriimsohbetleri.example.com
 - **Listeners:** about 6,000 per episode (Podscan estimate); in Turkish
 - **Guest like you:** Riley Example, ["Running a company with agents"](https://example.com/ep/42), 2026-08-14
@@ -87,6 +90,7 @@ Seven shows are worth pitching now. Start with Bootstrapped Builders: its listen
 
 **Why this show:** It covers getting cited by AI assistants, what the product does for small companies, and the founder has data across 100 sites.
 
+- **Odds:** likely: it hosts guests like the founder
 - **Show:** https://citedweekly.example.com
 - **Listeners:** about 6,000 per episode (Podscan estimate)
 - **Guest like you:** Riley Example, ["Running a company with agents"](https://example.com/ep/42), 2026-08-14
@@ -107,6 +111,7 @@ Seven shows are worth pitching now. Start with Bootstrapped Builders: its listen
 
 **Why this show:** Solo SaaS founders listen to it, and it books founders with an unusual way of running growth.
 
+- **Odds:** likely: it hosts guests like the founder
 - **Show:** https://solosaashour.example.com
 - **Listeners:** about 6,000 per episode (Podscan estimate)
 - **Guest like you:** Riley Example, ["Running a company with agents"](https://example.com/ep/42), 2026-08-14
@@ -124,6 +129,7 @@ Seven shows are worth pitching now. Start with Bootstrapped Builders: its listen
 
 **Why this show:** Its listeners build with models, and its recent guests are engineers with production data.
 
+- **Odds:** long shot: on the US Apple Technology chart and books well-known engineers; its founder interviews are sponsored, so this pitches its eval-harness theme
 - **Show:** https://theinferencehour.example.com
 - **Listeners:** about 6,000 per episode (Podscan estimate)
 - **Guest like you:** Riley Example, ["Running a company with agents"](https://example.com/ep/42), 2026-08-14
@@ -138,6 +144,7 @@ Seven shows are worth pitching now. Start with Bootstrapped Builders: its listen
 
 **Why this show:** Turkish engineers listen to it, and a contact of the founder knows the host.
 
+- **Odds:** likely: it hosts guests like the founder
 - **Show:** https://teknolojinotlar.example.com
 - **Listeners:** about 6,000 per episode (Podscan estimate); in Turkish
 - **Guest like you:** Riley Example, ["Running a company with agents"](https://example.com/ep/42), 2026-08-14

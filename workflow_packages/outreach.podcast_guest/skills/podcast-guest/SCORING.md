@@ -44,7 +44,11 @@ One per candidate you verified or rejected:
   `guest_form`, `direct_message` (writing to a host with no stated intake), `warm_intro`
   (someone the founder knows is connected) or `ladder` (a step comes first: a talk, a guest
   post, a launch).
-- `rank`: your rank for it within its arena, 1 first.
+- `tier`: `likely` (it books people like the founder, so a good pitch should land) or
+  `reach` (a show with a bigger name or audience than the founder's usual rooms: a chart
+  show, a known network, guests a step above the founder; worth a try, likely a no).
+  Optional; `likely` when left out.
+- `rank`: your rank for it within its arena and tier, 1 first.
 - `reason`: why it fits, in one line.
 - `pitch_address` and `address_source`: for `published_email`, the address and the page that
   publishes it. Never guessed, never Podscan's `listed_email` alone.
@@ -70,11 +74,16 @@ METHODS = (
     "buyer_guests",
     "transcript_topic",
     "country_chart",
+    "category_chart",
     "local_youtube",
     "named_show",
     "web_search",
 )
 ROUTES = ("published_email", "guest_form", "direct_message", "warm_intro", "ladder")
+TIERS = ("likely", "reach")
+# About a third of the picks are long shots: enough to try for the bigger shows, not so many
+# that the founder spends the week on pitches that mostly go unanswered.
+REACH_SHARE = 0.3
 HARD_NOS = (
     "no_cold_email",
     "no_paid_ads",
@@ -184,6 +193,8 @@ def check_show(show, arena_ids):
     route = show.get("route")
     if route not in ROUTES:
         raise ValueError(f"route must be one of {', '.join(ROUTES)}")
+    if show.get("tier", "likely") not in TIERS:
+        raise ValueError(f"tier must be one of {', '.join(TIERS)}")
     rank = show.get("rank")
     if isinstance(rank, bool) or not isinstance(rank, int) or rank < 1:
         raise ValueError("rank must be a whole number from 1")
@@ -289,7 +300,12 @@ def plan(
     merged, duplicates = {}, 0
     for show in shows:
         key = slug(show["name"])
-        row = dict(show, key=key, found_by=sorted(set(show["found_by"])))
+        row = dict(
+            show,
+            key=key,
+            tier=show.get("tier", "likely"),
+            found_by=sorted(set(show["found_by"])),
+        )
         known = merged.get(key)
         if known is None:
             merged[key] = row
@@ -335,23 +351,33 @@ def plan(
 
     for rows in eligible.values():
         rows.sort(key=lambda r: (r["rank"], r["key"]))
-    picks, depth = [], 0
-    while len(picks) < max_pitches and any(len(rows) > depth for rows in eligible.values()):
-        for arena in order:
-            rows = eligible[arena]
-            if len(rows) > depth and len(picks) < max_pitches:
-                picks.append(rows[depth])
-        depth += 1
+
+    def round_robin(pools, limit):
+        taken, depth = [], 0
+        while len(taken) < limit and any(len(rows) > depth for rows in pools.values()):
+            for arena in order:
+                rows = pools[arena]
+                if len(rows) > depth and len(taken) < limit:
+                    taken.append(rows[depth])
+            depth += 1
+        return taken
+
+    # Long shots get their own share, so a strong list of likely shows never crowds them out
+    # and they never crowd out the likely ones. Likely shows come first in the report.
+    reach = {arena: [r for r in eligible[arena] if r["tier"] == "reach"] for arena in order}
+    likely = {arena: [r for r in eligible[arena] if r["tier"] == "likely"] for arena in order}
+    reach_picks = round_robin(reach, max(1, round(max_pitches * REACH_SHARE)))
+    picks = round_robin(likely, max_pitches - len(reach_picks)) + reach_picks
     chosen = {row["key"] for row in picks}
     for arena in order:
         for row in eligible[arena]:
             if row["key"] not in chosen:
-                excluded.append(
-                    dict(
-                        row,
-                        reason="more shows than the pitches you asked for; a later run can pick it",
-                    )
+                reason = (
+                    "more long shots than one run tries; a later run can pick it"
+                    if row["tier"] == "reach"
+                    else "more shows than the pitches you asked for; a later run can pick it"
                 )
+                excluded.append(dict(row, reason=reason))
     ladder.sort(
         key=lambda r: (r.get("deadline") or "9999-12-31", order.index(r["arena"]), r["rank"])
     )

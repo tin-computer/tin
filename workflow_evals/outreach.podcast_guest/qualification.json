@@ -32,6 +32,7 @@
           "## Next steps",
           "## Picks",
           "**Why this show:**",
+          "**Odds:**",
           "**Guest like you:**",
           "**How to reach them:**",
           "## Ladder",
@@ -159,6 +160,10 @@
       "question": "Is each pick backed by a real past guest who resembles the founder, with the episode linked and dated, or an honest statement that none was found? Are big shows without such guests placed on the ladder with a concrete step instead of being picked or silently dropped?"
     },
     {
+      "id": "long_shots",
+      "question": "Do about a third of the picks reach for shows that carry weight in their field (a chart place, a known network, guests a step above the founder), each marked as a long shot with what makes it one, pitched on a topic or argument rather than the company, and with any sponsored slots named?"
+    },
+    {
       "id": "audience_evidence",
       "question": "Does each pick state the audience numbers relied on and their source, compared only with shows in the same arena, and is every pick active within the last few months?"
     },
@@ -169,10 +174,6 @@
     {
       "id": "language",
       "question": "Is each pitch written in its show's language, so home-country shows get pitches in that language?"
-    },
-    {
-      "id": "specificity",
-      "question": "Does each pitch name a specific recent episode of that show and follow from it?"
     },
     {
       "id": "honesty",
@@ -188,7 +189,7 @@
     },
     {
       "id": "sounds_human",
-      "question": "Does each pitch read like a note the founder wrote to a host whose show they listen to (one specific moment from the episode, one concrete story, one ask), with no template phrasing, em dashes or details the episode did not contain?"
+      "question": "Does each pitch name a specific recent episode of that show and read like a note the founder wrote to a host whose show they listen to (one real moment from that episode, one concrete story, one ask), with no template phrasing, em dashes or details the episode did not contain?"
     }
   ]
 }
