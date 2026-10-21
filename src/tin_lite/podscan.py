@@ -19,8 +19,9 @@ from __future__ import annotations
 
 import html
 import re
+from collections import Counter
 from dataclasses import dataclass
-from datetime import date
+from datetime import date, timedelta
 from typing import Any
 
 from tin_lite.connection_records import ServiceArgumentError, fit_records, text
@@ -31,6 +32,15 @@ ORIGIN = "https://podscan.fm/api/v1"
 # Under the gateway's 60-second per-call limit.
 SECONDS = 30
 MAX_BYTES = 8_000_000
+# A sweep runs every topic's reads inside one gateway call, so all of them share its limit.
+SWEEP_SECONDS = 45
+SWEEP_CONCURRENCY = 8
+SWEEP_TOPICS = 10
+# A show is active when it posted within this many days; topic episodes are read this far back.
+ACTIVE_DAYS = 120
+EPISODE_DAYS = 180
+# A publisher with this many shows in one sweep is a feed network, not a show to pitch.
+NETWORK_SHOWS = 4
 
 EPISODE_FIELDS = ("transcription", "title", "description")
 PODCAST_FIELDS = ("name", "description", "website", "publisher_name")
@@ -92,6 +102,9 @@ OPERATIONS = {
         frozenset({"entity_id", "role", "since", "before", "per_page", "page"})
     ),
     "charts.top": Operation(frozenset({"platform", "country", "category", "limit"})),
+    "podcasts.sweep": Operation(
+        frozenset({"topics", "language", "region", "active_since", "limit", "today"})
+    ),
 }
 
 
@@ -181,6 +194,8 @@ def request_for(operation: str, args: dict) -> dict[str, Any]:
     extra = set(args) - spec.arguments
     if extra:
         raise ServiceArgumentError(f"unsupported argument {sorted(extra)[0]}")
+    if operation == "podcasts.sweep":
+        return _sweep_request(args)
     params: dict[str, Any] = {}
     echo: dict[str, Any] = {}
     paged = operation not in {"podcasts.get", "charts.top"}
@@ -294,6 +309,87 @@ def request_for(operation: str, args: dict) -> dict[str, Any]:
         "params": {"limit": limit},
         "echo": echo,
     }
+
+
+def _sweep_request(args: dict) -> dict[str, Any]:
+    """Four reads a topic: the best matches (two pages), the biggest matches, and the shows
+    whose recent episodes match. Topic words in a show's name or description find the niche
+    shows; the biggest-first read finds the shows a whole field listens to."""
+    topics = args.get("topics")
+    if not isinstance(topics, list) or not 1 <= len(topics) <= SWEEP_TOPICS:
+        raise ServiceArgumentError(f"topics must be a list of 1-{SWEEP_TOPICS} search phrases")
+    clean: dict[str, str] = {}
+    for topic in topics:
+        if (
+            not isinstance(topic, str)
+            or not topic.strip()
+            or len(topic) > 80
+            or not topic.isprintable()
+        ):
+            raise ServiceArgumentError("each topic must be 1-80 printable characters")
+        clean.setdefault(topic.strip().casefold(), topic.strip())
+    today = _day(args, "today") or date.today().isoformat()
+    active_since = (
+        _day(args, "active_since")
+        or (date.fromisoformat(today) - timedelta(days=ACTIVE_DAYS)).isoformat()
+    )
+    episodes_since = (date.fromisoformat(today) - timedelta(days=EPISODE_DAYS)).isoformat()
+    language = _code(args, "language", r"[A-Za-z]{2,3}", "en or tr") or "en"
+    region = _code(args, "region", r"[A-Za-z]{2}", "us or tr")
+    echo = {
+        "topics": list(clean.values()),
+        "language": language,
+        "region": region,
+        "active_since": active_since,
+        "limit": _integer(args, "limit", 100, 10, 100),
+    }
+    shows = {
+        "search_fields": "name,description",
+        "min_last_episode_posted_at": active_since,
+        "per_page": 50,
+        "language": language,
+        "order_dir": "desc",
+        **({"region": region.upper()} if region else {}),
+    }
+    reads = []
+    for topic in echo["topics"]:
+        reads += [
+            {
+                "topic": topic,
+                "kind": "shows",
+                "path": "/podcasts/search",
+                "params": {**shows, "query": topic, "order_by": "best_match", "page": page},
+            }
+            for page in (1, 2)
+        ]
+        reads.append(
+            {
+                "topic": topic,
+                "kind": "shows",
+                "path": "/podcasts/search",
+                "params": {**shows, "query": topic, "order_by": "audience_size", "page": 1},
+            }
+        )
+        reads.append(
+            {
+                "topic": topic,
+                "kind": "episodes",
+                "path": "/episodes/search",
+                "params": {
+                    "query": topic,
+                    "search_fields": "title,description",
+                    "since": f"{episodes_since} 00:00:00",
+                    "per_page": 50,
+                    "page": 1,
+                    "order_by": "best_match",
+                    "order_dir": "desc",
+                    "show_full_podcast": "true",
+                    "podcast_language": language,
+                    **({"podcast_region": region.upper()} if region else {}),
+                },
+            }
+        )
+    return {"reads": reads, "echo": echo}
 
 
 # ---------------------------------------------------------------- projections
@@ -544,4 +640,121 @@ def result(operation: str, request: dict, payload: dict, *, max_response_bytes: 
     # Pages are numbered upstream. When Tin cut records to fit the bound, ask for a smaller
     # per_page instead; the next page would skip the ones left out.
     page["next_page"] = echo["page"] + 1 if upstream_more and not page["truncated"] else None
+    return page
+
+
+def _key(name: str | None) -> str:
+    return re.sub(r"[^a-z0-9]+", " ", (name or "").casefold()).strip()
+
+
+def sweep_result(
+    request: dict,
+    answers: list[tuple[dict, dict | None]],
+    failed: list[dict],
+    *,
+    max_response_bytes: int,
+) -> dict:
+    """Merge every topic's reads into one ranked list of active shows.
+
+    One show often has several feeds (a duplicate, a video feed); they merge by name and keep
+    the biggest. A show ranks higher the more topics found it, the more recent episodes
+    matched, and the higher its reach score. Feed networks (one publisher, many near-identical
+    shows) sink. The caller reads the leading shows and judges fit; the rank only orders them.
+    """
+    echo = request["echo"]
+    shows: dict[str, dict] = {}
+    for read, payload in answers:
+        if read["kind"] == "episodes":
+            found = [
+                (item.get("podcast"), item)
+                for item in _list((payload or {}).get("episodes"))
+                if isinstance(item.get("podcast"), dict)
+            ]
+        else:
+            found = [(item, None) for item in _list((payload or {}).get("podcasts"))]
+        for podcast, item in found:
+            record = podcast_record(podcast)
+            if not record["podcast_id"] or not record["name"]:
+                continue
+            if (record["last_posted"] or "") < echo["active_since"]:
+                continue
+            show = shows.get(_key(record["name"]))
+            if show is None:
+                summary = podcast.get("podcast_summary")
+                summary = summary if isinstance(summary, dict) else {}
+                duration = podcast.get("avg_episode_duration")
+                show = shows[_key(record["name"])] = {
+                    **record,
+                    "avg_episode_minutes": round(duration / 60) if type(duration) is int else None,
+                    "style": _plain(summary.get("style"), 80),
+                    "about": _plain(summary.get("summary_long"), 200)
+                    or _plain(podcast.get("podcast_description"), 200),
+                    "other_feeds": [],
+                    "topics": [],
+                    "episode_matches": 0,
+                    "matching_episode": None,
+                }
+            elif record["podcast_id"] != show["podcast_id"]:
+                if (record["reach_score"] or 0) > (show["reach_score"] or 0):
+                    feeds = [show["podcast_id"], *show["other_feeds"]]
+                    show.update({k: v for k, v in record.items() if v is not None})
+                    show["other_feeds"] = feeds
+                elif record["podcast_id"] not in show["other_feeds"]:
+                    show["other_feeds"].append(record["podcast_id"])
+            if read["topic"] not in show["topics"]:
+                show["topics"].append(read["topic"])
+            if item is not None:
+                show["episode_matches"] += 1
+                if show["matching_episode"] is None:
+                    show["matching_episode"] = {
+                        "title": _plain(item.get("episode_title"), 120),
+                        "posted": _day_of(item.get("posted_at")),
+                    }
+    publishers = Counter(_key(show["publisher"]) for show in shows.values() if show["publisher"])
+    topic_words = [_key(topic) for topic in echo["topics"]]
+    for show in shows.values():
+        network = publishers[_key(show["publisher"])] if show["publisher"] else 0
+        # A topic in the show's name or the opening of its summary marks a show about the
+        # field, not one that mentioned it once.
+        opening = _key(f"{show['name']} {(show.get('about') or '')[:120]}")
+        named = any(
+            words and re.search(rf"\b{re.escape(words)}\b", opening) for words in topic_words
+        )
+        show["score"] = round(
+            len(show["topics"]) * 2
+            + min(show["episode_matches"], 2) * 0.5
+            + (show["reach_score"] or 0) / 25
+            + (3 if named else 0)
+            - (4 if network >= NETWORK_SHOWS else 0),
+            2,
+        )
+        if network >= NETWORK_SHOWS:
+            show["feed_network"] = network
+        show["other_feeds"] = show["other_feeds"][:4]
+        if not show["other_feeds"]:
+            del show["other_feeds"]
+        if show["matching_episode"] is None:
+            del show["matching_episode"]
+        # `has_guests` is wrong on most small interview shows, so a sweep never offers it.
+        # The show's page comes from `podcasts.get` for the finalists.
+        for field in ("is_active", "has_guests", "region", "language", "apple_rating", "url"):
+            show.pop(field, None)
+        for field in [name for name, value in show.items() if value is None]:
+            del show[field]
+    ranked = sorted(shows.values(), key=lambda show: (-show["score"], show["name"]))
+    envelope = {
+        "status": "ok",
+        **{k: v for k, v in echo.items() if v is not None},
+        "shows_found": len(ranked),
+        "reads": len(answers) + len(failed),
+        "failed_reads": failed,
+    }
+    page = fit_records(
+        ranked[: echo["limit"]],
+        max_response_bytes=max_response_bytes,
+        has_more=len(ranked) > echo["limit"],
+        envelope=envelope,
+        cursor_field="name",
+    )
+    page.pop("next_cursor")
     return page

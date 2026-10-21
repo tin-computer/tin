@@ -20,8 +20,9 @@ Seven shows are worth pitching now, one of them a long shot. Start with Bootstra
 **Why this show:** Its listeners run small SaaS companies, the people who buy the product. In August it booked Riley Example to talk about running a company with agents, which is the room this founder speaks to.
 
 - **Odds:** likely: it booked a founder running a company with agents in August
-- **Show:** https://bootstrappedbuilders.example.com
-- **Listeners:** about 6,000 per episode, reach score 61, 140 Apple ratings (Podscan estimates)
+- **What the show is:** [Weekly interviews](https://bootstrappedbuilders.example.com) with people running software businesses on agents.
+- **Who hosts it:** Sam Example, a former founder who sold a SaaS company; a host who has run one asks for numbers, not demos.
+- **Show facts:** 140 episodes · about 45 min · weekly · newest 2026-10-02 · about 6,000 per episode, reach score 61, 140 Apple ratings (Podscan estimates)
 - **Guest like you:** Riley Example, ["Running a company with agents"](https://example.com/ep/42), 2026-08-14
 - **How to reach them:** email guests@bootstrappedbuilders.example.com, published on [the guests page](https://bootstrappedbuilders.example.com/guests)
 - **Worth knowing:** nothing
@@ -49,8 +50,9 @@ Seven shows are worth pitching now, one of them a long shot. Start with Bootstra
 **Why this show:** Engineers who build agent systems listen to it for production stories. It booked Riley Example on running a company with agents; few guests run a fleet of coding agents on real businesses every day.
 
 - **Odds:** likely: it hosts guests like the founder
-- **Show:** https://agentopsweekly.example.com
-- **Listeners:** about 6,000 per episode, reach score 61 (Podscan estimates)
+- **What the show is:** [Weekly interviews](https://agentopsweekly.example.com) with people running software businesses on agents.
+- **Who hosts it:** Sam Example, a former founder who sold a SaaS company; a host who has run one asks for numbers, not demos.
+- **Show facts:** 140 episodes · about 45 min · weekly · newest 2026-10-02 · about 6,000 per episode, reach score 61 (Podscan estimates)
 - **Guest like you:** Riley Example, ["Running a company with agents"](https://example.com/ep/42), 2026-08-14
 - **How to reach them:** email guests@agentopsweekly.example.com, published on [the guests page](https://agentopsweekly.example.com/guests)
 - **Worth knowing:** nothing
@@ -70,8 +72,9 @@ Seven shows are worth pitching now, one of them a long shot. Start with Bootstra
 **Why this show:** Turkish founders and engineers listen to it, and a Turkish engineer at a US venture-backed AI startup is rare in that scene.
 
 - **Odds:** likely: it hosts guests like the founder
-- **Show:** https://giriimsohbetleri.example.com
-- **Listeners:** about 6,000 per episode (Podscan estimate); in Turkish
+- **What the show is:** [Weekly interviews](https://giriimsohbetleri.example.com) with people running software businesses on agents.
+- **Who hosts it:** Sam Example, a former founder who sold a SaaS company; a host who has run one asks for numbers, not demos.
+- **Show facts:** 140 episodes · about 45 min · weekly · newest 2026-10-02 · about 6,000 per episode (Podscan estimate); in Turkish
 - **Guest like you:** Riley Example, ["Running a company with agents"](https://example.com/ep/42), 2026-08-14
 - **How to reach them:** email guests@giriimsohbetleri.example.com, published on [the guests page](https://giriimsohbetleri.example.com/guests)
 - **Worth knowing:** nothing
@@ -91,8 +94,9 @@ Seven shows are worth pitching now, one of them a long shot. Start with Bootstra
 **Why this show:** It covers getting cited by AI assistants, what the product does for small companies, and the founder has data across 100 sites.
 
 - **Odds:** likely: it hosts guests like the founder
-- **Show:** https://citedweekly.example.com
-- **Listeners:** about 6,000 per episode (Podscan estimate)
+- **What the show is:** [Weekly interviews](https://citedweekly.example.com) with people running software businesses on agents.
+- **Who hosts it:** Sam Example, a former founder who sold a SaaS company; a host who has run one asks for numbers, not demos.
+- **Show facts:** 140 episodes · about 45 min · weekly · newest 2026-10-02 · about 6,000 per episode (Podscan estimate)
 - **Guest like you:** Riley Example, ["Running a company with agents"](https://example.com/ep/42), 2026-08-14
 - **How to reach them:** email guests@citedweekly.example.com, published on [the guests page](https://citedweekly.example.com/guests)
 - **Worth knowing:** nothing
@@ -112,8 +116,9 @@ Seven shows are worth pitching now, one of them a long shot. Start with Bootstra
 **Why this show:** Solo SaaS founders listen to it, and it books founders with an unusual way of running growth.
 
 - **Odds:** likely: it hosts guests like the founder
-- **Show:** https://solosaashour.example.com
-- **Listeners:** about 6,000 per episode (Podscan estimate)
+- **What the show is:** [Weekly interviews](https://solosaashour.example.com) with people running software businesses on agents.
+- **Who hosts it:** Sam Example, a former founder who sold a SaaS company; a host who has run one asks for numbers, not demos.
+- **Show facts:** 140 episodes · about 45 min · weekly · newest 2026-10-02 · about 6,000 per episode (Podscan estimate)
 - **Guest like you:** Riley Example, ["Running a company with agents"](https://example.com/ep/42), 2026-08-14
 - **How to reach them:** the guest form on [its site](https://solosaashour.example.com)
 - **Worth knowing:** nothing
@@ -130,8 +135,9 @@ Seven shows are worth pitching now, one of them a long shot. Start with Bootstra
 **Why this show:** Its listeners build with models, and its recent guests are engineers with production data.
 
 - **Odds:** long shot: on the US Apple Technology chart and books well-known engineers; its founder interviews are sponsored, so this pitches its eval-harness theme
-- **Show:** https://theinferencehour.example.com
-- **Listeners:** about 6,000 per episode (Podscan estimate)
+- **What the show is:** [Weekly interviews](https://theinferencehour.example.com) with people running software businesses on agents.
+- **Who hosts it:** Sam Example, a former founder who sold a SaaS company; a host who has run one asks for numbers, not demos.
+- **Show facts:** 140 episodes · about 45 min · weekly · newest 2026-10-02 · about 6,000 per episode (Podscan estimate)
 - **Guest like you:** Riley Example, ["Running a company with agents"](https://example.com/ep/42), 2026-08-14
 - **How to reach them:** a message to the host on the channel linked from [its site](https://theinferencehour.example.com)
 - **Worth knowing:** lists a $300 "featured guest" package on its sponsor page; free interviews also run.
@@ -145,8 +151,9 @@ Seven shows are worth pitching now, one of them a long shot. Start with Bootstra
 **Why this show:** Turkish engineers listen to it, and a contact of the founder knows the host.
 
 - **Odds:** likely: it hosts guests like the founder
-- **Show:** https://teknolojinotlar.example.com
-- **Listeners:** about 6,000 per episode (Podscan estimate); in Turkish
+- **What the show is:** [Weekly interviews](https://teknolojinotlar.example.com) with people running software businesses on agents.
+- **Who hosts it:** Sam Example, a former founder who sold a SaaS company; a host who has run one asks for numbers, not demos.
+- **Show facts:** 140 episodes · about 45 min · weekly · newest 2026-10-02 · about 6,000 per episode (Podscan estimate); in Turkish
 - **Guest like you:** Riley Example, ["Running a company with agents"](https://example.com/ep/42), 2026-08-14
 - **How to reach them:** a warm intro from a contact who knows the host
 - **Worth knowing:** nothing

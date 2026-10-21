@@ -5,7 +5,7 @@
     "title": "Find the podcasts to go on as a guest",
     "description": "Finds the podcasts worth going on across every audience where you carry weight: your buyers, your own craft, your home country and your product's topic. Checks that each show is active, listened to and has hosted guests like you, and drafts one pitch per show in its language. Shows that need a first step, like a talk or a guest post, get that step drafted. Skips shows pitched in earlier runs; never sends anything.",
     "executor": "codex.procedure",
-    "version": "1.2.0",
+    "version": "1.3.0",
     "schedule_modes": ["on_demand"],
     "system": "cold-outreach",
     "input_schema": {
@@ -101,7 +101,7 @@
         "podcasts": {
           "provider_key": "managed.podscan",
           "max_calls": 30,
-          "max_response_bytes": 24000
+          "max_response_bytes": 100000
         }
       },
       "output": {
@@ -117,8 +117,8 @@
         "nodes": [
           {"id": "context", "kind": "store", "label": "Your profile, Feature map, plan", "fact": "hard no's bind, earlier picks not repeated"},
           {"id": "arenas", "kind": "step", "label": "Choose the audiences", "fact": "3 to 6: buyers, craft, home country, topic"},
-          {"id": "search", "kind": "surface", "label": "Podscan and the web", "fact": "at most 30 Podscan calls, 2 methods an arena"},
-          {"id": "verify", "kind": "step", "label": "Verify each finalist", "fact": "active, listened to, hosted guests like you"},
+          {"id": "search", "kind": "surface", "label": "Sweep, then Podscan and the web", "fact": "hundreds of active shows, then lookalikes"},
+          {"id": "verify", "kind": "step", "label": "Verify each finalist", "fact": "last three episodes, host, guests like you"},
           {"id": "plan", "kind": "step", "label": "Balance the picks in code", "fact": "10 by default, a third long shots"},
           {"id": "draft", "kind": "step", "label": "Draft one pitch per show", "fact": "in its language, or a first step to get in"},
           {"id": "report", "kind": "receipt", "label": "Pitches to send yourself", "fact": "summary first, Tin sends nothing"},

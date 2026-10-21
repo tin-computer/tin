@@ -37,6 +37,11 @@ One per candidate you verified or rejected:
   it is not the `similar_guest` episode. `detail` is what that episode's page, description or
   transcript actually says, in a line; the pitch may only refer to what `detail` holds.
   Optional; without it the pitch opens on the `similar_guest` episode.
+- `gap`: what the show's catalogue lacks that this pitch offers (a sequel not yet run, a kind
+  of guest it has not had, a new season), from the episodes you read. Optional; a pitch may
+  open on it instead of an episode.
+- `premise`: what the show is, in a sentence or two: the argument or job it is about.
+- `host`: who hosts it (name, role, background) and why that matters for this pitch.
 - `takes_guests`: `false` for a show that only has its hosts talking. Optional; a show with
   `false` is listed as excluded.
 - `route`: `published_email` (the show's own page or feed asks for guest pitches at an
@@ -69,6 +74,7 @@ from datetime import date
 
 KINDS = ("buyers", "craft", "home", "topic", "other")
 METHODS = (
+    "topic_sweep",
     "lookalike_company",
     "lookalike_title",
     "buyer_guests",
@@ -190,6 +196,9 @@ def check_show(show, arena_ids):
         _url(hook.get("url"), "hook_episode url")
         _day(hook.get("date"), "hook_episode date")
         _text(hook.get("detail"), "hook_episode detail", 400)
+    for field, limit in (("gap", 300), ("premise", 400), ("host", 500)):
+        if show.get(field) is not None:
+            _text(show[field], field, limit)
     route = show.get("route")
     if route not in ROUTES:
         raise ValueError(f"route must be one of {', '.join(ROUTES)}")

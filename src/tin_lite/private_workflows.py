@@ -973,7 +973,9 @@ def authoring_guide(*, settings, project_id):
                 "min_audience, search_fields, order_by, per_page, page}, podcasts.search, "
                 "podcasts.get {podcast_id}, podcasts.episodes, people.search {query, "
                 "search_fields, type}, people.appearances {entity_id, role, since, before}, "
-                "charts.top {platform, country, category, limit}; records carry guests, hosts "
+                "charts.top {platform, country, category, limit}, podcasts.sweep {topics, "
+                "language, region, active_since, limit} (active shows across up to 10 topics, "
+                "merged and ranked, in one call); records carry guests, hosts "
                 "and sponsors, never transcripts. Lists come back as records that "
                 "fit max_response_bytes, with truncated and next_offset. Details: "
                 "docs/project-api-connections.md in Tin's source.",

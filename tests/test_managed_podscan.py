@@ -325,6 +325,13 @@ async def test_refusals_are_named_and_never_echo_the_key(status, error, code):
         ("charts.top", {"platform": "spotify", "country": "tr", "limit": 51}),
         ("charts.top", {"platform": "apple", "country": "tr", "category": "../x"}),
         ("podcasts.audience_overlap", {"podcast_id": "pd_example0001"}),
+        ("podcasts.sweep", {}),
+        ("podcasts.sweep", {"topics": []}),
+        ("podcasts.sweep", {"topics": "GRC"}),
+        ("podcasts.sweep", {"topics": [f"topic {n}" for n in range(11)]}),
+        ("podcasts.sweep", {"topics": ["x" * 81]}),
+        ("podcasts.sweep", {"topics": ["GRC"], "limit": 500}),
+        ("podcasts.sweep", {"topics": ["GRC"], "has_guests": True}),
     ],
 )
 def test_arguments_are_closed_and_bounded(operation, arguments):
@@ -339,3 +346,132 @@ async def test_a_used_up_daily_allowance_says_to_continue_without_podscan():
     assert raised.value.code == "provider_quota"
     assert not isinstance(raised.value, IntegrationRateLimitedError)
     assert "continue without Podscan" in str(raised.value)
+
+
+SWEEP = {"topics": ["GRC", '"SOC 2"'], "today": "2026-10-21"}
+
+
+def sweeping(answer):
+    """A sweep's reads, answered per request by `answer(request)` -> (status, payload)."""
+    seen = []
+
+    def respond(request):
+        seen.append(request)
+        status, payload = answer(request)
+        return httpx.Response(status, json=payload)
+
+    return ManagedServices(SETTINGS, transport=httpx.MockTransport(respond)), seen
+
+
+def shows(*items):
+    return {"podcasts": list(items), "pagination": {"total": len(items), "last_page": 1}}
+
+
+async def test_a_sweep_reads_four_ways_a_topic_without_trusting_has_guests():
+    service, seen = sweeping(lambda request: (200, shows()))
+    result = await call(service, "podcasts.sweep", SWEEP)
+    assert result["status"] == "ok" and result["reads"] == 8 and result["failed_reads"] == []
+    shows_reads = [r for r in seen if r.url.path.endswith("/podcasts/search")]
+    episode_reads = [r for r in seen if r.url.path.endswith("/episodes/search")]
+    assert len(shows_reads) == 6 and len(episode_reads) == 2
+    for request in seen:
+        assert "has_guests" not in request.url.params
+        assert request.headers["Authorization"] == f"Bearer {KEY}"
+    orders = sorted(
+        (r.url.params["query"], r.url.params["order_by"], r.url.params["page"]) for r in shows_reads
+    )
+    assert ("GRC", "audience_size", "1") in orders and ("GRC", "best_match", "2") in orders
+    assert {r.url.params["min_last_episode_posted_at"] for r in shows_reads} == {"2026-06-23"}
+    assert {r.url.params["since"] for r in episode_reads} == {"2026-04-24 00:00:00"}
+
+
+async def test_a_sweep_merges_feeds_drops_quiet_shows_and_sinks_feed_networks():
+    grc = podcast(
+        podcast_id="pd_grcshow0001",
+        podcast_name="GRC Straight Talk",
+        podcast_reach_score=20,
+        podcast_has_guests=False,
+        podcast_summary={
+            "style": "Interviews.",
+            "summary_long": "Audits after the auditor leaves.",
+        },
+    )
+    grc_video = {**grc, "podcast_id": "pd_grcshow0002", "podcast_reach_score": 30}
+    quiet = podcast(
+        podcast_id="pd_quietshow01",
+        podcast_name="Quiet Compliance",
+        last_posted_at="2026-03-01T00:00:00+00:00",
+    )
+    network = [
+        podcast(
+            podcast_id=f"pd_netshow{n:04d}",
+            podcast_name=f"Compliance Daily {n}",
+            publisher_name="Feed Factory",
+            podcast_reach_score=60,
+        )
+        for n in range(4)
+    ]
+    soc2 = podcast(podcast_id="pd_soctalk0001", podcast_name="SOC 2 Talk", podcast_reach_score=10)
+
+    def answer(request):
+        query, path = request.url.params["query"], request.url.path
+        if path.endswith("/episodes/search"):
+            return 200, {"episodes": [episode(podcast=grc)] if query == "GRC" else []}
+        if query == "GRC":
+            return 200, shows(grc, grc_video, quiet, *network)
+        return 200, shows(grc, soc2)
+
+    service, _ = sweeping(answer)
+    result = await call(service, "podcasts.sweep", SWEEP, max_response_bytes=64000)
+    names = [record["name"] for record in result["records"]]
+    assert names[0] == "GRC Straight Talk"
+    assert "Quiet Compliance" not in names
+    top = result["records"][0]
+    assert top["podcast_id"] == "pd_grcshow0002" and top["other_feeds"] == ["pd_grcshow0001"]
+    assert top["topics"] == ["GRC", '"SOC 2"'] and top["episode_matches"] == 1
+    assert top["about"] == "Audits after the auditor leaves." and "has_guests" not in top
+    assert top["matching_episode"]["posted"] == "2026-09-20"
+    netted = [r for r in result["records"] if r["name"].startswith("Compliance Daily")]
+    assert all(r["feed_network"] == 4 for r in netted)
+    assert names.index("SOC 2 Talk") < min(names.index(r["name"]) for r in netted)
+    assert result["shows_found"] == 6
+
+
+async def test_a_sweep_keeps_what_answered_and_names_what_did_not():
+    def answer(request):
+        if request.url.params["query"] == '"SOC 2"':
+            raise httpx.ReadTimeout("slow", request=request)
+        if request.url.params.get("order_by") == "audience_size":
+            return 500, {"message": "upstream"}
+        return 200, shows(podcast())
+
+    service, _ = sweeping(answer)
+    result = await call(service, "podcasts.sweep", SWEEP)
+    assert result["status"] == "ok" and len(result["records"]) == 1
+    reasons = sorted((f["topic"], f["kind"], f["reason"]) for f in result["failed_reads"])
+    assert ("GRC", "shows", "provider_error") in reasons
+    assert sum(1 for f in reasons if f[0] == '"SOC 2"' and f[2] == "timed_out") == 4
+
+
+async def test_a_sweep_fails_only_on_a_refused_key_or_when_nothing_answered():
+    def refused(request):
+        if request.url.params["query"] == "GRC":
+            return 401, {"message": f"bad token {KEY}"}
+        return 200, shows(podcast())
+
+    with pytest.raises(ServiceCallRefused) as raised:
+        await call(sweeping(refused)[0], "podcasts.sweep", SWEEP)
+    assert raised.value.code == "provider_refused" and KEY not in str(raised.value)
+
+    limited = {"message": "slow down"}
+    with pytest.raises(IntegrationRateLimitedError):
+        await call(sweeping(lambda request: (429, limited))[0], "podcasts.sweep", SWEEP)
+
+    def partly(request):
+        if request.url.params["query"] == "GRC":
+            return 429, limited
+        return 200, shows(podcast())
+
+    result = await call(sweeping(partly)[0], "podcasts.sweep", SWEEP)
+    assert result["status"] == "ok"
+    assert {f["reason"] for f in result["failed_reads"]} == {"rate_limited"}
