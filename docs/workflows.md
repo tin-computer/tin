@@ -99,7 +99,7 @@ Tin ships 43 built-in workflows. Every workflow also takes a `project_id`; requi
 
 # Registry packages
 
-28 contributed packages from `workflow_packages/` are selected in `src/tin_lite/public_workflows.py` and published with the next catalog sync. [The package guide](../workflow_packages/README.md#how-the-packages-fit-together) shows how they build on the built-ins.
+29 contributed packages from `workflow_packages/` are selected in `src/tin_lite/public_workflows.py` and published with the next catalog sync. [The package guide](../workflow_packages/README.md#how-the-packages-fit-together) shows how they build on the built-ins.
 
 ## Organic traffic system
 
