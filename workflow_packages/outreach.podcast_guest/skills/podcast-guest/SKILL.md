@@ -51,9 +51,12 @@ exclusions, balance, memory and the pitch block.
    inside the 30-call Podscan budget, plus web searches. Record on each arena every method
    you tried, including ones that found nothing (`tried`). Seed searches from the profile:
    companies like the founder's, the founder's title, the buyers' titles, the topics, the
-   home country's charts. In every arena also look for the shows that carry weight there
-   (SEARCH.md, "Finding the shows that carry weight"), starting from its `category_chart`,
-   so the plan has long shots as well as likely yeses. Skip shows already pitched (state,
+   home country's charts. Spend most of the budget here, before verifying: about 12 calls on
+   finding the shows that carry weight (SEARCH.md, "Finding the shows that carry weight"),
+   through each arena's `category_chart` and a web search for the field's "best podcasts"
+   lists, and keep about 8 for verifying finalists. Every arena ends with at least one
+   `reach` candidate verified, or a line in `## What could not be checked` saying why none
+   exists. Skip shows already pitched (state,
    `already_pitched`) before spending calls on them.
 
 5. **Verify the finalists** on their own pages, as SEARCH.md says, and write a show record
@@ -66,7 +69,9 @@ exclusions, balance, memory and the pitch block.
    with what it actually says in `detail`.
 
 6. **Set each show's tier and rank.** `likely` when it books people like the founder, `reach`
-   when it books guests a step above them. Rank within each arena and tier by your judgment
+   when it books guests a step above them. A `reach` show is clearly bigger than the arena's
+   `likely` picks by chart place in the product's main market, ratings, network or guests;
+   a place on a small home-country chart alone does not make one. Rank within each arena and tier by your judgment
    of fit, audience and reachability, and write the reason. Do not compare shows across
    arenas; `plan()` balances them and keeps about a third of the picks for long shots.
 
@@ -76,58 +81,72 @@ exclusions, balance, memory and the pitch block.
    disagree with a result, say why next to the show; do not change it.
 
 8. **Draft for every pick and ladder show**, in the show's language and the founder's voice.
-   A host gets dozens of pitches; a message that reads as generated is deleted. Write it the
-   way the founder would dash it off to a host whose show they actually listen to.
-   - Open on the episode chosen in step 5 and refer only to what you read in it (its
-     `similar_guest` episode or `hook_episode.detail`): a moment, a claim, a question it left
-     open. Never add details the page, description or transcript does not contain, and never
-     summarise the episode back to the host. If nothing specific is known, open with who the
-     founder is instead.
-   - Then one concrete story from the founder's past, with its number or place, told as
-     something that happened ("At my last company I ran the audit across five offices"), not
-     a category ("after leading audit work"). Then the episode idea in one sentence, and one
-     plain ask.
-   - Short sentences, contractions, first person, the words the founder uses in the profile.
-     No em dashes, no lists of three, no "I can talk through", "I'd love to", "would that be
-     useful", "resonated", "delve", "explore", "journey", "landscape", "the useful
-     conversation for your listeners", no compliments on the show in general.
+   A host reads dozens of pitches a week and decides in the first line. Every pitch follows
+   one formula, in this order:
+   1. **The episode, as a title.** Lead with the episode the founder would make for this
+      show: a specific claim a listener would click ("Your SOC 2 report is out of date the
+      day the auditor leaves"), not a topic ("compliance automation"). In email it is the
+      subject and the first line; in a DM, the first sentence.
+   2. **Why this founder, in one sentence.** The one credential that matters to this show's
+      listeners, as something that happened, with its number or place ("As CISO at TechKraft
+      I took five offices through ISO 27001"). Choose it per arena: do not lead every pitch
+      with the same fact.
+   3. **What listeners get** (email and forms only): two or three bullets, each a concrete
+      story or claim the founder can back from the profile, never a feature of the product.
+   4. **Proof you listen, at most one clause,** and only when it adds to the idea: how this
+      episode would follow or answer a specific recent one ("a follow-up to your Andrew
+      Carney episode: the tools are bought, and the controls still drift"). Never restate the
+      host's episode to them, never compliment the show, never open with it.
+   5. **An easy ask and a sign-off:** "Open to it?" or "Happy to send more detail." Then the
+      founder's name, role and site on their own line. The product is named once, in the
+      credential or the sign-off.
+   - Lengths: email 90-140 words, a direct message 60 words at most, a form's "why" answer
+     70 words at most.
+   - Short sentences, contractions, plain words the founder uses in the profile. No em
+     dashes. Never: "I can talk through", "I'd love to", "would that be useful", "could that
+     fit", "is there a slot", "resonated", "delve", "explore", "journey", "landscape",
+     "operational trust", slogans from the product's site, or money (fees and sponsored
+     slots belong in `Worth knowing`, not in the pitch).
    - Facts only from the profile and the files in step 1. Never invent audience, metrics,
-     appearances or availability, and use the arena's angle rather than one generic bio.
-   - Read it as the host would. If it could have been sent to any show, or sounds like a
-     template, rewrite it.
-   - `published_email`: a subject under 80 characters that names the episode idea, not
-     "Guest idea"; a pitch of 90-160 words in short paragraphs; and a two-sentence follow-up
-     for a week later that adds one new detail rather than "following up".
-   - `guest_form`: the answers to the form's own questions, ready to paste. Fill in every
-     answer the profile, the project files or the product's site already hold (name, company,
-     site, links, bio); leave only what only the founder can give (a headshot, their own
-     email address, recording times) and list those under `What you add`. When the form's
-     questions cannot be read (an embedded form), answer the usual ones (topic, why now, bio,
-     links) and say so.
-   - `direct_message`: under 70 words, written for the host's channel; no sign-off dash.
-   - `warm_intro`: a three-sentence blurb a contact can forward.
+     appearances or availability. Refer to an episode only for what you read in it
+     (`similar_guest`, or `hook_episode.detail`).
+   - Read every pitch as that host. If it could go to another show by changing the name, or
+     takes more than ten seconds to see the episode idea, rewrite it.
+   - `published_email`: the subject is the episode title, under 80 characters. The follow-up
+     a week later is two sentences that offer a second, smaller idea, never "bumping this".
+   - `guest_form`: the answers to the form's own questions, ready to paste, with the same
+     formula in its topic and "why" answers. Fill in every answer the profile, the project
+     files or the product's site already hold (name, company, site, links, bio); leave only
+     what only the founder can give (a headshot, their own email address, recording times)
+     and list those under `What you add`. When the form's questions cannot be read (an
+     embedded form), answer the usual ones (topic, why now, bio, links) and say so.
+   - `warm_intro`: three sentences a contact can forward: who the founder is, the episode
+     title, why this host.
    - `ladder`: the step's draft (a talk title and abstract, a guest post outline) and its date.
-   - For a `reach` show, pitch the topic, not the company: the contested view or hands-on data
-     the founder brings to a question that show covers, in the format it books (a topic
-     proposal, a panel argument, comment on a story).
+   - A `reach` show gets the same formula with an argument for its format: the contested
+     question for a debate show, the topic proposal for a show that picks topics first, the
+     founder's take for a news show.
    Then call `pitch_block()` with the picks and one draft per `published_email` pick.
 
 9. **Write the report** to the declared output path. The founder should understand it in ten
-   seconds from the top and act on it without reading the rest. Write it for them: plain
-   words, no arena ids, method names, file paths or Podscan field names outside `## About
+   seconds from the top and act on it without reading the rest. Write it to them, as "you",
+   everywhere outside the drafts: plain words, no arena ids, method names, file paths or Podscan field names outside `## About
    this run`. Every label below is its own line or bullet, never several in one paragraph
    (consecutive Markdown lines join into one). In this order:
    - `# Podcasts for <founder name> to go on`
    - Two to four sentences of summary: how many shows are worth pitching now, how many of them
      are long shots, and the one to start with and why; what it asks of the founder (for
-     example "two emails, two messages and one form, drafted below"); the main caveat (small audiences, pitches that lean on
-     the profile because the project has no growth plan, fewer picks than asked for).
+     example "two emails, two messages and one form, drafted below"); the main caveat
+     (small audiences, pitches that lean on the profile because the project has no growth
+     plan, fewer picks than asked for).
    - `## Next steps`: one numbered line per pick and ladder step, in the order to do them:
      the action, the show, and where (`Email podcast@… with the draft below`).
    - `## Picks`: one `### <n>. <Show name>` per pick, in `plan()` order. First a short
-     paragraph, `**Why this show:**`, of two or three sentences: who listens, which past guest
-     shows they book people like the founder, and why this founder fits that room, from the
-     record's `reason` and the arena's `why`. Then a bullet list:
+     paragraph, `**Why this show:**`, of two or three sentences addressed to the founder
+     ("Its listeners run audits for a living, and it booked an audit-AI founder last month;
+     you have run the audit from the other side"): who listens, which past guest shows they
+     book people like you, and why you fit that room, from the record's `reason` and the
+     arena's `why`. Then a bullet list:
      - `**Odds:**` `likely` with the reason, or `long shot` with what makes it one (for
        example "on the US Apple Technology chart; founder interviews are sponsored, so this
        pitches its panel")
@@ -162,8 +181,9 @@ exclusions, balance, memory and the pitch block.
      survived, say so plainly; do not pad the list.
    - `## About this run`: bullets `Status:` the status from `plan()` (`complete` or `no shows
      verified`) or `needs context`; `Verdict:` followed by nothing but the verdict from
-     `plan()` (`fit`, `thin` or `not a fit`); `As of:` today's UTC date; `Read:` the step 1
-     files found; `Not found:` the ones missing.
+     `plan()` (`fit`, `thin` or `not a fit`); `As of:` today's UTC date; `Read:` the context
+     found, named as the founder knows it ("your profile", "the growth plan"), never this
+     skill's files or Podscan; `Not found:` the context missing.
 
    End with two fenced blocks written with Python from the returned values, not retyped: the
    `pitch_block()` result with info string `json tin-podcast-pitches`, then the `plan()` state

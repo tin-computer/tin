@@ -189,7 +189,7 @@
     },
     {
       "id": "sounds_human",
-      "question": "Does each pitch name a specific recent episode of that show and read like a note the founder wrote to a host whose show they listen to (one real moment from that episode, one concrete story, one ask), with no template phrasing, em dashes or details the episode did not contain?"
+      "question": "Does each pitch follow the formula: the episode as a specific title first, one credential that matters to this show's listeners, two or three concrete talking points in email, at most one clause tying it to a real recent episode, and an easy ask with name, role and site; within the length limits, with no restating of the host's episode, template phrasing, em dashes, money or invented detail?"
     }
   ]
 }
