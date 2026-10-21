@@ -380,7 +380,7 @@ def sentence(notes: dict) -> str:
     text = f"{new} new profile view{'s' if new != 1 else ''}"
     if people:
         text += f", {people} {'people' if people != 1 else 'person'} new to Tin"
-    text += "."
+    text += "." + engagers.accepted_text(notes.get("accepted", 0))
     if notes.get("proposed"):
         count = notes["proposed"]
         text += (

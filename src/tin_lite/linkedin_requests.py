@@ -17,8 +17,9 @@ approved while a run still sends theirs joins it, behind what it already holds.
 
 A request that may have gone out is never sent again. LinkedIn's warning, a signed-out session
 or a refusal pauses the member's sending until they resume; LinkedIn's weekly limit holds it
-until the next week. Approvals not sent within 14 days lapse. After sending, the run reads each
-weekday who accepted, for three weeks.
+until the next week. Approvals not sent within 14 days lapse. The run finishes once nothing is
+left to send. Who accepted is read by the member's own LinkedIn reads (profile viewers, daily,
+and engagers): about once a day, for three weeks after each request went out.
 """
 
 from __future__ import annotations
@@ -50,6 +51,8 @@ QUEUE_DAYS = 14
 # People a member can choose at once in People: a runaway guard above a fortnight's sending.
 MAX_PICKED = 100
 CHECK_DAYS = 21
+# Who accepted is read about once a day, whichever of the member's LinkedIn reads comes first.
+READ_EVERY = timedelta(hours=20)
 GAP = timedelta(minutes=15)
 JITTER_SECONDS = 25 * 60
 DEFAULTS = {
@@ -799,10 +802,10 @@ async def sending_run(conn, batch_id: UUID, now: datetime) -> UUID | None:
     """The run that sends this approved batch, or None when a new one should start.
 
     A batch joins the member's run on the project while that run still has requests waiting,
-    so they go after the ones it holds. A run with none left only reads who accepted, and
-    would sleep through the new ones, so a new run starts instead. Call in a transaction and
-    record a new run on the batch before it commits: the member's line stays locked until
-    then, so two approvals at once still share one run."""
+    so they go after the ones it holds. A run with none left is finishing, so a new run
+    starts instead. Call in a transaction and record a new run on the batch before it
+    commits: the member's line stays locked until then, so two approvals at once still share
+    one run."""
 
     batch = await conn.fetchrow(
         "SELECT * FROM linkedin_request_batches WHERE id = $1 FOR UPDATE", batch_id
@@ -844,20 +847,20 @@ async def lapse(conn, run_id: UUID, now: datetime) -> int:
 
 
 async def next_step(conn, run_id: UUID, now: datetime) -> dict:
-    """Send the run's next request, wait, read who accepted, or finish.
+    """Send the run's next request, wait, or finish once nothing is left to send.
 
-    Returns {"action": "send", "request_id"}, {"action": "check"}, {"action": "wait",
-    "seconds"} or {"action": "done"}. Requests go in the order they were queued. Sending waits
-    while the member's sending is off or paused; a wait is never longer than six hours, so a
-    change is noticed. Decided under the member's line lock, so a batch never joins a run that
-    has just finished.
+    Returns {"action": "send", "request_id"}, {"action": "wait", "seconds"} or
+    {"action": "done"}. Requests go in the order they were queued. Sending waits while the
+    member's sending is off or paused; a wait is never longer than six hours, so a change is
+    noticed. Decided under the member's line lock, so a batch never joins a run that has just
+    finished. Who accepted is read by the member's LinkedIn reads, not here (`reading_due`);
+    runs from before that asked for {"action": "check"}.
     """
 
     async with conn.transaction():
         held = await conn.fetchrow(
-            """SELECT project_id, member, max(checked_at) AS checked_at
-               FROM linkedin_request_batches WHERE send_run_id = $1
-               GROUP BY project_id, member""",
+            """SELECT DISTINCT project_id, member FROM linkedin_request_batches
+               WHERE send_run_id = $1""",
             run_id,
         )
         if held is None:
@@ -871,35 +874,18 @@ async def next_step(conn, run_id: UUID, now: datetime) -> dict:
                ORDER BY q.queued_at, q.id LIMIT 1""",
             run_id,
         )
-        # Who accepted is read about a day after the newest request, then about daily.
-        check_after = None
-        newest = await conn.fetchval(
-            """SELECT max(q.attempted_at) FROM linkedin_requests q
-               JOIN linkedin_request_batches b ON b.id = q.batch_id
-               WHERE b.send_run_id = $1 AND q.status IN ('sent', 'uncertain')
-                 AND q.settled_at IS NULL""",
-            run_id,
-        )
-        if newest is not None:
-            last = held["checked_at"]
-            check_after = max(newest, last or newest) + timedelta(hours=20)
-            if check_after <= now:
-                return {"action": "check"}
-        if queued is not None:
-            settings = await sending(conn, held["project_id"], held["member"])
-            if not settings["on"] or settings["held"]:
-                return {"action": "wait", "seconds": 6 * 3600}
-            attempts, first = await member_attempts(conn, held["member"], now)
-            slot = next_slot(now, settings, attempts, queued["id"], first=first)
-            if slot is None:
-                return {"action": "wait", "seconds": 6 * 3600}
-            if slot <= now + timedelta(seconds=30):
-                return {"action": "send", "request_id": str(queued["id"])}
-            until = min(slot, check_after) if check_after else slot
-            return {"action": "wait", "seconds": _seconds(until - now)}
-        if check_after is not None:
-            return {"action": "wait", "seconds": _seconds(check_after - now)}
-        return {"action": "done"}
+        if queued is None:
+            return {"action": "done"}
+        settings = await sending(conn, held["project_id"], held["member"])
+        if not settings["on"] or settings["held"]:
+            return {"action": "wait", "seconds": 6 * 3600}
+        attempts, first = await member_attempts(conn, held["member"], now)
+        slot = next_slot(now, settings, attempts, queued["id"], first=first)
+        if slot is None:
+            return {"action": "wait", "seconds": 6 * 3600}
+        if slot <= now + timedelta(seconds=30):
+            return {"action": "send", "request_id": str(queued["id"])}
+        return {"action": "wait", "seconds": _seconds(slot - now)}
 
 
 def _seconds(delta: timedelta) -> int:
@@ -1099,43 +1085,76 @@ async def _relationship(conn, request, value: str, run_id: UUID) -> None:
             raise
 
 
-async def checking(conn, run_id: UUID, now: datetime) -> list[dict]:
-    """The run's requests still waiting for an answer, at most 20, oldest first; those past
-    three weeks stop being read."""
+# Who accepted. The member's own LinkedIn reads (profile viewers, daily, and engagers) read it
+# once a day while any of their requests on the project waits for an answer.
+
+
+async def checking(conn, project_id: UUID, member: str, now: datetime) -> list[dict]:
+    """The member's requests on the project still waiting for an answer, at most 20, oldest
+    first; those past three weeks stop being read."""
 
     await conn.execute(
-        """UPDATE linkedin_requests q SET settled_at = now()
-           FROM linkedin_request_batches b
-           WHERE b.id = q.batch_id AND b.send_run_id = $1
-             AND q.status IN ('sent', 'uncertain') AND q.settled_at IS NULL
-             AND q.attempted_at < $2""",
-        run_id,
+        """UPDATE linkedin_requests SET settled_at = now()
+           WHERE project_id = $1 AND member = $2 AND status IN ('sent', 'uncertain')
+             AND settled_at IS NULL AND attempted_at < $3""",
+        project_id,
+        member,
         now - timedelta(days=CHECK_DAYS),
     )
     rows = await conn.fetch(
-        """SELECT q.id, q.target, q.status FROM linkedin_requests q
-           JOIN linkedin_request_batches b ON b.id = q.batch_id
-           WHERE b.send_run_id = $1 AND q.status IN ('sent', 'uncertain')
-             AND q.settled_at IS NULL
-           ORDER BY q.attempted_at, q.id LIMIT 20""",
-        run_id,
+        """SELECT id, target, status FROM linkedin_requests
+           WHERE project_id = $1 AND member = $2 AND status IN ('sent', 'uncertain')
+             AND settled_at IS NULL
+           ORDER BY attempted_at, id LIMIT 20""",
+        project_id,
+        member,
     )
     return [dict(row) for row in rows]
 
 
-async def read_at(conn, run_id: UUID, now: datetime) -> None:
-    """Note that the run read who accepted, or tried to, at the time the next step reads."""
+async def reading_due(conn, project_id: UUID, member: str, now: datetime) -> bool:
+    """Whether a LinkedIn read of the member's should read who accepted: a request of theirs
+    waits for an answer, and the last read was about a day ago, or never."""
 
-    await conn.execute(
-        "UPDATE linkedin_request_batches SET checked_at = $2 WHERE send_run_id = $1", run_id, now
+    last = await conn.fetchval(
+        "SELECT max(checked_at) FROM linkedin_request_batches WHERE project_id = $1 "
+        "AND member = $2",
+        project_id,
+        member,
+    )
+    if last is not None and last > now - READ_EVERY:
+        return False
+    return await conn.fetchval(
+        """SELECT EXISTS (SELECT 1 FROM linkedin_requests
+                          WHERE project_id = $1 AND member = $2
+                            AND status IN ('sent', 'uncertain') AND settled_at IS NULL
+                            AND attempted_at >= $3)""",
+        project_id,
+        member,
+        now - timedelta(days=CHECK_DAYS),
     )
 
 
-async def checked(conn, run_id: UUID, states: dict[str, str], now: datetime) -> dict:
-    """Record a relationship read: accepted, still pending, or no longer pending."""
+async def read_at(conn, project_id: UUID, member: str, now: datetime) -> None:
+    """Note that Tin read who accepted, or tried to, at the time the read was decided."""
+
+    await conn.execute(
+        "UPDATE linkedin_request_batches SET checked_at = $3 WHERE project_id = $1 "
+        "AND member = $2 AND status = 'approved'",
+        project_id,
+        member,
+        now,
+    )
+
+
+async def checked(
+    conn, project_id: UUID, member: str, states: dict[str, str], now: datetime, *, run_id: UUID
+) -> dict:
+    """Record a relationship read by the run `run_id`: accepted, still pending, or no longer
+    pending."""
 
     counts = {"accepted": 0, "pending": 0, "ended": 0}
-    for row in await checking(conn, run_id, datetime.now(UTC)):
+    for row in await checking(conn, project_id, member, now):
         state = states.get(row["target"])
         request = await conn.fetchrow("SELECT * FROM linkedin_requests WHERE id = $1", row["id"])
         if state == "connected":
@@ -1179,5 +1198,5 @@ async def checked(conn, run_id: UUID, states: dict[str, str], now: datetime) -> 
             )
             await _relationship(conn, request, "none", run_id)
             counts["ended"] += 1
-    await read_at(conn, run_id, now)
+    await read_at(conn, project_id, member, now)
     return counts

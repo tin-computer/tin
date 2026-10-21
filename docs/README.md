@@ -68,7 +68,7 @@ your own accounts before use; ordinary contributor tests need no production cred
 - [People records](people-records.md): one lasting record per person, identifiers, values with
   lineage, the event timeline and forgetting.
 - [Connection requests](linkedin-requests.md): approved LinkedIn requests sent one at a time
-  from the member's session, then who accepted.
+  from the member's session; the member's LinkedIn reads then read who accepted.
 - [People who engaged with your LinkedIn posts](linkedin-engagers.md): the founder's posts,
   who reacted, ICP scores and the list in Files.
 - [People who viewed your LinkedIn profile](linkedin-profile-viewers.md): the profile-views

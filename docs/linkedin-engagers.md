@@ -60,7 +60,10 @@ sends nothing.
    - An answer outside the contract leaves the person unscored with a reason. A batch whose
      call failed is left for a later run.
    - At most 600 people are scored per run.
-5. **Publish.** It rewrites `people/linkedin-engagers.csv` (everyone who engaged, best fit
+5. **Who accepted.** About once a day, one read of where the member stands with up to 20
+   people whose [connection requests](linkedin-requests.md#who-accepted) wait for an answer.
+   The summary says how many accepted. It doesn't run after LinkedIn objected.
+6. **Publish.** It rewrites `people/linkedin-engagers.csv` (everyone who engaged, best fit
    first) and `people/linkedin-engagers.md` (counts and the best fits not yet connected).
    - CSV cells that a spreadsheet would read as a formula are prefixed with `'`.
    - Each run replaces both files. Earlier versions stay in the file history until the

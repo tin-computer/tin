@@ -16,6 +16,8 @@ from tin_lite.workflows import (
     ConnectionCollectionWorkflow,
     DesignMdWorkflow,
     KeywordPlanWorkflow,
+    LinkedInEngagersWorkflow,
+    LinkedInProfileViewersWorkflow,
     OrganicAuditWorkflow,
     ProjectMemoryWorkflow,
     ProjectTaskWorkflow,
@@ -123,6 +125,18 @@ ACCEPTED_HISTORIES = (
         OrganicAuditWorkflow,
         "organic.audit:6b1f0c2e-8d3a-4e5f-9a7b-2c4d6e8f0a13",
         FIXTURES / "organic_audit_history.json",
+    ),
+    # Recorded locally from main at 9feab40a, before linkedin-accepted-v1: runs that published
+    # without reading who accepted the member's connection requests.
+    (
+        LinkedInEngagersWorkflow,
+        "social.linkedin_engagers:3f2b9c1e-7a4d-4e8b-9c6f-1d2e3f4a5b6c",
+        FIXTURES / "linkedin_engagers_history.json",
+    ),
+    (
+        LinkedInProfileViewersWorkflow,
+        "social.linkedin_profile_viewers:7c1d2e3f-4a5b-4c6d-8e9f-0a1b2c3d4e5f",
+        FIXTURES / "linkedin_profile_viewers_history.json",
     ),
 )
 

@@ -1,7 +1,8 @@
 # Connection requests
 
 `social.linkedin_requests` (#450) sends the LinkedIn connection requests a member approved, one
-at a time, from their own saved session, then reads who accepted. It follows
+at a time, from their own saved session, and finishes once the last one is sent. The member's
+LinkedIn reads then read who accepted. It follows
 [People who engaged with your LinkedIn posts](linkedin-engagers.md) and
 [People who viewed your LinkedIn profile](linkedin-profile-viewers.md), whose people they propose.
 Members can also choose people themselves in People. Boards: Paper "Warm reach · connection
@@ -57,8 +58,8 @@ own line, so two members can each ask the same person.
 
 `linkedin_requests.sending_run` decides which run sends an approved batch. A batch joins the
 member's run on the project (`send_run_id`) while that run still has requests waiting, behind
-them. A run with none left only reads who accepted and would sleep through new ones, so a new
-run starts, with the start key `linkedin-requests:<batch>`. Joining, starting and a run's
+them. A run with none left is finishing, so a new run starts, with the start key
+`linkedin-requests:<batch>`. A member has at most one sending run on a project. Joining, starting and a run's
 decision to finish all take the member's line lock, and a new run is recorded on its batch
 before the lock is released, so two approvals at once share one run and no batch joins a run
 that is finishing. A run that reaches its step limit carries on as the same run (continue as
@@ -86,8 +87,8 @@ they turn it on again there (`PUT …/linkedin-requests/sending` with `consent_v
 consent box starts ticked). MCP can't turn it back on. The card says plainly that LinkedIn's terms don't allow automated requests
 and that pacing lowers the risk to the account without removing it.
 
-The run asks `linkedin_requests_next` what to do and follows: send, wait, read who accepted,
-or finish. It sends every batch it holds. Every decision about time is made from Postgres, so history holds only request IDs,
+The run asks `linkedin_requests_next` what to do and follows: send, wait, or finish once
+nothing is left to send. It sends every batch it holds. Every decision about time is made from Postgres, so history holds only request IDs,
 waits and outcomes. A request may go when, for the member across all their projects:
 
 - it's a weekday inside the window (09:00–17:00 by default) in the founder's time zone: the one
@@ -115,18 +116,36 @@ shows neither a connection nor an invitation. Outcomes:
 
 Approvals not sent within 14 days lapse.
 
+When nothing is queued, the run writes `people/connection-requests.md` (who, and what happened,
+for every batch it held) and finishes with a one-line summary ("13 connection requests sent.").
+A run that fails lapses what it had queued, from every batch it held; those people can be
+chosen again.
+
 ## Who accepted
 
-About a day after the newest request, and then daily, `linkedin_requests_check` reads the
-relationship of up to 20 waiting people (`linkedin_relationships`): connected becomes
-`accepted` (with an `accepted` event), still invited stays, and neither becomes `not_pending`
-(declined or withdrawn) or, for an uncertain one, `not_sent`. Requests stop being read three
-weeks after they were sent. Withdrawing old requests isn't built yet: no LinkedIn endpoint for
-it has been verified.
+Not the sending run: it would sit in Running for weeks only to wait. The member's own LinkedIn
+reads read it instead, after their main reads and before they publish:
+[profile viewers](linkedin-profile-viewers.md) (daily) and [engagers](linkedin-engagers.md).
 
-When nothing is queued or waiting, the run writes `people/connection-requests.md` (who, and
-what happened, for every batch it held) and finishes with a one-line summary. A run that fails
-lapses what it had queued, from every batch it held; those people can be chosen again.
+- **When:** about once a day (`linkedin_requests.reading_due`): while a request of the member's
+  on the project waits for an answer, and the last read was 20 hours ago or more, whichever of
+  their runs comes first. Not after LinkedIn objected earlier in the run.
+- **What:** one sandbox read (`linkedin_relationships`) of up to 20 waiting people, oldest
+  first, under the run's effect receipt (`<run>:<engagers|viewers>:accepted`):
+  - connected becomes `accepted`, with an `accepted` event;
+  - still invited stays;
+  - neither becomes `not_pending` (declined or withdrawn) or, for an uncertain one, `not_sent`.
+- **How it shows:** People and the LinkedIn card, and the run's line ("1 person accepted your
+  connection request.").
+- **Problems:** a read that can't run counts as done for the day. LinkedIn objecting pauses the
+  member's sending, as a send would.
+- **Nobody answers:** a request stops being read three weeks after it was sent. The person
+  stays "Invited" in People and the request stays pending on LinkedIn. Withdrawing old requests
+  isn't built yet: no LinkedIn endpoint for it has been verified.
+
+A member with neither workflow running isn't read. Sending runs from before this change still
+read who accepted themselves when they ask to (`linkedin_requests_check`), from the same
+helper, `read_accepted`.
 
 ## Where it shows
 

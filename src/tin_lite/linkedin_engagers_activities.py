@@ -38,6 +38,7 @@ from tin_lite.integrations import (
 )
 from tin_lite.linkedin_cloud import ENGAGEMENT_OPERATION
 from tin_lite.linkedin_engagement import PostsResult, ReactionsResult
+from tin_lite.linkedin_invitations import RelationshipsResult
 from tin_lite.model_providers import (
     MessageRole,
     ModelMessage,
@@ -143,6 +144,66 @@ async def saved_session(db, settings, cipher, project_id, member) -> tuple[dict,
     if datetime.fromisoformat(sealed["expires_at"]) <= datetime.now(UTC):
         raise IntegrationAuthorizationError(SAYS["session_expired"])
     return sealed["session"], sealed["actor"]
+
+
+async def read_accepted(db, settings, cipher, cloud, run, *, key: str) -> dict:
+    """Read who accepted the connection requests of the run's starter on its project that
+    still wait for an answer: one receipted read of up to 20, oldest first. A read that can't
+    run counts as done for today; LinkedIn objecting pauses their sending, as a send would."""
+
+    member = run.started_by_clerk_user_id
+    now = datetime.now(UTC)
+    async with db.pool.acquire() as conn:
+        waiting = await requests.checking(conn, run.project_id, member, now)
+        if not waiting:
+            await requests.read_at(conn, run.project_id, member, now)
+            return {"outcome": "nothing"}
+    try:
+        session, actor = await saved_session(db, settings, cipher, run.project_id, member)
+    except (IntegrationAuthorizationError, WorkflowInputError, IntegrationUpstreamError):
+        async with db.pool.acquire() as conn:
+            await requests.read_at(conn, run.project_id, member, now)
+        return {"outcome": "unread"}
+    async with db.effect_lock(key, ENGAGEMENT_OPERATION) as (conn, receipt):
+        states = None
+        if receipt is not None and receipt.status == "completed":
+            states = (receipt.result or {}).get("states")
+        elif receipt is None:
+            await db.start_effect(conn, execution_key=key, operation=ENGAGEMENT_OPERATION)
+            try:
+                raw = await cloud.engagement(
+                    conn,
+                    execution_key=key,
+                    run_id=run.id,
+                    session=session,
+                    packet={
+                        "kind": "linkedin_relationships",
+                        "members": [row["target"] for row in waiting],
+                        "actor": actor,
+                    },
+                )
+                result = RelationshipsResult.model_validate(raw)
+                states = {p.member: p.state for p in result.people}
+                await db.complete_effect(conn, execution_key=key, result={"states": states})
+            except (CollectionError, ValueError) as error:
+                code = getattr(error, "code", "unsupported_contract")
+                await db.complete_effect(
+                    conn, execution_key=key, result={"outcome": "error", "reason": code}
+                )
+                if code in STOPS:
+                    async with db.pool.acquire() as other:
+                        await requests.pause(other, member, code)
+        elif (receipt.result or {}).get("sandbox_id"):
+            await cloud.cleanup(receipt.result["sandbox_id"])
+            await db.complete_effect(
+                conn, execution_key=key, result={"outcome": "error", "reason": "interrupted"}
+            )
+    async with db.pool.acquire() as conn, conn.transaction():
+        if states is None:
+            await requests.read_at(conn, run.project_id, member, now)
+            return {"outcome": "unread"}
+        counts = await requests.checked(conn, run.project_id, member, states, now, run_id=run.id)
+    return {"outcome": "read", **counts}
 
 
 class LinkedInEngagersActivities:
@@ -557,6 +618,31 @@ class LinkedInEngagersActivities:
                 summary=summary.strip(),
                 workflow_key=KEY,
             )
+
+    async def _accepted(self, run_id: str) -> dict:
+        """Who accepted the starter's connection requests on the project, read about once a day
+        by whichever of their LinkedIn reads comes first. History keeps only the count."""
+
+        run = await self._active(run_id)
+        async with self.db.pool.acquire() as conn:
+            due = await requests.reading_due(
+                conn, run.project_id, run.started_by_clerk_user_id, datetime.now(UTC)
+            )
+        if not due:
+            return {"outcome": "nothing", "accepted": 0}
+        read = await read_accepted(
+            self.db,
+            self.settings,
+            self.cipher,
+            self.cloud,
+            run,
+            key=f"{run.id}:{self.prefix}:accepted",
+        )
+        return {"outcome": read["outcome"], "accepted": read.get("accepted", 0)}
+
+    @activity.defn(name="linkedin_engagers_accepted")
+    async def accepted(self, run_id: str) -> dict:
+        return await self._accepted(run_id)
 
     @activity.defn(name="linkedin_engagers_failure")
     async def failure(self, argument: str | dict) -> None:

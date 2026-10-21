@@ -465,6 +465,16 @@ def summary_markdown(people: list[dict], notes: dict, *, now: datetime) -> str:
     return "\n".join(lines)
 
 
+def accepted_text(count: int) -> str:
+    """Who accepted the member's connection requests since the last read, for a run's line."""
+
+    if not count:
+        return ""
+    if count == 1:
+        return " 1 person accepted your connection request."
+    return f" {count} people accepted your connection requests."
+
+
 def sentence(notes: dict) -> str:
     posts, people = notes.get("posts", 0), notes.get("reactions", 0)
     text = (
@@ -477,7 +487,7 @@ def sentence(notes: dict) -> str:
         text += f"; {notes['unread']} post{'s' if notes['unread'] != 1 else ''} couldn't be read"
     if notes.get("capped"):
         text += "; very large posts were read to their first 1,000 reactions"
-    text += "."
+    text += "." + accepted_text(notes.get("accepted", 0))
     if notes.get("proposed"):
         count = notes["proposed"]
         text += (
