@@ -24,7 +24,8 @@ page. A result with `status: "unavailable"` (timed out, or Podscan failed) or `"
 an answer: note it and move on. A failed call still counts against the 30. A rate-limit error
 means wait a minute and call once more under a new step; after a second rate limit in a row,
 or a `provider_quota` error (Tin's daily Podscan allowance is used up), stop calling Podscan
-for this run, continue with the web, and say in `## Gaps` which methods could not run.
+for this run, continue with the web, and say in `## What could not be checked`, in plain
+words, which searches could not run.
 
 What the data gets wrong, every run:
 

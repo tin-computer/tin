@@ -33,6 +33,10 @@ One per candidate you verified or rejected:
 - `similar_guest`: `{"name", "episode", "url", "date"}` for a past guest who resembles the
   founder in this arena, or `null`. `url` is the episode's page, or the show's page when its
   episodes have none.
+- `hook_episode`: `{"title", "url", "date", "detail"}` for the episode the pitch opens on, when
+  it is not the `similar_guest` episode. `detail` is what that episode's page, description or
+  transcript actually says, in a line; the pitch may only refer to what `detail` holds.
+  Optional; without it the pitch opens on the `similar_guest` episode.
 - `takes_guests`: `false` for a show that only has its hosts talking. Optional; a show with
   `false` is listed as excluded.
 - `route`: `published_email` (the show's own page or feed asks for guest pitches at an
@@ -80,6 +84,7 @@ HARD_NOS = (
 )
 # A show with no episode in this window is not booking guests now.
 ACTIVE_DAYS = 120
+OUTPUT_DIR = "reports/outreach/podcasts/"
 FIT_MIN_PICKS = 5
 MAX_STATE_SHOWS = 500
 EMAIL = re.compile(r"[^@\s<>\"]{1,64}@[A-Za-z0-9-]{1,63}(\.[A-Za-z0-9-]{1,63})*\.[A-Za-z]{2,24}\Z")
@@ -106,6 +111,16 @@ def _url(value, field):
     if not isinstance(value, str) or not value.startswith(("https://", "http://")):
         raise ValueError(f"{field} must be an http(s) URL")
     return value
+
+
+def report_path_of(value):
+    """The report's path inside the project, even when given as a sandbox path."""
+    if not isinstance(value, str) or not value.endswith(".md"):
+        raise ValueError(f"report_path must be the declared output path, {OUTPUT_DIR}<run>.md")
+    at = value.find(OUTPUT_DIR)
+    if at < 0 or "/" in value[at + len(OUTPUT_DIR) :]:
+        raise ValueError(f"report_path must be the declared output path, {OUTPUT_DIR}<run>.md")
+    return value[at:]
 
 
 def slug(name):
@@ -158,6 +173,14 @@ def check_show(show, arena_ids):
         _text(guest.get("episode"), "similar_guest episode", 300)
         _url(guest.get("url"), "similar_guest url")
         _day(guest.get("date"), "similar_guest date")
+    hook = show.get("hook_episode")
+    if hook is not None:
+        if not isinstance(hook, dict):
+            raise ValueError("hook_episode must be an object or null")
+        _text(hook.get("title"), "hook_episode title", 300)
+        _url(hook.get("url"), "hook_episode url")
+        _day(hook.get("date"), "hook_episode date")
+        _text(hook.get("detail"), "hook_episode detail", 400)
     route = show.get("route")
     if route not in ROUTES:
         raise ValueError(f"route must be one of {', '.join(ROUTES)}")
@@ -201,6 +224,11 @@ def read_state(value):
             report = item.get("report")
             if not isinstance(report, str) or not report.strip():
                 return None
+            # Reports from before 1.1.0 could record the sandbox path of the same file.
+            try:
+                report = report_path_of(report)
+            except ValueError:
+                pass
             clean[key] = {
                 "name": item["name"],
                 "route": item["route"],
@@ -238,6 +266,7 @@ def plan(
 ):
     """Balance verified shows across arenas; return picks, ladder, exclusions, gaps and state."""
     today = _day(as_of, "as_of")
+    report_path = report_path_of(report_path)
     if isinstance(max_pitches, bool) or not isinstance(max_pitches, int):
         raise ValueError("max_pitches must be 3-20")
     if not 3 <= max_pitches <= 20:
@@ -291,12 +320,12 @@ def plan(
         elif (today - _day(row["last_episode"], "last_episode")).days > ACTIVE_DAYS:
             reason = f"no episode since {row['last_episode']}"
         elif key in skipped:
-            reason = "named in already_pitched"
+            reason = "you already pitched it"
         elif key in earlier:
             prior = earlier[key]
-            reason = f"pitched on {prior['first_pitched']} in {prior['report']}"
+            reason = f"pitched in an earlier run on {prior['first_pitched']} ({prior['report']})"
         elif row["route"] == "direct_message" and "no_cold_email" in hard_nos:
-            reason = "hard no: no cold email (the show states no way to pitch it)"
+            reason = "your growth plan rules out cold email, and the show states no way to pitch it"
         if reason:
             excluded.append(dict(row, reason=reason))
         elif row["route"] == "ladder":
@@ -317,7 +346,12 @@ def plan(
     for arena in order:
         for row in eligible[arena]:
             if row["key"] not in chosen:
-                excluded.append(dict(row, reason="over max_pitches; eligible next run"))
+                excluded.append(
+                    dict(
+                        row,
+                        reason="more shows than the pitches you asked for; a later run can pick it",
+                    )
+                )
     ladder.sort(
         key=lambda r: (r.get("deadline") or "9999-12-31", order.index(r["arena"]), r["rank"])
     )
@@ -333,28 +367,30 @@ def plan(
             outcome = "ladder"
         else:
             hit = next((row for row in excluded if row["key"] == key), None)
-            outcome = f"excluded: {hit['reason']}" if hit else "not evaluated"
+            outcome = f"left out: {hit['reason']}" if hit else "not evaluated"
         outcomes.append({"name": name.strip(), "outcome": outcome})
 
+    # Gaps are read by the founder: name audiences by their label, never by id or method.
     gaps = []
     kinds = {arena["kind"] for arena in arenas}
-    for kind in ("buyers", "craft"):
-        if kind not in kinds:
-            gaps.append(f"no {kind} arena was searched")
+    if "buyers" not in kinds:
+        gaps.append("No shows your buyers listen to were searched.")
+    if "craft" not in kinds:
+        gaps.append("No shows for people in your own line of work were searched.")
     tried = {arena["id"]: set(arena.get("tried", [])) for arena in arenas}
+    labels = {arena["id"]: arena["label"] for arena in arenas}
     for arena in order:
         rows = [row for row in merged.values() if row["arena"] == arena]
         methods = tried[arena] | {method for row in rows for method in row["found_by"]}
         if not rows:
-            gaps.append(f"{arena}: no candidates found")
+            gaps.append(f"{labels[arena]}: no shows found.")
         if len(methods) < 2:
-            used = ", ".join(sorted(methods)) or "none recorded"
-            gaps.append(f"{arena}: fewer than two methods tried ({used})")
+            gaps.append(f"{labels[arena]}: searched only one way, so shows may be missing.")
         if rows and not any(row["key"] in chosen for row in rows):
-            gaps.append(f"{arena}: no pick this run")
+            gaps.append(f"{labels[arena]}: shows were found, but none made the picks this run.")
     for item in outcomes:
         if item["outcome"] == "not evaluated":
-            gaps.append(f"asked-for show not evaluated: {item['name']}")
+            gaps.append(f"You asked about {item['name']}, and it was not checked.")
 
     count = len(picks)
     verdict = "fit" if count >= FIT_MIN_PICKS else "thin" if count else "not a fit"
