@@ -14,7 +14,8 @@ sends nothing.
   engagement reads, and the native model service (`TIN_LITE_LUNA_API_KEY`).
 - **Member:** each member runs it with their own LinkedIn connection. Their saved session reads
   their own posts. That member needs cloud reading turned on and a live session from Tin for
-  Chrome, as collection does.
+  Chrome, as collection does. Each member saves their own copy, once, and only they can change
+  it ([personal workflows](connection-collection.md#connect-once-then-run-from-tin)).
 
 ## What a run does
 

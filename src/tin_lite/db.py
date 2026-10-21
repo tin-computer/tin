@@ -2107,6 +2107,25 @@ class Database:
                 from tin_lite.content_plan import bound_schedule
 
                 schedule = bound_schedule(inputs, schedule)
+            from tin_lite.connection_collection import ALREADY_SAVED, ONE_PER_MEMBER
+
+            if workflow["executor"] in ONE_PER_MEMBER:
+                # One saved copy per member: it reads their own LinkedIn account.
+                await conn.execute(
+                    "SELECT pg_advisory_xact_lock(hashtextextended($1, 0))",
+                    f"personal-workflow:{project_id}:{workflow_id}:{created_by_clerk_user_id}",
+                )
+                if await conn.fetchval(
+                    """SELECT EXISTS (SELECT 1 FROM project_workflows
+                                      WHERE project_id = $1 AND workflow_id = $2
+                                        AND created_by_clerk_user_id = $3
+                                        AND status <> 'archived' AND request_id <> $4)""",
+                    project_id,
+                    workflow_id,
+                    created_by_clerk_user_id,
+                    request_id,
+                ):
+                    raise ValueError(ALREADY_SAVED)
             await conn.execute(
                 """
                 INSERT INTO project_workflows (

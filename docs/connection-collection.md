@@ -36,6 +36,18 @@ and member; every other integration stays one per project):
   choice fills their own new workflows, and disconnecting removes only their own.
 - Deleting the project removes every member's connection.
 
+The workflows that act through a member's own session are personal
+(`connection_collection.personal`): this collection, [engagers](linkedin-engagers.md),
+[profile viewers](linkedin-profile-viewers.md) and [connection requests](linkedin-requests.md).
+The project's ICP file and People stay shared; who runs them, and with whose LinkedIn, doesn't.
+- **Saved copies are the saver's.** Only the member who saved one changes, pauses, resumes,
+  skips, runs, retries or removes it, over HTTP or MCP (`owns`); anyone else gets "This uses the
+  LinkedIn of the member who saved it". Each member keeps one saved copy of engagers and of
+  profile viewers (`ONE_PER_MEMBER`); collections, which take profiles to read, can be saved
+  more than once.
+- **A schedule runs as the member who saved it**, with their LinkedIn, as code schedules do. If
+  they leave the project, the schedule pauses and says so; a current member saves their own.
+
 ![First-time installation with synthetic content](images/linkedin-install.png)
 
 ![Confirm the account and collection choice](images/linkedin-setup.png)

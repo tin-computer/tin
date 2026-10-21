@@ -3560,6 +3560,22 @@ async def create_project_workflow(
     return ProjectWorkflowView.model_validate(configured)
 
 
+async def _require_own(
+    request: Request, project_id: UUID, project_workflow_id: UUID, user: AuthContext
+) -> None:
+    """A personal workflow's saved copy (one that uses a member's own LinkedIn) is changed,
+    paused, run or removed only by the member who saved it."""
+    from tin_lite.connection_collection import NOT_YOURS, owns
+
+    configured = await request.app.state.runtime.database.get_project_workflow(project_workflow_id)
+    if (
+        configured is not None
+        and configured.project_id == project_id
+        and not owns(configured, user.clerk_user_id)
+    ):
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail=NOT_YOURS)
+
+
 @router.put(
     "/api/projects/{project_id}/workflows/{project_workflow_id}",
     response_model=ProjectWorkflowView,
@@ -3572,6 +3588,7 @@ async def update_project_workflow(
     user: AuthContext = AUTHENTICATED_USER,
 ) -> ProjectWorkflowView:
     await _require_project_access(project_id, request, user)
+    await _require_own(request, project_id, project_workflow_id, user)
     database = request.app.state.runtime.database
     existing = await database.get_project_workflow(project_workflow_id)
     if existing is None or existing.project_id != project_id:
@@ -3686,6 +3703,7 @@ async def start_project_workflow_run(
     user: AuthContext = AUTHENTICATED_USER,
 ) -> RunView:
     await _require_project_access(project_id, request, user)
+    await _require_own(request, project_id, project_workflow_id, user)
     database = request.app.state.runtime.database
     configured = await database.get_project_workflow(project_workflow_id)
     if configured is None or configured.project_id != project_id:
@@ -3754,6 +3772,7 @@ async def retry_project_workflow_run(
     user: AuthContext = AUTHENTICATED_USER,
 ) -> RunView:
     await _require_project_access(project_id, request, user)
+    await _require_own(request, project_id, project_workflow_id, user)
     database = request.app.state.runtime.database
     configured = await database.get_project_workflow(project_workflow_id)
     if configured is None or configured.project_id != project_id:
@@ -3839,6 +3858,7 @@ async def pause_project_workflow(
     user: AuthContext = AUTHENTICATED_USER,
 ) -> ProjectWorkflowView:
     await _require_project_access(project_id, request, user)
+    await _require_own(request, project_id, project_workflow_id, user)
     return ProjectWorkflowView.model_validate(
         await _set_project_workflow_pause(
             project_id=project_id,
@@ -3860,6 +3880,7 @@ async def skip_project_workflow_once(
     user: AuthContext = AUTHENTICATED_USER,
 ) -> ProjectWorkflowView:
     await _require_project_access(project_id, request, user)
+    await _require_own(request, project_id, project_workflow_id, user)
     database = request.app.state.runtime.database
     configured = await database.get_project_workflow(project_workflow_id)
     if configured is None or configured.project_id != project_id:
@@ -3905,6 +3926,7 @@ async def remove_project_workflow(
     user: AuthContext = AUTHENTICATED_USER,
 ) -> Response:
     await _require_project_access(project_id, request, user)
+    await _require_own(request, project_id, project_workflow_id, user)
     database = request.app.state.runtime.database
     configured = await database.get_project_workflow(project_workflow_id, include_archived=True)
     if configured is None or configured.project_id != project_id:
@@ -3949,6 +3971,7 @@ async def resume_project_workflow(
     user: AuthContext = AUTHENTICATED_USER,
 ) -> ProjectWorkflowView:
     await _require_project_access(project_id, request, user)
+    await _require_own(request, project_id, project_workflow_id, user)
     return ProjectWorkflowView.model_validate(
         await _set_project_workflow_pause(
             project_id=project_id,
