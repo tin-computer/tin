@@ -334,6 +334,8 @@ def request_for(operation: str, arguments: Any) -> tuple[Operation, dict[str, An
     if spec is None:
         raise ServiceArgumentError("unknown PostHog operation")
     args = _checked(arguments, spec.arguments)
+    if operation == "project.read":
+        return spec, {"params": {}}
     if operation == "query.hogql":
         if "query" not in args:
             raise ServiceArgumentError("query is required")
@@ -410,6 +412,37 @@ def project_insight(value: dict[str, Any]) -> dict[str, Any]:
         "kind": text(query.get("kind"), 60),
         "query_kind": text(source.get("kind"), 60) or text(query.get("kind"), 60),
         "last_refresh": text(value.get("last_refresh"), 40),
+    }
+
+
+# What a workflow may read about the selected project: how it captures, never its keys.
+PROJECT_SETTINGS = (
+    "session_recording_opt_in",
+    "autocapture_opt_out",
+    "autocapture_exceptions_opt_in",
+    "capture_dead_clicks",
+    "capture_performance_opt_in",
+    "heatmaps_opt_in",
+    "surveys_opt_in",
+)
+
+
+def project_settings(value: dict[str, Any], *, host: str, project_id: str) -> dict[str, Any]:
+    """The selected project's name, capture settings and app URLs, and where its replays open.
+
+    The API token, secret keys and team members never leave Tin. `replay_url` is the prefix a
+    session ID completes to open that session's recording in PostHog.
+    """
+    urls = value.get("app_urls") if isinstance(value.get("app_urls"), list) else []
+    mode = value.get("cookieless_server_hash_mode")
+    recording = value.get("session_recording_opt_in") is True
+    return {
+        "name": text(value.get("name")),
+        "timezone": text(value.get("timezone"), 60),
+        "app_urls": [u for u in (text(item, 300) for item in urls[:20]) if u],
+        **{key: boolean(value.get(key)) for key in PROJECT_SETTINGS},
+        "cookieless": mode in {1, 2} if type(mode) is int else None,
+        "replay_url": f"{host.rstrip('/')}/project/{project_id}/replay/" if recording else None,
     }
 
 
@@ -506,6 +539,9 @@ OPERATIONS: dict[str, Operation] = {
         project_property_definition,
     ),
     "insights.list": Operation("insights.read", "insights", _PAGE, project_insight),
+    # The project record itself, which every grant reads (project:read): what it captures and
+    # where replays open. Under definitions.read, as it describes how the data was collected.
+    "project.read": Operation("definitions.read", "", frozenset()),
 }
 assert {op.capability for op in OPERATIONS.values()} == set(POSTHOG_CAPABILITIES)
 
@@ -1119,7 +1155,7 @@ class PostHogConnections:
         selected = config.get("selected_project_id")
         if not isinstance(selected, str) or not selected.isdigit():
             raise IntegrationAuthorizationError("Choose a PostHog project first")
-        path = f"/api/projects/{selected}/{spec.resource}/"
+        path = f"/api/projects/{selected}/" + (f"{spec.resource}/" if spec.resource else "")
         method = "POST" if spec.resource == "query" else "GET"
         fingerprint = hashlib.sha256(
             json.dumps(
@@ -1148,7 +1184,16 @@ class PostHogConnections:
             )
             raise
         try:
-            if method == "POST":
+            if operation == "project.read":
+                if not isinstance(payload, dict):
+                    raise IntegrationUpstreamError("PostHog returned an invalid project")
+                result = {
+                    **project_settings(payload, host=config["api_host"], project_id=selected),
+                    "has_more": False,
+                    "truncated": False,
+                }
+                summary = {"record_count": 1, "returned_count": 1}
+            elif method == "POST":
                 result = project_query(payload, max_response_bytes=max_response_bytes)
                 summary = {
                     "record_count": len(payload.get("results") or []),

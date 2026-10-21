@@ -43,6 +43,8 @@ ESTIMATES_USD: dict[str, str] = {
     "outreach.awesome_lists": "1.75",
     "outreach.email_shortlist": "1.00",
     "product.analytics_brief": "0.50",
+    # Judged, not measured: a longer read than the brief (8-10 queries, up to 30 journeys).
+    "product.visitor_journeys": "1.00",
     "organic.error_surface": "2.25",
     "organic.mention_backlinks": "1.25",
     "content.diagram": "1.20",

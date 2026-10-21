@@ -81,6 +81,11 @@ def show(name="Example Builders Show", arena="buyers", rank=1, route="guest_form
     return record
 
 
+def plan(scoring, *args, **kwargs):
+    kwargs.setdefault("report_path", REPORT)
+    return scoring["plan"](*args, **kwargs)
+
+
 def fixture_text(name):
     # Normalise line endings so a Windows checkout (core.autocrlf) reads the same as CI.
     return (FIXTURES / name).read_bytes().decode("utf-8").replace("\r\n", "\n")
@@ -122,15 +127,18 @@ def test_manifest_binds_podscan_and_declares_context_and_a_run_owned_report():
 def test_skill_report_labels_and_blocks_agree():
     skill = (SKILL / "SKILL.md").read_text(encoding="utf-8")
     for label in (
-        "Founder:",
-        "## Arenas",
+        "## Next steps",
         "## Picks",
-        "Similar guest:",
-        "Send via:",
+        "**Why this show:**",
+        "**Odds:**",
+        "**Guest like you:**",
+        "**How to reach them:**",
         "## Ladder",
+        "## Who these shows reach",
         "## Shows you asked about",
-        "## Gaps",
-        "## Excluded candidates",
+        "## What could not be checked",
+        "## Left out",
+        "## About this run",
     ):
         assert label in skill, label
     scoring_text = (SKILL / "SCORING.md").read_text(encoding="utf-8")
@@ -166,11 +174,11 @@ def test_picks_are_balanced_across_arenas_not_ranked_on_one_scale(scoring):
         show("Craft One", "craft", 1, found_by=["lookalike_title"]),
         show("Ev Sohbeti", "home", 1, language="tr", found_by=["country_chart"]),
     ]
-    result = scoring["plan"](ARENAS, shows, AS_OF, max_pitches=3)
+    result = plan(scoring, ARENAS, shows, AS_OF, max_pitches=3)
     assert [row["name"] for row in result["picks"]] == ["Buyers One", "Craft One", "Ev Sohbeti"]
     overflow = [row["name"] for row in result["excluded"]]
     assert overflow == ["Buyers Two", "Buyers Three"]
-    assert result["excluded"][0]["reason"] == "over max_pitches; eligible next run"
+    assert result["excluded"][0]["reason"].startswith("more shows than the pitches you asked for")
     assert result["verdict"] == "thin"
 
 
@@ -179,7 +187,7 @@ def test_ladder_shows_wait_for_their_step_and_do_not_take_a_pick(scoring):
         show("Big Show", "craft", 1, "ladder", deadline="2026-10-11", similar_guest=None),
         show("Craft Two", "craft", 2),
     ]
-    result = scoring["plan"](ARENAS, shows, AS_OF, include_shows=["the big show"])
+    result = plan(scoring, ARENAS, shows, AS_OF, include_shows=["the big show"])
     assert [row["name"] for row in result["ladder"]] == ["Big Show"]
     assert [row["name"] for row in result["picks"]] == ["Craft Two"]
     assert result["include_outcomes"] == [{"name": "the big show", "outcome": "ladder"}]
@@ -188,7 +196,7 @@ def test_ladder_shows_wait_for_their_step_and_do_not_take_a_pick(scoring):
 
 def test_a_guest_fee_is_a_note_not_an_exclusion(scoring):
     paid = show(notes="Charges $300 for a guaranteed guest slot (its sponsor page).")
-    result = scoring["plan"](ARENAS, [paid], AS_OF)
+    result = plan(scoring, ARENAS, [paid], AS_OF)
     assert [row["name"] for row in result["picks"]] == ["Example Builders Show"]
     assert result["picks"][0]["notes"].startswith("Charges $300")
 
@@ -198,14 +206,18 @@ def test_a_guest_fee_is_a_note_not_an_exclusion(scoring):
     [
         ({"last_episode": "2026-04-01"}, {}, "no episode since 2026-04-01"),
         ({"last_episode": None}, {}, "latest episode date not verified"),
-        ({}, {"already_pitched": ["example builders show"]}, "named in already_pitched"),
-        ({"route": "direct_message"}, {"hard_nos": ["no_cold_email"]}, "hard no: no cold email"),
+        ({}, {"already_pitched": ["example builders show"]}, "you already pitched it"),
+        (
+            {"route": "direct_message"},
+            {"hard_nos": ["no_cold_email"]},
+            "your growth plan rules out cold email",
+        ),
     ],
 )
 def test_inactive_pitched_and_hard_no_shows_are_excluded_with_a_reason(
     scoring, overrides, kwargs, reason
 ):
-    result = scoring["plan"](ARENAS, [show(**overrides)], AS_OF, **kwargs)
+    result = plan(scoring, ARENAS, [show(**overrides)], AS_OF, **kwargs)
     assert result["picks"] == []
     assert result["excluded"][0]["reason"].startswith(reason)
     assert result["status"] == "no shows verified" and result["verdict"] == "not a fit"
@@ -216,7 +228,7 @@ def test_a_show_found_twice_is_merged_with_every_method(scoring):
         show("Example Builders Show", "craft", 2, found_by=["lookalike_title"]),
         show("The Example Builders Show", "buyers", 1, found_by=["buyer_guests"]),
     ]
-    result = scoring["plan"](ARENAS, shows, AS_OF)
+    result = plan(scoring, ARENAS, shows, AS_OF)
     assert len(result["picks"]) == 1 and result["duplicates_merged"] == 1
     assert result["picks"][0]["arena"] == "buyers"
     assert result["picks"][0]["found_by"] == ["buyer_guests", "lookalike_title"]
@@ -224,32 +236,40 @@ def test_a_show_found_twice_is_merged_with_every_method(scoring):
 
 def test_gaps_name_missing_kinds_thin_arenas_and_unevaluated_asks(scoring):
     arenas = [ARENAS[0], ARENAS[2]]
-    result = scoring["plan"](arenas, [show()], AS_OF, include_shows=["Latent Space"])
-    assert "no craft arena was searched" in result["gaps"]
-    assert "buyers: fewer than two methods tried (buyer_guests)" in result["gaps"]
-    assert "home: no candidates found" in result["gaps"]
-    assert "asked-for show not evaluated: Latent Space" in result["gaps"]
+    result = plan(scoring, arenas, [show()], AS_OF, include_shows=["Latent Space"])
+    gaps = result["gaps"]
+    assert "No shows for people in your own line of work were searched." in gaps
+    assert "Small SaaS founders: searched only one way, so shows may be missing." in gaps
+    assert "Turkish tech: no shows found." in gaps
+    assert "You asked about Latent Space, and it was not checked." in gaps
+    # The founder reads gaps: no arena ids or method names.
+    assert not any("buyer_guests" in gap or gap.startswith("home:") for gap in gaps)
 
 
 def test_a_show_pitched_in_an_earlier_run_is_never_pitched_again(scoring):
-    first = scoring["plan"](ARENAS, [show()], "2026-09-10", report_path="reports/a.md")
+    first_report = "reports/outreach/podcasts/a.md"
+    first = plan(scoring, ARENAS, [show()], "2026-09-10", report_path=first_report)
     earlier = scoring["merge_states"](
         [scoring["read_state"](json.loads(json.dumps(first["state"])))]
     )
-    second = scoring["plan"](
+    second = plan(
+        scoring,
         ARENAS,
         [show(), show("New Show", "craft", 1)],
         AS_OF,
         previous=earlier,
-        report_path="reports/b.md",
+        report_path="reports/outreach/podcasts/b.md",
     )
     assert [row["name"] for row in second["picks"]] == ["New Show"]
-    assert second["excluded"][0]["reason"] == "pitched on 2026-09-10 in reports/a.md"
+    assert second["excluded"][0]["reason"] == (
+        f"pitched in an earlier run on 2026-09-10 ({first_report})"
+    )
     assert set(second["state"]["shows"]) == {"example builders show", "new show"}
 
 
 def test_the_pitch_block_holds_one_email_per_published_address_pick(scoring):
-    picks = scoring["plan"](
+    picks = plan(
+        scoring,
         ARENAS,
         [show(route="published_email"), show("Form Show", "craft", 1)],
         AS_OF,
@@ -289,6 +309,8 @@ def test_the_pitch_block_holds_one_email_per_published_address_pick(scoring):
         {"pitch_address": "guests@builders.example.com"},
         {"route": "ladder", "ladder_step": ""},
         {"similar_guest": {"name": "Riley", "episode": "x", "url": "x", "date": "2026-01-01"}},
+        {"hook_episode": {"title": "Ep 9", "url": "https://x.example/9", "date": "2026-09-01"}},
+        {"hook_episode": {"title": "Ep 9", "url": "x", "date": "2026-09-01", "detail": "d"}},
     ],
 )
 def test_plausible_but_unusable_records_are_rejected(scoring, overrides):
@@ -296,7 +318,7 @@ def test_plausible_but_unusable_records_are_rejected(scoring, overrides):
     if overrides.get("route") == "published_email" and "address_source" in overrides:
         record["address_source"] = overrides["address_source"]
     with pytest.raises(ValueError):
-        scoring["plan"](ARENAS, [record], AS_OF)
+        plan(scoring, ARENAS, [record], AS_OF)
 
 
 @pytest.mark.parametrize(
@@ -309,7 +331,7 @@ def test_plausible_but_unusable_records_are_rejected(scoring, overrides):
 )
 def test_run_inputs_outside_the_contract_are_rejected(scoring, args, message):
     with pytest.raises(ValueError, match=message):
-        scoring["plan"](ARENAS, [show()], AS_OF, **args)
+        plan(scoring, ARENAS, [show()], AS_OF, **args)
 
 
 @pytest.mark.parametrize(
@@ -323,7 +345,7 @@ def test_run_inputs_outside_the_contract_are_rejected(scoring, args, message):
 )
 def test_untrustworthy_arenas_are_rejected(scoring, arenas):
     with pytest.raises(ValueError):
-        scoring["plan"](arenas, [], AS_OF)
+        plan(scoring, arenas, [], AS_OF)
 
 
 @pytest.mark.parametrize(
@@ -367,14 +389,14 @@ def test_a_plausible_report_passes_the_ordinary_case(scoring):
     text = fixture_text("synthetic_report.md")
     result = assess_output(case("ordinary"), status="succeeded", content=text.encode("utf-8"))
     assert result["status"] == "passed", result["checks"]
-    state = re.search(r"```tin-podcast-state\n(.*?)\n```", text, re.S).group(1)
+    state = re.search(r"```json tin-podcast-state\n(.*?)\n```", text, re.S).group(1)
     parsed = scoring["read_state"](json.loads(state))
     assert parsed is not None
     picks_section = text.split("## Picks", 1)[1].split("\n## ", 1)[0]
     picked = re.findall(r"(?m)^### \d+\. (.+)$", picks_section)
     pitched_here = [s["name"] for s in parsed["shows"].values() if s["report"] == REPORT]
     assert sorted(picked) == sorted(pitched_here)
-    block = json.loads(re.search(r"```tin-podcast-pitches\n(.*?)\n```", text, re.S).group(1))
+    block = json.loads(re.search(r"```json tin-podcast-pitches\n(.*?)\n```", text, re.S).group(1))
     emails = [p for p in block["pitches"]]
     assert {p["show"] for p in emails} <= set(picked)
     turkish = next(p for p in emails if p["language"] == "tr")
@@ -390,19 +412,80 @@ def test_a_plausible_but_unusable_report_fails_the_ordinary_case():
     assert result["status"] == "failed"
     failed = {check["check"] for check in result["checks"] if not check["passed"]}
     contains = case("ordinary").expect.contains
-    for label in ("## Arenas", "(home, tr)", "Similar guest:", "```tin-podcast-state"):
+    for label in ("## Who these shows reach", "(home, Turkish)", "**Guest like you:**"):
         assert f"contains:{contains.index(label)}" in failed, label
 
 
 def test_methods_tried_count_toward_coverage_even_when_they_found_nothing(scoring):
     arenas = [{**ARENAS[0], "tried": ["buyer_guests", "transcript_topic"]}]
-    result = scoring["plan"](arenas, [show()], AS_OF)
+    result = plan(scoring, arenas, [show()], AS_OF)
     assert not any("fewer than two methods" in gap for gap in result["gaps"])
     with pytest.raises(ValueError, match="tried"):
-        scoring["plan"]([{**ARENAS[0], "tried": ["guessing"]}], [show()], AS_OF)
+        plan(scoring, [{**ARENAS[0], "tried": ["guessing"]}], [show()], AS_OF)
 
 
 def test_a_show_without_guests_is_listed_as_excluded(scoring):
-    result = scoring["plan"](ARENAS, [show(takes_guests=False)], AS_OF)
+    result = plan(scoring, ARENAS, [show(takes_guests=False)], AS_OF)
     assert result["picks"] == []
     assert result["excluded"][0]["reason"] == "does not host guests"
+
+
+def test_state_records_the_report_path_inside_the_project(scoring):
+    sandbox = "/home/user/project/" + REPORT
+    result = plan(scoring, ARENAS, [show()], AS_OF, report_path=sandbox)
+    assert result["state"]["shows"]["example builders show"]["report"] == REPORT
+    with pytest.raises(ValueError, match="report_path"):
+        plan(scoring, ARENAS, [show()], AS_OF, report_path="")
+    with pytest.raises(ValueError, match="report_path"):
+        plan(scoring, ARENAS, [show()], AS_OF, report_path="notes/podcasts.md")
+
+
+def test_earlier_state_with_a_sandbox_path_is_read_as_the_project_path(scoring):
+    item = {"name": "X", "route": "guest_form", "first_pitched": "2026-10-21"}
+    state = {"version": 1, "shows": {"x": {**item, "report": "/home/user/project/" + REPORT}}}
+    assert scoring["read_state"](state)["shows"]["x"]["report"] == REPORT
+
+
+def test_a_pitch_may_open_on_a_checked_episode_other_than_the_similar_guest(scoring):
+    hook = {
+        "title": "Why a CISO doesn't trust the approve button",
+        "url": "https://builders.example.com/ep/104",
+        "date": "2026-09-22",
+        "detail": "The CISO explains why one-click approvals stop being a control.",
+    }
+    result = plan(scoring, ARENAS, [show(hook_episode=hook)], AS_OF)
+    assert result["picks"][0]["hook_episode"] == hook
+
+
+def test_the_report_reads_as_separate_lines_with_its_data_folded_away():
+    from tin_lite.documents import render_markdown
+
+    text = fixture_text("synthetic_report.md")
+    html = render_markdown(text).html
+    # Each field renders on its own: a bullet, not one paragraph of joined lines.
+    assert "<li><strong>Listeners:</strong>" in html
+    assert "<strong>Listeners:</strong>" not in html.split("<li><strong>Listeners:</strong>")[0]
+    assert html.count('<details class="md-document-metadata md-document-data">') == 2
+    # The founder-facing part names no method or arena ids.
+    readable = text.split("## About this run", 1)[0]
+    assert not re.search(r"buyer_guests|lookalike_|transcript_topic|Searched with", readable)
+
+
+def test_long_shots_take_about_a_third_of_the_picks_and_never_crowd_out_likely_shows(scoring):
+    likely = [show(f"Likely {n}", "buyers", n) for n in range(1, 9)]
+    reach = [show(f"Big {n}", "craft", n, tier="reach") for n in range(1, 6)]
+    result = plan(scoring, ARENAS, likely + reach, AS_OF, max_pitches=10)
+    names = [row["name"] for row in result["picks"]]
+    assert names[-3:] == ["Big 1", "Big 2", "Big 3"] and len(names) == 10
+    assert sum(name.startswith("Likely") for name in names) == 7
+    left = {row["name"]: row["reason"] for row in result["excluded"]}
+    assert left["Big 4"].startswith("more long shots than one run tries")
+    assert left["Likely 8"].startswith("more shows than the pitches you asked for")
+
+
+def test_without_long_shots_every_pick_is_a_likely_show(scoring):
+    shows = [show(f"Likely {n}", "buyers", n) for n in range(1, 6)]
+    result = plan(scoring, ARENAS, shows, AS_OF, max_pitches=3)
+    assert [row["name"] for row in result["picks"]] == ["Likely 1", "Likely 2", "Likely 3"]
+    with pytest.raises(ValueError, match="tier"):
+        plan(scoring, ARENAS, [show(tier="dream")], AS_OF)

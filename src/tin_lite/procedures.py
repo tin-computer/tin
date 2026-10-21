@@ -16,6 +16,7 @@ from tin_lite import (
     blog_index_plan,
     content_draft,
     feedback_fix_plan,
+    visitor_journal,
 )
 from tin_lite.code_storage import CodeStorage
 from tin_lite.diagram_compositions import parse_diagram_v2
@@ -99,6 +100,11 @@ ANALYTICS_BRIEF_VALIDATOR = analytics_brief.VALIDATOR
 ANALYTICS_BRIEF_PATH_TEMPLATE = "reports/analytics/{run_id}.md"
 BLOG_INDEX_PLAN_VALIDATOR = blog_index_plan.VALIDATOR
 FEEDBACK_FIX_PLAN_VALIDATOR = feedback_fix_plan.VALIDATOR
+# product.visitor_journeys: its report's named people are written to People after publication,
+# so only that reviewed package, at its run-owned path, may declare this validator.
+VISITOR_JOURNAL_VALIDATOR = visitor_journal.VALIDATOR
+VISITOR_JOURNAL_KEY = "product.visitor_journeys"
+VISITOR_JOURNAL_PATH_TEMPLATE = "reports/visitors/{run_id}.md"
 CONTENT_REFRESH_VALIDATOR = "content-refresh.v1"
 # content.plan_research's portfolio (content_plan_agent): one validator, one run-owned path.
 CONTENT_PORTFOLIO_VALIDATOR = "content-plan-portfolio.v1"
@@ -110,6 +116,7 @@ ARTIFACT_VALIDATORS = frozenset(
         ANALYTICS_BRIEF_VALIDATOR,
         BLOG_INDEX_PLAN_VALIDATOR,
         FEEDBACK_FIX_PLAN_VALIDATOR,
+        VISITOR_JOURNAL_VALIDATOR,
         *content_draft.VALIDATORS,
         CONTENT_REFRESH_VALIDATOR,
         EMAIL_SHORTLIST_VALIDATOR,
@@ -1049,7 +1056,7 @@ def validate_codex_procedure_definition(definition: dict[str, Any]) -> CodexProc
                 raise ValueError("readable run folders are reserved for reviewed documents")
             if placeholders in (["{run_id}"], ["{run_folder}"]):
                 plain_report = (
-                    output_validator in (None, ANALYTICS_BRIEF_VALIDATOR)
+                    output_validator in (None, ANALYTICS_BRIEF_VALIDATOR, VISITOR_JOURNAL_VALIDATOR)
                     and raw_output_template.startswith("reports/")
                     and raw_output_template.endswith("/{run_id}.md")
                     and output.get("media_type") == "text/markdown"
@@ -1132,6 +1139,13 @@ def validate_codex_procedure_definition(definition: dict[str, Any]) -> CodexProc
             or workspace_kind != GITHUB_REPOSITORY_WORKSPACE
         ):
             raise ValueError("A copy fix plan is qa.feedback_to_fix's run-owned PLAN.md.")
+        if output_validator == VISITOR_JOURNAL_VALIDATOR and (
+            definition.get("key") != VISITOR_JOURNAL_KEY
+            or output_path_template != VISITOR_JOURNAL_PATH_TEMPLATE
+            or output_media_type != "text/markdown"
+            or workspace_kind != PROJECT_STATE_WORKSPACE
+        ):
+            raise ValueError("A visitor journal is product.visitor_journeys' run-owned report.")
         if output_validator == CONTENT_PORTFOLIO_VALIDATOR and (
             definition.get("key") != "content.plan_research"
             or output_path_template != CONTENT_PORTFOLIO_PATH_TEMPLATE
@@ -1619,6 +1633,8 @@ def validate_procedure_artifact(
         blog_index_plan.validate(text)
     elif spec.output_validator == FEEDBACK_FIX_PLAN_VALIDATOR:
         feedback_fix_plan.validate(text)
+    elif spec.output_validator == VISITOR_JOURNAL_VALIDATOR:
+        visitor_journal.validate(text)
     elif spec.output_validator == CONTENT_PORTFOLIO_VALIDATOR:
         from tin_lite import content_plan_agent
 

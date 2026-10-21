@@ -24,7 +24,8 @@ page. A result with `status: "unavailable"` (timed out, or Podscan failed) or `"
 an answer: note it and move on. A failed call still counts against the 30. A rate-limit error
 means wait a minute and call once more under a new step; after a second rate limit in a row,
 or a `provider_quota` error (Tin's daily Podscan allowance is used up), stop calling Podscan
-for this run, continue with the web, and say in `## Gaps` which methods could not run.
+for this run, continue with the web, and say in `## What could not be checked`, in plain
+words, which searches could not run.
 
 What the data gets wrong, every run:
 
@@ -37,9 +38,15 @@ What the data gets wrong, every run:
   (crypto shows for "agents"). Read the show's description and recent guests before keeping it.
 - **Name search can return the wrong feed** (a show's "early access" or network feed). Check
   the publisher and `last_posted`.
-- **Audience numbers are estimates** that disagree with other sources. Use `audience_size`,
-  `reach_score` and rating counts to compare shows in the same arena only, and say which
-  numbers you relied on.
+- **Audience numbers are estimates** that disagree with other sources, and they run low for
+  B2B and technical shows: a show the whole industry knows can read 3,000. Use
+  `audience_size`, `reach_score` and rating counts to compare shows in the same arena only,
+  never to drop a show by itself, and say which numbers you relied on.
+- **Name search matches words, not subjects.** `podcasts.search` for "health IT" returns news
+  shows. Search for specific phrases, and find a field's leading shows through its charts.
+- **`is_branded` marks a paid segment.** On a big show, check the founder interviews: when
+  they are all branded, those slots are sold, and the founder needs another way in (a panel,
+  comment on the news, a topic proposal). Record that in `notes`.
 - **`has_guests` is sometimes wrong.** Recent episodes with named guests settle it.
 - **`listed_email` is often a placeholder** (`noreply`, a hosting provider). It never becomes a
   pitch address on its own.
@@ -66,6 +73,10 @@ least two methods tried; if one found nothing, say so in the report.
 - `country_chart`: `charts.top` for the home country in `technology`, `business`,
   `entrepreneurship` and `marketing`. The method for `home` arenas: text search in the local
   language finds little.
+- `category_chart`: `charts.top` for the product's main market (usually `us`) in the
+  category the arena lives in, with `limit` 200, kept to the shows that fit the arena. The
+  way to find the shows that carry weight in a field, which is where the `reach` picks come
+  from.
 - `local_youtube`: a web search in the local language for interview channels and video
   podcasts (many Turkish tech and startup shows are YouTube-first and missing from podcast
   indexes).
@@ -89,3 +100,23 @@ Before a show becomes a record, open its own pages:
   marked sponsored by the guest's own company, or Podscan's `is_branded` on interviews.
   Record what you found and its source in `notes`. A fee is the founder's call, not a reason
   to drop the show.
+
+## Finding the shows that carry weight
+
+A list made only of shows that will say yes is a list of small shows. For each arena, also
+look for the shows people in that field name first, and mark them `tier: "reach"` when they
+book guests a step above the founder.
+
+- **Signs a show carries weight:** a place in a `category_chart` or `country_chart`; a known
+  network or publisher (an industry association, a media company, an analyst firm); many
+  ratings; guests who lead well-known companies; other shows and newsletters quoting it.
+- **What these shows book:** a topic or an argument, rarely a company. Some say so (a CEO
+  may not come on to discuss their company). Pitch the founder as the person with a contested
+  view or hands-on data on a question the show covers, and name the product once.
+- **How to get in:** a topic proposal, a panel or debate slot, comment on a news story in the
+  founder's field, or a guest form. Their founder interviews are often sponsored segments
+  (see `is_branded` above); find the unpaid way in and say in `notes` which slots are sold.
+- **When the only way in is paid,** it is still a candidate: say so in `notes` with the price
+  and its source, and let the founder decide. A show that never takes outside guests is
+  `takes_guests: false`.
+

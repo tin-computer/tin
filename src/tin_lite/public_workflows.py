@@ -94,6 +94,11 @@ PUBLIC_WORKFLOWS: tuple[PublicWorkflow, ...] = (
         PublicMCPExposure("start_product_analytics_brief", destructive=True, open_world=False),
     ),
     PublicWorkflow(
+        UUID("28b92e8b-122f-401a-8db2-70d6af30e72d"),
+        "product.visitor_journeys",
+        PublicMCPExposure("start_visitor_journeys", destructive=True, open_world=False),
+    ),
+    PublicWorkflow(
         UUID("543626b6-635f-4cef-b00e-e46225753c13"),
         "growth.score_quiz",
         PublicMCPExposure("start_score_quiz", destructive=True, open_world=False),
@@ -128,6 +133,11 @@ PUBLIC_WORKFLOWS: tuple[PublicWorkflow, ...] = (
         UUID("b0b2cb40-4c91-4283-adf2-43c11ec20b2f"),
         "outreach.speaking_shortlist",
         PublicMCPExposure("start_speaking_shortlist", destructive=True, open_world=True),
+    ),
+    PublicWorkflow(
+        UUID("5a93b993-484e-4ef4-9279-a3a03b8b3da0"),
+        "outreach.podcast_guest",
+        PublicMCPExposure("start_podcast_guest", destructive=True, open_world=True),
     ),
     PublicWorkflow(
         UUID("2dc0683b-74cc-4300-9dd3-dae5118c8a9a"),

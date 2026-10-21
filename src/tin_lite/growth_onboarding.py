@@ -629,6 +629,11 @@ WORKFLOW_EXPECTATIONS: dict[str, dict[str, str]] = {
         "lands": "Files, reports/outreach/speaking/<run>.md",
         "watch": "deadlines first; you submit the pitches",
     },
+    "outreach.podcast_guest": {
+        "first": "about thirty minutes",
+        "lands": "Files, reports/outreach/podcasts/<run>.md",
+        "watch": "shows that hosted guests like you first; you send the pitches",
+    },
     "outreach.syllabus_placement": {
         "first": "about thirty minutes",
         "lands": "Files, reports/outreach/syllabus/<run>.md",
@@ -658,6 +663,11 @@ WORKFLOW_EXPECTATIONS: dict[str, dict[str, str]] = {
         "first": "about fifteen minutes",
         "lands": "Files, reports/analytics/<run>.md",
         "watch": "activation and trends on each scheduled day",
+    },
+    "product.visitor_journeys": {
+        "first": "about fifteen minutes; the first run maps your events",
+        "lands": "Files, reports/visitors/<run>.md, and People for those who signed up",
+        "watch": "the people to act on today and the frictions that cost you signups",
     },
 }
 DEFAULT_EXPECTATION = {

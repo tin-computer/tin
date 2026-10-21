@@ -858,6 +858,20 @@ a.person-event:hover span { text-decoration: underline; }
 
 a.person-event:hover svg { color: var(--ink-secondary); }
 
+/* What a visitor journeys run suggests after a visit, under the visit it belongs to. */
+.person-event-note {
+  margin: -4px 0 0;
+  padding: 0 0 9px 64px;
+  color: var(--ink-secondary);
+  font: 12px/16px var(--sans);
+}
+
+.person-panel > header .person-panel-email {
+  color: var(--ink-secondary);
+  font: 12px/16px var(--mono);
+  overflow-wrap: anywhere;
+}
+
 .person-quiet {
   margin: 0;
   color: var(--ink-muted);

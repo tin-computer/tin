@@ -1,6 +1,7 @@
 """People records: one lasting record per person a project knows (#435).
 
-A record is recognized by its identifiers (a LinkedIn member ID or profile slug), holds typed
+A record is recognized by its identifiers (a LinkedIn member ID or profile slug, or an email the
+person gave the project's product), holds typed
 field values that each say who set them, when and why, and keeps an append-only timeline.
 Only Tin's own services write here. When one read supplies identifiers of two records, they
 merge: the older record survives, the newer points at it, and events stay where they were
@@ -22,12 +23,14 @@ from urllib.parse import quote, unquote, urlsplit
 from uuid import UUID, uuid4
 
 PERSON = "person"
-IDENTIFIER_KINDS = ("linkedin_member", "linkedin_slug")
-EVENT_KINDS = ("reacted", "commented", "viewed", "invited", "accepted", "withdrawn")
+IDENTIFIER_KINDS = ("linkedin_member", "linkedin_slug", "email")
+EVENT_KINDS = ("reacted", "commented", "viewed", "invited", "accepted", "withdrawn", "visited")
 # What a person did that shows interest in a member: reacting to or commenting on their posts,
 # viewing their profile. Tin scores and proposes people with any of these.
 SIGNALS = ("reacted", "commented", "viewed")
 RELATIONSHIPS = ("connected", "pending", "none")
+# What a person was on the project's site or product when a run last read them.
+WEB_TIERS = ("lead", "new_user", "user")
 # Built-in fields: key → (type, label, choices).
 FIELDS: dict[str, tuple[str, str, tuple[str, ...] | None]] = {
     "name": ("text", "Name", None),
@@ -36,6 +39,8 @@ FIELDS: dict[str, tuple[str, str, tuple[str, ...] | None]] = {
     "icp": ("text", "ICP", None),
     "icp_fit": ("number", "ICP fit", None),
     "customer": ("choice", "Customer", ("yes", "no")),
+    "web_tier": ("choice", "On the site", WEB_TIERS),
+    "web_summary": ("text", "Last visit", None),
 }
 SET_BY = ("run", "member")
 TEXT_LIMIT = 2000
@@ -43,6 +48,7 @@ REASON_LIMIT = 500
 NOTE_LIMIT = 2000
 # LinkedIn's own profile ID, as in /in/ACoAA… and urn:li:fsd_profile:ACoAA….
 MEMBER_ID = re.compile(r"ACo[A-Za-z0-9_-]{20,80}")
+EMAIL = re.compile(r"[^@\s]{1,64}@[a-z0-9.-]{1,253}\.[a-z]{2,63}")
 
 
 class RecordError(ValueError):
@@ -113,9 +119,9 @@ def _pairs(identifiers: dict[str, str]) -> list[tuple[str, str]]:
         if kind not in IDENTIFIER_KINDS or not isinstance(value, str):
             raise RecordError("invalid_identifier")
         value = value.strip()
-        if kind == "linkedin_slug":
+        if kind in ("linkedin_slug", "email"):
             value = value.casefold()
-        if not value or len(value) > 300:
+        if not value or len(value) > 300 or (kind == "email" and not EMAIL.fullmatch(value)):
             raise RecordError("invalid_identifier")
         pairs.append((kind, value))
     if not pairs:
@@ -659,12 +665,14 @@ WRITERS = {
     "social.linkedin_engagers": "engagers",
     "social.linkedin_profile_viewers": "profile viewers",
     "social.linkedin_requests": "requests",
+    "product.visitor_journeys": "visitors",
 }
 # LinkedIn shows each member their own relationship, from `record_relationships`.
-VIEW_FIELDS = ("icp", "icp_fit", "customer")
+VIEW_FIELDS = ("icp", "icp_fit", "customer", "web_tier", "web_summary")
 # Values computed under a definition, such as the ICP file, go stale when it changes.
 DEFINED_FIELDS = ("icp", "icp_fit")
 POST = re.compile(r"urn:li:(?:activity|ugcPost|share):[0-9]{1,30}")
+REPLAY = re.compile(r"https://(?:us|eu)\.posthog\.com/project/\d{1,12}/replay/[0-9A-Za-z-]{8,80}")
 
 
 def writer(key: str) -> str:
@@ -858,6 +866,7 @@ async def directory(
                 "name": (person["fields"].get("name") or {}).get("text") or "",
                 "headline": (person["fields"].get("headline") or {}).get("text") or "",
                 "profile_url": person["profile_url"],
+                "email": person["identifiers"].get("email", ""),
                 "fields": fields,
                 "last_touch": touches.get(person["id"]),
                 "invited_at": invited.get(person["id"]),
@@ -908,9 +917,21 @@ async def person(
         post = detail.get("post") if isinstance(detail.get("post"), str) else ""
         reaction = detail.get("reaction")
         started_by = (runs.get(str(row["run_id"])) or {}).get("started_by")
+        visit = {}
+        if row["kind"] == "visited":
+            # What a visitor journeys run read about their day on the site.
+            replay = detail.get("replay_url")
+            visit = {
+                key: detail[key] if isinstance(detail.get(key), str) else ""
+                for key in ("summary", "stopped_at", "action", "tier")
+            }
+            visit["replay_url"] = (
+                replay if isinstance(replay, str) and REPLAY.fullmatch(replay) else ""
+            )
         member = _event_member(detail.get("member"), row["run_id"], runs)
         events.append(
             {
+                **visit,
                 "kind": row["kind"],
                 "at": _when(row),
                 "reaction": reaction if isinstance(reaction, str) else None,

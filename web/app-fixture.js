@@ -68,6 +68,29 @@ export function syntheticPeople() {
   ];
 }
 
+// Someone a visitor journeys run named: recognized by the email they signed up with, no LinkedIn.
+export function visitorPerson() {
+  const at = "2026-10-16T14:00:00Z";
+  const by = {by: "visitors", at, stale: false, stale_reason: null, definition: "", previous: null};
+  return {
+    id: "p-ana", name: "Ana Souza", headline: "", profile_url: "", email: "ana@fieldnotes.dev",
+    fields: {
+      web_tier: {value: "new_user", reason: "/scan/connect", ...by},
+      web_summary: {value: "Signed up from the hackathon page, picked a plan, stopped at Connect GitHub.", reason: "", ...by},
+    },
+    last_touch: {kind: "visited", at: "2026-10-15T13:20:00Z"},
+    added: {at, by: "visitors"},
+    notes: [],
+    events: [{
+      kind: "visited", at: "2026-10-15T13:20:00Z", tier: "new_user",
+      summary: "Signed up from the hackathon page, picked a plan, stopped at Connect GitHub.",
+      stopped_at: "/scan/connect", action: "Email her a two-line guide to connecting GitHub.",
+      replay_url: "https://us.posthog.com/project/1/replay/01a1449a-9164-7200-8316-b1ea9c8c006a",
+      post_url: "", yours: null,
+    }],
+  };
+}
+
 // The list carries each person's newest note; one person carries every note and the timeline.
 function listed({notes, ...person}) {
   return {
@@ -78,7 +101,7 @@ function listed({notes, ...person}) {
 }
 
 function detail(person) {
-  return {...person, events: [
+  return {...person, events: person.events || [
     {kind: "viewed", at: "2026-10-18T08:00:00Z", reaction: null, post_url: "", yours: true, who: "you"},
     {kind: "invited", at: "2026-10-16T08:00:00Z", reaction: null, post_url: "", yours: false, who: "Mira"},
     {kind: "reacted", at: "2026-10-13T08:00:00Z", reaction: "INTEREST", post_url: "https://www.linkedin.com/feed/update/urn:li:activity:1/", yours: true, who: "you"},
@@ -94,11 +117,12 @@ function noted(person) {
   }
 }
 
-export async function serveApp({decisionCount = 4, people = syntheticPeople(), engagers = false, integrations = [], removed = [], requests = null, requestWrites = []} = {}) {
+export async function serveApp({decisionCount = 4, people = syntheticPeople(), engagers = false, visitors = false, integrations = [], removed = [], requests = null, requestWrites = []} = {}) {
   const project = {id: "project", name: "Example Co", workspace_id: "ws", workspace_name: "Example", member_count: 1, hidden: false};
   const catalog = [{id: "wf-answer", key: "content.generate", title: "Draft planned content", description: "Draft the next planned page for review.", definition: {schedule_modes: ["weekly", "on_demand"]}}];
   // The workflow that finds people is offered only to some projects; People shows with it.
   if (engagers) catalog.push({id: "wf-engagers", key: "social.linkedin_engagers", title: "People who engaged with your LinkedIn posts", description: "Who reacted to your LinkedIn posts.", definition: {schedule_modes: ["daily", "on_demand"]}});
+  if (visitors) catalog.push({id: "wf-visitors", key: "product.visitor_journeys", title: "Visitor journeys", description: "Who used your site and product each day.", definition: {schedule_modes: ["daily", "on_demand"]}});
   const projectWorkflows = [{id: "cfg-1", workflow_id: "wf-answer", name: "Draft planned content", status: "active", schedule: {cadence: "weekly", weekdays: ["tuesday"], local_time: "10:00", timezone: "UTC"}, inputs: {}, created_at: "2026-09-20T00:00:00Z"}];
   const runs = Array.from({length: decisionCount}, (_, index) => ({id: `run-${index}`, workflow_id: "wf-answer", workflow_name: "content.generate", status: "needs_input", created_at: `2026-09-2${index}T10:00:00Z`, artifact_path: "reports/answers/page-1.md", canonical_commit_sha: revision}));
   const decisions = runs.map((run, index) => ({

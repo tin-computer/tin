@@ -286,7 +286,17 @@ class FakePostHogConnection:
         try:
             if step in self.refuse:
                 raise POSTHOG_REFUSALS[self.refuse[step]]()
-            if operation == "query.hogql":
+            if operation == "project.read":
+                response = {
+                    **posthog_connection.project_settings(
+                        self.objects["projects"][0],
+                        host="https://eu.posthog.com",
+                        project_id=str(self.objects["projects"][0]["id"]),
+                    ),
+                    "has_more": False,
+                    "truncated": False,
+                }
+            elif operation == "query.hogql":
                 response = posthog_connection.project_query(
                     self.query(request["body"], arguments.get("name")),
                     max_response_bytes=self.max_response_bytes,

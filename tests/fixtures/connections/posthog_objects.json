@@ -11,7 +11,14 @@
    "uuid": "0192f0a0-0000-7000-8000-000000000101",
    "name": "Fixture App",
    "organization": "0192f0a0-0000-7000-8000-0000000000ff",
-   "api_token": "phc_fixture_not_stored"
+   "api_token": "phc_fixture_not_stored",
+   "secret_api_token": "phs_fixture_never_read",
+   "timezone": "UTC",
+   "app_urls": ["https://fixture.example"],
+   "session_recording_opt_in": true,
+   "autocapture_exceptions_opt_in": true,
+   "capture_dead_clicks": false,
+   "cookieless_server_hash_mode": 0
   },
   {
    "id": 102,
