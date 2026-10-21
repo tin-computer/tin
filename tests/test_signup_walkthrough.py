@@ -412,7 +412,7 @@ def test_browser_template_pins_camoufox_warp_and_the_browser_mcp(
     assert ("sandbox/warp_up.sh", "/opt/tin-lite/warp-up") in copied
     assert ("sandbox/camoufox_mcp.py", "/opt/tin-lite/camoufox-mcp") in copied
     commands = "\n".join(str(args[0]) for name, args in calls if name == "run_cmd")
-    assert "cloudflare-warp=2026.7.1377.0" in commands
+    assert "cloudflare-warp=2026.8.2115.0" in commands
     assert "'camoufox[geoip]==0.5.5' 'mcp==2.1.1'" in commands
     assert "camoufox fetch official/152.0.4-beta.29" in commands
     assert "download_mmdb()" in commands
