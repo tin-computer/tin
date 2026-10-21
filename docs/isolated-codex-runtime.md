@@ -11,7 +11,9 @@ The provider key stays on the switchboard. Pooled ChatGPT authentication is reti
 - A pinned procedure may select `sandbox.profile: isolated` with fenced egress and the
   existing 1–7200-second timeout contract (1–3600 before October 2, 2026). The switchboard must explicitly configure
   `TIN_LITE_E2B_ISOLATED_TEMPLATE`; no missing-image fallback to the default is allowed.
-- The separate `tin-lite-codex-isolated` image pins Codex CLI 0.156.1 and `gpt-6-sol`.
+- The separate `tin-lite-codex-isolated` image pins Codex CLI 0.159.1 and `gpt-6.1-sol`.
+  The controller writes the model the run's contract pinned, so a run admitted on
+  `gpt-6-sol` keeps it on a rebuilt image.
   The controller uses Codex's native experimental exec-server environment to run command,
   patch, and image tools as the `tin-work` UID. Local fallback environments are not selected.
   Project configuration cannot start local MCP servers or hooks; controller configuration

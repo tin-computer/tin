@@ -241,7 +241,7 @@ class Handler(BaseHTTPRequestHandler):
             "id": f"resp_{number}",
             "object": "response",
             "status": "completed",
-            "model": "gpt-6-sol",
+            "model": "gpt-6.1-sol",
             "output": output,
             "usage": {
                 "input_tokens": input_tokens,

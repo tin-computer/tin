@@ -30,6 +30,7 @@ from tin_lite.codex_api import (
     token_hash,
 )
 from tin_lite.codex_api_pricing import (
+    HISTORICAL_RATE_CARDS,
     RATE_CARD,
     REQUEST_MAXIMUM,
     api_terms,
@@ -65,8 +66,16 @@ def facts(inputs=9250, outputs=117, cached=0, writes=9247, searches=0):
 
 def test_actual_pilot_usage_and_context_boundary():
     total = sum(price_response(RATE_CARD, facts(*usage))[0] for usage in GOLDEN)
-    assert total == 40_533_000
+    assert total == 38_363_000
     assert final_charge(total, 5_000_000_000) == 40_000_000
+    # A run that pinned the GPT-6 Sol card still settles at its rates.
+    sol = next(card for card in HISTORICAL_RATE_CARDS if card["model"] == "gpt-6-sol")
+    earlier = [
+        price_response(sol, {**facts(*usage), "pricing": sol, "model": "gpt-6-sol"})
+        for usage in GOLDEN
+    ]
+    assert sum(price[0] for price in earlier) == 40_533_000
+    assert {price[1]["rate_card"] for price in earlier} == {"openai-codex-standard-2026-09-23-v1"}
     for inputs, band, rate, output in (
         (272000, "standard", 2000, 10000),
         (272001, "long_context", 4000, 15000),
@@ -210,9 +219,9 @@ async def test_paid_responses_settle_once_with_cache_write_pricing(billed):
         assert await f.billing.settle(run.id) is None  # Still executing.
         readout = await read_run_usage(database=f.db, run=run)
         prices = [x["api_list_price"]["total_nanos"] for x in readout["own"]["observations"]]
-        assert sum(prices) == 40_533_000
+        assert sum(prices) == 38_363_000
         assert Decimal(readout["inclusive_totals"]["known_api_list_price_usd"]) == Decimal(
-            "0.040533"
+            "0.038363"
         )
         assert readout["inclusive_totals"]["unpriced_observations"] == 0
         assert readout["rate_cards"][-1] == RATE_CARD

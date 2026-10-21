@@ -137,7 +137,11 @@ async def record_attempt_failure(conn, key, exc=None, *, stop_reason=None):
     )
 
 
-MODEL = "gpt-6-sol"
+MODEL = "gpt-6.1-sol"
+# Models earlier admissions pinned, newest first. A pinned contract is never reinterpreted: a
+# run admitted before 2026-10-21 keeps gpt-6-sol and the card it pinned. Its contract matches
+# today's in every other field, so contract checks compare it as if it named MODEL.
+PINNED_MODELS = (MODEL, "gpt-6-sol")
 # Execution bounds; enrolled API runs separately pin their billing terms.
 CONTRACT = {
     "mode": MODE,
@@ -243,8 +247,15 @@ def parallel_requests(contract):
     return value if type(value) is int and 1 <= value <= 8 else 1
 
 
+def current_form(value):
+    """A pinned contract with an earlier pinned model, compared as if it named MODEL."""
+    if isinstance(value, dict) and value.get("model") in PINNED_MODELS:
+        return {**value, "model": MODEL}
+    return value
+
+
 def is_session_contract(value):
-    return value in SESSION_CONTRACTS
+    return current_form(value) in SESSION_CONTRACTS
 
 
 def api_enabled(settings, project_id):
@@ -265,11 +276,15 @@ def supports_api_definition(definition):
 
 
 def is_procedure_contract(value):
-    return value in (PROCEDURE_CONTRACT_V2, *MULTI_TOOL_CONTRACTS)
+    return current_form(value) in (PROCEDURE_CONTRACT_V2, *MULTI_TOOL_CONTRACTS)
+
+
+def is_multi_tool_contract(value):
+    return current_form(value) in MULTI_TOOL_CONTRACTS
 
 
 def is_api_contract(value):
-    return value == CONTRACT or is_procedure_contract(value)
+    return current_form(value) == CONTRACT or is_procedure_contract(value)
 
 
 def execution_profile(profile, contract):

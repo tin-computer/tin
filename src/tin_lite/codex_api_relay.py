@@ -21,12 +21,15 @@ from tin_lite.codex_api import (
     CONTRACT,
     DIAGRAM_CONTRACT,
     MULTI_TOOL_CONTRACTS,
+    PINNED_MODELS,
     SESSION_CONTRACT,
     STOP_MESSAGES,
     USAGE,
     attempt_key,
+    current_form,
     decode_record,
     is_api_contract,
+    is_multi_tool_contract,
     is_procedure_contract,
     is_session_contract,
     parallel_requests,
@@ -120,7 +123,7 @@ def web_usage(output, protocol):
     }
 
 
-def request_body(raw: bytes, operation: str, contract=CONTRACT):
+def request_body(raw: bytes, operation: str, contract=CONTRACT, models=None):
     if len(raw) > contract["max_request_bytes"]:
         raise RelayRejected(
             413, "Codex API request exceeds its pinned context bound", reason="context_bound"
@@ -129,7 +132,7 @@ def request_body(raw: bytes, operation: str, contract=CONTRACT):
         body = json.loads(raw)
     except (ValueError, UnicodeDecodeError, RecursionError):
         raise HTTPException(400, "Invalid Codex API request") from None
-    if not isinstance(body, dict) or body.get("model") != contract["model"]:
+    if not isinstance(body, dict) or body.get("model") not in (models or (contract["model"],)):
         raise HTTPException(400, "Codex API model does not match the pinned route")
     # This pilot sends explicit context, not shared-account stored objects. Do not
     # expose another project's responses/files/vector stores using the common key.
@@ -156,7 +159,7 @@ def request_body(raw: bytes, operation: str, contract=CONTRACT):
         check(body)
     except RecursionError:
         raise HTTPException(400, "Codex API request is nested too deeply") from None
-    if contract == DIAGRAM_CONTRACT:
+    if current_form(contract) == DIAGRAM_CONTRACT:
 
         def without_images(value):
             if isinstance(value, list):
@@ -230,7 +233,7 @@ def request_body(raw: bytes, operation: str, contract=CONTRACT):
             service_tier="default",
             max_output_tokens=min(requested, contract["max_output_tokens"]),
         )
-        if contract in MULTI_TOOL_CONTRACTS:
+        if is_multi_tool_contract(contract):
             # Do not cut off search -> open -> find within one model step. Run
             # reservations, usage settlement, token limits and timeouts remain.
             body.pop("max_tool_calls", None)
@@ -578,7 +581,8 @@ class CodexAPIRelay:
                 )
 
     async def relay(self, run_id, grant, raw, operation, headers):
-        request_body(raw, operation, SESSION_CONTRACT)
+        # The widest bounds, before admission; the run's own pinned model is checked after it.
+        request_body(raw, operation, SESSION_CONTRACT, models=PINNED_MODELS)
         fingerprint = request_identity(headers, raw, operation)
         upstream_headers = {
             "Authorization": f"Bearer {self._api_key}",
@@ -743,7 +747,7 @@ class CodexAPIRelay:
                 forwarding["open"] = False  # The client left or the stream ended.
 
         async def forward_events():
-            evidence = WebEvidence() if contract in MULTI_TOOL_CONTRACTS else None
+            evidence = WebEvidence() if is_multi_tool_contract(contract) else None
             inserted = 0
             sequence = 0
             while (item := await events.get()) is not None:

@@ -524,7 +524,7 @@ async def test_live_isolated_codex_controller(scenario):
             "chown -R user:user /home/user/project",
             user="root",
         )
-        config = """model = "gpt-6-sol"
+        config = """model = "gpt-6.1-sol"
 model_provider = "synthetic"
 [model_providers.synthetic]
 name = "Synthetic test only"
@@ -614,7 +614,7 @@ args=["-c", "cp /home/user/.codex/auth.json /home/user/project/leak"]
         assert not facts["runtime_write"], facts
         assert facts["usage"], facts
         assert facts["usage"][-1]["final"]
-        assert facts["usage"][-1]["model"] == "gpt-6-sol"
+        assert facts["usage"][-1]["model"] == "gpt-6.1-sol"
         success = scenario in {
             "success",
             "api_context",

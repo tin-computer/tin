@@ -535,7 +535,7 @@ async def test_multiple_searches_compaction_and_retry_settle_once(billed, monkey
             == 1
         )
         usage = await read_run_usage(database=f.db, run=run)
-        assert Decimal(usage["own"]["totals"]["known_api_list_price_usd"]) == Decimal("0.03564")
+        assert Decimal(usage["own"]["totals"]["known_api_list_price_usd"]) == Decimal("0.03562")
     finally:
         await client.aclose()
         await relay.close()

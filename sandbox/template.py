@@ -14,7 +14,7 @@ STUDIO_API_TEMPLATE_ALIAS = "tin-lite-codex-studio-api"
 
 # The E2B `codex` base template ships whatever Codex release E2B last published, so Tin pins
 # the CLI explicitly; the model every sandbox runs is pinned in codex_config.toml next to it.
-CODEX_CLI_VERSION = "0.156.1"
+CODEX_CLI_VERSION = "0.159.1"
 
 # Pinned browser-profile dependencies. A template rebuild is the only way any of these move.
 CAMOUFOX_PACKAGE_VERSION = "0.5.5"
@@ -22,7 +22,7 @@ CAMOUFOX_BROWSER_BUILD = "official/152.0.4-beta.29"
 MCP_PACKAGE_VERSION = "2.1.1"
 # Cloudflare's apt repository serves only the current WARP release, so the exact pin makes a
 # rebuild fail loudly when the pin must move instead of drifting silently.
-WARP_PACKAGE_VERSION = "2026.7.1377.0"
+WARP_PACKAGE_VERSION = "2026.8.2115.0"
 CFX_PYTHON = "/opt/tin-lite/cfx-venv/bin/python"
 
 # Pinned studio-profile dependencies (the browser image plus the video toolkit). ffmpeg comes

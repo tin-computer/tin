@@ -103,10 +103,10 @@ async def test_long_session_uses_returned_usage_without_wallet_lock_or_history_r
 
     f = billed
     run, relay, client, sent = await paid_relay(
-        # 150,000 cached x $0.20/M + 5 x $10/M = $0.03005 per response: about $3 over 100.
+        # 150,000 cached x $0.10/M + 1,505 x $10/M = $0.03005 per response: about $3 over 100.
         f,
         contract=SESSION_CONTRACT,
-        provider_usage=(150_000, 5, 150_000, 0),
+        provider_usage=(150_000, 1_505, 150_000, 0),
     )
     prices = []
 
