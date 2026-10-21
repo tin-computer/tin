@@ -58,13 +58,14 @@ test("a batch says what brought its people: their posts, the profile, or both", 
   await open({url: "/decisions", state: requests({people: [viewed(1, "Maya Lindqvist"), viewed(2, "Daniel Okafor")]})}, async (page) => {
     const card = page.locator(".requests-card");
     await card.waitFor();
-    assert.match(await card.locator("header").innerText(), /People who engaged with you on LinkedIn/);
+    assert.match(await card.locator("header").innerText(), /People who viewed your LinkedIn profile/);
     assert.match(await card.innerText(), /2 people who viewed your profile fit your ICP and aren’t connected to you yet\./);
     assert.equal(await card.locator(".request-engaged").first().innerText(), "oct 18 · viewed");
   });
   await open({url: "/decisions", state: requests({people: [viewed(1, "Maya Lindqvist"), person(2, "Daniel Okafor", 0.7)]})}, async (page) => {
     const card = page.locator(".requests-card");
     await card.waitFor();
+    assert.match(await card.locator("header").innerText(), /People who engaged with your posts or viewed your profile/);
     assert.match(await card.innerText(), /2 people who reacted to your posts or viewed your profile fit your ICP/);
   });
 });
@@ -75,6 +76,7 @@ test("a batch waits first in Decisions, and approving sends only the ticked peop
     await card.waitFor();
     assert.deepEqual(await page.locator(".decision-group-title").allInnerTexts(), ["Connection requests\n1", "Reviews\n1"]);
     assert.match(await page.locator(".decision-list-item.is-active").innerText(), /Send requests to 3 people/);
+    assert.match(await card.locator("header").innerText(), /People who engaged with your LinkedIn posts/);
     assert.match(await card.innerText(), /3 people who reacted to your posts fit your ICP and aren’t connected to you yet\./);
     assert.match(await card.innerText(), /one at a time on its own schedule, never together/);
     // The window is the project's time zone, named when it isn't the viewer's.

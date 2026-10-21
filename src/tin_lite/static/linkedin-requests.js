@@ -67,20 +67,22 @@ window.TinRequests = (() => {
     return batch.people.filter((person) => !skipped.has(person.record_id));
   }
 
-  // What brought the batch's people: reactions to the member's posts, views of their profile.
-  function engagedWith(batch) {
+  // What brought the batch's people, in the words of the workflow that found them: reactions to
+  // the member's posts (engagers), views of their profile (profile viewers), or both.
+  function broughtBy(batch) {
     const kinds = new Set(batch.people.map((person) => person.engaged?.kind).filter(Boolean));
     const viewed = kinds.has("viewed");
     const reacted = kinds.has("reacted") || kinds.has("commented");
-    if (viewed && !reacted) return "viewed your profile";
-    if (viewed) return "reacted to your posts or viewed your profile";
-    return "reacted to your posts";
+    if (viewed && !reacted) return { title: "People who viewed your LinkedIn profile", who: "viewed your profile" };
+    if (viewed) return { title: "People who engaged with your posts or viewed your profile", who: "reacted to your posts or viewed your profile" };
+    return { title: "People who engaged with your LinkedIn posts", who: "reacted to your posts" };
   }
 
   function detail(item, data, { waiting = "" } = {}) {
     const { batch } = item;
     const sending = data?.sending || {};
     const count = chosen(batch).length;
+    const brought = broughtBy(batch);
     const rows = batch.people.map((person) => {
       const on = !skipped.has(person.record_id);
       const engaged = person.engaged ? `${day(person.engaged.at)} · ${person.engaged.kind}` : "";
@@ -101,11 +103,11 @@ window.TinRequests = (() => {
     return `<article class="decision-detail-card requests-card" data-requests-batch="${escape(batch.id)}">
       <header>
         <span class="decision-workflow-mark">P</span>
-        <span><strong>People who engaged with you on LinkedIn</strong><code>${escape(waiting)}</code></span>
+        <span><strong>${escape(brought.title)}</strong><code>${escape(waiting)}</code></span>
         <button class="open-button" type="button" data-requests-open-people>Open People</button>
       </header>
       <div class="decision-detail-body">
-        <p class="decision-summary">${batch.people.length} ${batch.people.length === 1 ? "person" : "people"} who ${engagedWith(batch)} ${batch.people.length === 1 ? "fits" : "fit"} your ICP and ${batch.people.length === 1 ? "isn’t" : "aren’t"} connected to you yet.</p>
+        <p class="decision-summary">${batch.people.length} ${batch.people.length === 1 ? "person" : "people"} who ${brought.who} ${batch.people.length === 1 ? "fits" : "fit"} your ICP and ${batch.people.length === 1 ? "isn’t" : "aren’t"} connected to you yet.</p>
         <div class="request-rows">${rows}</div>
         <p class="decision-note">${escape(terms)}</p>
         ${sending.on
