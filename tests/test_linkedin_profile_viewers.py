@@ -262,6 +262,10 @@ async def test_a_run_keeps_who_viewed_scores_them_finds_their_ids_and_proposes_t
     again = await viewers_run(f)
     notes = await run_through(work(f, cloud), again)
     assert notes["new"] == 0 and notes["reads"] == 1
+    # Read before, so the run starts with the newest pages only.
+    assert [c["pages"] for c in cloud.calls if c["kind"] == "linkedin_viewers"] == [
+        viewers.LATER_PAGES
+    ]
     assert (
         await f.db.pool.fetchval(
             "SELECT count(*) FROM record_events WHERE project_id=$1 AND kind='viewed'", f.project.id

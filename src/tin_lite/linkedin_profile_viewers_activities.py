@@ -66,6 +66,16 @@ class LinkedInProfileViewersActivities(LinkedInEngagersActivities):
             request = ((previous.result or {}) if previous else {}).get("next")
             if not request:
                 return _returned({"outcome": "read", "people": 0, "new": 0, "anonymous": 0})
+        # The first run reads back as far as it may; later ones start with the newest pages.
+        earlier = await self.db.pool.fetchval(
+            """SELECT EXISTS (SELECT 1 FROM record_events e
+                              JOIN workflow_runs w ON w.id = e.run_id
+                              WHERE e.project_id = $1 AND e.kind = 'viewed'
+                                AND w.started_by_clerk_user_id = $2 AND e.run_id <> $3)""",
+            run.project_id,
+            run.started_by_clerk_user_id,
+            run.id,
+        )
         parsed, reason = await self._read(
             run,
             key,
@@ -73,7 +83,7 @@ class LinkedInProfileViewersActivities(LinkedInEngagersActivities):
                 "kind": "linkedin_viewers",
                 "request": request,
                 "overview": index == 0,
-                "pages": viewers.PAGES_PER_READ,
+                "pages": viewers.LATER_PAGES if earlier else viewers.PAGES_PER_READ,
             },
             ViewersResult,
         )

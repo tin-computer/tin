@@ -50,8 +50,10 @@ The same as engagers:
 ## What a run does
 
 1. **Prepare:** the session, owner and runtime checks, and the ICP file, as engagers does.
-2. **Read:** sandbox reads (`linkedin_viewers`) of up to ten pages each, with a random 3 to 9
-   seconds before every request; the first read takes the overview too.
+2. **Read:** sandbox reads (`linkedin_viewers`), with a random 3 to 9 seconds before every
+   request; the first read takes the overview too. A member's first run reads up to ten pages
+   a read; once their viewers were read before, two, since a day's views fit and the run reads
+   on while it finds new ones.
    - Each viewer is upserted by their profile ID, their slug, or both. A slug is kept decoded
      and lowercased, as People keeps slugs, so the overview's ID and the list's slug name one
      person.
@@ -66,7 +68,7 @@ The same as engagers:
 3. **When reads stop:**
    - at the first read that adds no new view, since the rest is older;
    - at the end of the list;
-   - after three reads (30 pages), which bounds the first run.
+   - after three reads (30 pages on a first run, six after), which bounds every run.
 
    A read LinkedIn objects to (a challenge, a limit, a signed-out session, a changed account, a
    refusal) stops reading and keeps what was read. On the first read, it fails the run with what

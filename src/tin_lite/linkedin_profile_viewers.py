@@ -35,6 +35,9 @@ WORKFLOW_ID = UUID("8a3f6c1d-2e95-4b7a-a0d4-6c1e9f3b52a7")
 # nobody new; the first run reads back as far as this allows.
 MAX_READS = 3
 PAGES_PER_READ = 10
+# Once a member's viewers were read before, each read takes two pages: a day's views fit, and
+# the run reads on while it finds new ones.
+LATER_PAGES = 2
 # Slug-only viewers who fit looked up for their profile ID per run, so they can be invited.
 IDS_PER_RUN = 20
 CSV_PATH = "people/linkedin-profile-viewers.csv"
