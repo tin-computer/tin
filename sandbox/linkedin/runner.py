@@ -15,13 +15,16 @@ from tin_lite.connection_collection import CollectionError
 from tin_lite.linkedin_session import read_page
 
 # A search page answers within 90 seconds; a paced engagement read takes up to five minutes,
-# a relationship read of a few people as long, and one connection request two minutes.
+# a relationship read of a few people as long, and one connection request two minutes. A read
+# of profile viewers (a few pages) and a lookup of a few profile IDs take up to five minutes.
 SECONDS = {
     "search": 90,
     "linkedin_posts": 300,
     "linkedin_reactions": 300,
     "linkedin_relationships": 300,
     "linkedin_invite": 120,
+    "linkedin_viewers": 300,
+    "linkedin_profile_ids": 300,
 }
 
 
@@ -30,8 +33,22 @@ async def engagement(packet):
 
     from tin_lite.linkedin_engagement import read_posts, read_reactions
     from tin_lite.linkedin_invitations import read_relationships, send_invitation
+    from tin_lite.linkedin_viewers import read_profile_ids, read_viewers
 
     async with httpx.AsyncClient(timeout=15, follow_redirects=False, trust_env=False) as client:
+        if packet["kind"] == "linkedin_viewers":
+            return await read_viewers(
+                packet["session"],
+                packet["actor"],
+                client=client,
+                request=packet.get("request"),
+                include_overview=packet.get("overview") is True,
+                pages=packet["pages"],
+            )
+        if packet["kind"] == "linkedin_profile_ids":
+            return await read_profile_ids(
+                packet["session"], packet["actor"], client=client, slugs=packet["slugs"]
+            )
         if packet["kind"] == "linkedin_relationships":
             return await read_relationships(
                 packet["session"], packet["actor"], client=client, members=packet["members"]

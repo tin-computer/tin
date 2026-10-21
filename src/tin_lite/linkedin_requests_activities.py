@@ -232,14 +232,15 @@ class LinkedInRequestsActivities:
 
         run = await self._active(run_id)
         member = run.started_by_clerk_user_id
+        now = datetime.now(UTC)
         async with self.db.pool.acquire() as conn:
-            waiting = await requests.checking(conn, run.id, datetime.now(UTC))
+            waiting = await requests.checking(conn, run.id, now)
             last = await conn.fetchval(
                 "SELECT max(checked_at) FROM linkedin_request_batches WHERE send_run_id = $1",
                 run.id,
             )
             if not waiting:
-                await requests.read_at(conn, run.id)
+                await requests.read_at(conn, run.id, now)
                 return {"outcome": "nothing"}
         stamp = last.isoformat() if last else "first"
         key = f"{run.id}:requests:check:{stamp}"
@@ -249,7 +250,7 @@ class LinkedInRequestsActivities:
             )
         except (IntegrationAuthorizationError, WorkflowInputError, IntegrationUpstreamError):
             async with self.db.pool.acquire() as conn:
-                await requests.read_at(conn, run.id)
+                await requests.read_at(conn, run.id, now)
             return {"outcome": "unread"}
         async with self.db.effect_lock(key, ENGAGEMENT_OPERATION) as (conn, receipt):
             states = None
@@ -288,9 +289,9 @@ class LinkedInRequestsActivities:
                 )
         async with self.db.pool.acquire() as conn, conn.transaction():
             if states is None:
-                await requests.read_at(conn, run.id)
+                await requests.read_at(conn, run.id, now)
                 return {"outcome": "unread"}
-            counts = await requests.checked(conn, run.id, states)
+            counts = await requests.checked(conn, run.id, states, now)
         return {"outcome": "read", **counts}
 
     @activity.defn(name="linkedin_requests_finish")

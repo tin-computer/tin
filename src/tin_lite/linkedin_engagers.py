@@ -193,12 +193,13 @@ async def read_icp(storage, project) -> dict:
 def score_instructions(profiles: list[str]) -> str:
     return (
         "You rank people against a company's ideal customer profiles (ICPs). Each person "
-        "reacted to the founder's LinkedIn post; you see only their name and LinkedIn headline. "
+        "engaged with the founder on LinkedIn: they reacted to a post or viewed the founder's "
+        "profile. You see only their name and LinkedIn headline. "
         "The ICP file below names the profiles, each under its own heading.\n\n"
         "The score decides whom the founder looks at first. It is not a decision to contact "
         "anyone: rules in the ICP file about qualifying or contacting people (such as a title "
         "alone not establishing fit) are for that later step, not for this score. A reaction "
-        "alone shows interest, not fit.\n\n"
+        "or a profile view alone shows interest, not fit.\n\n"
         "A headline rarely states a company's stage, size or needs. What it doesn't state is "
         "unknown: it counts neither for nor against the person. Never guess a company, role or "
         "fact the headline doesn't state.\n\n"
@@ -305,9 +306,9 @@ def scores(output: Any, batch: list[dict], profiles: list[str]) -> list[list[Val
 async def unscored(
     conn, project_id: UUID, definition: str, *, limit: int, skip: list[UUID] = ()
 ) -> list[dict]:
-    """People who engaged and have no current score, leaving out those this run already
-    tried. A score is current under the ICP definition and newer than the person's notes; a
-    fit a member set is never scored again."""
+    """People who engaged (reacted, commented or viewed a member's profile) and have no
+    current score, leaving out those this run already tried. A score is current under the ICP
+    definition and newer than the person's notes; a fit a member set is never scored again."""
 
     rows = await conn.fetch(
         """SELECT r.id,
@@ -320,7 +321,7 @@ async def unscored(
            FROM records r
            WHERE r.project_id = $1 AND r.merged_into IS NULL
              AND EXISTS (SELECT 1 FROM record_events e WHERE e.project_id = $1
-                         AND e.record_id = r.id AND e.kind IN ('reacted', 'commented'))
+                         AND e.record_id = r.id AND e.kind = ANY($6::text[]))
              AND NOT EXISTS (SELECT 1 FROM record_values v WHERE v.record_id = r.id
                              AND v.field = 'icp_fit' AND v.set_by_kind = 'member')
              AND NOT EXISTS (SELECT 1 FROM record_values v WHERE v.record_id = r.id
@@ -335,6 +336,7 @@ async def unscored(
         limit,
         list(skip),
         NOTES_READ,
+        list(records.SIGNALS),
     )
     return [{**dict(row), "notes": list(row["notes"] or [])} for row in rows]
 

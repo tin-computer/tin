@@ -20,7 +20,7 @@ const person = (n, name, fit) => ({
   icp: "ICP 1: founders who need growth done", fit, engaged: {kind: "reacted", at: "2026-10-13T08:00:00Z"},
 });
 
-function requests({on = false, held = false} = {}) {
+function requests({on = false, held = false, people = null} = {}) {
   const inAnHour = new Date(Date.now() + 3600000).toISOString();
   return {
     offered: true,
@@ -34,7 +34,7 @@ function requests({on = false, held = false} = {}) {
     batches: [{
       id: "batch-1", created_at: new Date(Date.now() - 7200000).toISOString(),
       first_send: inAnHour, last_send: new Date(Date.now() + 3 * 86400000).toISOString(),
-      people: [person(1, "Maya Lindqvist", 0.84), person(2, "Daniel Okafor", 0.78), person(3, "Amara Osei", 0.66)],
+      people: people || [person(1, "Maya Lindqvist", 0.84), person(2, "Daniel Okafor", 0.78), person(3, "Amara Osei", 0.66)],
     }],
   };
 }
@@ -52,6 +52,22 @@ async function open({url, state, integrations = [reading], people}, run) {
     served.server.close();
   }
 }
+
+test("a batch says what brought its people: their posts, the profile, or both", {timeout: 120000}, async () => {
+  const viewed = (n, name) => ({...person(n, name, 0.8), engaged: {kind: "viewed", at: "2026-10-18T12:00:00Z"}});
+  await open({url: "/decisions", state: requests({people: [viewed(1, "Maya Lindqvist"), viewed(2, "Daniel Okafor")]})}, async (page) => {
+    const card = page.locator(".requests-card");
+    await card.waitFor();
+    assert.match(await card.locator("header").innerText(), /People who engaged with you on LinkedIn/);
+    assert.match(await card.innerText(), /2 people who viewed your profile fit your ICP and aren’t connected to you yet\./);
+    assert.equal(await card.locator(".request-engaged").first().innerText(), "oct 18 · viewed");
+  });
+  await open({url: "/decisions", state: requests({people: [viewed(1, "Maya Lindqvist"), person(2, "Daniel Okafor", 0.7)]})}, async (page) => {
+    const card = page.locator(".requests-card");
+    await card.waitFor();
+    assert.match(await card.innerText(), /2 people who reacted to your posts or viewed your profile fit your ICP/);
+  });
+});
 
 test("a batch waits first in Decisions, and approving sends only the ticked people", {timeout: 120000}, async () => {
   await open({url: "/decisions", state: requests({on: true})}, async (page, served) => {

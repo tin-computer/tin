@@ -11,7 +11,8 @@ requests", INVITE-A to INVITE-C and REQ-A.
 At the end of an engagers run, `linkedin_requests.propose` puts everyone newly eligible into
 the starter's open batch (one open batch per member and project). Someone is eligible when:
 
-- they reacted to or commented on the starter's own posts (events from runs the starter began);
+- they reacted to or commented on the starter's own posts, or viewed the starter's profile
+  ([profile viewers](linkedin-profile-viewers.md)), as events from runs the starter began;
 - their ICP fit is 0.6 or more, whoever set it;
 - the starter isn't connected to them or already inviting them (their own row in
   `record_relationships` is `none`);

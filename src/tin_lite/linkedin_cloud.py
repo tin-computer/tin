@@ -29,6 +29,7 @@ ENGAGEMENT_ERRORS = frozenset(
         "unsupported_contract",
         "unsupported_identity",
         "unsupported_search_contract",
+        "viewers_format_changed",
         "cloud_failed",
     }
 )

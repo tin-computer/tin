@@ -210,7 +210,7 @@ async def start_workflow_run(
             raise WorkflowExecutorUnavailableError(
                 "Connection collection is unavailable on this project."
             )
-    if workflow.executor == "social.linkedin_engagers":
+    if workflow.executor in {"social.linkedin_engagers", "social.linkedin_profile_viewers"}:
         from tin_lite.connection_collection import enabled
 
         if not enabled(settings, project_id):
@@ -219,7 +219,7 @@ async def start_workflow_run(
             )
         if not getattr(settings, "luna_api_key", None):
             raise WorkflowExecutorUnavailableError(
-                "Scoring LinkedIn engagers requires the native model service."
+                "Scoring people from LinkedIn requires the native model service."
             )
     if workflow.executor == "social.linkedin_requests":
         from tin_lite.connection_collection import enabled

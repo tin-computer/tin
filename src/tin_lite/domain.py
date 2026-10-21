@@ -32,6 +32,7 @@ PAYMENT_RECOVERY_DECISION_DAYS = 6
 LINKEDIN_LISTEN_WORKFLOW_NAME = "social.linkedin_listen"
 LINKEDIN_RESULTS_WORKFLOW_NAME = "social.linkedin_results"
 LINKEDIN_ENGAGERS_WORKFLOW_NAME = "social.linkedin_engagers"
+LINKEDIN_PROFILE_VIEWERS_WORKFLOW_NAME = "social.linkedin_profile_viewers"
 LINKEDIN_REQUESTS_WORKFLOW_NAME = "social.linkedin_requests"
 # A sending run's steps (send, wait, read who accepted): a runaway guard far above a batch
 # sent over days and read for three weeks.

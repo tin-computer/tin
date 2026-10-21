@@ -61,6 +61,8 @@ CONNECTED_ACCOUNT_EXECUTORS = {
     "social.linkedin_results": "tin-linkedin-operator-funded-v1",
     # Tin pays the LinkedIn sandbox reads and the small ICP scoring calls.
     "social.linkedin_engagers": "tin-funded-linkedin-engagers-v1",
+    # Tin pays the LinkedIn sandbox reads of who viewed a profile and the same ICP scoring.
+    "social.linkedin_profile_viewers": "tin-funded-linkedin-profile-viewers-v1",
     # Tin pays the LinkedIn sandbox calls that send approved requests and read who accepted.
     "social.linkedin_requests": "tin-funded-linkedin-requests-v1",
 }

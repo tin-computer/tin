@@ -326,7 +326,14 @@ def view_url(value: str, page: int) -> str:
 
 
 # Workflows that read LinkedIn with a project's saved session: shown where collection is on.
-SESSION_EXECUTORS = frozenset({KEY, "social.linkedin_engagers", "social.linkedin_requests"})
+SESSION_EXECUTORS = frozenset(
+    {
+        KEY,
+        "social.linkedin_engagers",
+        "social.linkedin_profile_viewers",
+        "social.linkedin_requests",
+    }
+)
 
 
 def visible(settings, workflow, project_id):

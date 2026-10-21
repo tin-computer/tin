@@ -1309,11 +1309,14 @@ function updateRail() {
   workflowCount.textContent = runningCount ? String(runningCount) : "";
   const waiting = decisionItems().length;
   decisionCount.textContent = waiting ? String(waiting) : "";
-  // People shows where a workflow that finds people is offered; the only one is gated per project.
+  // People shows where a workflow that finds people is offered; both are gated per project.
   document.querySelector('.nav-item[data-view="people"]').hidden =
-    state.view !== "people" && !state.workflows.some((workflow) => workflow.key === "social.linkedin_engagers");
+    state.view !== "people" && !state.workflows.some((workflow) => PEOPLE_FINDERS.has(workflow.key));
   updateAgentRail();
 }
+
+// Workflows that add people to People.
+const PEOPLE_FINDERS = new Set(["social.linkedin_engagers", "social.linkedin_profile_viewers"]);
 
 const AGENT_PROMPT = "Use Tin to grow my project like a pro!";
 

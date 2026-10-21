@@ -69,6 +69,8 @@ your own accounts before use; ordinary contributor tests need no production cred
   from the member's session, then who accepted.
 - [People who engaged with your LinkedIn posts](linkedin-engagers.md): the founder's posts,
   who reacted, ICP scores and the list in Files.
+- [People who viewed your LinkedIn profile](linkedin-profile-viewers.md): the profile-views
+  list read daily, each viewer in People, scored, and proposed for connection requests.
 - [Project API connections](project-api-connections.md): secure credentials and external requests.
 - [Stripe and PostHog connections](stripe-and-posthog-connections.md): the first-party read-only
   connections, their operations, projected records and offline test fakes.

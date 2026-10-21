@@ -23,7 +23,10 @@ from uuid import UUID, uuid4
 
 PERSON = "person"
 IDENTIFIER_KINDS = ("linkedin_member", "linkedin_slug")
-EVENT_KINDS = ("reacted", "commented", "invited", "accepted", "withdrawn")
+EVENT_KINDS = ("reacted", "commented", "viewed", "invited", "accepted", "withdrawn")
+# What a person did that shows interest in a member: reacting to or commenting on their posts,
+# viewing their profile. Tin scores and proposes people with any of these.
+SIGNALS = ("reacted", "commented", "viewed")
 RELATIONSHIPS = ("connected", "pending", "none")
 # Built-in fields: key → (type, label, choices).
 FIELDS: dict[str, tuple[str, str, tuple[str, ...] | None]] = {
@@ -652,7 +655,11 @@ async def people(
 # What the People view reads: each person's fields with who set them, and their timeline.
 
 # Short names for the workflows that write records, shown beside a value as who set it.
-WRITERS = {"social.linkedin_engagers": "engagers", "social.linkedin_requests": "requests"}
+WRITERS = {
+    "social.linkedin_engagers": "engagers",
+    "social.linkedin_profile_viewers": "profile viewers",
+    "social.linkedin_requests": "requests",
+}
 # LinkedIn shows each member their own relationship, from `record_relationships`.
 VIEW_FIELDS = ("icp", "icp_fit", "customer")
 # Values computed under a definition, such as the ICP file, go stale when it changes.

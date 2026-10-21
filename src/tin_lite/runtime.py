@@ -46,6 +46,7 @@ from tin_lite.keyword_plan import ROUTE_KEY as KEYWORD_ROUTE_KEY
 from tin_lite.keyword_plan_activities import KeywordPlanActivities
 from tin_lite.linkedin_engagers_activities import LinkedInEngagersActivities
 from tin_lite.linkedin_listening_activities import LinkedInListeningActivities
+from tin_lite.linkedin_profile_viewers_activities import LinkedInProfileViewersActivities
 from tin_lite.linkedin_publish_activities import LinkedInPublishActivities
 from tin_lite.linkedin_requests_activities import LinkedInRequestsActivities
 from tin_lite.luna import LunaService, OpenAIResponsesClient, TinWorkflowApiClient
@@ -360,6 +361,14 @@ async def build_runtime(settings: Settings) -> RuntimeServices:
         cipher=integrations._cipher,
         router=model_router if settings.luna_api_key is not None else None,
     )
+    viewers_activities = LinkedInProfileViewersActivities(
+        database=database,
+        storage=storage,
+        settings=settings,
+        cloud=LinkedInCloud(database, settings),
+        cipher=integrations._cipher,
+        router=model_router if settings.luna_api_key is not None else None,
+    )
     requests_activities = LinkedInRequestsActivities(
         database=database,
         storage=storage,
@@ -418,6 +427,12 @@ async def build_runtime(settings: Settings) -> RuntimeServices:
         engagers_activities.score,
         engagers_activities.publish,
         engagers_activities.failure,
+        viewers_activities.viewers_prepare,
+        viewers_activities.viewers_read,
+        viewers_activities.viewers_score,
+        viewers_activities.viewers_ids,
+        viewers_activities.viewers_publish,
+        viewers_activities.viewers_failure,
         requests_activities.prepare,
         requests_activities.next,
         requests_activities.send,

@@ -105,6 +105,7 @@ test("a person opens beside a narrower grid, and the address keeps them", {timeo
     const touch = (name) => page.getByRole("row", {name}).locator("td.is-touch").innerText();
     assert.equal(await touch("Maya Lindqvist"), "oct 13 · reacted to you");
     assert.equal(await touch("Daniel Okafor"), "oct 16 · invited by Mira");
+    assert.equal(await touch("Hannah Kim"), "oct 17 · viewed Mira");
     await page.getByRole("row", {name: "Maya Lindqvist"}).click();
     const panel = page.locator("#person-panel");
     await panel.getByRole("link", {name: "Open on LinkedIn"}).waitFor();
@@ -114,6 +115,7 @@ test("a person opens beside a narrower grid, and the address keeps them", {timeo
     assert.equal(new URL(page.url()).searchParams.get("person"), "p-maya");
     assert.match(await panel.locator(".person-section").first().innerText(), /Fields\s*4[\s\S]*ICP fit\s*0\.84\s*engagers · oct 15[\s\S]*Customer\s*No/);
     await panel.getByText("Reacted to your post with Insightful").waitFor();
+    assert.equal(await panel.getByText("Viewed your profile").count(), 1);
     // The timeline names the teammate too (TEAM-C).
     assert.equal(await panel.getByText("Reacted to Mira’s post with Like").count(), 1);
     assert.equal(await panel.getByText("Mira sent a connection request").count(), 1);
@@ -151,7 +153,7 @@ test("Forget asks in place first, then removes the person", {timeout: 120000}, a
     await page.getByRole("row", {name: "Lea Fischer"}).click();
     const panel = page.locator("#person-panel");
     await panel.getByRole("button", {name: "Forget this person"}).click();
-    assert.match(await panel.locator("footer").innerText(), /Forget Lea Fischer\?\s*Tin deletes this person’s fields, notes and timeline in Example Co and won’t add them again, even when they react to a later post\. The list in Files drops them at the next run\./);
+    assert.match(await panel.locator("footer").innerText(), /Forget Lea Fischer\?\s*Tin deletes this person’s fields, notes and timeline in Example Co and won’t add them again, even when they react to a later post or view a profile\. The list in Files drops them at the next run\./);
     await panel.getByRole("button", {name: "Cancel"}).click();
     assert.equal(people.length, 5);
     await panel.getByRole("button", {name: "Forget this person"}).click();

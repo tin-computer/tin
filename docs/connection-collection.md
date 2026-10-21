@@ -222,6 +222,16 @@ The same image sends approved connection requests (#450), in `linkedin_invitatio
   who accepted.
 See [Connection requests](linkedin-requests.md).
 
+The same image reads who viewed the member's profile, in `linkedin_viewers.py`; see
+[profile viewers](linkedin-profile-viewers.md):
+- `linkedin_viewers`: up to ten pages of the profile-views list, from its start (with the
+  overview, `GET /voyager/api/identity/wvmpCards`) or from the next-page request the last read
+  handed back. The list pages are the page's own two read-only POSTs on `www.linkedin.com`
+  (`/flagship-web/rsc-action/actions/server-request` and `…/pagination`), answered as React
+  Server Components rows;
+- `linkedin_profile_ids`: up to 20 public slugs' profile IDs and relationships, from the same
+  profile read as `linkedin_relationships`.
+
 Comments aren't read from the server: the comment endpoints answer 400 to plain GETs, and the
 post page renders only the first comment. Reading them needs LinkedIn's current query ID from
 the member's browser, as search once did.

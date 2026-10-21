@@ -20,6 +20,7 @@ from tin_lite import (
     linkedin_engagers,
     linkedin_listening,
     linkedin_posts,
+    linkedin_profile_viewers,
     linkedin_requests,
     organic_system,
     paid_ads,
@@ -1598,6 +1599,80 @@ BUILTIN_WORKFLOWS = (
         schedule_modes=("on_demand",),
         system=LINKEDIN_SYSTEM,
         input_schema=linkedin_engagers.INPUT_SCHEMA,
+        model_route=linkedin_engagers.ROUTE,
+        integration_requirements=(
+            IntegrationRequirement(
+                provider_key=connection_collection.PROVIDER,
+                capabilities=(connection_collection.CAPABILITY,),
+            ),
+        ),
+    ),
+    BuiltinWorkflow(
+        id=linkedin_profile_viewers.WORKFLOW_ID,
+        key=linkedin_profile_viewers.KEY,
+        title="People who viewed your LinkedIn profile",
+        description=(
+            "Read who viewed your LinkedIn profile, newest first, keep each person in People "
+            "with whether you're already connected, score them against strategy/ICP.md, and "
+            "list them best fit first in people/linkedin-profile-viewers.csv. People who fit "
+            "and aren't connected wait in Decisions for your connection requests. Reads with "
+            "your saved LinkedIn session; sends nothing."
+        ),
+        executor=linkedin_profile_viewers.KEY,
+        version_label="1.0.0",
+        presentation=WorkflowDiagram(
+            direction="TD",
+            nodes=(
+                DiagramNode(
+                    "session",
+                    "store",
+                    "Your saved LinkedIn session",
+                    "from Tin for Chrome, with cloud reading on",
+                ),
+                DiagramNode(
+                    "viewers",
+                    "surface",
+                    "Read who viewed your profile",
+                    "newest first, ten at a time, with pauses",
+                ),
+                DiagramNode(
+                    "people",
+                    "store",
+                    "People records",
+                    "name, headline, connected, when they looked",
+                ),
+                DiagramNode(
+                    "score",
+                    "step",
+                    "Score against your ICP",
+                    "from headline and your notes, with a reason",
+                ),
+                DiagramNode(
+                    "ids",
+                    "surface",
+                    "Look up the people who fit",
+                    "their LinkedIn profile ID, so they can be asked",
+                ),
+                DiagramNode(
+                    "files",
+                    "receipt",
+                    "The list in project Files",
+                    "people/linkedin-profile-viewers.csv, a summary",
+                ),
+            ),
+            edges=(
+                DiagramEdge("session", "viewers"),
+                DiagramEdge("viewers", "people"),
+                DiagramEdge("people", "viewers", label="next page, until nobody new"),
+                DiagramEdge("people", "score"),
+                DiagramEdge("score", "ids"),
+                DiagramEdge("ids", "files"),
+            ),
+        ),
+        schedule_modes=("on_demand", "daily"),
+        default_schedule={"cadence": "daily", "local_time": "08:00"},
+        system=LINKEDIN_SYSTEM,
+        input_schema=linkedin_profile_viewers.INPUT_SCHEMA,
         model_route=linkedin_engagers.ROUTE,
         integration_requirements=(
             IntegrationRequirement(

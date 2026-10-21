@@ -64,7 +64,7 @@ export function syntheticPeople() {
     ], touch: {kind: "invited", at: "2026-10-16T08:00:00Z", who: "Mira"}}),
     person("p-sofia", "Sofia Marchetti", "Founder & CEO, Patchbay", "ICP 1: founders who need growth done", 0.66, "connected", {stale: true}),
     person("p-lea", "Lea Fischer", "Head of Marketing, Quanta Labs", "none", 0.15, "none"),
-    person("p-hannah", "Hannah Kim", "Building something new", null, null, "none", {reason: "Tin couldn't score this person this time; the next run tries again."}),
+    person("p-hannah", "Hannah Kim", "Building something new", null, null, "none", {reason: "Tin couldn't score this person this time; the next run tries again.", touch: {kind: "viewed", at: "2026-10-17T08:00:00Z", who: "Mira"}}),
   ];
 }
 
@@ -79,6 +79,7 @@ function listed({notes, ...person}) {
 
 function detail(person) {
   return {...person, events: [
+    {kind: "viewed", at: "2026-10-18T08:00:00Z", reaction: null, post_url: "", yours: true, who: "you"},
     {kind: "invited", at: "2026-10-16T08:00:00Z", reaction: null, post_url: "", yours: false, who: "Mira"},
     {kind: "reacted", at: "2026-10-13T08:00:00Z", reaction: "INTEREST", post_url: "https://www.linkedin.com/feed/update/urn:li:activity:1/", yours: true, who: "you"},
     {kind: "reacted", at: "2026-09-30T08:00:00Z", reaction: "LIKE", post_url: "https://www.linkedin.com/feed/update/urn:li:activity:2/", yours: false, who: "Mira"},
