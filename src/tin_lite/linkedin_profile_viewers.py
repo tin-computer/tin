@@ -273,7 +273,8 @@ async def viewers(conn, project_id: UUID, member: str) -> list[dict]:
 
     def order(person):
         fit = (person["fields"].get("icp_fit") or {}).get("number")
-        return (fit is None, -(fit or 0), -person["last_viewed"].timestamp())
+        name = (person["fields"].get("name") or {}).get("text") or ""
+        return (fit is None, -(fit or 0), -person["last_viewed"].timestamp(), name.casefold())
 
     return sorted(listed, key=order)
 

@@ -182,7 +182,7 @@ def sample():
             ],
             [viewer("Carol Shannon", slug="carol", degree="3rd", age="2w")],
         ],
-        overview=[viewer("Person One", slug="person-one", who=first, at=NOW - timedelta(hours=1))],
+        overview=[viewer("Person One", slug="person-one", who=first, at=NOW - timedelta(hours=2))],
         ids={"ada-lovelace": member(10)},
     )
 
