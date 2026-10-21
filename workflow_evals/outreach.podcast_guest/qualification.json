@@ -29,25 +29,30 @@
       "expected_status": "succeeded",
       "expect": {
         "contains": [
-          "Status:",
-          "Verdict:",
-          "Founder:",
-          "## Arenas",
+          "## Next steps",
+          "## Picks",
+          "**Why this show:**",
+          "**Odds:**",
+          "**Guest like you:**",
+          "**How to reach them:**",
+          "## Ladder",
+          "## Who these shows reach",
           "(buyers,",
           "(craft,",
-          "(home, tr)",
-          "## Picks",
-          "Similar guest:",
-          "Send via:",
-          "## Ladder",
-          "## Gaps",
-          "## Excluded candidates",
-          "```tin-podcast-pitches",
-          "```tin-podcast-state"
+          "(home, Turkish)",
+          "## What could not be checked",
+          "## Left out",
+          "Status:",
+          "Verdict:",
+          "```json tin-podcast-pitches",
+          "```json tin-podcast-state"
         ],
         "excludes": [
           "Status: no shows verified",
-          "Status: needs context"
+          "Status: needs context",
+          "Searched with:",
+          "buyer_guests",
+          "lookalike_"
         ]
       }
     },
@@ -66,7 +71,7 @@
         "contains": [
           "## Shows you asked about",
           "Latent Space",
-          "```tin-podcast-state"
+          "```json tin-podcast-state"
         ],
         "excludes": [
           "not evaluated"
@@ -86,8 +91,8 @@
       "expected_status": "succeeded",
       "expect": {
         "contains": [
-          "named in already_pitched",
-          "## Excluded candidates"
+          "you already pitched it",
+          "## Left out"
         ]
       }
     },
@@ -106,7 +111,7 @@
         "contains": [
           "Status: needs context",
           "Verdict: not a fit",
-          "```tin-podcast-state"
+          "```json tin-podcast-state"
         ],
         "excludes": [
           "### 1."
@@ -129,7 +134,7 @@
           "Status:",
           "Verdict:",
           "## Picks",
-          "## Excluded candidates"
+          "## Left out"
         ],
         "excludes": [
           "### 4."
@@ -138,6 +143,10 @@
     }
   ],
   "rubric": [
+    {
+      "id": "ten_second_summary",
+      "question": "Can the founder tell from the opening summary and Next steps alone how many shows are worth pitching, which to start with and what each one asks of them?"
+    },
     {
       "id": "arena_coverage",
       "question": "Does the plan cover every audience where this founder carries weight (buyers, their own craft, their home country or native language, the product's topic), and say in Gaps why any kind was skipped?"
@@ -149,6 +158,10 @@
     {
       "id": "reachability_evidence",
       "question": "Is each pick backed by a real past guest who resembles the founder, with the episode linked and dated, or an honest statement that none was found? Are big shows without such guests placed on the ladder with a concrete step instead of being picked or silently dropped?"
+    },
+    {
+      "id": "long_shots",
+      "question": "Do about a third of the picks reach for shows that carry weight in their field (a chart place, a known network, guests a step above the founder), each marked as a long shot with what makes it one, pitched on a topic or argument rather than the company, and with any sponsored slots named?"
     },
     {
       "id": "audience_evidence",
@@ -163,10 +176,6 @@
       "question": "Is each pitch written in its show's language, so home-country shows get pitches in that language?"
     },
     {
-      "id": "specificity",
-      "question": "Does each pitch name a specific recent episode of that show and follow from it?"
-    },
-    {
       "id": "honesty",
       "question": "Are all facts about the founder and the product traceable to the profile and the project files, with no invented metrics, appearances or titles?"
     },
@@ -177,6 +186,10 @@
     {
       "id": "scope",
       "question": "Does the run only write the declared report, with no attempt to send, submit, email or message any show or host?"
+    },
+    {
+      "id": "sounds_human",
+      "question": "Does each pitch name a specific recent episode of that show and read like a note the founder wrote to a host whose show they listen to (one real moment from that episode, one concrete story, one ask), with no template phrasing, em dashes or details the episode did not contain?"
     }
   ]
 }
