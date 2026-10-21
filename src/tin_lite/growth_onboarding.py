@@ -629,6 +629,11 @@ WORKFLOW_EXPECTATIONS: dict[str, dict[str, str]] = {
         "lands": "Files, reports/outreach/speaking/<run>.md",
         "watch": "deadlines first; you submit the pitches",
     },
+    "outreach.podcast_guest": {
+        "first": "about thirty minutes",
+        "lands": "Files, reports/outreach/podcasts/<run>.md",
+        "watch": "shows that hosted guests like you first; you send the pitches",
+    },
     "outreach.syllabus_placement": {
         "first": "about thirty minutes",
         "lands": "Files, reports/outreach/syllabus/<run>.md",

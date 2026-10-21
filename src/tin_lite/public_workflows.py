@@ -135,6 +135,11 @@ PUBLIC_WORKFLOWS: tuple[PublicWorkflow, ...] = (
         PublicMCPExposure("start_speaking_shortlist", destructive=True, open_world=True),
     ),
     PublicWorkflow(
+        UUID("5a93b993-484e-4ef4-9279-a3a03b8b3da0"),
+        "outreach.podcast_guest",
+        PublicMCPExposure("start_podcast_guest", destructive=True, open_world=True),
+    ),
+    PublicWorkflow(
         UUID("2dc0683b-74cc-4300-9dd3-dae5118c8a9a"),
         "outreach.syllabus_placement",
         PublicMCPExposure("start_syllabus_placement", destructive=True, open_world=True),

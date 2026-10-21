@@ -601,6 +601,7 @@ ADDED_INPUTS = {
     "qa.buyer_trust": {"product_url": "https://product.example"},
     "outreach.paying_segment": {"retention_days": 60},
     "outreach.speaking_shortlist": {},
+    "outreach.podcast_guest": {"founder_profile": "Founder and CEO; built two developer tools."},
     "outreach.syllabus_placement": {},
     "outreach.marketplace_listings": {},
     "outreach.campus_events": {},
@@ -618,7 +619,7 @@ def test_reviewed_public_catalog_coverage_and_explicit_exclusions():
     from tin_lite.public_workflows import PUBLIC_WORKFLOWS
 
     entries = published_workflows()
-    assert len(entries) == 43
+    assert len(entries) == 44
     assert {w.key for w in PUBLIC_WORKFLOWS if w.id not in entries} == {
         "social.x_compose",
         "competitor.sunset_rescue",
