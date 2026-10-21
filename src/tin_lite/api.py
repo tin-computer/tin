@@ -3567,9 +3567,7 @@ async def _require_own(
     paused, run or removed only by the member who saved it."""
     from tin_lite.connection_collection import NOT_YOURS, owns
 
-    configured = await request.app.state.runtime.database.get_project_workflow(
-        project_workflow_id, include_archived=True
-    )
+    configured = await request.app.state.runtime.database.get_project_workflow(project_workflow_id)
     if (
         configured is not None
         and configured.project_id == project_id
