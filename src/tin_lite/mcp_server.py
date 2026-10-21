@@ -28,6 +28,7 @@ from tin_lite.billing_contracts import BillingError
 from tin_lite.brand_capture import preparation as brand_capture_preparation
 from tin_lite.campaign_revisions import request_email_campaign_revision
 from tin_lite.capture_revisions import ProposalFile
+from tin_lite.connection_collection import NOT_YOURS, owns
 from tin_lite.connection_collection import validate_inputs as validate_collection_inputs
 from tin_lite.connection_collection import visible as collection_visible
 from tin_lite.content_delivery import DRAFT_WORKFLOW_ID, DeliverySettings
@@ -2782,6 +2783,8 @@ def create_mcp_app(
         )
         if not configured or configured.project_id != project:
             raise ToolError("saved workflow not found")
+        if not owns(configured, token.subject):
+            raise ToolError(NOT_YOURS)
         try:
             result = await set_schedule_paused(
                 runtime=runtime(),
@@ -2810,6 +2813,8 @@ def create_mcp_app(
         )
         if not configured or configured.project_id != project:
             raise ToolError("saved workflow not found")
+        if not owns(configured, token.subject):
+            raise ToolError(NOT_YOURS)
         try:
             await archive_configuration(
                 runtime=runtime(),
@@ -3121,6 +3126,8 @@ def create_mcp_app(
         existing = await services.database.get_project_workflow(parsed_workflow_id)
         if existing is None or existing.project_id != parsed_project_id:
             raise ToolError(PROJECT_WORKFLOW_NOT_FOUND)
+        if not owns(existing, clerk_user_id):
+            raise ToolError(NOT_YOURS)
         workflow = await services.database.get_workflow(existing.workflow_id)
         if workflow is None:
             raise ToolError("workflow is unavailable")
@@ -3220,6 +3227,8 @@ def create_mcp_app(
         configured = await services.database.get_project_workflow(parsed_workflow_id)
         if configured is None or configured.project_id != parsed_project_id:
             raise ToolError(PROJECT_WORKFLOW_NOT_FOUND)
+        if not owns(configured, clerk_user_id):
+            raise ToolError(NOT_YOURS)
         workflow = await services.database.get_workflow(configured.workflow_id)
         if workflow is None:
             raise ToolError("workflow is unavailable")

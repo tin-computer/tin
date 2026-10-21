@@ -20,6 +20,7 @@ from temporalio.exceptions import ApplicationError
 from tin_lite import analytics_brief, visitor_journal
 from tin_lite.billing_contracts import BillingError
 from tin_lite.code_storage import CodeStorage, reviewed_task_diff
+from tin_lite.connection_collection import personal
 from tin_lite.db import Database
 from tin_lite.domain import (
     ARTIFACT_PATH,
@@ -261,6 +262,11 @@ def transient_failure(message: str | None, *, restarted: bool = False) -> bool:
 
 
 NEEDS_YOU_PREFIX = "no change: needs you:"
+# A personal workflow's schedule whose saver left the project pauses with this.
+AUTHOR_LEFT = (
+    "This reads the LinkedIn of the member who saved it, and they're no longer on this "
+    "project. Save your own copy to run it with your LinkedIn."
+)
 
 
 def blocked_by_setup(title) -> str | None:
@@ -394,6 +400,19 @@ class TinActivities:
             scheduled_for=scheduled_for,
         ):
             return {}
+        # A personal workflow acts through one member's own LinkedIn: its schedule runs as the
+        # member who saved it, while they're still on the project.
+        starter: dict[str, str] = {}
+        if personal(workflow_definition):
+            member = configured.created_by_clerk_user_id
+            if not await self._db.has_project_access(
+                project_id=configured.project_id, clerk_user_id=member
+            ):
+                from tin_lite.code_schedules import pause_for_issue
+
+                await pause_for_issue(self, configured, AUTHOR_LEFT)
+                return {}
+            starter = {"started_by_clerk_user_id": member}
         evaluation = await evaluate_prerequisites(
             database=self._db,
             storage=self._storage,
@@ -455,6 +474,7 @@ class TinActivities:
                     evaluation.evidence(inputs=configured.inputs) if evaluation.results else None
                 ),
                 **selection,
+                **starter,
             )
         except BillingError as exc:
             from tin_lite.code_schedules import pause_for_issue, schedule_issue

@@ -18,6 +18,8 @@ The same as engagers:
   the native model service.
 - **Member:** each member runs it with their own LinkedIn connection, with cloud reading on and
   a live session from Tin for Chrome. A run reads the profile of the member who started it.
+  Each member saves their own copy, once; its daily schedule runs as them, and only they can
+  change it ([personal workflows](connection-collection.md#connect-once-then-run-from-tin)).
 
 ## What LinkedIn shows
 

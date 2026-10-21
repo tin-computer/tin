@@ -340,6 +340,33 @@ def visible(settings, workflow, project_id):
     return workflow.executor not in SESSION_EXECUTORS or enabled(settings, project_id)
 
 
+def personal(workflow) -> bool:
+    """Whether a workflow acts through one member's own LinkedIn session. Its runs, saved
+    copies and schedules belong to that member; its ICP file and People stay the project's."""
+
+    return workflow.executor in SESSION_EXECUTORS
+
+
+# Personal workflows each member saves once: they read the member's whole account, so a second
+# copy would only read it again. A collection takes profiles to read, so it can be saved more.
+ONE_PER_MEMBER = frozenset({"social.linkedin_engagers", "social.linkedin_profile_viewers"})
+NOT_YOURS = (
+    "This uses the LinkedIn of the member who saved it, so only they can change or run it. "
+    "Save your own copy to use yours."
+)
+ALREADY_SAVED = "You already saved this workflow on this project. Change that one instead."
+
+
+def owns(configured, clerk_user_id: str) -> bool:
+    """Whether a member may change, pause, run or remove a saved workflow: anyone on the
+    project may, except for a personal one, which only the member who saved it may."""
+
+    return (
+        getattr(configured, "workflow_key", None) not in SESSION_EXECUTORS
+        or configured.created_by_clerk_user_id == clerk_user_id
+    )
+
+
 def cloud_ready(settings):
     # The image and worker lane are separate; the E2B account need not be.
     return bool(
