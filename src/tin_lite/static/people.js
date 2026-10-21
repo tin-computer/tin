@@ -20,7 +20,11 @@ window.TinPeople = (() => {
     { key: "new", label: "Not connected yet" },
     // Shown once someone has been sent a connection request (#450).
     { key: "invited", label: "Invited" },
+    // Shown once a visitor journeys run named someone who used the site or product.
+    { key: "site", label: "On the site" },
   ];
+  // What a person was on the site when a visitor journeys run last read them.
+  const WEB_TIER = { lead: "Lead", new_user: "New user", user: "User" };
   const SORTS = {
     name: (a, b) => a.name.localeCompare(b.name),
     fit: (a, b) => fitOf(a) - fitOf(b),
@@ -151,13 +155,14 @@ window.TinPeople = (() => {
     if (key === "fit") return people.filter((person) => fitOf(person) >= view.fitShown);
     if (key === "new") return people.filter((person) => field(person, "linkedin_relationship")?.value === "none");
     if (key === "invited") return people.filter((person) => field(person, "linkedin_relationship")?.value === "pending");
+    if (key === "site") return people.filter((person) => field(person, "web_tier"));
     return people;
   }
 
   function shown() {
     const query = view.query.trim().toLowerCase();
     const people = segmentPeople(view.segment).filter((person) => !query ||
-      [person.name, person.headline, field(person, "icp")?.value, person.notes_text].some((text) => (text || "").toLowerCase().includes(query)));
+      [person.name, person.headline, person.email, field(person, "web_summary")?.value, field(person, "icp")?.value, person.notes_text].some((text) => (text || "").toLowerCase().includes(query)));
     const compare = SORTS[view.sort.key];
     return [...people].sort((a, b) => {
       const order = view.sort.descending ? compare(b, a) : compare(a, b);
@@ -273,7 +278,7 @@ window.TinPeople = (() => {
     const ticked = pickable.filter((person) => view.picked.has(person.id)).length;
     body.innerHTML = `
       <div class="workflow-sections system-sections people-sections" role="tablist" aria-label="People segments">
-        ${SEGMENTS.filter((segment) => segment.key !== "invited" || view.segment === "invited" || segmentPeople("invited").length).map((segment) => `<button class="workflow-section ${view.segment === segment.key ? "is-active" : ""}" type="button" role="tab" aria-selected="${view.segment === segment.key}" data-people-segment="${segment.key}">${segment.label} <span>${segmentPeople(segment.key).length}</span></button>`).join("")}
+        ${SEGMENTS.filter((segment) => !["invited", "site"].includes(segment.key) || view.segment === segment.key || segmentPeople(segment.key).length).map((segment) => `<button class="workflow-section ${view.segment === segment.key ? "is-active" : ""}" type="button" role="tab" aria-selected="${view.segment === segment.key}" data-people-segment="${segment.key}">${segment.label} <span>${segmentPeople(segment.key).length}</span></button>`).join("")}
       </div>
       ${pickedBar() || nobodyLine(people)}
       <div class="people-grid">
@@ -330,7 +335,7 @@ window.TinPeople = (() => {
       : "";
     return `<tr tabindex="0" data-person="${escape(person.id)}" class="${person.id === view.openId ? "is-selected" : ""} ${picked ? "is-picked" : ""}" aria-label="${escape(person.name || "Unnamed")}">
       ${box}<td class="is-name"><span class="people-name"><span>${escape(person.name || "Unnamed")}</span>${customer ? "<small>customer</small>" : ""}</span></td>
-      <td class="is-headline"><span>${escape(person.headline)}</span></td>
+      <td class="is-headline"><span>${escape(person.headline || field(person, "web_summary")?.value || "")}</span></td>
       <td class="is-icp ${icpLabel.muted ? "is-muted" : ""}" title="${escape(icpLabel.muted ? "" : icpLabel.text)}"><span class="is-short">${escape(icpLabel.short)}</span><span class="is-full">${escape(icpLabel.text)}</span></td>
       <td class="is-fit ${fitClass}" ${fit ? `data-fit="${escape(person.id)}"` : ""}>${mark ? `<small>${mark}</small>` : ""}<span>${fitValue === null ? "—" : fitValue.toFixed(2)}</span></td>
       <td class="is-notes" ${note ? `data-note="${escape(person.id)}"` : ""}><span>${note ? escape(note.body.split("\n")[0]) : ""}</span></td>
@@ -549,6 +554,17 @@ window.TinPeople = (() => {
       const since = queued && person.queued ? `you · ${day(person.queued.queued_at)}` : lineage(relationship);
       rows.push(fieldRow("LinkedIn", `<strong>${escape(relationshipLabel(person, relationship?.value))}</strong>`, since, notes));
     }
+    const web = field(person, "web_tier");
+    if (web) {
+      const summary = field(person, "web_summary");
+      const lines = [summary?.value, web.reason ? `Stopped at ${web.reason}` : ""].filter(Boolean);
+      rows.push(fieldRow(
+        "On the site",
+        `<strong>${escape(WEB_TIER[web.value] || web.value)}</strong>`,
+        lineage(web),
+        lines.length ? `<div class="person-field-notes">${lines.map((line) => `<p>${escape(line)}</p>`).join("")}</div>` : "",
+      ));
+    }
     const isCustomer = customer?.value === "yes";
     rows.push(fieldRow(
       "Customer",
@@ -629,6 +645,7 @@ window.TinPeople = (() => {
     if (event.kind === "invited") return who && who !== "you" ? `${who[0].toUpperCase()}${who.slice(1)} sent a connection request` : "Connection request sent";
     if (event.kind === "accepted") return who && who !== "you" ? `Accepted ${possessive(who)} connection request` : "Accepted your connection request";
     if (event.kind === "withdrawn") return "Connection request withdrawn";
+    if (event.kind === "visited") return event.summary ? `Visited: ${event.summary}` : "Visited the site";
     return event.kind;
   }
 
@@ -637,9 +654,12 @@ window.TinPeople = (() => {
     if (!person.events.length) return "";
     const rows = person.events.map((event) => {
       const content = `<code>${escape(day(event.at))}</code><span>${escape(eventText(event))}</span>`;
-      return event.post_url
-        ? `<a class="person-event" href="${escape(event.post_url)}" target="_blank" rel="noopener noreferrer">${content}${OUT}</a>`
+      // A visit opens its PostHog replay; the suggested next step reads under it.
+      const link = event.post_url || event.replay_url;
+      const shown = link
+        ? `<a class="person-event" href="${escape(link)}" target="_blank" rel="noopener noreferrer">${content}${OUT}</a>`
         : `<div class="person-event">${content}</div>`;
+      return event.action ? `${shown}<p class="person-event-note">Suggested: ${escape(event.action)}</p>` : shown;
     }).join("");
     return `<section class="person-section"><h3>Timeline <span>${person.events.length}</span></h3>${rows}</section>`;
   }
@@ -651,7 +671,7 @@ window.TinPeople = (() => {
       return `<footer class="person-forget">
         <div>
           <strong>Forget ${escape(name)}?</strong>
-          <p>Tin deletes this person’s fields, notes and timeline in ${escape(view.projectName || "this project")} and won’t add them again, even when they react to a later post.${files}</p>
+          <p>Tin deletes this person’s fields, notes and timeline in ${escape(view.projectName || "this project")} and won’t add them again, even when they ${person.added?.by === "visitors" ? "come back to the site" : "react to a later post"}.${files}</p>
           ${view.forgetError ? `<p class="person-forget-error" role="alert">${escape(view.forgetError)}</p>` : ""}
         </div>
         <div class="person-forget-actions">
@@ -714,6 +734,7 @@ window.TinPeople = (() => {
       panel.innerHTML = `<header>
           <div class="person-panel-title"><h2 id="person-panel-name">${escape(person.name || "Unnamed")}</h2><button class="diagram-panel-close" type="button" data-close-person aria-label="Close this person">${CLOSE}</button></div>
           ${person.headline ? `<p>${escape(person.headline)}</p>` : ""}
+          ${person.email ? `<p class="person-panel-email">${escape(person.email)}</p>` : ""}
           ${person.profile_url ? `<a class="person-panel-linkedin" href="${escape(person.profile_url)}" target="_blank" rel="noopener noreferrer">Open on LinkedIn${OUT}</a>` : ""}
         </header>
         <div class="person-panel-body">${body}${view.personError ? `<p class="person-quiet">${escape(view.personError)}</p>` : ""}</div>

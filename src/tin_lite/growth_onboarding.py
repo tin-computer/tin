@@ -659,6 +659,11 @@ WORKFLOW_EXPECTATIONS: dict[str, dict[str, str]] = {
         "lands": "Files, reports/analytics/<run>.md",
         "watch": "activation and trends on each scheduled day",
     },
+    "product.visitor_journeys": {
+        "first": "about fifteen minutes; the first run maps your events",
+        "lands": "Files, reports/visitors/<run>.md, and People for those who signed up",
+        "watch": "the people to act on today and the frictions that cost you signups",
+    },
 }
 DEFAULT_EXPECTATION = {
     "first": "within the hour",

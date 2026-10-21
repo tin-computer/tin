@@ -17,7 +17,7 @@ import httpx
 from temporalio import activity
 from temporalio.exceptions import ApplicationError
 
-from tin_lite import analytics_brief
+from tin_lite import analytics_brief, visitor_journal
 from tin_lite.billing_contracts import BillingError
 from tin_lite.code_storage import CodeStorage, reviewed_task_diff
 from tin_lite.db import Database
@@ -4112,7 +4112,8 @@ class TinActivities:
                         # A brief that measured nothing fails with its own plain reason.
                         exc.message
                         if isinstance(exc, ApplicationError)
-                        and exc.type == analytics_brief.MEASURED_NOTHING
+                        and exc.type
+                        in {analytics_brief.MEASURED_NOTHING, visitor_journal.MEASURED_NOTHING}
                         else str(exc)
                         if isinstance(exc, ApplicationError)
                         and exc.type in {"OutputConflictError", "PublicationPendingError"}
@@ -4328,6 +4329,22 @@ class TinActivities:
                     type=analytics_brief.MEASURED_NOTHING,
                     non_retryable=True,
                 )
+        visitors = None
+        if procedure.output_validator == visitor_journal.VALIDATOR:
+            visitors = visitor_journal.read(content)
+            if visitors.measured_nothing:
+                # As for an analytics brief: kept on the run, never in Files.
+                await self._db.retain_procedure_output(
+                    conn,
+                    run_id=run.id,
+                    checkpoint=checkpoint.to_dict(),
+                    reason="not_published",
+                )
+                raise ApplicationError(
+                    visitor_journal.failure(visitors),
+                    type=visitor_journal.MEASURED_NOTHING,
+                    non_retryable=True,
+                )
         await self._db.retain_procedure_output(
             conn,
             run_id=run.id,
@@ -4379,6 +4396,8 @@ class TinActivities:
                         )
                 if analytics is not None and analytics_brief.summary(analytics):
                     result["summary"] = analytics_brief.summary(analytics)
+                if visitors is not None:
+                    result["summary"] = visitor_journal.summary(visitors)
                 if procedure.review_revision_context is not None:
                     from tin_lite.article_review import change_summary
 
@@ -4411,6 +4430,12 @@ class TinActivities:
             )
             raise ApplicationError(reason, type=type(exc).__name__, non_retryable=conflict) from exc
         await self._db.release_lease(run.id)
+        if visitors is not None:
+            from tin_lite import visitor_people
+
+            # The people who told the product who they are, into People. Idempotent, and
+            # never fails the run that published the report.
+            await visitor_people.record(database=self._db, run=run, content=content)
         if procedure.output_validator == "feedback-fix-plan.v1":
             from tin_lite import website_change_feedback
 

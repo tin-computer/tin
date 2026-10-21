@@ -128,6 +128,7 @@ PROCEDURE_KEY_MAXIMUMS: dict[str, int] = {
         "outreach.community_threads": 4,
         "outreach.speaking_shortlist": 4,
         "product.analytics_brief": 3,
+        "product.visitor_journeys": 5,
         "competitor.watch": 3,
         "site.health_improve": 3,
         "outreach.marketplace_listings": 3,

@@ -1241,6 +1241,10 @@ def create_mcp_app(
             "name": person["name"],
             "headline": person["headline"],
             "profile_url": person["profile_url"],
+            # People a visitor journeys run named: their email and their last visit.
+            "email": person.get("email") or None,
+            "on_the_site": value("web_tier"),
+            "last_visit": value("web_summary"),
             "icp": value("icp"),
             "icp_fit": value("icp_fit"),
             "fit_set_by": fit.get("by"),
@@ -1261,19 +1265,24 @@ def create_mcp_app(
         """List a project's people, best ICP fit first: who they are, their ICP and fit with
         who set it and why, whether they are a customer, and their newest note.
 
-        segment: "all", "icp_fit" (fit at or above fit_shown) or "not_connected" (not
-        connected on LinkedIn). query matches name, headline, ICP and notes. `profiles` are
-        the ICP file's profiles, the values update_person accepts.
+        segment: "all", "icp_fit" (fit at or above fit_shown), "not_connected" (not
+        connected on LinkedIn) or "on_the_site" (named by a visitor journeys run, with their
+        email, tier and last visit). query matches name, headline, email, last visit, ICP and
+        notes. `profiles` are the ICP file's profiles, the values update_person accepts.
         """
         parsed, viewer, people = await people_service(project_id, "list_people")
-        if segment not in {"all", "icp_fit", "not_connected"}:
-            raise ToolError('invalid: segment is "all", "icp_fit" or "not_connected"')
+        if segment not in {"all", "icp_fit", "not_connected", "on_the_site"}:
+            raise ToolError(
+                'invalid: segment is "all", "icp_fit", "not_connected" or "on_the_site"'
+            )
         listed = await people_result(people.list(parsed, viewer))
         rows = [person_row(person) for person in listed["people"]]
         if segment == "icp_fit":
             rows = [r for r in rows if (r["icp_fit"] or 0) >= listed["fit_shown"]]
         elif segment == "not_connected":
             rows = [r for r in rows if r["linkedin"] in {"none", "pending"}]
+        elif segment == "on_the_site":
+            rows = [r for r in rows if r["on_the_site"]]
         if query:
             words = query.casefold()
             texts = {str(p["id"]): p.get("notes_text") or "" for p in listed["people"]}
@@ -1281,7 +1290,16 @@ def create_mcp_app(
                 r
                 for r in rows
                 if words
-                in " ".join([r["name"], r["headline"], r["icp"] or "", texts[r["id"]]]).casefold()
+                in " ".join(
+                    [
+                        r["name"],
+                        r["headline"],
+                        r["email"] or "",
+                        r["last_visit"] or "",
+                        r["icp"] or "",
+                        texts[r["id"]],
+                    ]
+                ).casefold()
             ]
         rows.sort(key=lambda r: (r["icp_fit"] is None, -(r["icp_fit"] or 0), r["name"].casefold()))
         limit = max(1, min(int(limit), 500))

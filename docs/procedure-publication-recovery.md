@@ -79,7 +79,8 @@ one bounded attempt to retain changed Markdown. The installed isolation helper f
 the author and freezes regular files; unchanged, missing, linked, oversized, non-UTF-8, or
 credential-bearing output is excluded. The switchboard revalidates the pinned output contract.
 This covers default/isolated plain Markdown research, `memory-section.v1` code maps and
-`analytics-brief.v1` reports, whose partial text is checked only for size; section
+`analytics-brief.v1` and `visitor-journal.v1` reports, whose partial text is checked only for
+size; section
 ownership still applies. Browser/Studio profiles, identity-enabled procedures, companion
 documents and other validators remain excluded.
 

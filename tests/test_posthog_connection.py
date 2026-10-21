@@ -1080,3 +1080,48 @@ def tokens_of_db(service, connection, project_id):
             context=f"credential:{project_id}:{POSTHOG_PROVIDER}",
         )
     )
+
+
+async def test_project_read_returns_capture_settings_and_the_replay_link_never_keys() -> None:
+    api = PostHog()
+    service, database, client = await service_for(api)
+    async with client:
+        connection, _ = await connect(service, api)
+        api.requests.clear()
+        result = await service.posthog.call(
+            "project.read",
+            {},
+            connection=connection,
+            run_id=RUN_ID,
+            execution_key="run:code-service:project",
+            max_response_bytes=4000,
+        )
+        with pytest.raises(ServiceArgumentError, match="unsupported argument"):
+            ph.request_for("project.read", {"project_id": 102})
+    [request] = api.requests
+    assert (request.method, request.url.path) == ("GET", "/api/projects/101/")
+    assert result == {
+        "name": "Fixture App",
+        "timezone": "UTC",
+        "app_urls": ["https://fixture.example"],
+        "session_recording_opt_in": True,
+        "autocapture_opt_out": None,
+        "autocapture_exceptions_opt_in": True,
+        "capture_dead_clicks": False,
+        "capture_performance_opt_in": None,
+        "heatmaps_opt_in": None,
+        "surveys_opt_in": None,
+        "cookieless": False,
+        "replay_url": "https://eu.posthog.com/project/101/replay/",
+        "has_more": False,
+        "truncated": False,
+    }
+    assert "phc_" not in json.dumps(result) and "phs_" not in json.dumps(result)
+    assert database.calls[-1]["capability"] == "definitions.read"
+    # Recording switched off: there is nowhere for a replay link to open.
+    assert (
+        ph.project_settings(
+            {"session_recording_opt_in": False}, host="https://us.posthog.com", project_id="7"
+        )["replay_url"]
+        is None
+    )

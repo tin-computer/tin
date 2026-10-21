@@ -591,6 +591,7 @@ ADDED_INPUTS = {
     "social.post_batch": {"mode": "repurpose", "article_path": "content/sample.md"},
     "brand.capture": {"product_url": "https://product.example", "include_repository": False},
     "product.analytics_brief": {"reporting_days": 7},
+    "product.visitor_journeys": {"lookback_hours": 24},
     "growth.score_quiz": {
         "product_name": "Fixture",
         "quiz_topic": "API readiness",
@@ -617,7 +618,7 @@ def test_reviewed_public_catalog_coverage_and_explicit_exclusions():
     from tin_lite.public_workflows import PUBLIC_WORKFLOWS
 
     entries = published_workflows()
-    assert len(entries) == 42
+    assert len(entries) == 43
     assert {w.key for w in PUBLIC_WORKFLOWS if w.id not in entries} == {
         "social.x_compose",
         "competitor.sunset_rescue",

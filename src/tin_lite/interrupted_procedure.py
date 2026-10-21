@@ -7,6 +7,7 @@ from tin_lite.domain import StaleGenerationError
 from tin_lite.procedures import (
     ANALYTICS_BRIEF_VALIDATOR,
     MEMORY_SECTION_VALIDATOR,
+    VISITOR_JOURNAL_VALIDATOR,
     settle_procedure_artifact,
     validate_procedure_artifact,
 )
@@ -20,7 +21,8 @@ def eligible(spec):
         spec.result_kind == "project.artifact"
         and spec.sandbox.profile in {"default", "isolated"}
         and spec.output_media_type == "text/markdown"
-        and spec.output_validator in {None, MEMORY_SECTION_VALIDATOR, ANALYTICS_BRIEF_VALIDATOR}
+        and spec.output_validator
+        in {None, MEMORY_SECTION_VALIDATOR, ANALYTICS_BRIEF_VALIDATOR, VISITOR_JOURNAL_VALIDATOR}
         and not spec.identity.enabled
         and spec.companion_path is None
         and 0 < spec.output_max_bytes <= 1_000_000
@@ -28,9 +30,9 @@ def eligible(spec):
 
 
 def _partial(spec):
-    # A partial analytics brief has no finished evidence block yet and is never published,
-    # so only its size and encoding are checked.
-    if spec.output_validator == ANALYTICS_BRIEF_VALIDATOR:
+    # A partial analytics brief or visitor journal has no finished evidence block yet and is
+    # never published, so only its size and encoding are checked.
+    if spec.output_validator in {ANALYTICS_BRIEF_VALIDATOR, VISITOR_JOURNAL_VALIDATOR}:
         return replace(spec, output_validator=None)
     return spec
 

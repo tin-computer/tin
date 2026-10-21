@@ -112,7 +112,7 @@ until the connection grants all of them (for Stripe, until the key can read the 
 | `payments.stripe` | `prices.read` | `prices.list` | Read on Prices and Products (products are expanded) |
 | `payments.stripe` | `charges.read` | `charges.list` | Read on Charges |
 | `analytics.posthog` | `query.read` | `query.hogql` | `query:read` |
-| `analytics.posthog` | `definitions.read` | `event_definitions.list`, `property_definitions.list` | `event_definition:read`, `property_definition:read` |
+| `analytics.posthog` | `definitions.read` | `event_definitions.list`, `property_definitions.list`, `project.read` | `event_definition:read`, `property_definition:read` (`project.read` uses `project:read`, which every grant holds) |
 | `analytics.posthog` | `insights.read` | `insights.list` | `insight:read` |
 
 Every operation is read-only. The Stripe client refuses any method but GET; the PostHog client
@@ -163,6 +163,7 @@ Every call reads the project the founder selected. The list operations accept:
 | `event_definitions.list` | `search`, `cursor`, `limit` | records of `name`, `volume_30_day`, `query_usage_30_day`, `last_seen_at` |
 | `property_definitions.list` | `event_names` (1–20 unique names: only properties those events carry), `search`, `cursor`, `limit` | records of `name`, `property_type`, `is_numerical` (event properties only) |
 | `insights.list` | `search`, `cursor`, `limit` | records of `id`, `short_id`, `name`, `kind`, `query_kind`, `last_refresh` (saved insights only) |
+| `project.read` | none | the selected project's `name`, `timezone`, `app_urls`, capture settings (`session_recording_opt_in`, `autocapture_opt_out`, `autocapture_exceptions_opt_in`, `capture_dead_clicks`, `capture_performance_opt_in`, `heatmaps_opt_in`, `surveys_opt_in`), `cookieless`, and `replay_url`: the prefix a `$session_id` completes to open that recording, or null when recording is off. Never its API tokens. |
 
 `query.hogql` runs with PostHog's blocking refresh. `rows` keep PostHog's column order;
 `types` are PostHog's type names, one per column. Text cells are cut to 2000 characters,

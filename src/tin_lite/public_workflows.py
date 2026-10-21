@@ -94,6 +94,11 @@ PUBLIC_WORKFLOWS: tuple[PublicWorkflow, ...] = (
         PublicMCPExposure("start_product_analytics_brief", destructive=True, open_world=False),
     ),
     PublicWorkflow(
+        UUID("28b92e8b-122f-401a-8db2-70d6af30e72d"),
+        "product.visitor_journeys",
+        PublicMCPExposure("start_visitor_journeys", destructive=True, open_world=False),
+    ),
+    PublicWorkflow(
         UUID("543626b6-635f-4cef-b00e-e46225753c13"),
         "growth.score_quiz",
         PublicMCPExposure("start_score_quiz", destructive=True, open_world=False),

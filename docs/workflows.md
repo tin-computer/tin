@@ -99,7 +99,7 @@ Tin ships 43 built-in workflows. Every workflow also takes a `project_id`; requi
 
 # Registry packages
 
-27 contributed packages from `workflow_packages/` are selected in `src/tin_lite/public_workflows.py` and published with the next catalog sync. [The package guide](../workflow_packages/README.md#how-the-packages-fit-together) shows how they build on the built-ins.
+28 contributed packages from `workflow_packages/` are selected in `src/tin_lite/public_workflows.py` and published with the next catalog sync. [The package guide](../workflow_packages/README.md#how-the-packages-fit-together) shows how they build on the built-ins.
 
 ## Organic traffic system
 
@@ -131,6 +131,7 @@ Tin ships 43 built-in workflows. Every workflow also takes a `project_id`; requi
 | Workflow | What it does | Inputs | Output |
 |---|---|---|---|
 | Product analytics brief<br>`product.analytics_brief` | A recurring PostHog brief: ordered activation, event trends, traffic, error signals and a supported breakdown, with reproducible evidence. | `reporting_days`, `as_of_utc`, `event_mapping`, `exclusions`, `website_hosts`, `exclude_email_domains`, `internal_flag_property` | `reports/analytics/{run_id}.md` |
+| Visitor journeys<br>`product.visitor_journeys` | A daily read of who used your site and product: each signed-up person's journey, where people struggled, what worked for them, who to follow up with and what to fix. Writes people who told you who they are to People. | `lookback_hours`, `website_hosts`, `product_hosts`, `exclude_email_domains`, `internal_people`, `max_people_detailed`, `notes` | `reports/visitors/{run_id}.md` |
 | Check if a buyer would trust your checkout (human review)<br>`qa.buyer_trust` | Run before launch or after a signup walkthrough: get a fixed-rule PASS, FAIL or UNVERIFIED verdict on whether a careful buyer would trust your site and checkout, with ranked fixes handed to Improve site health or to you. Public GET requests only; it never signs in, submits forms, changes your site or claims CVE coverage. | **`product_url`**, `depth`, `notes` | `reports/BUYER_TRUST.md` |
 | Turn what people say about your product into a copy fix<br>`qa.feedback_to_fix` | Read public threads where people react to your product, keep what at least two different people say in their own words, and plan the change to the page copy that caused it, or report why not. You approve the change in Decisions and website.change puts it on your site. Never replies or posts. | `platforms`, `lookback_days` | `reports/feedback-to-fix/{run_id}/PLAN.md` |
 

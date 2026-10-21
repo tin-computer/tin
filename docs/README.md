@@ -59,6 +59,8 @@ your own accounts before use; ordinary contributor tests need no production cred
 - [Project files in code workflows](code-project-files.md): direct reads of current files,
   optional caller inputs, and stable retries without a source or version picker.
 - [Product analytics brief](product-analytics-brief.md): the public PostHog package and qualification limits.
+- [Visitor journeys](visitor-journeys.md): a daily per-person read of PostHog, frictions and
+  delights, the map and ledger it keeps, and the people it writes to People.
 - [Private activation](private-workflow-activation.md), [code workflows](code-workflows.md),
   [managed model steps](code-model-workflows.md) and [code schedules](code-workflow-schedules.md).
 - [Connection collection](connection-collection.md): project-bound Tin extension, local collection,
