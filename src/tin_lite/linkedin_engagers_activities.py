@@ -146,13 +146,21 @@ async def saved_session(db, settings, cipher, project_id, member) -> tuple[dict,
 
 
 class LinkedInEngagersActivities:
+    # The workflow these activities serve, the prefix of their receipts, the scoring step's
+    # place in the run's progress and the founder's line when a run fails; the profile viewers
+    # workflow reuses the ICP read and the scoring with its own.
+    key = KEY
+    prefix = "engagers"
+    score_step = (2, 4)
+    fallback = FALLBACK
+
     def __init__(self, *, database, storage, settings, cipher, cloud, router):
         self.db, self.storage, self.settings = database, storage, settings
         self.cipher, self.cloud, self.router = cipher, cloud, router
 
     async def _active(self, run_id, *, conn=None):
         run = await self.db.get_run(UUID(str(run_id)), conn=conn)
-        if not run or run.executor != KEY or run.status.value not in {"pending", "running"}:
+        if not run or run.executor != self.key or run.status.value not in {"pending", "running"}:
             raise ApplicationError("This LinkedIn read is no longer active.", non_retryable=True)
         return run
 
@@ -167,19 +175,25 @@ class LinkedInEngagersActivities:
             self.db, self.settings, self.cipher, run.project_id, run.started_by_clerk_user_id
         )
 
-    @activity.defn(name="linkedin_engagers_prepare")
-    async def prepare(self, run_id: str) -> None:
-        run = await self._active(run_id)
-        await self._session(run)
+    async def _prepare_icp(self, run) -> None:
+        """The ICP file at the project's head, kept in a receipt so every step scores against
+        the same words."""
+
         project = await self.db.get_project(run.project_id)
-        key = f"{run.id}:engagers:icp"
-        async with self.db.effect_lock(key, KEY) as (conn, receipt):
+        key = f"{run.id}:{self.prefix}:icp"
+        async with self.db.effect_lock(key, self.key) as (conn, receipt):
             if not (receipt and receipt.status == "completed"):
-                await self.db.start_effect(conn, execution_key=key, operation=KEY)
+                await self.db.start_effect(conn, execution_key=key, operation=self.key)
                 await self.db.complete_effect(
                     conn, execution_key=key, result=await engagers.read_icp(self.storage, project)
                 )
             await records.ensure_fields(conn, run.project_id)
+
+    @activity.defn(name="linkedin_engagers_prepare")
+    async def prepare(self, run_id: str) -> None:
+        run = await self._active(run_id)
+        await self._session(run)
+        await self._prepare_icp(run)
         await self.db.mark_run_running(run.id)
         await self._progress(run.id, "posts", 0, 4, "Reading your LinkedIn posts")
 
@@ -326,7 +340,7 @@ class LinkedInEngagersActivities:
             await self.storage.read_canonical_artifact(
                 repo_id="registry/workflows",
                 commit_sha=run.definition_commit_sha,
-                path=f"workflows/{KEY}.json",
+                path=f"workflows/{self.key}.json",
             )
         )
         route = engagers.ROUTE
@@ -348,17 +362,17 @@ class LinkedInEngagersActivities:
         digest = hashlib.sha256(
             (definition + ":" + ",".join(sorted(str(p["id"]) for p in batch))).encode()
         ).hexdigest()[:24]
-        key = f"{run.id}:engagers:score:{digest}"
-        async with self.db.effect_lock(key, KEY) as (conn, saved):
+        key = f"{run.id}:{self.prefix}:score:{digest}"
+        async with self.db.effect_lock(key, self.key) as (conn, saved):
             if saved and saved.status == "completed":
                 return (saved.result or {}).get("output")
             if saved:
                 return None
-            await self.db.start_effect(conn, execution_key=key, operation=KEY)
+            await self.db.start_effect(conn, execution_key=key, operation=self.key)
             output = None
             try:
                 with model_usage_scope(
-                    run_id=run.id, step=f"linkedin_engagers:icp:{digest}", conn=conn
+                    run_id=run.id, step=f"linkedin_{self.prefix}:icp:{digest}", conn=conn
                 ):
                     async with asyncio.timeout(MODEL_SECONDS + 15):
                         result = await self.router.generate(
@@ -386,8 +400,11 @@ class LinkedInEngagersActivities:
 
     @activity.defn(name="linkedin_engagers_score")
     async def score(self, run_id: str) -> None:
+        await self._score(run_id)
+
+    async def _score(self, run_id: str) -> None:
         run = await self._active(run_id)
-        icp = (await self.db.get_effect(f"{run.id}:engagers:icp")).result or {}
+        icp = (await self.db.get_effect(f"{run.id}:{self.prefix}:icp")).result or {}
         if not icp.get("profiles"):
             return
         if self.router is None:
@@ -398,7 +415,7 @@ class LinkedInEngagersActivities:
             repo_id=project.state_repo_id, commit_sha=icp["revision"], path=icp["path"]
         )
         text = (raw or b"")[: engagers.ICP_BYTES].decode("utf-8", "replace")
-        await self._progress(run.id, "score", 2, 4, "Scoring people against your ICP")
+        await self._progress(run.id, "score", *self.score_step, "Scoring people against your ICP")
         tried: list[UUID] = []
         while len(tried) < engagers.MAX_SCORED:
             async with self.db.pool.acquire() as conn:
@@ -543,8 +560,11 @@ class LinkedInEngagersActivities:
 
     @activity.defn(name="linkedin_engagers_failure")
     async def failure(self, argument: str | dict) -> None:
+        await self._failure(argument)
+
+    async def _failure(self, argument: str | dict) -> None:
         run_id, passed = split_failure_input(argument)
         run = await self.db.get_run(UUID(str(run_id)))
-        if not run or run.executor != KEY:
+        if not run or run.executor != self.key:
             return
-        await self.db.project_failure(run_id=run.id, **failure_projection(passed, FALLBACK))
+        await self.db.project_failure(run_id=run.id, **failure_projection(passed, self.fallback))

@@ -24,7 +24,10 @@ from uuid import UUID, uuid4
 
 PERSON = "person"
 IDENTIFIER_KINDS = ("linkedin_member", "linkedin_slug", "email")
-EVENT_KINDS = ("reacted", "commented", "invited", "accepted", "withdrawn", "visited")
+EVENT_KINDS = ("reacted", "commented", "viewed", "invited", "accepted", "withdrawn", "visited")
+# What a person did that shows interest in a member: reacting to or commenting on their posts,
+# viewing their profile. Tin scores and proposes people with any of these.
+SIGNALS = ("reacted", "commented", "viewed")
 RELATIONSHIPS = ("connected", "pending", "none")
 # What a person was on the project's site or product when a run last read them.
 WEB_TIERS = ("lead", "new_user", "user")
@@ -660,6 +663,7 @@ async def people(
 # Short names for the workflows that write records, shown beside a value as who set it.
 WRITERS = {
     "social.linkedin_engagers": "engagers",
+    "social.linkedin_profile_viewers": "profile viewers",
     "social.linkedin_requests": "requests",
     "product.visitor_journeys": "visitors",
 }

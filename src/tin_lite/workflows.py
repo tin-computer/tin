@@ -28,6 +28,7 @@ from tin_lite.domain import (
     LINKEDIN_LISTEN_CHECKPOINTS,
     LINKEDIN_LISTEN_READ_ATTEMPTS,
     LINKEDIN_LISTEN_WORKFLOW_NAME,
+    LINKEDIN_PROFILE_VIEWERS_WORKFLOW_NAME,
     LINKEDIN_REQUESTS_STEPS,
     LINKEDIN_REQUESTS_WORKFLOW_NAME,
     LINKEDIN_RESULTS_WORKFLOW_NAME,
@@ -1825,6 +1826,68 @@ class LinkedInEngagersWorkflow:
             raise
 
 
+@workflow.defn(name=LINKEDIN_PROFILE_VIEWERS_WORKFLOW_NAME)
+class LinkedInProfileViewersWorkflow:
+    """Read who viewed the founder's profile, newest first, up to ten pages at a time, until a
+    read adds nobody new; score the people against the ICP file, look up the profile IDs of
+    those who fit, and write the list. History holds read numbers and counts; names, headlines,
+    scores and LinkedIn's request for the next page stay in Postgres."""
+
+    # Reads per run (linkedin_profile_viewers.MAX_READS), each up to ten pages of ten viewers.
+    reads = 3
+
+    @workflow.run
+    async def run(self, run_id: str) -> None:
+        async def call(name, argument=run_id, *, minutes=5):
+            return await workflow.execute_activity(
+                name,
+                argument,
+                start_to_close_timeout=timedelta(minutes=minutes),
+                heartbeat_timeout=timedelta(minutes=2) if minutes > 5 else None,
+                retry_policy=RetryPolicy(
+                    initial_interval=timedelta(seconds=30),
+                    maximum_attempts=3,
+                    non_retryable_error_types=[
+                        "IntegrationAuthorizationError",
+                        "WorkflowInputError",
+                        "BillingError",
+                    ],
+                ),
+            )
+
+        try:
+            await call("linkedin_viewers_prepare")
+            notes = {"viewers": 0, "new": 0, "anonymous": 0}
+            for index in range(self.reads):
+                read = await call(
+                    "linkedin_viewers_read", {"run_id": run_id, "read": index}, minutes=8
+                )
+                notes["viewers"] += read["people"] or 0
+                notes["new"] += read["new"] or 0
+                notes["anonymous"] += read["anonymous"] or 0
+                if read.get("total_views") is not None:
+                    notes.setdefault("total_views", read["total_views"])
+                if read.get("reason") == "viewers_format_changed":
+                    notes["format_changed"] = True
+                if read["outcome"] == "stopped":
+                    notes["stopped"] = read["reason"]
+                    break
+                if read["outcome"] != "read":
+                    notes["unread"] = read["reason"]
+                    break
+                # Everything on these pages was already in People: the rest is older.
+                if not read["more"] or not read["new"]:
+                    break
+            await call("linkedin_viewers_score", minutes=20)
+            if not notes.get("stopped"):
+                found = await call("linkedin_viewers_ids", minutes=8)
+                notes["looked_up"] = found["looked_up"]
+            await call("linkedin_viewers_publish", {"run_id": run_id, "notes": notes})
+        except BaseException as exc:
+            await call("linkedin_viewers_failure", failure_input(run_id, exc))
+            raise
+
+
 @workflow.defn(name=LINKEDIN_REQUESTS_WORKFLOW_NAME)
 class LinkedInRequestsWorkflow:
     """Send a member's approved connection requests one at a time, then read who accepted. The
@@ -2018,6 +2081,7 @@ def registered_workflows() -> list[type]:
         LinkedInListenWorkflow,
         LinkedInResultsWorkflow,
         LinkedInEngagersWorkflow,
+        LinkedInProfileViewersWorkflow,
         LinkedInRequestsWorkflow,
         OrganicTrafficSystemWorkflow,
         GrowthOnboardingWorkflow,
@@ -2060,6 +2124,7 @@ def registered_workflow_implementations() -> dict[str, type]:
         LINKEDIN_LISTEN_WORKFLOW_NAME: LinkedInListenWorkflow,
         LINKEDIN_RESULTS_WORKFLOW_NAME: LinkedInResultsWorkflow,
         LINKEDIN_ENGAGERS_WORKFLOW_NAME: LinkedInEngagersWorkflow,
+        LINKEDIN_PROFILE_VIEWERS_WORKFLOW_NAME: LinkedInProfileViewersWorkflow,
         LINKEDIN_REQUESTS_WORKFLOW_NAME: LinkedInRequestsWorkflow,
         "organic.traffic_system": OrganicTrafficSystemWorkflow,
         "growth.onboarding": GrowthOnboardingWorkflow,

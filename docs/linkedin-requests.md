@@ -2,16 +2,19 @@
 
 `social.linkedin_requests` (#450) sends the LinkedIn connection requests a member approved, one
 at a time, from their own saved session, then reads who accepted. It follows
-[People who engaged with your LinkedIn posts](linkedin-engagers.md), whose people it proposes.
+[People who engaged with your LinkedIn posts](linkedin-engagers.md) and
+[People who viewed your LinkedIn profile](linkedin-profile-viewers.md), whose people they propose.
 Members can also choose people themselves in People. Boards: Paper "Warm reach · connection
 requests", INVITE-A to INVITE-C and REQ-A.
 
 ## Proposed
 
-At the end of an engagers run, `linkedin_requests.propose` puts everyone newly eligible into
-the starter's open batch (one open batch per member and project). Someone is eligible when:
+At the end of an engagers or profile viewers run, `linkedin_requests.propose` puts everyone
+newly eligible into the starter's open batch (one open batch per member and project). Someone is
+eligible when:
 
-- they reacted to or commented on the starter's own posts (events from runs the starter began);
+- they reacted to or commented on the starter's own posts, or viewed the starter's profile
+  ([profile viewers](linkedin-profile-viewers.md)), as events from runs the starter began;
 - their ICP fit is 0.6 or more, whoever set it;
 - the starter isn't connected to them or already inviting them (their own row in
   `record_relationships` is `none`);
@@ -128,7 +131,10 @@ lapses what it had queued, from every batch it held; those people can be chosen 
 ## Where it shows
 
 - **Decisions:** the batch's card lists each person with their headline, ICP, fit and what they
-  engaged with; unticking skips someone. It says when the first and last would go.
+  did ("reacted", "viewed"); unticking skips someone. It says when the first and last would go.
+  Its title names what brought them, in the words of the workflow that found them: "People who
+  engaged with your LinkedIn posts", "People who viewed your LinkedIn profile", or "People who
+  engaged with your posts or viewed your profile" for a batch with both.
 - **LinkedIn card:** the Sending row (switch, consent, limits, the paused state with Resume) and
   This week (sent, accepted, queued, pending, next send). A held sending makes the card need
   you.

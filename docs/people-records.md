@@ -14,7 +14,7 @@ copies (`pull_records`, `commit_record_changes`) come later.
 | `record_identifiers` | How a record is recognized: a LinkedIn member ID or profile slug, or an email, unique per project |
 | `record_fields` | Field definitions: built-in today, custom later without a migration |
 | `record_values` | One current value per record and field, with its lineage |
-| `record_events` | The timeline: `reacted`, `commented`, `invited`, `accepted`, `withdrawn`, `visited` |
+| `record_events` | The timeline: `reacted`, `commented`, `viewed`, `invited`, `accepted`, `withdrawn`, `visited` |
 | `record_suppressions` | A hash of each identifier of a person the founder asked Tin to forget |
 
 ## Recognizing a person
@@ -86,9 +86,11 @@ member set is never sent to the model.
 
 Events are only added. Each has an `event_key` that is unique per project: an engagement
 keys on the post, the person and the kind, so reading the same post again adds nothing. A
-`visited` event keys on the person and the run's window end date, so a retried or overlapping
-run adds one a day; it holds the summary, where they stopped, the suggested action and a
-PostHog replay link. An event written to a record that later merged counts under the survivor.
+profile view keys on the member, the person and the day, and a view seen again within the span
+LinkedIn's "… ago" leaves open adds nothing either. A `visited` event keys on the person and the
+run's window end date, so a retried or overlapping run adds one a day; it holds the summary,
+where they stopped, the suggested action and a PostHog replay link. An event written to a record
+that later merged counts under the survivor.
 
 ## The People view
 
@@ -105,8 +107,9 @@ tools share `people_service.People`.
   - Notes shows the start of the newest note; hovering shows it whole, with who wrote it and
     how many notes there are. Search covers every note.
   - Last touch is the latest event and who was behind it (Paper TEAM-A): "reacted to you",
-    "reacted to Mira", "invited by Mira", "connected with you". LinkedIn gives no time for a
-    reaction, so a reaction counts on the post's date.
+    "reacted to Mira", "viewed you", "invited by Mira", "connected with you". LinkedIn gives no
+    time for a reaction, so a reaction counts on the post's date; a profile view counts on the
+    day LinkedIn's "3d ago" gives.
   - The segments are all people, ICP fit (0.6 or more) and not connected yet, plus Invited
     once a [connection request](linkedin-requests.md) went out. The LinkedIn column reads
     "Queued" for the viewer's request waiting to go out and "Invited oct 16" for one Tin sent.
@@ -129,8 +132,8 @@ tools share `people_service.People`.
   - Each field says who set it: the workflow's short name ("engagers"), or "you" and
     "a teammate" for a member's value.
   - A reaction says whose post it was: the run read the LinkedIn of the member who started it.
-  - The timeline and notes name teammates too (Paper TEAM-C): "Reacted to Mira's post", "Mira
-    sent a connection request". Names are each teammate's first name from their Tin account
+  - The timeline and notes name teammates too (Paper TEAM-C): "Reacted to Mira's post",
+    "Viewed Mira's profile", "Mira sent a connection request". Names are each teammate's first name from their Tin account
     (Clerk), read when the view is built; without one, "a teammate". The service turns member
     IDs into `who` ("you", a first name or "a teammate") before anything leaves Tin.
 - **Correcting a person:** `PATCH …/people/{person_id}`.
@@ -147,10 +150,11 @@ tools share `people_service.People`.
   a run scores them is skipped, not an error.
 
 The menu shows People where the project is offered a workflow that finds people
-(`social.linkedin_engagers`, which is gated per project, or `product.visitor_journeys`), and on
-`/people` itself. People a visitor journeys run named have an "On the site" segment and field;
-the grid's Headline shows their last visit's summary, the panel shows their email, and a visit
-in the timeline opens its replay with the suggested next step under it. Any project
+(`social.linkedin_engagers` or `social.linkedin_profile_viewers`, both gated per project, or
+`product.visitor_journeys`), and on `/people` itself. People a visitor journeys run named have an
+"On the site" segment and field; the grid's Headline shows their last visit's summary, the panel
+shows their email, and a visit in the timeline opens its replay with the suggested next step under
+it. Any project
 member can read, correct, annotate and forget the project's people; other users get 404.
 
 MCP gives a member's coding agent the same: `list_people` (segments, a search over notes),

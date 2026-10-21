@@ -628,6 +628,7 @@ window.TinPeople = (() => {
     if (!who) return touch.kind;
     if (touch.kind === "reacted") return `reacted to ${who}`;
     if (touch.kind === "commented") return `replied to ${who}`;
+    if (touch.kind === "viewed") return `viewed ${who}`;
     if (touch.kind === "invited") return `invited by ${who}`;
     if (touch.kind === "accepted") return `connected with ${who}`;
     return touch.kind;
@@ -641,6 +642,8 @@ window.TinPeople = (() => {
       return `Reacted to ${whose}${reaction ? ` with ${reaction}` : ""}`;
     }
     if (event.kind === "commented") return `Commented on ${whose}`;
+    // A view is of the profile of the member whose LinkedIn the run read.
+    if (event.kind === "viewed") return `Viewed ${who ? possessive(who) : "a"} profile`;
     // A request is the member's whose LinkedIn sent it.
     if (event.kind === "invited") return who && who !== "you" ? `${who[0].toUpperCase()}${who.slice(1)} sent a connection request` : "Connection request sent";
     if (event.kind === "accepted") return who && who !== "you" ? `Accepted ${possessive(who)} connection request` : "Accepted your connection request";
@@ -667,11 +670,11 @@ window.TinPeople = (() => {
   function footerHtml(person) {
     if (view.confirming) {
       const name = person.name || "this person";
-      const files = person.added?.by === "engagers" ? " The list in Files drops them at the next run." : "";
+      const files = ["engagers", "profile viewers"].includes(person.added?.by) ? " The list in Files drops them at the next run." : "";
       return `<footer class="person-forget">
         <div>
           <strong>Forget ${escape(name)}?</strong>
-          <p>Tin deletes this person’s fields, notes and timeline in ${escape(view.projectName || "this project")} and won’t add them again, even when they ${person.added?.by === "visitors" ? "come back to the site" : "react to a later post"}.${files}</p>
+          <p>Tin deletes this person’s fields, notes and timeline in ${escape(view.projectName || "this project")} and won’t add them again, even when they ${person.added?.by === "visitors" ? "come back to the site" : "react to a later post or view a profile"}.${files}</p>
           ${view.forgetError ? `<p class="person-forget-error" role="alert">${escape(view.forgetError)}</p>` : ""}
         </div>
         <div class="person-forget-actions">

@@ -20,7 +20,7 @@ const person = (n, name, fit) => ({
   icp: "ICP 1: founders who need growth done", fit, engaged: {kind: "reacted", at: "2026-10-13T08:00:00Z"},
 });
 
-function requests({on = false, held = false} = {}) {
+function requests({on = false, held = false, people = null} = {}) {
   const inAnHour = new Date(Date.now() + 3600000).toISOString();
   return {
     offered: true,
@@ -34,7 +34,7 @@ function requests({on = false, held = false} = {}) {
     batches: [{
       id: "batch-1", created_at: new Date(Date.now() - 7200000).toISOString(),
       first_send: inAnHour, last_send: new Date(Date.now() + 3 * 86400000).toISOString(),
-      people: [person(1, "Maya Lindqvist", 0.84), person(2, "Daniel Okafor", 0.78), person(3, "Amara Osei", 0.66)],
+      people: people || [person(1, "Maya Lindqvist", 0.84), person(2, "Daniel Okafor", 0.78), person(3, "Amara Osei", 0.66)],
     }],
   };
 }
@@ -53,12 +53,30 @@ async function open({url, state, integrations = [reading], people}, run) {
   }
 }
 
+test("a batch says what brought its people: their posts, the profile, or both", {timeout: 120000}, async () => {
+  const viewed = (n, name) => ({...person(n, name, 0.8), engaged: {kind: "viewed", at: "2026-10-18T12:00:00Z"}});
+  await open({url: "/decisions", state: requests({people: [viewed(1, "Maya Lindqvist"), viewed(2, "Daniel Okafor")]})}, async (page) => {
+    const card = page.locator(".requests-card");
+    await card.waitFor();
+    assert.match(await card.locator("header").innerText(), /People who viewed your LinkedIn profile/);
+    assert.match(await card.innerText(), /2 people who viewed your profile fit your ICP and aren’t connected to you yet\./);
+    assert.equal(await card.locator(".request-engaged").first().innerText(), "oct 18 · viewed");
+  });
+  await open({url: "/decisions", state: requests({people: [viewed(1, "Maya Lindqvist"), person(2, "Daniel Okafor", 0.7)]})}, async (page) => {
+    const card = page.locator(".requests-card");
+    await card.waitFor();
+    assert.match(await card.locator("header").innerText(), /People who engaged with your posts or viewed your profile/);
+    assert.match(await card.innerText(), /2 people who reacted to your posts or viewed your profile fit your ICP/);
+  });
+});
+
 test("a batch waits first in Decisions, and approving sends only the ticked people", {timeout: 120000}, async () => {
   await open({url: "/decisions", state: requests({on: true})}, async (page, served) => {
     const card = page.locator(".requests-card");
     await card.waitFor();
     assert.deepEqual(await page.locator(".decision-group-title").allInnerTexts(), ["Connection requests\n1", "Reviews\n1"]);
     assert.match(await page.locator(".decision-list-item.is-active").innerText(), /Send requests to 3 people/);
+    assert.match(await card.locator("header").innerText(), /People who engaged with your LinkedIn posts/);
     assert.match(await card.innerText(), /3 people who reacted to your posts fit your ICP and aren’t connected to you yet\./);
     assert.match(await card.innerText(), /one at a time on its own schedule, never together/);
     // The window is the project's time zone, named when it isn't the viewer's.

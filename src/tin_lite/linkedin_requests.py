@@ -326,13 +326,13 @@ async def propose(conn, project_id: UUID, member: str, *, run_id: UUID | None = 
         """SELECT r.id, i.value AS target FROM records r
            JOIN record_identifiers i ON i.record_id = r.id AND i.kind = 'linkedin_member'
            WHERE r.project_id = $1 AND r.merged_into IS NULL
-             -- They engaged with this member's own posts.
+             -- They engaged with this member's own posts, or viewed their profile.
              AND EXISTS (
                  SELECT 1 FROM record_events e
                  JOIN records m ON m.id = e.record_id
                  JOIN workflow_runs w ON w.id = e.run_id
                  WHERE e.project_id = $1 AND COALESCE(m.merged_into, m.id) = r.id
-                   AND e.kind IN ('reacted', 'commented')
+                   AND e.kind = ANY($4::text[])
                    AND w.started_by_clerk_user_id = $2)
              AND EXISTS (SELECT 1 FROM record_values v WHERE v.record_id = r.id
                          AND v.field = 'icp_fit' AND v.value_number >= $3)
@@ -346,6 +346,7 @@ async def propose(conn, project_id: UUID, member: str, *, run_id: UUID | None = 
         project_id,
         member,
         FIT,
+        list(records.SIGNALS),
     )
     if not rows:
         return 0
@@ -605,16 +606,17 @@ async def open_batches(conn, project_id: UUID, member: str, now: datetime) -> li
     ]
     if not people:
         return []
-    # What each engaged with last: the post's date stands in, as in People.
+    # What each did last: a reaction counts on the post's date, as in People.
     engaged: dict = {}
     for row in await conn.fetch(
         """SELECT COALESCE(r.merged_into, r.id) AS person, e.kind, e.occurred_at,
                e.recorded_at, e.detail->>'posted_at' AS posted_at
            FROM record_events e JOIN records r ON r.id = e.record_id
-           WHERE e.project_id = $1 AND e.kind IN ('reacted', 'commented')
+           WHERE e.project_id = $1 AND e.kind = ANY($3::text[])
              AND COALESCE(r.merged_into, r.id) = ANY($2::uuid[])""",
         project_id,
         [p["record_id"] for p in people],
+        list(records.SIGNALS),
     ):
         at = records._when(row)
         if row["person"] not in engaged or at > engaged[row["person"]]["at"]:
@@ -1121,15 +1123,15 @@ async def checking(conn, run_id: UUID, now: datetime) -> list[dict]:
     return [dict(row) for row in rows]
 
 
-async def read_at(conn, run_id: UUID) -> None:
-    """Note that the run read who accepted, or tried to."""
+async def read_at(conn, run_id: UUID, now: datetime) -> None:
+    """Note that the run read who accepted, or tried to, at the time the next step reads."""
 
     await conn.execute(
-        "UPDATE linkedin_request_batches SET checked_at = now() WHERE send_run_id = $1", run_id
+        "UPDATE linkedin_request_batches SET checked_at = $2 WHERE send_run_id = $1", run_id, now
     )
 
 
-async def checked(conn, run_id: UUID, states: dict[str, str]) -> dict:
+async def checked(conn, run_id: UUID, states: dict[str, str], now: datetime) -> dict:
     """Record a relationship read: accepted, still pending, or no longer pending."""
 
     counts = {"accepted": 0, "pending": 0, "ended": 0}
@@ -1177,5 +1179,5 @@ async def checked(conn, run_id: UUID, states: dict[str, str]) -> dict:
             )
             await _relationship(conn, request, "none", run_id)
             counts["ended"] += 1
-    await read_at(conn, run_id)
+    await read_at(conn, run_id, now)
     return counts
