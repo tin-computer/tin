@@ -211,7 +211,9 @@ outside marketing, or were written without ever being run. Full rules:
 - My system is a flat operational view. Live runs show in Running and saved workflows whose
   last run failed in Needs a look; the healthy rest fold by group. Within a group, saved
   workflows list newest-created first and editing an older one does not reorder it.
-  Activity keeps history.
+  Activity keeps history. A teammate's personal workflows (those that use their own LinkedIn)
+  stay out of your My system, its calendar, counts and MCP lists; Activity keeps their runs,
+  saying whose LinkedIn each used.
 - Content generation selects the next eligible chronological plan item unless explicitly
   overridden. Preserve editorial judgment: already-covered or weakly evidenced ideas need
   not produce another article. Keep source evidence separate from publishable copy.

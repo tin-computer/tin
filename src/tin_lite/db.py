@@ -1918,16 +1918,28 @@ class Database:
         )
         return _project_workflow(row) if row else None
 
-    async def get_project_system_summary(self, *, project_id: UUID) -> dict[str, Any]:
+    async def get_project_system_summary(
+        self, *, project_id: UUID, viewer: str | None = None
+    ) -> dict[str, Any]:
+        """The System page's counts. With a viewer, a teammate's personal workflows and runs
+        (`connection_collection.personal`) are left out, as My system leaves them out."""
+
+        from tin_lite.connection_collection import SESSION_EXECUTORS
+
         row = await self.pool.fetchrow(
             f"""
             SELECT projects.timezone,
-                   (SELECT count(*) FROM project_workflows
-                    WHERE project_id = projects.id AND status <> 'archived')::integer
+                   (SELECT count(*) FROM project_workflows AS configured
+                    JOIN workflows ON workflows.id = configured.workflow_id
+                    WHERE configured.project_id = projects.id AND configured.status <> 'archived'
+                      AND ($2::text IS NULL OR NOT (workflows.key = ANY($3::text[])
+                           AND configured.created_by_clerk_user_id <> $2)))::integer
                        AS workflow_count,
                    (SELECT count(*) FROM workflow_runs
                     WHERE project_id = projects.id AND executor <> 'project.task'
-                      AND status IN ('pending', 'running'))::integer
+                      AND status IN ('pending', 'running')
+                      AND ($2::text IS NULL OR NOT (executor = ANY($3::text[])
+                           AND started_by_clerk_user_id IS DISTINCT FROM $2)))::integer
                        AS running_count,
                    (SELECT count(*) FROM workflow_runs
                     WHERE project_id = projects.id
@@ -1945,9 +1957,12 @@ class Database:
                     WHERE project_id = projects.id AND audience = 'product'
                       AND created_at >= now() - interval '30 days')::integer
                        AS activity_count_30_days,
-                   (SELECT min(next_run_at) FROM project_workflows
-                    WHERE project_id = projects.id AND status = 'active'
-                      AND schedule IS NOT NULL) AS next_run_at,
+                   (SELECT min(configured.next_run_at) FROM project_workflows AS configured
+                    JOIN workflows ON workflows.id = configured.workflow_id
+                    WHERE configured.project_id = projects.id AND configured.status = 'active'
+                      AND configured.schedule IS NOT NULL
+                      AND ($2::text IS NULL OR NOT (workflows.key = ANY($3::text[])
+                           AND configured.created_by_clerk_user_id <> $2))) AS next_run_at,
                    (SELECT max(finished_at) FROM workflow_runs
                     WHERE project_id = projects.id AND executor = 'growth.onboarding'
                       AND status = 'succeeded') AS set_up_at,
@@ -1958,6 +1973,8 @@ class Database:
             WHERE projects.id = $1
             """,  # noqa: S608 — static SQL predicate, no caller text
             project_id,
+            viewer,
+            sorted(SESSION_EXECUTORS),
         )
         if row is None:
             raise LookupError(f"project {project_id} does not exist")
@@ -3638,7 +3655,9 @@ class Database:
                    ) AS details,
                    COALESCE(workflows.key, runs.executor, events.details->>'workflow_key')
                        AS workflow_key,
-                   COALESCE(workflows.title, events.details->>'workflow_title') AS workflow_title
+                   COALESCE(workflows.title, events.details->>'workflow_title') AS workflow_title,
+                   runs.started_by_clerk_user_id AS run_started_by,
+                   runs.executor AS run_executor
             FROM activity_events AS events
             LEFT JOIN workflow_runs AS runs ON runs.id = events.run_id
             LEFT JOIN workflows ON workflows.id = runs.workflow_id
@@ -8827,6 +8846,8 @@ def _activity_event(row: asyncpg.Record) -> ActivityEvent:
         created_at=row["created_at"],
         workflow_key=row.get("workflow_key"),
         workflow_title=row.get("workflow_title"),
+        run_started_by=row.get("run_started_by"),
+        run_executor=row.get("run_executor"),
     )
 
 

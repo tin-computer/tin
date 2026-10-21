@@ -773,6 +773,10 @@ class RunView(BaseModel):
     prerequisite_evidence: dict | None = None
     content_delivery: dict | None = None
     page_url: dict | None = None
+    # A personal workflow's run (one that uses a member's own LinkedIn), and whether it's the
+    # viewer's: My system shows a member only their own.
+    personal: bool = False
+    mine: bool = False
 
 
 class OutreachCampaignView(BaseModel):
@@ -947,6 +951,10 @@ class ProjectWorkflowView(BaseModel):
     failed_count: int = 0
     typical_duration_seconds: float | None = None
     content_revision: dict | None = None
+    # A personal workflow's saved copy, and whether it's the viewer's: My system shows a member
+    # only their own, and only its saver can change it.
+    personal: bool = False
+    mine: bool = False
 
 
 class ProjectSystemView(BaseModel):
@@ -1165,6 +1173,8 @@ class ActivityView(BaseModel):
     created_at: datetime
     workflow_key: str | None
     workflow_title: str | None
+    # A teammate's personal run (their own LinkedIn): their first name, or "a teammate".
+    teammate: str | None = None
 
 
 class ChatCreate(BaseModel):
@@ -3238,7 +3248,14 @@ async def list_project_workflows(
         project_id=project_id
     )
     response.headers["X-Tin-Read-Source"] = "postgres"
-    return [ProjectWorkflowView.model_validate(item) for item in configured]
+    from tin_lite.connection_collection import viewed_by
+
+    return [
+        ProjectWorkflowView.model_validate(item).model_copy(
+            update=viewed_by(item.workflow_key, item.created_by_clerk_user_id, user.clerk_user_id)
+        )
+        for item in configured
+    ]
 
 
 class SavedWorkflowDiagramView(BaseModel):
@@ -3330,7 +3347,7 @@ async def get_project_system(
 ) -> ProjectSystemView:
     await _require_project_access(project_id, request, user)
     summary = await request.app.state.runtime.database.get_project_system_summary(
-        project_id=project_id
+        project_id=project_id, viewer=user.clerk_user_id
     )
     response.headers["X-Tin-Read-Source"] = "postgres"
     return ProjectSystemView.model_validate(summary)
@@ -3351,9 +3368,28 @@ async def get_project_week(
         begin, end = week_window(start, timezone)
     except (ZoneInfoNotFoundError, ValueError) as exc:
         raise HTTPException(status_code=422, detail="timezone must be an IANA name") from exc
+    from tin_lite.connection_collection import viewed_by
+
     database = request.app.state.runtime.database
-    runs = await database.list_runs_between(project_id=project_id, start=begin, end=end)
-    configured = await database.list_project_workflows(project_id=project_id)
+    viewer = user.clerk_user_id
+
+    def teammates(key, owner):
+        seen = viewed_by(key, owner, viewer)
+        return seen["personal"] and not seen["mine"]
+
+    # The calendar is My system's: a teammate's personal workflows stay out of it.
+    runs = [
+        (run, key, title)
+        for run, key, title in await database.list_runs_between(
+            project_id=project_id, start=begin, end=end
+        )
+        if not teammates(run.executor, run.started_by_clerk_user_id)
+    ]
+    configured = [
+        item
+        for item in await database.list_project_workflows(project_id=project_id)
+        if not teammates(item.workflow_key, item.created_by_clerk_user_id)
+    ]
     by_id = {item.id: item for item in configured}
     occurrences = upcoming_occurrences(configured, start=begin, end=end, now=datetime.now(UTC))
     response.headers["X-Tin-Read-Source"] = "postgres"
@@ -4006,12 +4042,15 @@ async def list_project_runs(
         for item in runs
         if item.executor == "workflow.code"
     }
+    from tin_lite.connection_collection import viewed_by
+
     return [
         RunView.model_validate(item).model_copy(
             update={
                 "content_delivery": deliveries.get(item.id),
                 "page_url": pages.get(item.id),
                 "selected_sources": selected_sources.get(item.id, {}),
+                **viewed_by(item.executor, item.started_by_clerk_user_id, user.clerk_user_id),
             }
         )
         for item in runs
@@ -4034,7 +4073,29 @@ async def list_project_activity(
         offset=offset,
     )
     response.headers["X-Tin-Read-Source"] = "postgres"
-    return [ActivityView.model_validate(item) for item in events]
+    from tin_lite.connection_collection import viewed_by
+    from tin_lite.people_service import first_names
+
+    viewer = user.clerk_user_id
+    # A teammate's personal run says whose LinkedIn it used; member IDs never leave Tin.
+    theirs = {
+        item.id: item.run_started_by
+        for item in events
+        if (seen := viewed_by(item.run_executor, item.run_started_by, viewer))["personal"]
+        and not seen["mine"]
+    }
+    names = await first_names(
+        getattr(request.app.state, "auth", None),
+        {member for member in theirs.values() if member},
+    )
+    return [
+        ActivityView.model_validate(item).model_copy(
+            update={"teammate": names.get(theirs[item.id], "a teammate")}
+            if item.id in theirs
+            else {}
+        )
+        for item in events
+    ]
 
 
 @router.get("/api/workflows/{workflow_id}", response_model=WorkflowView)
@@ -4280,6 +4341,7 @@ async def get_run(
 ) -> RunView:
     run = await _run_from_postgres(run_id, request, user)
     response.headers["X-Tin-Read-Source"] = "postgres"
+    from tin_lite.connection_collection import viewed_by
     from tin_lite.content_delivery_api import delivery_service, page_url_service
     from tin_lite.x_draft import facts as x_draft_facts
 
@@ -4305,6 +4367,7 @@ async def get_run(
                 if run.executor == "workflow.code"
                 else {}
             ),
+            **viewed_by(run.executor, run.started_by_clerk_user_id, user.clerk_user_id),
         }
     )
 

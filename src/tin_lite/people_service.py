@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import time
 from datetime import UTC, datetime
 from typing import Any
 from uuid import UUID
@@ -64,6 +65,37 @@ def _first_name(profile: dict) -> str | None:
     if not name or "@" in name or name == "Project member":
         return None
     return name.split()[0][:40]
+
+
+# Teammates' first names, kept briefly: Activity asks on every refresh.
+NAME_SECONDS = 600
+_names: dict[str, tuple[str | None, float]] = {}
+
+
+async def first_names(profiles, members: set[str]) -> dict[str, str]:
+    """Teammates' first names from their Tin accounts, kept for ten minutes. A member without
+    one, or whose profile can't be read, is left out; callers say "a teammate"."""
+
+    now = time.monotonic()
+    found: dict[str, str] = {}
+
+    async def name(member):
+        cached = _names.get(member)
+        if cached and cached[1] > now:
+            value = cached[0]
+        else:
+            try:
+                value = _first_name(await profiles.member_profile(member))
+            except Exception as error:  # noqa: BLE001
+                logger.info("Tin couldn't read a teammate's name: %s", type(error))
+                return
+            _names[member] = (value, now + NAME_SECONDS)
+        if value:
+            found[member] = value
+
+    if profiles is not None and members:
+        await asyncio.gather(*(name(member) for member in sorted(members)))
+    return found
 
 
 class People:

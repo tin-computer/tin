@@ -426,6 +426,10 @@ class ActivityEvent:
     created_at: datetime
     workflow_key: str | None = None
     workflow_title: str | None = None
+    # Who started the event's run, and with which executor: Activity names a teammate whose
+    # personal run it was. Never sent to the browser.
+    run_started_by: str | None = None
+    run_executor: str | None = None
 
 
 @dataclass(frozen=True)
