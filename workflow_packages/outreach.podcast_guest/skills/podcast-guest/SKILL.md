@@ -48,31 +48,40 @@ exclusions, balance, memory and the pitch block.
    checked`. Add the arena of any show named in `include_shows`.
 
 4. **Search each arena** with the methods SEARCH.md lists for it, at least two per arena,
-   inside the 30-call Podscan budget, plus web searches. Record on each arena every method
-   you tried, including ones that found nothing (`tried`). Seed searches from the profile:
-   companies like the founder's, the founder's title, the buyers' titles, the topics, the
-   home country's charts. Spend most of the budget here, before verifying: about 12 calls on
-   finding the shows that carry weight (SEARCH.md, "Finding the shows that carry weight"),
-   through each arena's `category_chart` and a web search for the field's "best podcasts"
-   lists, and keep about 8 for verifying finalists. Every arena ends with at least one
-   `reach` candidate verified, or a line in `## What could not be checked` saying why none
-   exists. Skip shows already pitched (state,
-   `already_pitched`) before spending calls on them.
+   inside the 32-call Podscan budget (a sweep counts as five), plus web searches. Record on each arena every method
+   you tried, including ones that found nothing (`tried`).
+   - Start every arena except `home` with `podcasts.sweep` (SEARCH.md, "The sweep comes
+     first"): one call per group of arenas, with topics in the field's own words. Read every
+     show it returns and keep a long list of the ones whose premise is the founder's argument
+     or the arena's work, before searching any other way.
+   - Then the methods a sweep cannot replace: lookalike guests from the profile (companies
+     like the founder's, the founder's title, the buyers' titles), each arena's
+     `category_chart`, a web search for the field's "best podcasts" lists, and the home
+     country's charts and the web for `home` arenas.
+   - Keep about ten calls for reading finalists' episodes. Every arena ends with at least
+     one `reach` candidate verified, or a line in `## What could not be checked` saying why
+     none exists. Skip shows already pitched (state, `already_pitched`) before spending calls
+     on them.
 
-5. **Verify the finalists** on their own pages, as SEARCH.md says, and write a show record
-   for each one, verified or rejected. A show that is big but has never hosted anyone like
+5. **Verify the finalists** from their last three episodes and their own pages, as SEARCH.md
+   says, and write a show record for each one, verified or rejected, with what the show is
+   (`premise`) and who hosts it (`host`). A show that is big but has never hosted anyone like
    the founder is a `ladder` show if a step would get them in (a conference talk with the
    hosts, a guest post, a launch they cover), otherwise rank it low and say why. Judge
    reachability from the guests the show actually had, never from its size alone.
-   Choose the episode each pitch will open on now, from a page, description or transcript
-   you read: the `similar_guest` episode, or another recent one recorded as `hook_episode`
-   with what it actually says in `detail`.
+   Choose what each pitch will open on now, from the episodes you read: the `similar_guest`
+   episode, another recent one recorded as `hook_episode` with what it actually says in
+   `detail`, or a gap in the catalogue recorded as `gap` (a sequel the host has not run, a
+   kind of guest the show has not had yet, a new season starting).
 
 6. **Set each show's tier and rank.** `likely` when it books people like the founder, `reach`
    when it books guests a step above them. A `reach` show is clearly bigger than the arena's
    `likely` picks by chart place in the product's main market, ratings, network or guests;
-   a place on a small home-country chart alone does not make one. Rank within each arena and tier by your judgment
-   of fit, audience and reachability, and write the reason. Do not compare shows across
+   a place on a small home-country chart alone does not make one. Rank within each arena and
+   tier by your judgment of fit first (how closely the show's premise matches the founder's
+   argument), then audience and reachability, and write the reason. A show run by a
+   competitor keeps its place when it books outside practitioners; say in `notes` how to
+   pitch it (the founder's argument, never the product). Do not compare shows across
    arenas; `plan()` balances them and keeps about a third of the picks for long shots.
 
 7. **Call `plan()`** with the arenas, the records, today's UTC date, `max_pitches`,
@@ -95,8 +104,10 @@ exclusions, balance, memory and the pitch block.
       story or claim the founder can back from the profile, never a feature of the product.
    4. **Proof you listen, at most one clause,** and only when it adds to the idea: how this
       episode would follow or answer a specific recent one ("a follow-up to your Andrew
-      Carney episode: the tools are bought, and the controls still drift"). Never restate the
-      host's episode to them, never compliment the show, never open with it.
+      Carney episode: the tools are bought, and the controls still drift"), or the gap it
+      fills ("every guest so far has run GRC at a large company; this is the 60-person
+      version"). Never restate the host's episode to them, never compliment the show, never
+      open with it.
    5. **An easy ask and a sign-off:** "Open to it?" or "Happy to send more detail." Then the
       founder's name, role and site on their own line. The product is named once, in the
       credential or the sign-off.
@@ -140,7 +151,9 @@ exclusions, balance, memory and the pitch block.
      (small audiences, pitches that lean on the profile because the project has no growth
      plan, fewer picks than asked for).
    - `## Next steps`: one numbered line per pick and ladder step, in the order to do them:
-     the action, the show, and where (`Email podcast@… with the draft below`).
+     the action, the show, and where (`Email podcast@… with the draft below`). Likely picks
+     come first; long shots come last, to send once one or two of the smaller episodes are
+     out to point to, unless the founder already has recorded appearances.
    - `## Picks`: one `### <n>. <Show name>` per pick, in `plan()` order. First a short
      paragraph, `**Why this show:**`, of two or three sentences addressed to the founder
      ("Its listeners run audits for a living, and it booked an audit-AI founder last month;
@@ -150,13 +163,18 @@ exclusions, balance, memory and the pitch block.
      - `**Odds:**` `likely` with the reason, or `long shot` with what makes it one (for
        example "on the US Apple Technology chart; founder interviews are sponsored, so this
        pitches its panel")
-     - `**Show:**` the link
-     - `**Listeners:**` the numbers you relied on, their source, and the language when it is
-       not English
+     - `**What the show is:**` one or two sentences on the argument or job it is about, from
+       `premise`, with the show's name linked to its page
+     - `**Who hosts it:**` the host's name, role and background, then one sentence on why
+       that matters for this pitch, from `host`
+     - `**Show facts:**` episodes so far, typical length, how often it publishes, the newest
+       episode's date, the listener numbers you relied on and their source, and the language
+       when it is not English (`165 episodes · about 44 min · weekly · newest 2026-10-14 ·
+       about 1,600 listeners (Podscan estimate)`)
      - `**Guest like you:**` name, linked episode, date (or `none found` and why it is still a
        pick)
-     - `**Opens on:**` the episode the pitch refers to, linked and dated, when it is not the
-       guest-like-you episode
+     - `**Opens on:**` the episode the pitch refers to, linked and dated, or the gap in the
+       catalogue it fills, when it is not the guest-like-you episode
      - `**How to reach them:**` the route in words and the published address and the page
        that publishes it, the form link, the host's channel, or the contact
      - `**Worth knowing:**` fees, sponsored signs, caveats, or `nothing`
@@ -183,7 +201,8 @@ exclusions, balance, memory and the pitch block.
      verified`) or `needs context`; `Verdict:` followed by nothing but the verdict from
      `plan()` (`fit`, `thin` or `not a fit`); `As of:` today's UTC date; `Read:` the context
      found, named as the founder knows it ("your profile", "the growth plan"), never this
-     skill's files or Podscan; `Not found:` the context missing.
+     skill's files or Podscan; `Not found:` the context missing. Nothing else: no run id, no
+     list of searches or methods.
 
    End with two fenced blocks written with Python from the returned values, not retyped: the
    `pitch_block()` result with info string `json tin-podcast-pitches`, then the `plan()` state
@@ -197,4 +216,4 @@ exclusions, balance, memory and the pitch block.
    match `plan()`'s picks, that the `Verdict:` line matches, that every `published_email` pick
    appears once in the pitch block with the address the show publishes, that both blocks
    parse, that no two labels share a line, and that every pitch opens on an episode recorded
-   for its show. Fix any mismatch.
+   for its show or a `gap` recorded for it. Fix any mismatch.

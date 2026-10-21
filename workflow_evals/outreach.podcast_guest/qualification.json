@@ -1,14 +1,14 @@
 {
   "version": 1,
   "assumptions": [
-    "Evidence comes from Tin's Podscan account (managed.podscan, at most 30 calls) and the agent's fenced web search; these cases check the report's contract and input handling, not live show facts.",
+    "Evidence comes from Tin's Podscan account (managed.podscan, at most 32 calls, a sweep that reads hundreds of active shows counting as five) and the agent's fenced web search; these cases check the report's contract and input handling, not live show facts.",
     "Live qualification of whether picked shows are active, listened to and reachable needs an explicitly authorized live case with a real founder profile; nothing here fixture-replays Podscan.",
     "Static checking runs every case's inputs through the declared input_schema; cases only cover schema-valid inputs.",
     "Project context (wiki/INDEX.md Feature map, reports/GROWTH_ONBOARDING_PLAN.md, the writing style guide) is read when present; without a growth plan the buyers arena comes from the Feature map and the profile."
   ],
   "cost_drivers": [
     "One bounded Codex session on the existing pinned model pricing and spending ceiling; no managed-model routes are declared. The 2,400-second runtime ceiling is not an expected price.",
-    "Podscan reads are free to the run (Tin pays a flat subscription); the 30-call limit is a runaway guard. Cost scales with how many arenas and finalists are searched and verified on the web."
+    "Podscan reads are free to the run (Tin pays a flat subscription); the 32-call limit is a runaway guard on Tin's shared daily Podscan allowance. Cost scales with how many arenas and finalists are searched and verified on the web."
   ],
   "effects": [
     "One project.artifact write to a run-owned reports/outreach/podcasts/<run_id>.md; no other project files change.",
@@ -33,6 +33,9 @@
           "## Picks",
           "**Why this show:**",
           "**Odds:**",
+          "**What the show is:**",
+          "**Who hosts it:**",
+          "**Show facts:**",
           "**Guest like you:**",
           "**How to reach them:**",
           "## Ladder",
@@ -52,7 +55,9 @@
           "Status: needs context",
           "Searched with:",
           "buyer_guests",
-          "lookalike_"
+          "lookalike_",
+          "topic_sweep",
+          "Run ID:"
         ]
       }
     },

@@ -107,8 +107,8 @@ def test_manifest_binds_podscan_and_declares_context_and_a_run_owned_report():
     assert procedure["services"] == {
         "podcasts": {
             "provider_key": "managed.podscan",
-            "max_calls": 30,
-            "max_response_bytes": 24000,
+            "max_calls": 32,
+            "max_response_bytes": 100000,
         }
     }
     assert definition["integration_requirements"] == [
@@ -463,8 +463,9 @@ def test_the_report_reads_as_separate_lines_with_its_data_folded_away():
     text = fixture_text("synthetic_report.md")
     html = render_markdown(text).html
     # Each field renders on its own: a bullet, not one paragraph of joined lines.
-    assert "<li><strong>Listeners:</strong>" in html
-    assert "<strong>Listeners:</strong>" not in html.split("<li><strong>Listeners:</strong>")[0]
+    assert "<li><strong>Show facts:</strong>" in html
+    assert "<strong>Show facts:</strong>" not in html.split("<li><strong>Show facts:</strong>")[0]
+    assert "<li><strong>Who hosts it:</strong>" in html
     assert html.count('<details class="md-document-metadata md-document-data">') == 2
     # The founder-facing part names no method or arena ids.
     readable = text.split("## About this run", 1)[0]

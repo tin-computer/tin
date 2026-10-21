@@ -96,6 +96,9 @@ USAGE_PROVIDER = {
 # overrun is Tin's loss, not a larger customer charge. At the argument bounds below every
 # live read costs well under this ($0.03 at most at DataForSEO's September 2026 prices).
 CALL_CEILING_USD = {DATAFORSEO_PROVIDER: "0.05"}
+# Operations that make several upstream reads count as this many of a binding's calls, so
+# `max_calls` still bounds what one run can spend from Tin's shared provider allowance.
+CALL_WEIGHT = {"podcasts.sweep": 5}
 # Tin's own wait for Google, under the gateway's 60-second per-call limit, so a slow
 # Lighthouse run comes back as a "timed_out" result rather than an unresolved request.
 GOOGLE_SECONDS = 55
@@ -735,23 +738,24 @@ class ManagedServices:
             return crux_result(request, payload)
         return {**base, "status": "unavailable", "reason": "provider_error", "http_status": status}
 
-    async def _podscan(self, operation, request, *, max_response_bytes):
-        """One Podscan read. Free and read-only, so a slow or failed read is a known outcome."""
+    def _podscan_client(self):
+        return httpx.AsyncClient(
+            trust_env=False,
+            timeout=podscan.SECONDS,
+            follow_redirects=False,
+            transport=self.transport,
+        )
+
+    async def _podscan_read(self, client, path, params) -> tuple[int, Any]:
+        """One Podscan read: (status, parsed body), or a reason string when there is no answer."""
         key = self.settings.podscan_api_key.get_secret_value()
-        echo = {"status": "unavailable", **request["echo"]}
         try:
             async with (
                 asyncio.timeout(podscan.SECONDS),
-                httpx.AsyncClient(
-                    trust_env=False,
-                    timeout=podscan.SECONDS,
-                    follow_redirects=False,
-                    transport=self.transport,
-                ) as client,
                 client.stream(
                     "GET",
-                    podscan.ORIGIN + request["path"],
-                    params=request["params"],
+                    podscan.ORIGIN + path,
+                    params=params,
                     headers={"Authorization": f"Bearer {key}", "Accept": "application/json"},
                 ) as response,
             ):
@@ -759,15 +763,19 @@ class ManagedServices:
                 async for chunk in response.aiter_bytes():
                     body.extend(chunk)
                     if len(body) > podscan.MAX_BYTES:
-                        return {**echo, "reason": "response_too_large"}
+                        return status, "response_too_large"
         except (TimeoutError, httpx.TimeoutException):
-            return {**echo, "reason": "timed_out", "seconds": podscan.SECONDS}
+            return 0, "timed_out"
         except (httpx.HTTPError, OSError):
-            return {**echo, "reason": "request_failed"}
+            return 0, "request_failed"
         try:
-            payload = json.loads(body)
+            return status, json.loads(body)
         except (ValueError, UnicodeError, RecursionError):
-            payload = None
+            return status, None
+
+    def _podscan_refuse(self, status, payload) -> None:
+        """Raise for an answer that refuses the call; return for anything else."""
+        key = self.settings.podscan_api_key.get_secret_value()
 
         def error():
             return provider_error_detail("Podscan", status, payload, secrets=(key,))
@@ -796,18 +804,85 @@ class ManagedServices:
                 code="provider_refused",
                 provider_error=error(),
             )
-        if status == 404:
-            # An unknown podcast, person or chart category is an answer, not a failure.
-            return {**echo, "status": "not_found"}
         if status in {400, 422}:
             raise ServiceCallRefused(
                 "Podscan did not accept these arguments; check the query, ids and dates.",
                 code="invalid_request",
                 provider_error=error(),
             )
+
+    async def _podscan(self, operation, request, *, max_response_bytes):
+        """One Podscan read. Free and read-only, so a slow or failed read is a known outcome."""
+        if operation == "podcasts.sweep":
+            return await self._podscan_sweep(request, max_response_bytes=max_response_bytes)
+        echo = {"status": "unavailable", **request["echo"]}
+        async with self._podscan_client() as client:
+            status, payload = await self._podscan_read(client, request["path"], request["params"])
+        if isinstance(payload, str):
+            if payload == "timed_out":
+                return {**echo, "reason": payload, "seconds": podscan.SECONDS}
+            return {**echo, "reason": payload}
+        self._podscan_refuse(status, payload)
+        if status == 404:
+            # An unknown podcast, person or chart category is an answer, not a failure.
+            return {**echo, "status": "not_found"}
         if status != 200 or not isinstance(payload, dict):
             return {**echo, "reason": "provider_error", "http_status": status}
         return podscan.result(operation, request, payload, max_response_bytes=max_response_bytes)
+
+    async def _podscan_sweep(self, request, *, max_response_bytes):
+        """Every topic's reads in one call. A read that fails is named and the rest still count;
+        only a refused key, or no read answering at all, fails the call."""
+        reads = request["reads"]
+        gate = asyncio.Semaphore(podscan.SWEEP_CONCURRENCY)
+        outcomes: list[Any] = ["timed_out"] * len(reads)
+        refusals: list[Exception] = []
+
+        async def one(client, index, read):
+            async with gate:
+                status, payload = await self._podscan_read(client, read["path"], read["params"])
+            if isinstance(payload, str):
+                outcomes[index] = payload
+            elif status == 404:
+                outcomes[index] = {}
+            elif status == 200 and isinstance(payload, dict):
+                outcomes[index] = payload
+            else:
+                try:
+                    self._podscan_refuse(status, payload)
+                    outcomes[index] = "provider_error"
+                except ServiceCallRefused as exc:
+                    if exc.code == "provider_refused":
+                        raise
+                    refusals.append(exc)
+                    outcomes[index] = exc.code
+                except IntegrationRateLimitedError as exc:
+                    refusals.append(exc)
+                    outcomes[index] = "rate_limited"
+
+        async with self._podscan_client() as client:
+            tasks = [asyncio.create_task(one(client, i, read)) for i, read in enumerate(reads)]
+            done, pending = await asyncio.wait(tasks, timeout=podscan.SWEEP_SECONDS)
+            for task in pending:
+                task.cancel()
+            await asyncio.gather(*pending, return_exceptions=True)
+        # Read every task's outcome so no refusal is left unretrieved, then raise the first.
+        errors = [task.exception() for task in done if task.exception() is not None]
+        if errors:
+            raise errors[0]
+        answers = [
+            (read, out) for read, out in zip(reads, outcomes, strict=True) if isinstance(out, dict)
+        ]
+        failed = [
+            {"topic": read["topic"], "kind": read["kind"], "reason": out}
+            for read, out in zip(reads, outcomes, strict=True)
+            if isinstance(out, str)
+        ]
+        if not answers:
+            if refusals:
+                raise refusals[0]
+            return {"status": "unavailable", **request["echo"], "failed_reads": failed}
+        return podscan.sweep_result(request, answers, failed, max_response_bytes=max_response_bytes)
 
     async def _dataforseo(self, operation, request, *, execution_key, max_response_bytes):
         from tin_lite.dataforseo import DataForSEOError
