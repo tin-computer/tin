@@ -83,7 +83,11 @@ The same as engagers:
      other reads.
    - Each ID found is added to the person's record, with where the member stands with them.
    - It doesn't run after LinkedIn objected.
-6. **Propose and publish.** Newly eligible viewers join the member's open batch in Decisions,
+6. **Who accepted:** about once a day, one read of where the member stands with up to 20 people
+   whose [connection requests](linkedin-requests.md#who-accepted) wait for an answer. The
+   summary says how many accepted. This daily run is what reads it, so the sending run can
+   finish once its requests are out. It doesn't run after LinkedIn objected.
+7. **Propose and publish.** Newly eligible viewers join the member's open batch in Decisions,
    under the same rules as people who reacted. Then it rewrites:
    - `people/linkedin-profile-viewers.csv`: everyone who viewed the member, best fit first, with
      when they last looked and how many times;

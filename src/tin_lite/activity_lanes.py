@@ -38,6 +38,8 @@ COLLECTION_ACTIVITIES = frozenset(
         "linkedin_viewers_read",
         "linkedin_viewers_ids",
         # A connection request and the reads of who accepted use the same sandbox.
+        "linkedin_engagers_accepted",
+        "linkedin_viewers_accepted",
         "linkedin_requests_send",
         "linkedin_requests_check",
     }

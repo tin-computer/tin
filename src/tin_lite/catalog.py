@@ -1546,7 +1546,7 @@ BUILTIN_WORKFLOWS = (
             "nothing."
         ),
         executor=linkedin_engagers.KEY,
-        version_label="1.2.0",
+        version_label="1.3.0",
         presentation=WorkflowDiagram(
             direction="TD",
             nodes=(
@@ -1581,6 +1581,12 @@ BUILTIN_WORKFLOWS = (
                     "from headline and your notes, with a reason",
                 ),
                 DiagramNode(
+                    "accepted",
+                    "surface",
+                    "Read who accepted",
+                    "your connection requests, about once a day",
+                ),
+                DiagramNode(
                     "files",
                     "receipt",
                     "The list in project Files",
@@ -1593,7 +1599,8 @@ BUILTIN_WORKFLOWS = (
                 DiagramEdge("reactions", "people"),
                 DiagramEdge("people", "reactions", label="next page or post"),
                 DiagramEdge("people", "score"),
-                DiagramEdge("score", "files"),
+                DiagramEdge("score", "accepted"),
+                DiagramEdge("accepted", "files"),
             ),
         ),
         schedule_modes=("on_demand",),
@@ -1619,7 +1626,7 @@ BUILTIN_WORKFLOWS = (
             "your saved LinkedIn session; sends nothing."
         ),
         executor=linkedin_profile_viewers.KEY,
-        version_label="1.0.0",
+        version_label="1.1.0",
         presentation=WorkflowDiagram(
             direction="TD",
             nodes=(
@@ -1654,6 +1661,12 @@ BUILTIN_WORKFLOWS = (
                     "their LinkedIn profile ID, so they can be asked",
                 ),
                 DiagramNode(
+                    "accepted",
+                    "surface",
+                    "Read who accepted",
+                    "your connection requests, about once a day",
+                ),
+                DiagramNode(
                     "files",
                     "receipt",
                     "The list in project Files",
@@ -1666,7 +1679,8 @@ BUILTIN_WORKFLOWS = (
                 DiagramEdge("people", "viewers", label="next page, until nobody new"),
                 DiagramEdge("people", "score"),
                 DiagramEdge("score", "ids"),
-                DiagramEdge("ids", "files"),
+                DiagramEdge("ids", "accepted"),
+                DiagramEdge("accepted", "files"),
             ),
         ),
         schedule_modes=("on_demand", "daily"),
@@ -1689,11 +1703,12 @@ BUILTIN_WORKFLOWS = (
             "Send the LinkedIn connection requests you approved in Decisions, one at a time "
             "from your saved session: weekdays in your hours, at least 15 minutes apart, under "
             "a daily and weekly cap, each only after a fresh check that you aren't connected "
-            "or already invited. Then read who accepted for three weeks. Tin starts it when "
-            "you approve."
+            "or already invited. It finishes once the last one is sent; your LinkedIn reads "
+            "then see who accepted, about once a day for three weeks. Tin starts it when you "
+            "approve."
         ),
         executor=linkedin_requests.KEY,
-        version_label="1.0.0",
+        version_label="1.1.0",
         presentation=WorkflowDiagram(
             direction="TD",
             nodes=(

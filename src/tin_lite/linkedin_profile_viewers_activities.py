@@ -174,6 +174,10 @@ class LinkedInProfileViewersActivities(LinkedInEngagersActivities):
                 await self.db.complete_effect(conn, execution_key=key, result={"looked_up": found})
         return {"looked_up": found, "reason": None}
 
+    @activity.defn(name="linkedin_viewers_accepted")
+    async def viewers_accepted(self, run_id: str) -> dict:
+        return await self._accepted(run_id)
+
     @activity.defn(name="linkedin_viewers_publish")
     async def viewers_publish(self, control: dict) -> None:
         run = await self._active(control["run_id"])

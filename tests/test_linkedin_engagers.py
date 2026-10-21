@@ -246,6 +246,8 @@ async def run_through(w, run_id):
         if notes.get("stopped"):
             break
     await w.score(run_id)
+    if not notes.get("stopped"):
+        notes["accepted"] = (await w.accepted(run_id))["accepted"]
     await w.publish({"run_id": run_id, "notes": notes})
     return notes
 
@@ -351,7 +353,7 @@ async def test_a_run_keeps_everyone_who_reacted_scores_them_and_writes_the_list(
     router = Router()
     run_id = await engagers_run(f)
     notes = await run_through(work(f, cloud, router), run_id)
-    assert notes == {"posts": 2, "reactions": 153, "unread": 0, "capped": False}
+    assert notes == {"posts": 2, "reactions": 153, "unread": 0, "capped": False, "accepted": 0}
     # Two reaction reads for the first post (100, then 50), one for the second.
     assert [(c["kind"], c.get("start")) for c in cloud.calls] == [
         ("linkedin_posts", None),
@@ -568,6 +570,11 @@ def stubs(calls, pages):
     async def score(run_id):
         calls.append("score")
 
+    @activity.defn(name="linkedin_engagers_accepted")
+    async def accepted(run_id):
+        calls.append("accepted")
+        return {"outcome": "read", "accepted": 2}
+
     @activity.defn(name="linkedin_engagers_publish")
     async def publish(control):
         calls.append(("publish", control["notes"]))
@@ -576,7 +583,7 @@ def stubs(calls, pages):
     async def failure(argument):
         raise AssertionError("The run must not fail")
 
-    return [prepare, posts, reactions, score, publish, failure]
+    return [prepare, posts, reactions, score, accepted, publish, failure]
 
 
 @pytest.mark.parametrize("stop", [False, True])
@@ -623,16 +630,21 @@ async def test_the_workflow_reads_each_post_page_by_page_and_keeps_only_counts(s
     reads = [c for c in calls if isinstance(c, tuple) and c[0] == "reactions"]
     if stop:
         assert [r[2] for r in reads] == [0, 100]
+        # After LinkedIn objected, nothing more is read, not even who accepted.
+        assert "accepted" not in calls
         assert calls[-1] == (
             "publish",
             {"posts": 2, "reactions": 100, "unread": 0, "capped": False, "stopped": "rate_limited"},
         )
     else:
         assert [r[2] for r in reads] == [0, 100, 0]
-        assert calls[-1] == (
-            "publish",
-            {"posts": 2, "reactions": 106, "unread": 0, "capped": False},
-        )
+        assert calls[-2:] == [
+            "accepted",
+            (
+                "publish",
+                {"posts": 2, "reactions": 106, "unread": 0, "capped": False, "accepted": 2},
+            ),
+        ]
     assert "score" in calls
     # History carries post URNs, offsets and counts, never names or headlines.
     for event in history.events:

@@ -54,11 +54,13 @@ def viewer(
 
 
 class Cloud:
-    """The LinkedIn sandbox: the overview, the list's pages, and profile IDs by slug."""
+    """The LinkedIn sandbox: the overview, the list's pages, profile IDs by slug, and where
+    the member stands with people they asked."""
 
-    def __init__(self, pages, *, overview=(), ids=None, errors=None, reason=None):
+    def __init__(self, pages, *, overview=(), ids=None, errors=None, reason=None, states=None):
         self.pages, self.overview, self.ids = pages, list(overview), ids or {}
         self.errors, self.reason, self.now = errors or {}, reason, NOW
+        self.states = states or {}
         self.calls, self.cleaned = [], []
 
     async def engagement(self, conn, *, execution_key, run_id, session, packet, seconds=270):
@@ -68,6 +70,12 @@ class Cloud:
             return {
                 "people": [
                     {"slug": s, "member": self.ids.get(s), "state": "none"} for s in packet["slugs"]
+                ]
+            }
+        if packet["kind"] == "linkedin_relationships":
+            return {
+                "people": [
+                    {"member": m, "state": self.states.get(m, "invited")} for m in packet["members"]
                 ]
             }
         assert packet["kind"] == "linkedin_viewers"
@@ -160,6 +168,7 @@ async def run_through(w, run_id, *, reads=viewers.MAX_READS):
     await w.viewers_score(run_id)
     if not notes.get("stopped"):
         notes["looked_up"] = (await w.viewers_ids(run_id))["looked_up"]
+        notes["accepted"] = (await w.viewers_accepted(run_id))["accepted"]
     await w.viewers_publish({"run_id": run_id, "notes": notes})
     return notes
 
@@ -308,6 +317,56 @@ async def test_a_list_tin_cant_read_keeps_the_overview_and_says_so(collection_db
     )
 
 
+async def test_the_daily_read_says_who_accepted_your_connection_requests(collection_db):
+    f = await fixture(collection_db)
+    cloud = Cloud([[viewer("Ada", who=member(1)), viewer("Bob", who=member(2))]])
+    w = work(f, cloud)
+    await run_through(w, await viewers_run(f))
+    # Two days ago the member asked both; Ada has accepted since.
+    batch = uuid4()
+    await f.db.pool.execute(
+        """INSERT INTO linkedin_request_batches (id, project_id, member, status, decided_at)
+           VALUES ($1, $2, $3, 'approved', now() - interval '2 days')""",
+        batch,
+        f.project.id,
+        USER,
+    )
+    for who in (member(1), member(2)):
+        await f.db.pool.execute(
+            """INSERT INTO linkedin_requests
+               (id, project_id, batch_id, record_id, member, target, status, attempted_at, sent_at)
+               SELECT $1, $2, $3, record_id, $4, $5, 'sent', now() - interval '2 days',
+                      now() - interval '2 days'
+               FROM record_identifiers
+               WHERE project_id = $2 AND kind = 'linkedin_member' AND value = $5""",
+            uuid4(),
+            f.project.id,
+            batch,
+            USER,
+            who,
+        )
+    cloud.states = {member(1): "connected"}
+    run_id = await viewers_run(f)
+    notes = await run_through(w, run_id)
+    assert notes["accepted"] == 1
+    reads = [c for c in cloud.calls if c["kind"] == "linkedin_relationships"]
+    assert [sorted(c["members"]) for c in reads] == [[member(1), member(2)]]
+    summary = await f.db.pool.fetchval(
+        "SELECT result_summary FROM workflow_runs WHERE id=$1", UUID(run_id)
+    )
+    assert summary.startswith("0 new profile views. 1 person accepted your connection request.")
+    statuses = await f.db.pool.fetch(
+        "SELECT target, status FROM linkedin_requests WHERE batch_id = $1 ORDER BY target", batch
+    )
+    assert [(r["target"], r["status"]) for r in statuses] == [
+        (member(1), "accepted"),
+        (member(2), "sent"),
+    ]
+    # The next run the same day leaves it for tomorrow.
+    await run_through(w, await viewers_run(f))
+    assert len([c for c in cloud.calls if c["kind"] == "linkedin_relationships"]) == 1
+
+
 async def test_a_signed_out_session_stops_the_run_with_what_to_do(collection_db):
     f = await fixture(collection_db)
     cloud = Cloud([[viewer("Ada", slug="ada")]], errors={0: "session_expired"})
@@ -371,6 +430,11 @@ def stubs(calls, reads):
         calls.append("ids")
         return {"looked_up": 2, "reason": None}
 
+    @activity.defn(name="linkedin_viewers_accepted")
+    async def accepted(run_id):
+        calls.append("accepted")
+        return {"outcome": "read", "accepted": 1}
+
     @activity.defn(name="linkedin_viewers_publish")
     async def publish(control):
         calls.append(("publish", control["notes"]))
@@ -379,7 +443,7 @@ def stubs(calls, reads):
     async def failure(argument):
         raise AssertionError("The run must not fail")
 
-    return [prepare, read, score, ids, publish, failure]
+    return [prepare, read, score, ids, accepted, publish, failure]
 
 
 def outcome(*, new=5, more=True, kind="read", reason=None):
@@ -428,8 +492,10 @@ async def test_the_workflow_reads_until_nobody_new_and_keeps_only_counts(reads, 
     await Replayer(workflows=[LinkedInProfileViewersWorkflow]).replay_workflow(history)
     assert [c[1] for c in calls if isinstance(c, tuple) and c[0] == "read"] == expected
     stopped = any(r["outcome"] == "stopped" for r in reads[: len(expected)])
-    assert ("ids" in calls) is not stopped
+    # Who accepted is read after the lookups, unless LinkedIn objected.
+    assert ("ids" in calls) is not stopped and ("accepted" in calls) is not stopped
     notes = next(c[1] for c in calls if isinstance(c, tuple) and c[0] == "publish")
+    assert notes.get("accepted") == (None if stopped else 1)
     assert notes["new"] == sum(reads[i]["new"] for i in expected) and notes["total_views"] == 455
     # History holds counts only: no names, headlines or LinkedIn's next-page request.
     events = json.dumps([e.to_json() if hasattr(e, "to_json") else str(e) for e in history.events])

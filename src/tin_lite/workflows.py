@@ -1820,6 +1820,10 @@ class LinkedInEngagersWorkflow:
                 if notes.get("stopped"):
                     break
             await call("linkedin_engagers_score", minutes=20)
+            if not notes.get("stopped") and workflow.patched("linkedin-accepted-v1"):
+                # Who accepted the member's connection requests, about once a day.
+                accepted = await call("linkedin_engagers_accepted", minutes=8)
+                notes["accepted"] = accepted["accepted"]
             await call("linkedin_engagers_publish", {"run_id": run_id, "notes": notes})
         except BaseException as exc:
             await call("linkedin_engagers_failure", failure_input(run_id, exc))
@@ -1882,6 +1886,10 @@ class LinkedInProfileViewersWorkflow:
             if not notes.get("stopped"):
                 found = await call("linkedin_viewers_ids", minutes=8)
                 notes["looked_up"] = found["looked_up"]
+                if workflow.patched("linkedin-accepted-v1"):
+                    # Who accepted the member's connection requests, about once a day.
+                    accepted = await call("linkedin_viewers_accepted", minutes=8)
+                    notes["accepted"] = accepted["accepted"]
             await call("linkedin_viewers_publish", {"run_id": run_id, "notes": notes})
         except BaseException as exc:
             await call("linkedin_viewers_failure", failure_input(run_id, exc))
@@ -1890,10 +1898,11 @@ class LinkedInProfileViewersWorkflow:
 
 @workflow.defn(name=LINKEDIN_REQUESTS_WORKFLOW_NAME)
 class LinkedInRequestsWorkflow:
-    """Send a member's approved connection requests one at a time, then read who accepted. The
-    run sends every batch approved while it still has requests waiting. Each step asks an
-    activity what comes next, so every decision about time is made from Postgres; history
-    holds request IDs, waits and outcomes."""
+    """Send a member's approved connection requests one at a time, and finish once nothing is
+    left to send; the member's LinkedIn reads then read who accepted. The run sends every batch
+    approved while it still has requests waiting. Each step asks an activity what comes next,
+    so every decision about time is made from Postgres; history holds request IDs, waits and
+    outcomes. Runs from before still follow a "check" step."""
 
     @workflow.run
     async def run(self, run_id: str) -> None:

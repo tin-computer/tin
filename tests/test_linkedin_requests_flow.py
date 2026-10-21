@@ -34,8 +34,8 @@ from test_linkedin_engagers import (
 from test_linkedin_per_member import TEAMMATE, add_teammate
 from test_people_view import mcp, structured
 
+from tin_lite import linkedin_engagers_activities, linkedin_requests_activities
 from tin_lite import linkedin_requests as requests
-from tin_lite import linkedin_requests_activities
 from tin_lite import people_records as records
 from tin_lite.auth import AuthContext, require_user
 from tin_lite.catalog import BUILTIN_WORKFLOWS
@@ -474,13 +474,25 @@ async def test_approved_requests_go_one_at_a_time_and_acceptances_are_read(
     await acts.send({"run_id": run_id, "request_id": step["request_id"]})
     assert len(cloud.calls) == 2
 
-    # A day later Tin reads who accepted.
+    # With nothing left to send, the run finishes and says what went out.
+    assert (await acts.next(run_id))["action"] == "done"
+    await acts.finish(run_id)
+    run = await f.db.get_run(UUID(run_id))
+    assert run.status.value == "succeeded"
+    assert run.result_summary == "2 connection requests sent."
+    repo = f.storage.repo
+    report = repo.trees[repo.head]["people/connection-requests.md"][1].decode()
+    assert "| Person 1 |" in report and "pending" in report
+
+    # The member's LinkedIn read a day later reads who accepted.
     clock.now = MONDAY + timedelta(days=1, hours=1)
-    monkeypatch.setattr(linkedin_requests_activities, "datetime", clock())
+    monkeypatch.setattr(linkedin_engagers_activities, "datetime", clock())
     cloud.states = {target: "connected"}
-    assert (await acts.next(run_id))["action"] == "check"
-    checked = await acts.check(run_id)
-    assert checked == {"outcome": "read", "accepted": 1, "pending": 1, "ended": 0}
+    reader = work(f, cloud)
+    assert await reader.accepted(str(await engagers_run(f))) == {
+        "outcome": "read",
+        "accepted": 1,
+    }
     assert await status(f, sent_to) == "accepted"
     async with client(f) as http:
         person_view = (await http.get(f"/api/projects/{f.project.id}/people/{sent_to}")).json()
@@ -489,29 +501,16 @@ async def test_approved_requests_go_one_at_a_time_and_acceptances_are_read(
     assert [e["kind"] for e in person_view["events"][:2]] == ["accepted", "invited"]
     assert week["accepted"] == 1 and week["queued"] == 0
 
-    # When every request is settled or past three weeks, the run finishes with a report.
-    await f.db.pool.execute(
-        "UPDATE linkedin_requests SET attempted_at = attempted_at - interval '22 days' "
-        "WHERE status = 'sent'"
-    )
-    # check() stamps checked_at with the database clock, not the test's.
-    await f.db.pool.execute(
-        "UPDATE linkedin_request_batches SET checked_at = checked_at - interval '22 days' "
-        "WHERE send_run_id = $1",
-        UUID(run_id),
-    )
-    clock.now = MONDAY + timedelta(days=2)
-    monkeypatch.setattr(linkedin_requests_activities, "datetime", clock())
-    assert (await acts.next(run_id))["action"] in {"check", "done"}
-    await acts.check(run_id)
-    assert (await acts.next(run_id))["action"] == "done"
-    await acts.finish(run_id)
-    run = await f.db.get_run(UUID(run_id))
-    assert run.status.value == "succeeded"
-    assert run.result_summary == "2 connection requests sent, 1 accepted."
-    repo = f.storage.repo
-    report = repo.trees[repo.head]["people/connection-requests.md"][1].decode()
-    assert "| Person 1 |" in report and "accepted" in report
+    # About once a day: another read the same day leaves it.
+    assert await reader.accepted(str(await engagers_run(f))) == {
+        "outcome": "nothing",
+        "accepted": 0,
+    }
+    assert [c["kind"] for c in cloud.calls].count("linkedin_relationships") == 1
+    async with f.db.pool.acquire() as conn:
+        assert await requests.reading_due(conn, f.project.id, USER, clock.now + timedelta(days=1))
+        # Three weeks after it went out, a request nobody answered stops being read.
+        assert not await requests.reading_due(conn, f.project.id, USER, MONDAY + timedelta(days=22))
 
 
 async def test_linkedin_s_warning_pauses_sending_until_you_resume(collection_db, monkeypatch):
@@ -574,15 +573,31 @@ async def test_a_send_that_may_have_gone_out_is_never_sent_again(collection_db, 
     step = await acts.next(run_id)
     await acts.send({"run_id": run_id, "request_id": step["request_id"]})
     assert await status(f, known[member(1)]) == "uncertain"
-    # The next relationship read settles it: never sent, so it is left, not retried.
-    clock.now = MONDAY + timedelta(days=1)
-    monkeypatch.setattr(linkedin_requests_activities, "datetime", clock())
-    cloud.states = {member(1): "none"}
-    assert (await acts.next(run_id))["action"] == "check"
-    await acts.check(run_id)
-    assert await status(f, known[member(1)]) == "not_sent"
     assert (await acts.next(run_id))["action"] == "done"
+    # The member's next LinkedIn read settles it: never sent, so it is left, not retried.
+    clock.now = MONDAY + timedelta(days=1)
+    monkeypatch.setattr(linkedin_engagers_activities, "datetime", clock())
+    cloud.states = {member(1): "none"}
+    assert (await work(f, cloud).accepted(str(await engagers_run(f))))["outcome"] == "read"
+    assert await status(f, known[member(1)]) == "not_sent"
     assert [c["kind"] for c in cloud.calls].count("linkedin_invite") == 1
+
+
+async def test_a_run_from_before_still_reads_who_accepted_when_it_asks(collection_db, monkeypatch):
+    f = await fixture(collection_db)
+    batch, known = await approved(f, 1)
+    monkeypatch.setattr(linkedin_requests_activities, "datetime", Clock(MONDAY)())
+    later = Clock(MONDAY + timedelta(days=1))
+    monkeypatch.setattr(linkedin_engagers_activities, "datetime", later())
+    cloud = InviteCloud(f.db, states={member(1): "connected"})
+    acts = sender(f, cloud)
+    run_id = await requests_run(f, batch)
+    await acts.prepare(run_id)
+    step = await acts.next(run_id)
+    await acts.send({"run_id": run_id, "request_id": step["request_id"]})
+    # A run started before the member's LinkedIn reads read who accepted may still ask to.
+    assert await acts.check(run_id) == {"outcome": "read", "accepted": 1, "pending": 0, "ended": 0}
+    assert await status(f, known[member(1)]) == "accepted"
 
 
 async def test_approvals_not_sent_within_two_weeks_lapse(collection_db, monkeypatch):
@@ -1068,7 +1083,10 @@ async def test_a_member_s_requests_wait_in_one_line_sent_by_one_run(collection_d
     sent = [call["member"] for call in cloud.calls]
     assert sorted(sent[:2]) == [member(1), member(4)] and sent[2] == member(5)
 
-    # With nothing left to send, the run only reads who accepted: a new choice starts a run.
+    # With nothing left to send, the run finishes, and a new choice starts a run. The three
+    # sent still wait for an answer, which the member's LinkedIn reads read.
+    assert (await acts.next(first_run))["action"] == "done"
+    await acts.finish(first_run)
     async with client(f) as http:
         later = {"request_id": str(uuid4()), "people": [str(known[member(6)])]}
         answer = await http.post(f"{base}/send", json=later)
@@ -1076,7 +1094,7 @@ async def test_a_member_s_requests_wait_in_one_line_sent_by_one_run(collection_d
     assert len(STARTED) == 2
     assert await sent_by(f, answer.json()["batch_id"]) != first_run
     async with f.db.pool.acquire() as conn:
-        assert len(await requests.checking(conn, UUID(first_run), clock.now)) == 3
+        assert len(await requests.checking(conn, f.project.id, USER, clock.now)) == 3
 
 
 async def test_two_choices_at_once_share_one_run(collection_db, monkeypatch):
