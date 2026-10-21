@@ -21,19 +21,19 @@ from tin_lite.codex_api import (
 from tin_lite.workflow_costs import SESSION_FUNDING
 
 RATE_CARD = {
-    "id": "openai-codex-standard-2026-09-23-v1",
+    "id": "openai-codex-standard-2026-10-21-v1",
     "provider": "openai",
     "model": MODEL,
     "service_tier": "default",
-    "source": "https://developers.openai.com/api/docs/models/gpt-6-sol",
+    "source": "https://developers.openai.com/api/docs/models/gpt-6.1-sol",
     "tool_source": "https://developers.openai.com/api/docs/pricing",
     "cache_source": "https://developers.openai.com/api/docs/guides/prompt-caching",
     "unit": "USD_nanodollars_per_token",
-    "standard": {"input": 2_000, "cached_input": 200, "cache_write": 2_500, "output": 10_000},
+    "standard": {"input": 2_000, "cached_input": 100, "cache_write": 2_500, "output": 10_000},
     "long_context_above_input_tokens": 272_000,
     "long_context": {
         "input": 4_000,
-        "cached_input": 400,
+        "cached_input": 200,
         "cache_write": 5_000,
         "output": 15_000,
     },
@@ -42,6 +42,25 @@ RATE_CARD = {
 # Cards earlier runs pinned. They still price those runs' outstanding receipts;
 # new runs never select them.
 HISTORICAL_RATE_CARDS = (
+    {
+        "id": "openai-codex-standard-2026-09-23-v1",
+        "provider": "openai",
+        "model": "gpt-6-sol",
+        "service_tier": "default",
+        "source": "https://developers.openai.com/api/docs/models/gpt-6-sol",
+        "tool_source": "https://developers.openai.com/api/docs/pricing",
+        "cache_source": "https://developers.openai.com/api/docs/guides/prompt-caching",
+        "unit": "USD_nanodollars_per_token",
+        "standard": {"input": 2_000, "cached_input": 200, "cache_write": 2_500, "output": 10_000},
+        "long_context_above_input_tokens": 272_000,
+        "long_context": {
+            "input": 4_000,
+            "cached_input": 400,
+            "cache_write": 5_000,
+            "output": 15_000,
+        },
+        "web_search_call_nanos": 10_000_000,
+    },
     {
         "id": "openai-codex-standard-2026-09-12-v1",
         "provider": "openai",

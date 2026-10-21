@@ -14,7 +14,7 @@ STUDIO_API_TEMPLATE_ALIAS = "tin-lite-codex-studio-api"
 
 # The E2B `codex` base template ships whatever Codex release E2B last published, so Tin pins
 # the CLI explicitly; the model every sandbox runs is pinned in codex_config.toml next to it.
-CODEX_CLI_VERSION = "0.156.1"
+CODEX_CLI_VERSION = "0.159.1"
 
 # Pinned browser-profile dependencies. A template rebuild is the only way any of these move.
 CAMOUFOX_PACKAGE_VERSION = "0.5.5"

@@ -20,9 +20,14 @@ from test_rollouts import base_values
 from tin_lite.codex_api import (
     ATTEMPT,
     CONTRACT,
+    PARALLEL_PROCEDURE_CONTRACT,
     PROCEDURE_CONTRACT_V5,
+    SESSION_CONTRACT,
     USAGE,
     attempt_key,
+    is_api_contract,
+    is_multi_tool_contract,
+    is_session_contract,
     pinned_contract,
     run_api_attempt,
     select_contract,
@@ -537,3 +542,69 @@ async def test_usage_recorded_before_terminal_event_and_even_for_incomplete_outp
     finally:
         await client.aclose()
         await relay.close()
+
+
+def test_runs_admitted_on_gpt_6_sol_keep_their_model():
+    for contract in (
+        CONTRACT,
+        SESSION_CONTRACT,
+        PROCEDURE_CONTRACT_V5,
+        PARALLEL_PROCEDURE_CONTRACT,
+    ):
+        assert contract["model"] == "gpt-6.1-sol"
+        earlier = {**contract, "model": "gpt-6-sol"}
+        assert is_api_contract(earlier)
+        assert is_session_contract(earlier) == is_session_contract(contract)
+        assert is_multi_tool_contract(earlier) == is_multi_tool_contract(contract)
+        assert not is_api_contract({**contract, "model": "gpt-6-astra"})
+    earlier = {**PROCEDURE_CONTRACT_V5, "model": "gpt-6-sol"}
+    raw = json.dumps({**BODY, "model": "gpt-6-sol"}).encode()
+    assert request_body(raw, "responses", earlier)["model"] == "gpt-6-sol"
+    with pytest.raises(HTTPException, match="pinned route"):
+        request_body(raw, "responses", PROCEDURE_CONTRACT_V5)
+    with pytest.raises(HTTPException, match="pinned route"):
+        request_body(json.dumps(BODY).encode(), "responses", earlier)
+
+
+@pytest.mark.parametrize(
+    ("baked", "pinned", "expected"),
+    [
+        ("gpt-6.1-sol", "gpt-6.1-sol", "gpt-6.1-sol"),
+        ("gpt-6.1-sol", "gpt-6-sol", "gpt-6-sol"),
+        ("gpt-6-sol", "gpt-6.1-sol", "gpt-6.1-sol"),
+        ("gpt-6.1-sol", None, "gpt-6.1-sol"),
+    ],
+)
+def test_controller_runs_the_model_its_contract_pinned(tmp_path, baked, pinned, expected):
+    module = load_sandbox_module("codex_api_config")
+    config = tmp_path / "config.toml"
+    config.write_text(
+        f'# baked\nmodel = "{baked}"\n[mcp_servers.tin]\nurl="https://tin.test/tools"\n'
+    )
+    env = {
+        "TIN_PROCEDURE_ISOLATED": "1",
+        "TIN_CODEX_API_URL": f"https://tin.test/internal/codex-api/{uuid4()}/v1",
+        "TIN_CODEX_API_GRANT": GRANT,
+    }
+    if pinned is not None:
+        env["TIN_CODEX_API_CONTRACT"] = json.dumps({**SESSION_CONTRACT, "model": pinned})
+    module.configure(config, env)
+    parsed = tomllib.loads(config.read_text())
+    assert parsed["model"] == expected and "tin" in parsed["mcp_servers"]
+
+
+def test_controller_refuses_a_model_it_does_not_know(tmp_path):
+    module = load_sandbox_module("codex_api_config")
+    env = {
+        "TIN_PROCEDURE_ISOLATED": "1",
+        "TIN_CODEX_API_URL": f"https://tin.test/internal/codex-api/{uuid4()}/v1",
+        "TIN_CODEX_API_GRANT": GRANT,
+        "TIN_CODEX_API_CONTRACT": json.dumps({**SESSION_CONTRACT, "model": "gpt-6-astra"}),
+    }
+    config = tmp_path / "config.toml"
+    config.write_text('model = "gpt-6.1-sol"\n')
+    with pytest.raises(ValueError, match="Unknown Codex API model"):
+        module.configure(config, env)
+    config.write_text('model = "gpt-6-astra"\n')
+    with pytest.raises(ValueError, match="pinned model"):
+        module.configure(config, {**env, "TIN_CODEX_API_CONTRACT": json.dumps(SESSION_CONTRACT)})

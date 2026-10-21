@@ -237,7 +237,7 @@ def main() -> None:
             if info.st_uid != 0 or not stat.S_ISREG(info.st_mode) or info.st_mode & 0o022:
                 raise RuntimeError("isolated runtime resources are not protected")
         version = subprocess.check_output(["/usr/local/bin/codex", "--version"], text=True)
-        if version.strip() != "codex-cli 0.156.1":
+        if version.strip() != "codex-cli 0.159.1":
             raise RuntimeError("isolated runtime requires the pinned Codex CLI")
         print("TIN_ISOLATION_READY_V1")
     elif action == "prepare" and not args:

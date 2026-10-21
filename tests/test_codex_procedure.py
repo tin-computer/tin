@@ -87,7 +87,7 @@ def test_procedure_sandbox_template_pins_repository_tooling(
         (
             "run_cmd",
             (
-                "npm install -g @openai/codex@0.156.1 && codex --version",
+                "npm install -g @openai/codex@0.159.1 && codex --version",
                 {"user": "root"},
             ),
         ),
@@ -106,7 +106,7 @@ def test_procedure_sandbox_template_pins_repository_tooling(
     # The single-finding technical verifiers left with organic.technical_fix.
     assert not any("verify_technical" in str(call) for call in calls)
     config = (ROOT / "sandbox" / "codex_config.toml").read_text()
-    assert 'model = "gpt-6-sol"' in config
+    assert 'model = "gpt-6.1-sol"' in config
     assert "OPENAI_API_KEY" not in config
 
 

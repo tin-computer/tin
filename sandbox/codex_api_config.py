@@ -2,12 +2,16 @@
 
 import json
 import os
+import re
 import sys
 import tomllib
 from pathlib import Path
 from urllib.parse import urlsplit
 
 WORKER_PROXY = Path("/home/user/.tin-lite/proxy-worker.json")
+# Models a run may have pinned, newest first; the image bakes the first. A run keeps the model
+# its contract names, so one admitted before an image rebuild still calls the model it pinned.
+MODELS = ("gpt-6.1-sol", "gpt-6-sol")
 
 
 def studio_values(env):
@@ -100,11 +104,16 @@ def configure(path, env):
         raise ValueError("Invalid run-bound Codex API configuration")
     existing = path.read_text()
     config = tomllib.loads(existing)
-    if config.get("model") != "gpt-6-sol" or "model_provider" in config:
+    if config.get("model") not in MODELS or "model_provider" in config:
         raise ValueError("Codex API requires the pinned model and a fresh controller")
     if path.with_name("auth.json").exists():
         raise ValueError("Codex API controller must not contain ChatGPT credentials")
     contract = json.loads(env.get("TIN_CODEX_API_CONTRACT", "{}"))
+    model = contract.get("model", config["model"])
+    if model not in MODELS:
+        raise ValueError("Unknown Codex API model")
+    # The image's root `model` line comes before any table; the run's own replaces it below.
+    existing = re.sub(r"^[ \t]*model[ \t]*=.*\n?", "", existing, count=1, flags=re.MULTILINE)
     context = ""
     protocol = contract.get("protocol")
     contexts = {
@@ -127,6 +136,7 @@ def configure(path, env):
         raise ValueError("Unknown Codex API protocol")
     # Prefix root keys; appending them after an MCP table would change their meaning.
     content = (
+        f"model = {json.dumps(model)}\n"
         'model_provider = "tin_api"\n'
         + context
         + existing
@@ -148,7 +158,8 @@ def configure(path, env):
         )
     )
     content += worker_shell_policy(env)
-    tomllib.loads(content)
+    if tomllib.loads(content).get("model") != model:
+        raise ValueError("Codex API requires the pinned model")
     path.write_text(content)
     path.chmod(0o600)
 
