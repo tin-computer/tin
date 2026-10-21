@@ -494,6 +494,12 @@ async def test_approved_requests_go_one_at_a_time_and_acceptances_are_read(
         "UPDATE linkedin_requests SET attempted_at = attempted_at - interval '22 days' "
         "WHERE status = 'sent'"
     )
+    # check() stamps checked_at with the database clock, not the test's.
+    await f.db.pool.execute(
+        "UPDATE linkedin_request_batches SET checked_at = checked_at - interval '22 days' "
+        "WHERE send_run_id = $1",
+        UUID(run_id),
+    )
     clock.now = MONDAY + timedelta(days=2)
     monkeypatch.setattr(linkedin_requests_activities, "datetime", clock())
     assert (await acts.next(run_id))["action"] in {"check", "done"}
