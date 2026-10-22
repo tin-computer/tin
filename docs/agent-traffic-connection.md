@@ -79,6 +79,19 @@ once it is more than ten minutes old. A claim on `agent_traffic_sites.status_cla
 that true across processes. A `429` waits for its `retry-after`; an outage waits a minute,
 doubling up to an hour. Meanwhile the card shows the stored copy with `stale: true`.
 
+## Stored reports and comparisons
+
+The page and the MCP tool read Tin's stored copy of a report (`agent_traffic_reports`, keyed by
+site, period, date and time zone). Tin asks again once the copy is more than ten minutes old,
+unless the report says `complete`, which is final. A failed read keeps the stored copy.
+
+Each stored report comes with `comparison`, built from the report's `previous` (the day before
+for a day, the 7 days before for a week): visits, page views, visits from AI assistants
+(`totals.assistant_visits`) and each kind of visit, each as `now` and `before`, with `percent`
+only when the period before had at least ten ("up from 4" reads truer than "+50%"). A number
+withheld in either period has no change, and `comparison` is null when `previous` is (the
+period before is past retention). Before the site's first visit, `before` is 0.
+
 ## Stop measuring
 
 Stop measuring (the card's disconnect) and project deletion send

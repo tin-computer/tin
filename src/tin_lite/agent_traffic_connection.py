@@ -494,6 +494,50 @@ def report_from(payload: Any, site_id: str, period: str) -> dict[str, Any]:
     return payload
 
 
+# The numbers the report's `previous` repeats for the period before, and where each is now.
+COMPARED = (
+    ("visits", ("totals", "visits")),
+    ("page_views", ("totals", "page_views")),
+    ("assistant_visits", ("totals", "assistant_visits")),
+    ("no_automation_seen", ("kinds", "no_automation_seen", "visits")),
+    ("automated_browser", ("kinds", "automated_browser", "visits")),
+    ("declared_crawler", ("kinds", "declared_crawler", "visits")),
+)
+# Below this many before, a percentage overstates a small change ("+300%" from 1 to 4); the
+# page says "up from 1" instead.
+PERCENT_FROM = 10
+
+
+def comparison(report: dict[str, Any]) -> dict[str, Any] | None:
+    """Each number's change from the period before, from the report's `previous`.
+
+    None when there is no period before to compare with (`previous` is null past retention).
+    A number withheld in either period (null) has no change. `percent` is given only when the
+    period before had at least PERCENT_FROM; `before` is 0 for days before the first visit.
+    """
+
+    previous = report.get("previous")
+    if not isinstance(previous, dict):
+        return None
+    changes = {}
+    for name, path in COMPARED:
+        now: Any = report
+        for key in path:
+            now = now.get(key) if isinstance(now, dict) else None
+        now, before = integer(now), integer(previous.get(name))
+        if now is None or before is None or now < 0 or before < 0:
+            continue
+        change: dict[str, Any] = {"now": now, "before": before}
+        if before >= PERCENT_FROM:
+            change["percent"] = round((now - before) * 100 / before)
+        changes[name] = change
+    return {
+        "start": text(previous.get("start"), 10),
+        "end": text(previous.get("end"), 10),
+        "changes": changes,
+    }
+
+
 def reporter_connected(status: dict[str, Any] | None, *, now: datetime | None = None) -> bool:
     moment = _moment((status or {}).get("requests_last_at"))
     if moment is None:
@@ -948,7 +992,8 @@ class AgentTrafficConnections:
         self, project_id: UUID, *, period: str, day: date | None = None
     ) -> dict[str, Any] | None:
         """Tin's stored report for the period, asked for again once it is more than ten minutes
-        old and not complete. Returns `{report, fetched_at, stale}`, or None before any read."""
+        old and not complete. Returns `{report, fetched_at, stale, comparison}`, or None before
+        any read."""
 
         connection = await self.db.get_integration_connection(
             project_id=project_id, provider_key=PROVIDER
@@ -996,7 +1041,12 @@ class AgentTrafficConnections:
             *key,
             json.dumps(report),
         )
-        return {"report": report, "fetched_at": datetime.now(UTC).isoformat(), "stale": False}
+        return {
+            "report": report,
+            "fetched_at": datetime.now(UTC).isoformat(),
+            "stale": False,
+            "comparison": comparison(report),
+        }
 
     # ----- workflow reads
 
@@ -1197,7 +1247,12 @@ class AgentTrafficConnections:
 def _stored(stored: dict[str, Any] | None) -> dict[str, Any] | None:
     if stored is None:
         return None
-    return {"report": stored["report"], "fetched_at": _iso(stored["fetched_at"]), "stale": False}
+    return {
+        "report": stored["report"],
+        "fetched_at": _iso(stored["fetched_at"]),
+        "stale": False,
+        "comparison": comparison(stored["report"]),
+    }
 
 
 async def removal_loop(integrations: Any) -> None:

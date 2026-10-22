@@ -7,7 +7,7 @@
   "tz": "Europe/Istanbul",
   "complete": true,
   "built_at": "2026-10-21T00:10:12Z",
-  "summary": "48 visits and 91 page views. 6 visits came from AI assistants' answers, and 3 came from automated browsers.",
+  "summary": "48 visits and 91 page views, against 41 visits the day before. 6 visits came from AI assistants' answers, up from 4, and 3 came from automated browsers.",
   "needs_you": [],
   "totals": {
     "visits": 48,
@@ -15,7 +15,18 @@
     "pages_per_visit": 1.9,
     "one_page_share": 0.58,
     "median_seconds_per_page": 24,
-    "mobile_share": 0.41
+    "mobile_share": 0.41,
+    "assistant_visits": 6
+  },
+  "previous": {
+    "start": "2026-10-19",
+    "end": "2026-10-19",
+    "visits": 41,
+    "page_views": 80,
+    "assistant_visits": 4,
+    "no_automation_seen": 37,
+    "automated_browser": 2,
+    "declared_crawler": 2
   },
   "kinds": {
     "no_automation_seen": {

@@ -19,10 +19,12 @@ from test_integrations import USER_ID, settings
 from test_procedure_publication import publication_db as publication_db
 
 from tin_lite.agent_traffic_connection import (
+    COMPARED,
     NOT_SET_UP,
     STILL_REMOVING,
     AnalyticsAccessLost,
     ServiceArgumentError,
+    comparison,
     moved_hosts,
     project_ref,
     removal_wait,
@@ -604,7 +606,9 @@ async def test_reports_are_stored_and_read_again_when_ten_minutes_old(publicatio
     day = date(2026, 10, 20)
     stored = await service.agent_traffic.report(project.id, period="day", day=day)
     report = stored["report"]
-    assert report["summary"].startswith("48 visits and 91 page views")
+    assert report["summary"].startswith("48 visits and 91 page views, against 41 visits")
+    assert report["previous"]["visits"] == 41 and report["totals"]["assistant_visits"] == 6
+    assert stored["comparison"]["changes"]["visits"] == {"now": 48, "before": 41, "percent": 17}
     assert report["tz"] == TIMEZONE and report["start"] == "2026-10-20"
     assert report["kinds"]["automated_browser"]["named"] == [
         {"operator": "openai", "visits": 2, "evidence": "signature"}
@@ -613,7 +617,7 @@ async def test_reports_are_stored_and_read_again_when_ten_minutes_old(publicatio
     assert dict(request.url.params) == {"period": "day", "date": "2026-10-20", "tz": TIMEZONE}
     # A complete report is final.
     again = await service.agent_traffic.report(project.id, period="day", day=day)
-    assert again["report"] == report
+    assert again["report"] == report and again["comparison"] == stored["comparison"]
     assert len([r for r in api.calls if r.url.path.endswith("/report")]) == 1
     week = await service.agent_traffic.report(project.id, period="week", day=day)
     assert week["report"]["hours"] is None and len(week["report"]["days"]) == 7
@@ -639,6 +643,7 @@ async def test_workflow_reads_write_receipts_and_mark_attention(publication_db) 
     yesterday = (date.today() - timedelta(days=1)).isoformat()
     week = await read("report.read", {"period": "week", "date": yesterday}, "run:week")
     assert week["period"] == "week" and len(week["days"]) == 7
+    assert week["previous"]["start"] == "2026-10-07" and week["totals"]["assistant_visits"] == 38
     request = api.calls[-1]
     assert dict(request.url.params) == {"period": "week", "date": yesterday, "tz": TIMEZONE}
     with pytest.raises(ServiceResponseTooLarge):
@@ -674,10 +679,53 @@ def test_contract_examples_are_complete_responses() -> None:
     put = example("put_site.json")
     assert set(put) >= {"site_id", "state", "script", "csp", "read_token", "reporter"}
     assert len(put["read_token"]) == 43
+    for report in (example("report_day.json"), example("report_week.json")):
+        totals, kinds = report["totals"], report["kinds"]
+        assert sum(kind["visits"] for kind in kinds.values()) == totals["visits"]
+        assistants = sum(row["visits"] for row in report["came_from"] if row["assistant"])
+        assert totals["assistant_visits"] == assistants
+        assert set(report["previous"]) == {"start", "end"} | {name for name, _ in COMPARED}
     day, week = example("report_day.json"), example("report_week.json")
-    kinds = day["kinds"]
-    assert sum(kind["visits"] for kind in kinds.values()) == day["totals"]["visits"]
     assert set(week) - set(day) == {"days"} and week["hours"] is None
+    assert sum(row["visits"] for row in week["days"]) == week["totals"]["visits"]
+
+
+def test_each_number_compares_with_the_period_before() -> None:
+    day = example("report_day.json")
+    assert comparison(day) == {
+        "start": "2026-10-19",
+        "end": "2026-10-19",
+        "changes": {
+            "visits": {"now": 48, "before": 41, "percent": 17},
+            "page_views": {"now": 91, "before": 80, "percent": 14},
+            # Below ten before, a percentage overstates the change; the page says "up from 4".
+            "assistant_visits": {"now": 6, "before": 4},
+            "no_automation_seen": {"now": 43, "before": 37, "percent": 16},
+            "automated_browser": {"now": 3, "before": 2},
+            "declared_crawler": {"now": 2, "before": 2},
+        },
+    }
+    week = comparison(example("report_week.json"))
+    assert week["start"] == "2026-10-07" and week["changes"]["visits"] == {
+        "now": 270,
+        "before": 248,
+        "percent": 9,
+    }
+    # A withheld number (null) in either period has no change.
+    withheld = example("report_day.json")
+    withheld["totals"]["page_views"] = None
+    withheld["previous"]["assistant_visits"] = None
+    assert set(comparison(withheld)["changes"]) == {
+        "visits",
+        "no_automation_seen",
+        "automated_browser",
+        "declared_crawler",
+    }
+    # Past retention there is no period before; before the first visit it counts zero.
+    assert comparison({**day, "previous": None}) is None
+    assert comparison({**day, "previous": {**day["previous"], "visits": 0}})["changes"][
+        "visits"
+    ] == {"now": 48, "before": 0}
 
 
 async def test_routes_set_up_show_the_card_and_never_send_a_token(publication_db) -> None:
