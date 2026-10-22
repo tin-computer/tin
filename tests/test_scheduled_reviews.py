@@ -280,6 +280,7 @@ async def test_scheduled_admission_skips_active_restored_run_and_reuses_occurren
         definition=definition,
     )
     project = await db.create_project(name="Review fixture", state_repo_id=f"projects/{uuid4()}")
+    await db.grant_project_membership(project_id=project.id, clerk_user_id="user_fixture")
     inputs = normalize_workflow_inputs(
         schema=definition["input_schema"],
         project_id=project.id,

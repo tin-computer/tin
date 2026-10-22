@@ -42,6 +42,7 @@ async def test_native_schedule_billing_block_projects_existing_pause_path(monkey
         input_schema={},
         inputs={},
         settings_revision=1,
+        created_by_clerk_user_id="user_fixture",
     )
     workflow = SimpleNamespace(
         key="content.answer_page", executor="content.answer_page", definition={}
@@ -50,6 +51,7 @@ async def test_native_schedule_billing_block_projects_existing_pause_path(monkey
         get_project_workflow=AsyncMock(return_value=configured),
         get_workflow=AsyncMock(return_value=workflow),
         consume_project_workflow_skip=AsyncMock(return_value=False),
+        has_project_access=AsyncMock(return_value=True),
         create_run=AsyncMock(
             side_effect=BillingError(
                 "insufficient_limit", "This schedule has no sufficient standing spending limit."

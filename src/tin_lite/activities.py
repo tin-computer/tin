@@ -400,19 +400,22 @@ class TinActivities:
             scheduled_for=scheduled_for,
         ):
             return {}
-        # A personal workflow acts through one member's own LinkedIn: its schedule runs as the
-        # member who saved it, while they're still on the project.
-        starter: dict[str, str] = {}
-        if personal(workflow_definition):
-            member = configured.created_by_clerk_user_id
-            if not await self._db.has_project_access(
-                project_id=configured.project_id, clerk_user_id=member
-            ):
-                from tin_lite.code_schedules import pause_for_issue
+        # A schedule runs as the member who saved it, while they're still on the project, as
+        # a code schedule does: model calls, service reads and private procedures all check
+        # the run's starter. A personal workflow also acts through that member's LinkedIn.
+        member = configured.created_by_clerk_user_id
+        if not await self._db.has_project_access(
+            project_id=configured.project_id, clerk_user_id=member
+        ):
+            from tin_lite.code_schedules import AUTHOR_LEFT_SCHEDULE, pause_for_issue
 
-                await pause_for_issue(self, configured, AUTHOR_LEFT)
-                return {}
-            starter = {"started_by_clerk_user_id": member}
+            await pause_for_issue(
+                self,
+                configured,
+                AUTHOR_LEFT if personal(workflow_definition) else AUTHOR_LEFT_SCHEDULE,
+            )
+            return {}
+        starter = {"started_by_clerk_user_id": member}
         evaluation = await evaluate_prerequisites(
             database=self._db,
             storage=self._storage,

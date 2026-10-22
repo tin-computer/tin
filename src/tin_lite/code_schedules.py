@@ -18,6 +18,12 @@ from tin_lite.workflow_definitions import ensure_schedule_allowed, resolve_execu
 from tin_lite.workflow_inputs import normalize_workflow_inputs
 from tin_lite.workflow_setup import code_readiness
 
+# Every scheduled run starts as the member who saved the schedule; once they leave, it pauses.
+AUTHOR_LEFT_SCHEDULE = (
+    "The schedule's author no longer has project access. "
+    "A current member can save a new configuration."
+)
+
 
 def dispatched(run):
     if run.status in {RunStatus.FAILED, RunStatus.STOPPED, RunStatus.SUCCEEDED}:
@@ -139,10 +145,7 @@ async def dispatch_code_schedule(common, configured, workflow, payload):
         if not await db.has_project_access(
             project_id=configured.project_id, clerk_user_id=configured.created_by_clerk_user_id
         ):
-            raise ValueError(
-                "The schedule's author no longer has project access. "
-                "A current member can save a new configuration."
-            )
+            raise ValueError(AUTHOR_LEFT_SCHEDULE)
         inputs = normalize_workflow_inputs(
             schema=configured.input_schema,
             project_id=configured.project_id,
