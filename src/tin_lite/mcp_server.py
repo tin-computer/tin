@@ -5353,6 +5353,39 @@ def create_mcp_app(
         return value
 
     @server.tool()
+    async def get_site_analytics(
+        project_id: str, period: str = "day", date: str | None = None
+    ) -> dict[str, Any]:
+        """Read the project's site report from Tin Analytics: visits, page views, visits from AI
+        assistants, automated browsers, crawlers and, with the request reporter, every page
+        request, each compared with the period before.
+
+        `period` is `day` (midnight to midnight) or `week` (the 7 days ending on `date`).
+        `date` is YYYY-MM-DD in the founder's time zone, today when omitted, within the last 180
+        days. The result is Tin's stored copy, read again once it is ten minutes old, with the
+        report's own `markdown`. A null number was withheld for covering too few visits.
+        """
+        from tin_lite.agent_traffic_connection import ServiceArgumentError, report_date
+
+        token = await caller()
+        parsed_project_id = _mcp_uuid(project_id, field="project_id")
+        await require_project(parsed_project_id, token, tool_name="get_site_analytics")
+        if period not in {"day", "week"}:
+            raise ToolError("period must be day or week")
+        try:
+            day = report_date(date)
+        except ServiceArgumentError as exc:
+            raise ToolError(str(exc)) from None
+        service = runtime().integrations.agent_traffic
+        try:
+            stored = await service.report(parsed_project_id, period=period, day=day)
+        except IntegrationError as exc:
+            raise ToolError(str(exc)) from exc
+        if stored is None:
+            raise ToolError("Tin Analytics has no report for that period yet")
+        return {"project_id": str(parsed_project_id), "period": period, **stored}
+
+    @server.tool()
     async def start_integration_connection(
         project_id: str,
         provider_key: str,
@@ -5405,8 +5438,8 @@ def create_mcp_app(
                     relay=(
                         f"I am opening Tin's Integrations page for "
                         f"{project.name if project else 'your project'}. Press Set up on the "
-                        "Analytics card; there is nothing to sign in to. Tin then shows the one "
-                        "script line for your site."
+                        "Tin Analytics card; there is nothing to sign in to. Tin then shows "
+                        "the one script line for your site."
                     )
                 ),
             }

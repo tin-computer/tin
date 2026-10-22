@@ -478,6 +478,8 @@ ASSET_VERSION = hashlib.sha256(
             "output-comparison.js",
             "people.css",
             "people.js",
+            "analytics.css",
+            "analytics.js",
             "linkedin-requests.css",
             "linkedin-requests.js",
             "pierre-trees.js",
@@ -514,6 +516,7 @@ def _static_page(filename: str, request: Request) -> Response:
                 "/activity",
                 "/decisions",
                 "/people",
+                "/analytics",
                 "/files",
                 "/integrations",
                 "/billing",
@@ -1532,6 +1535,7 @@ class GoogleAdsLinkRequest(BaseModel):
 @router.api_route("/activity", methods=["GET", "HEAD"], include_in_schema=False)
 @router.api_route("/decisions", methods=["GET", "HEAD"], include_in_schema=False)
 @router.api_route("/people", methods=["GET", "HEAD"], include_in_schema=False)
+@router.api_route("/analytics", methods=["GET", "HEAD"], include_in_schema=False)
 @router.api_route("/files", methods=["GET", "HEAD"], include_in_schema=False)
 @router.api_route("/integrations", methods=["GET", "HEAD"], include_in_schema=False)
 @router.api_route("/billing", methods=["GET", "HEAD"], include_in_schema=False)
@@ -2366,6 +2370,22 @@ async def refresh_analytics(
     await _require_project_access(project_id, request, user)
     try:
         return await _analytics_view(request.app.state.runtime, project_id)
+    except IntegrationError as exc:
+        raise _integration_http_error(exc) from None
+
+
+@router.get("/api/projects/{project_id}/analytics")
+async def analytics_page(
+    project_id: UUID,
+    request: Request,
+    view: str = "today",
+    user: AuthContext = AUTHENTICATED_USER,
+) -> dict:
+    """The Analytics page: the card's state and Tin's stored report for one tab (Today,
+    Yesterday or the last 7 days). No token is ever in it."""
+    await _require_project_access(project_id, request, user)
+    try:
+        return await request.app.state.runtime.integrations.agent_traffic.page(project_id, view)
     except IntegrationError as exc:
         raise _integration_http_error(exc) from None
 

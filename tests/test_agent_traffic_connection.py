@@ -128,7 +128,7 @@ async def card(service, project_id):
 
 def test_registry_gateway_and_capabilities_are_explicit() -> None:
     definition = {d.key: d for d in registered_integrations()}[AGENT_TRAFFIC_PROVIDER]
-    assert definition.name == "Analytics"
+    assert definition.name == "Tin Analytics"
     assert definition.capabilities == ("status.read", "reports.read")
     assert SERVICE_CAPABILITIES[AGENT_TRAFFIC_PROVIDER] == {"status.read", "reports.read"}
     assert GATEWAY_OPERATIONS[(AGENT_TRAFFIC_PROVIDER, "site.status")] == (
@@ -831,3 +831,80 @@ async def test_the_gateway_dispatches_to_the_connection(publication_db) -> None:
     ARGUMENT_CHECKS[AGENT_TRAFFIC_PROVIDER]("report.read", {"period": "week"})
     with pytest.raises(ServiceArgumentError):
         ARGUMENT_CHECKS[AGENT_TRAFFIC_PROVIDER]("report.read", {"site_id": "st-other"})
+
+
+async def test_the_page_reads_each_tab_once_a_visit_has_arrived(publication_db) -> None:
+    service, api, project = await analytics(publication_db)
+    before = await service.agent_traffic.page(project.id, "today")
+    assert before["card"]["state"] == "not_set_up" and before["report"] is None
+    await service.agent_traffic.set_up(project_id=project.id, clerk_user_id=USER_ID)
+    waiting = await service.agent_traffic.page(project.id, "today")
+    assert waiting["card"]["state"] == "waiting" and waiting["report"] is None
+    assert waiting["card"]["script"].startswith("<script") and waiting["tz"] == TIMEZONE
+    assert not [r for r in api.calls if r.url.path.endswith("/report")]
+    await age(publication_db, project.id, 31)
+    api.state = "live"
+    today = await service.agent_traffic.page(project.id, "today")
+    assert today["card"]["state"] == "live" and today["report"]["period"] == "day"
+    assert today["comparison"]["changes"]["visits"]["before"] == 41
+    reads = [r for r in api.calls if r.url.path.endswith("/report")]
+    assert reads[-1].url.params["date"] == today["date"]
+    yesterday = await service.agent_traffic.page(project.id, "yesterday")
+    assert date.fromisoformat(yesterday["date"]) == date.fromisoformat(today["date"]) - timedelta(1)
+    week = await service.agent_traffic.page(project.id, "week")
+    assert week["report"]["period"] == "week" and week["date"] == today["date"]
+    with pytest.raises(IntegrationInputError):
+        await service.agent_traffic.page(project.id, "month")
+    # A failed first read says so; nothing stored to fall back on.
+    publication_db_reports = "DELETE FROM agent_traffic_reports WHERE project_id = $1"
+    await publication_db.pool.execute(publication_db_reports, project.id)
+    api.refuse["report"] = [503]
+    failed = await service.agent_traffic.page(project.id, "yesterday")
+    assert failed["report"] is None and failed["error"] == "provider_error"
+
+
+async def test_mcp_reads_the_card_and_the_stored_report_without_tokens(
+    publication_db, monkeypatch
+) -> None:
+    from types import SimpleNamespace
+
+    from tin_lite.mcp_server import create_mcp_app
+
+    service, api, project = await analytics(publication_db)
+    await publication_db.grant_project_membership(project_id=project.id, clerk_user_id=USER_ID)
+    token = SimpleNamespace(subject=USER_ID, scopes=["openid"], client_id="mcp-client")
+    monkeypatch.setattr("tin_lite.mcp_server.get_access_token", lambda: token)
+    runtime = SimpleNamespace(database=publication_db, integrations=service)
+    service._settings.clerk_frontend_api_url = "https://clerk.test"
+    server, _ = create_mcp_app(
+        settings=service._settings, auth=SimpleNamespace(), runtime=lambda: runtime
+    )
+
+    async def call(name, args):
+        result = await server.call_tool(name, args)
+        content = result[1] if isinstance(result, tuple) else result.structured_content
+        return content.get("result", content) if isinstance(content, dict) else content
+
+    from mcp.server.mcpserver.exceptions import ToolError
+
+    with pytest.raises(ToolError, match="Set up Analytics first"):
+        await call("get_site_analytics", {"project_id": str(project.id)})
+    await service.agent_traffic.set_up(project_id=project.id, clerk_user_id=USER_ID)
+    api.state = "live"
+    listed = await call(
+        "get_integration", {"project_id": str(project.id), "provider_key": AGENT_TRAFFIC_PROVIDER}
+    )
+    assert listed["analytics"]["state"] == "live" and listed["name"] == "Tin Analytics"
+    yesterday = (date.today() - timedelta(days=1)).isoformat()
+    read = await call(
+        "get_site_analytics", {"project_id": str(project.id), "period": "day", "date": yesterday}
+    )
+    assert read["report"]["markdown"].startswith("# example.com")
+    assert read["comparison"]["changes"]["assistant_visits"] == {"now": 6, "before": 4}
+    with pytest.raises(ToolError, match="period must be day or week"):
+        await call("get_site_analytics", {"project_id": str(project.id), "period": "month"})
+    with pytest.raises(ToolError, match="YYYY-MM-DD"):
+        await call("get_site_analytics", {"project_id": str(project.id), "date": "yesterday"})
+    issued = [f"read-token-st-fake0001-{n:04d}-synthetic" for n in range(1, api.issued + 1)]
+    text = json.dumps([listed, read], default=str)
+    assert SERVICE_CREDENTIAL not in text and not any(item in text for item in issued)

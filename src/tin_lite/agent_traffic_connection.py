@@ -94,8 +94,7 @@ STILL_REMOVING = (
     "Tin is still removing this project's earlier analytics site. Try again in a few minutes."
 )
 READ_LOST = (
-    "Analytics can't read this site anymore. Press Set up again on the Analytics card in "
-    "Integrations."
+    "Tin Analytics can't read this site anymore. Press Set up again on its card in Integrations."
 )
 # Hosts a founder's site lives on as one exact host among many. A host on one of them in
 # `uncounted_hosts` is usually a preview deployment, not a move.
@@ -494,6 +493,9 @@ def report_from(payload: Any, site_id: str, period: str) -> dict[str, Any]:
     return payload
 
 
+# The page's tabs: Today and Yesterday read a day, the last 7 days a week ending today.
+PAGE_VIEWS = {"today": ("day", 0), "yesterday": ("day", 1), "week": ("week", 0)}
+
 # The numbers the report's `previous` repeats for the period before, and where each is now.
 COMPARED = (
     ("visits", ("totals", "visits")),
@@ -835,7 +837,7 @@ class AgentTrafficConnections:
     # ----- the card
 
     async def card(self, project_id: UUID, connection: Any | None) -> dict[str, Any]:
-        """What the Analytics card shows. Opening it asks the service again when Tin's stored
+        """What the Tin Analytics card shows. Opening it asks the service again when Tin's stored
         status is due (contract: The card); a failure keeps the stored copy."""
 
         if not self.integrations.is_configured(PROVIDER):
@@ -884,8 +886,14 @@ class AgentTrafficConnections:
             "site_id": configuration.get("site_id"),
             "linked": configuration.get("linked") is True,
             "counted_hosts": configuration.get("counted_hosts") or [],
+            "address_source": (site or {}).get("address_source"),
+            # The line on the founder's site and its CSP entries; neither is a credential.
+            "script": configuration.get("script"),
+            "csp": configuration.get("csp") or {},
             "pages_today": status.get("pages_today"),
+            "first_page_at": status.get("first_page_at"),
             "last_page_at": status.get("last_page_at"),
+            "hosts_seen": status.get("hosts_seen") or [],
             "requests_last_at": status.get("requests_last_at"),
             "reporter_connected": reporter_connected(status),
             "moved_hosts": moved_hosts(status),
@@ -988,6 +996,34 @@ class AgentTrafficConnections:
         from tin_lite.organic_system_activities import founder_timezone
 
         return await founder_timezone(self.db, project_id)
+
+    # ----- the page
+
+    async def page(self, project_id: UUID, view: str) -> dict[str, Any]:
+        """The Analytics page for one tab: the card's state (which asks for status when due) and,
+        once a visit has arrived, Tin's stored report for Today, Yesterday or the last 7 days."""
+
+        if view not in PAGE_VIEWS:
+            raise IntegrationInputError("Choose today, yesterday or week")
+        connection = await self.db.get_integration_connection(
+            project_id=project_id, provider_key=PROVIDER
+        )
+        card = await self.card(project_id, connection)
+        tz = await self.timezone(project_id)
+        result: dict[str, Any] = {"card": card, "view": view, "tz": tz, "report": None}
+        if connection is None or card["state"] in {"unavailable", "not_set_up", "waiting"}:
+            return result
+        period, back = PAGE_VIEWS[view]
+        day = datetime.now(ZoneInfo(tz)).date() - timedelta(days=back)
+        try:
+            stored = await self.report(project_id, period=period, day=day)
+        except IntegrationError as exc:
+            # A first read that failed has no stored copy to fall back on.
+            result["error"] = getattr(exc, "code", None) or "unavailable"
+            return result
+        result.update(stored or {})
+        result["date"] = day.isoformat()
+        return result
 
     # ----- reports
 

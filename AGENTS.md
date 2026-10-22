@@ -106,8 +106,8 @@ outside marketing, or were written without ever being run. Full rules:
   by name, DCR success or membership alone, or override conflicting signed claims.
   Keep MCP and connection setup on the shared verifier; browser sessions stay separate.
 - Dashboard routes are ordinary paths: /system, /chat, /activity, /decisions, /people,
-  /files, /integrations and /billing. Use the History API and explicit FastAPI shell routes,
-  not hash routing or a catch-all that intercepts APIs, MCP, webhooks or callbacks.
+  /analytics, /files, /integrations and /billing. Use the History API and explicit FastAPI
+  shell routes, not hash routing or a catch-all that intercepts APIs, MCP, webhooks or callbacks.
 - TIN_LITE_PUBLIC_URL is the configured service origin. Optional TIN_LITE_APP_URL
   defaults to it. Legacy-origin compatibility is inbound only; it must never supply
   new service links. Keep issuer, memberships and validated auth returns unchanged

@@ -523,7 +523,7 @@ def registered_integrations() -> tuple[IntegrationDefinition, ...]:
         ),
         IntegrationDefinition(
             key=AGENT_TRAFFIC_PROVIDER,
-            name="Analytics",
+            name="Tin Analytics",
             badge="AN",
             description=(
                 "See who visits your site, including AI agents, crawlers and visits from "
