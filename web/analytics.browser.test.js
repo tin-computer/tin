@@ -248,7 +248,7 @@ test("page: without the reporter there is no request section", {timeout: 120000}
   const yesterday = fixture("report_day.json");
   yesterday.requests = null;
   yesterday.came_from = [];
-  yesterday.regions = [{name: "Asia", visits: 5}, {name: "Europe", visits: 4}, {name: "Africa", visits: 2}, {name: "America", visits: 1}];
+  yesterday.regions = [{name: "America", visits: 304}, {name: "Europe", visits: 247}, {name: "Asia", visits: 120}, {name: "Australia", visits: 22}, {name: "Africa", visits: 15}, {name: "Pacific", visits: 4}, {name: "UTC", visits: 3}];
   yesterday.notes = ["The script can't see crawlers and assistants that don't run scripts.", ...yesterday.notes.slice(1)];
   await open({integrations: [live], analytics: {pages: {today: pageOf("today", yesterday, live)}, answer: () => ({})}}, "/analytics", async page => {
     await page.locator(".analytics-tiles").waitFor();
@@ -260,10 +260,16 @@ test("page: without the reporter there is no request section", {timeout: 120000}
     const cameFrom = page.locator(".analytics-table", {hasText: "Came from"});
     assert.deepEqual(await cameFrom.locator(".analytics-row:not(.is-head)").allInnerTexts(), [
       "No visits followed a link from another site",
-      "Regions, from browser time zones\nAsia 5 · Europe 4 · Africa 2 · America 1",
+      "Regions, from browser time zones\nAmerica 304 · Europe 247 · Asia 120 · Australia 22 · Africa 15 · Pacific 4 · UTC 3",
     ]);
     const label = cameFrom.locator(".is-regions .is-label");
     assert.equal(await label.evaluate(node => node.scrollWidth <= node.clientWidth), true);
+    // Seven regions stay inside the table, wrapping when they must.
+    assert.equal(await cameFrom.evaluate(table => {
+      const edge = table.getBoundingClientRect().right;
+      const regions = table.querySelector(".analytics-regions");
+      return regions.getBoundingClientRect().right <= edge && regions.scrollWidth <= regions.clientWidth;
+    }), true);
   });
 });
 
