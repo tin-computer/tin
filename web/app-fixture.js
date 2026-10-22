@@ -117,7 +117,9 @@ function noted(person) {
   }
 }
 
-export async function serveApp({decisionCount = 4, people = syntheticPeople(), engagers = false, visitors = false, integrations = [], removed = [], requests = null, requestWrites = []} = {}) {
+// `analytics` answers the Analytics page and card: {pages: {today, yesterday, week}, writes: [],
+// answer(action, body) → {status, body}} for the card's setup and address requests.
+export async function serveApp({decisionCount = 4, people = syntheticPeople(), engagers = false, visitors = false, integrations = [], removed = [], requests = null, requestWrites = [], analytics = null} = {}) {
   const project = {id: "project", name: "Example Co", workspace_id: "ws", workspace_name: "Example", member_count: 1, hidden: false};
   const catalog = [{id: "wf-answer", key: "content.generate", title: "Draft planned content", description: "Draft the next planned page for review.", definition: {schedule_modes: ["weekly", "on_demand"]}}];
   // The workflow that finds people is offered only to some projects; People shows with it.
@@ -133,7 +135,7 @@ export async function serveApp({decisionCount = 4, people = syntheticPeople(), e
   const server = http.createServer(async (request, response) => {
     const url = new URL(request.url, "http://localhost");
     const send = value => {response.setHeader("Content-Type", "application/json"); response.end(JSON.stringify(value));};
-    if (/^\/(?:system|chat|activity|decisions|people|files|file|integrations)?$/.test(url.pathname)) {
+    if (/^\/(?:system|chat|activity|decisions|people|analytics|files|file|integrations)?$/.test(url.pathname)) {
       const html = (await fs.readFile(path.join(assets, "index.html"), "utf8"))
         .replaceAll("{{ASSET_VERSION}}", "test").replaceAll("{{CLERK_PUBLISHABLE_KEY}}", "")
         .replaceAll("{{BROWSER_LOCK_ENABLED}}", "false").replaceAll("{{MCP_URL}}", "https://app.tin.test/mcp")
@@ -255,6 +257,17 @@ export async function serveApp({decisionCount = 4, people = syntheticPeople(), e
         requests.batches = requests.batches.filter(batch => batch.id !== decided[1]);
         return send({status: decided[2] === "approve" ? "approved" : "discarded", queued: body.people?.length || 0});
       }
+    }
+    const analyticsAction = url.pathname.match(/^\/api\/projects\/[^/]+\/integrations\/analytics\.agent_traffic\/(setup|address)$/);
+    if (analytics && request.method === "POST" && analyticsAction) {
+      const body = await read();
+      analytics.writes?.push({action: analyticsAction[1], body});
+      const answer = analytics.answer(analyticsAction[1], body);
+      response.statusCode = answer.status || 200;
+      return send(answer.body);
+    }
+    if (analytics && request.method === "GET" && /^\/api\/projects\/[^/]+\/analytics$/.test(url.pathname)) {
+      return send(analytics.pages[url.searchParams.get("view") || "today"]);
     }
     // Disconnecting marks the connection gone, as the API does, and records which.
     const integrationPath = url.pathname.match(/^\/api\/projects\/[^/]+\/integrations\/([^/]+)$/);

@@ -2298,6 +2298,15 @@ async def refresh_stripe_key(
     return _integration_view(service._definition(STRIPE_PROVIDER), connection, configured=True)
 
 
+def _analytics_http_error(exc: IntegrationError) -> HTTPException:
+    """The card's refusals keep their code (such as `staging_limit`) beside Tin's sentence."""
+    error = _integration_http_error(exc)
+    code = getattr(exc, "code", None)
+    if code is None:
+        return error
+    return HTTPException(error.status_code, detail={"message": error.detail, "code": code})
+
+
 async def _analytics_view(runtime, project_id: UUID) -> IntegrationView:
     service = runtime.integrations
     connection = await runtime.database.get_integration_connection(
@@ -2331,7 +2340,7 @@ async def set_up_analytics(
             url=payload.url if payload is not None else None,
         )
     except IntegrationError as exc:
-        raise _integration_http_error(exc) from None
+        raise _analytics_http_error(exc) from None
     return await _analytics_view(request.app.state.runtime, project_id)
 
 
@@ -2353,7 +2362,7 @@ async def count_analytics_host(
             project_id=project_id, clerk_user_id=user.clerk_user_id, host=payload.host
         )
     except IntegrationError as exc:
-        raise _integration_http_error(exc) from None
+        raise _analytics_http_error(exc) from None
     return await _analytics_view(request.app.state.runtime, project_id)
 
 

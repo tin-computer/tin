@@ -67,7 +67,12 @@ another host.
 | `quiet` | Pages before, none in 7 days. |
 | `needs_attention` | A read got `401` or `404` without Tin asking to stop. **Set up again** sends PUT. |
 
-The card's data comes from `GET /api/projects/{id}/integrations` (the `analytics` field) and
+The card is **Tin Analytics** in Integrations (`app.js`, `renderAnalyticsCard`; Paper CARD-1 to
+CARD-4 on the "Analytics · daily report" page). Configure opens rows for the address (with the
+offer to count a moved host), the script (its line shown on request) and, once records arrive,
+the reporter. Stop measuring confirms in the card's foot; only that confirmation's "Stop and
+delete" is filled. The card's data comes from `GET /api/projects/{id}/integrations` (the
+`analytics` field) and
 `POST .../integrations/analytics.agent_traffic/refresh`. Set up is `POST .../setup` (with `url`
 only for a project without Start here's address), and counting a moved host is
 `POST .../address` with `host`.
@@ -78,6 +83,36 @@ for each project while the site is waiting. Otherwise Tin shows its stored copy 
 once it is more than ten minutes old. A claim on `agent_traffic_sites.status_claimed_at` keeps
 that true across processes. A `429` waits for its `retry-after`; an outage waits a minute,
 doubling up to an hour. Meanwhile the card shows the stored copy with `stale: true`.
+
+## The Analytics page
+
+`/analytics` (`analytics.js`, `analytics.css`; Paper REP-V2, V2b, V2c, V2d and V2e) shows in the
+rail once the project has set analytics up; before that the card is the way in. It reads
+`GET /api/projects/{id}/analytics?view=today|yesterday|week`: the card's state (opening the page
+asks for status when it is due, as opening the card does) and, once a visit has arrived, Tin's
+stored report for the tab, in the founder's time zone. Today and Yesterday read a day; the last 7
+days read a week ending today.
+
+- While no visit has arrived, the page has no tabs: it shows the script line, where it goes, the
+  CSP entries and what's counted.
+- Four numbers: visits, page views, visits from AI assistants (each with its change from the
+  period before) and automated browsers, named only where the report's `named` list says so.
+  Declared crawlers stay in the chart's legend.
+- Hour by hour for a day and day by day for a week, by kind of visit; the detector's split sits
+  under it, marked provisional. Pages, where visits came from (an AI assistant's site is tagged)
+  and regions.
+- With the request reporter: page loads by class ("verified bots", "named bots, unconfirmed",
+  "other bots", and browser-like loads with how many never ran the script), the companies that
+  asked for pages, and the pages AI companies loaded, split by company as `ai_pages` gives them.
+- The needs-you bar shows the report's `needs_you` text as it is, with Count instead for a moved
+  host. A withheld number is a dash, and the report's notes close the page in small print.
+
+## MCP
+
+`list_integrations` and `get_integration` carry the card's state as `analytics`.
+`get_site_analytics(project_id, period, date)` returns Tin's stored report (`day` or `week`,
+`date` in the founder's time zone, today by default) with its `markdown` and the `comparison`.
+Neither returns a token.
 
 ## Stored reports and comparisons
 
