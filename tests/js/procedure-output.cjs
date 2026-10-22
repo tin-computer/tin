@@ -21,7 +21,7 @@ const context = vm.createContext({
   main: {},
   window: { TinMarkdownViewer: { mount: (_main, _doc, options) => { actions = options; } },
     setTimeout: () => {} },
-  ALLOWED_VIEWS: new Set(["chat", "workflows", "activity", "decisions", "files", "integrations"]),
+  ALLOWED_VIEWS: new Set(["workflows", "activity", "decisions", "files", "integrations"]),
   URLSearchParams,
   isCampaignRevisionReview: () => false,
   supportsArticleFeedback: () => false,
@@ -93,5 +93,5 @@ assert.equal(
 );
 const pending = { id: "pending", status: "running" };
 context.state.runs.push(pending);
-context.openRunArtifact("pending", "chat");
-assert.deepEqual(calls.pop(), ["pending", "chat", "canonical"]);
+context.openRunArtifact("pending", "workflows");
+assert.deepEqual(calls.pop(), ["pending", "workflows", "canonical"]);

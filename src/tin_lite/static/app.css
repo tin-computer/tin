@@ -165,7 +165,6 @@
   --mono: "Geist Mono", "SFMono-Regular", Consolas, monospace;
   --rail: 248px;
   --top-menu-height: 105px;
-  --chat: 680px;
   --work: 1120px;
   --radius-chip: 4px;
   --radius-card: 8px;
@@ -1904,198 +1903,6 @@ html[data-theme="dark"] .markdown-logo::before {
   font-size: 16px;
 }
 
-.chat-view {
-  display: flex;
-  height: 100svh;
-  justify-content: center;
-  overflow: hidden;
-  padding: 22px 40px 0;
-}
-
-.chat-sheet {
-  display: flex;
-  width: min(100%, var(--chat));
-  height: calc(100svh - 22px);
-  min-height: 0;
-  flex-direction: column;
-}
-
-.live-indicator {
-  display: flex;
-  align-items: center;
-  gap: 6px;
-  color: var(--accent-deep);
-  font-family: var(--mono);
-  font-size: 11px;
-  line-height: 14px;
-}
-
-.chat-thread {
-  display: flex;
-  min-height: 0;
-  flex: 1;
-  flex-direction: column;
-  gap: 24px;
-  overflow-y: auto;
-  padding: 34px 40px 18px;
-  scroll-behavior: smooth;
-  scrollbar-width: none;
-}
-
-.chat-thread::-webkit-scrollbar {
-  display: none;
-}
-
-.chat-thread > :first-child {
-  margin-top: auto;
-}
-
-.empty-chat {
-  display: flex;
-  flex: 1;
-  flex-direction: column;
-  align-items: center;
-  justify-content: center;
-  padding-bottom: 40px;
-  text-align: center;
-}
-
-.empty-chat h1 {
-  max-width: 520px;
-  margin: 0;
-  font-size: 32px;
-  letter-spacing: -0.02em;
-  line-height: 38px;
-}
-
-.chat-turn {
-  display: flex;
-  flex-direction: column;
-}
-
-.chat-turn.is-user {
-  align-items: flex-end;
-  gap: 4px;
-  padding-left: 120px;
-  text-align: right;
-}
-
-.chat-turn.is-agent {
-  align-items: flex-start;
-  gap: 10px;
-}
-
-.turn-text {
-  max-width: 560px;
-  margin: 0;
-  font-size: 17px;
-  line-height: 25px;
-  white-space: pre-wrap;
-}
-
-.turn-time {
-  color: var(--ink-muted);
-  font-family: var(--mono);
-  font-size: 11px;
-  line-height: 14px;
-}
-
-.tin-avatar {
-  display: grid;
-  width: 34px;
-  height: 34px;
-  place-items: center;
-  background: var(--avatar-soft);
-  border-radius: var(--radius-pill);
-  font-size: 14px;
-  font-weight: 700;
-  line-height: 18px;
-}
-
-.turn-typing {
-  display: inline-flex;
-  align-items: center;
-  gap: 5px;
-  min-height: 18px;
-  padding: 1px 2px;
-}
-
-.turn-typing > span {
-  width: 6px;
-  height: 6px;
-  background: var(--ink-secondary);
-  border-radius: var(--radius-pill);
-  opacity: 0.28;
-  animation: tin-typing-wave 1.15s ease-in-out infinite;
-}
-
-.turn-typing > span:nth-child(2) {
-  animation-delay: 120ms;
-}
-
-.turn-typing > span:nth-child(3) {
-  animation-delay: 240ms;
-}
-
-@keyframes tin-typing-wave {
-  0%,
-  60%,
-  100% {
-    opacity: 0.28;
-    transform: translateY(0);
-  }
-
-  30% {
-    opacity: 0.82;
-    transform: translateY(-2px);
-  }
-}
-
-.run-receipt {
-  display: flex;
-  width: min(100%, 560px);
-  align-items: center;
-  gap: 12px;
-  padding: 12px 16px;
-  background: rgb(var(--ink-rgb) / 4%);
-  border: 1px solid var(--card-border);
-  border-radius: var(--radius-card);
-}
-
-.run-receipt code {
-  min-width: 0;
-  flex: 1;
-  overflow: hidden;
-  color: var(--ink-secondary);
-  font-family: var(--mono);
-  font-size: 11.5px;
-  line-height: 16px;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
-.run-receipt a,
-.run-receipt button {
-  flex: 0 0 auto;
-  padding: 0;
-  background: transparent;
-  color: var(--accent-text);
-  font-size: 12.5px;
-  font-weight: 700;
-  line-height: 16px;
-  text-decoration: none;
-  cursor: pointer;
-}
-
-.chat-composer {
-  display: flex;
-  flex: 0 0 auto;
-  align-items: flex-end;
-  gap: 12px;
-  padding: 16px 36px 22px;
-  background: var(--paper-bg);
-}
-
 .send-button {
   display: grid;
   flex: 0 0 auto;
@@ -2321,7 +2128,7 @@ html[data-theme="dark"] .markdown-logo::before {
 /* One "Open" everywhere a row opens what it describes: a small bordered button, not a text link
    with an arrow. The container selectors outrank the plain-text button resets of each row. */
 .open-button,
-:is(.run-receipt, .activity-action, .decision-detail-card > header, .workflow-card) .open-button {
+:is(.activity-action, .decision-detail-card > header, .workflow-card) .open-button {
   display: inline-flex;
   flex: 0 0 auto;
   align-items: center;
@@ -2345,7 +2152,7 @@ html[data-theme="dark"] .markdown-logo::before {
 }
 
 .open-button:hover,
-:is(.run-receipt, .activity-action, .decision-detail-card > header, .workflow-card) .open-button:hover {
+:is(.activity-action, .decision-detail-card > header, .workflow-card) .open-button:hover {
   background: var(--paper-well);
   border-color: rgb(var(--ink-rgb) / 35%);
   text-decoration: none;
@@ -8053,7 +7860,6 @@ html[data-theme="dark"] .integration-badge.is-monochrome::before {
     flex-basis: auto;
   }
 
-  .chat-view,
   .workspace-view,
   .activity-view,
   .product-view,
@@ -8061,17 +7867,6 @@ html[data-theme="dark"] .integration-badge.is-monochrome::before {
   .project-file-view,
   .markdown-viewer.is-in-app {
     min-height: calc(100svh - var(--top-menu-height));
-  }
-
-  .chat-view {
-    height: calc(100svh - var(--top-menu-height));
-    min-height: 0;
-    padding: 0;
-  }
-
-  .chat-sheet {
-    height: 100%;
-    min-height: 0;
   }
 
   .task-header,
@@ -8131,27 +7926,6 @@ html[data-theme="dark"] .integration-badge.is-monochrome::before {
   .activity-view,
   .product-view {
     padding: 24px 20px 48px;
-  }
-
-  .chat-view {
-    height: calc(100svh - var(--top-menu-height));
-    min-height: 0;
-    padding: 0;
-  }
-
-  .chat-sheet {
-    height: 100%;
-    min-height: 0;
-  }
-
-  .chat-thread {
-    padding-right: 20px;
-    padding-left: 20px;
-  }
-
-  .chat-composer {
-    padding-right: 16px;
-    padding-left: 16px;
   }
 
   .workspace-header {
@@ -8426,11 +8200,6 @@ html[data-theme="dark"] .integration-badge.is-monochrome::before {
     font-size: 13px;
   }
 
-  .chat-turn.is-user {
-    padding-left: 40px;
-  }
-
-  .empty-chat h1,
   .workspace-header h1 {
     font-size: 28px;
     line-height: 34px;

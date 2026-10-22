@@ -97,7 +97,7 @@ test("lock page: no workflow yet locks the rail and sends the person to their co
     assert.equal(await page.locator(".lock-page-head p").textContent(), "Your agent reads your repo, picks the workflows that fit and starts the first ones. This page follows along.");
     assert.equal(await page.getByText("Browser setup is not available yet.").count(), 0);
     // Every rail item is dimmed and dead; the coding-agent block is gone because the page is that block.
-    assert.deepEqual(await page.locator(".nav-list .nav-item").evaluateAll(items => items.map(item => item.disabled)), [true, true, true, true, true, true]);
+    assert.deepEqual(await page.locator(".nav-list .nav-item").evaluateAll(items => items.map(item => item.disabled)), [true, true, true, true, true]);
     assert.equal(await page.locator("#agent-rail").isHidden(), true);
     assert.equal(await page.locator("#project-switcher").isDisabled(), false);
     // Three steps; the first holds the install line and is the only active one.
@@ -337,7 +337,7 @@ test("lock page: one workflow, one run, or the setting off, renders System as be
         await page.locator(".system-view").waitFor();
         assert.equal(await page.locator(".lock-page").count(), 0);
         assert.equal(await page.locator("#agent-rail").isVisible(), true);
-        assert.deepEqual(await page.locator(".nav-list .nav-item").evaluateAll(items => items.map(item => item.disabled)), [false, false, false, false, false, false]);
+        assert.deepEqual(await page.locator(".nav-list .nav-item").evaluateAll(items => items.map(item => item.disabled)), [false, false, false, false, false]);
         assert.deepEqual(writes.filter(item => item.path === "/api/events/lock-page"), []);
         assert.deepEqual(errors, []);
         await context.close();

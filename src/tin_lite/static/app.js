@@ -62,7 +62,7 @@ const MCP_URL = document.documentElement.dataset.mcpUrl?.startsWith("http")
 function configuredOrigin(value) {
   return value && !value.startsWith("{{") ? new URL(value).origin : window.location.origin;
 }
-const ALLOWED_VIEWS = new Set(["chat", "workflows", "activity", "decisions", "people", "files", "integrations"]);
+const ALLOWED_VIEWS = new Set(["workflows", "activity", "decisions", "people", "files", "integrations"]);
 if (BILLING_ENABLED) ALLOWED_VIEWS.add("billing");
 // One small History API router. Legacy bookmarks are input-only compatibility;
 // new links use paths. Document heading fragments are not application routes.
@@ -71,7 +71,8 @@ const DASHBOARD_ROUTE = /^(?:system|workflows|chat|activity|decisions|people|fil
 function routeUrl(route, base = window.location.href, carry = null) {
   const url = new URL(base);
   const [path, query = ""] = route.replace(/^#?\/?/, "").split("?", 2);
-  url.pathname = `/${path === "workflows" ? "system" : path}`;
+  // Chat left the dashboard; old /chat links land on System.
+  url.pathname = `/${["workflows", "chat"].includes(path) ? "system" : path}`;
   if (carry) for (const key of [...url.searchParams.keys()]) if (!carry.includes(key)) url.searchParams.delete(key);
   for (const key of ["return", "taskPath", "source", "path", "revision", "reviewRun", "compareRun", "back", "x_draft", "x_run", "x_back", "person"]) url.searchParams.delete(key);
   for (const [key, value] of new URLSearchParams(query)) url.searchParams.set(key, value);
@@ -83,7 +84,7 @@ function normalizeDashboardUrl() {
   const legacy = url.hash.replace(/^#\/?/, "");
   if (url.pathname === "/" && DASHBOARD_ROUTE.test(legacy)) {
     window.history.replaceState(null, "", routeUrl(legacy));
-  } else if (url.pathname === "/" || url.pathname === "/workflows") {
+  } else if (["/", "/workflows", "/chat"].includes(url.pathname)) {
     url.pathname = "/system";
     window.history.replaceState(null, "", `${url.pathname}${url.search}${url.hash}`);
   }
@@ -237,7 +238,6 @@ const state = {
   systemSummary: null,
   runs: [],
   activity: [],
-  messages: [],
   integrations: [],
   decisions: [],
   // Proposed website changes and open judgment calls wait in Decisions beside run reviews.
@@ -302,9 +302,6 @@ const state = {
   projectCreateWorkspaceId: null,
   projectCreateRequestId: null,
   projectCreatePersonal: false,
-  chatDraft: "",
-  chatDrafts: new Map(),
-  sending: false,
   pendingReviewRunIds: new Set(),
   // The System calendar: the week on screen and the weeks already read (see ensureWeek).
   week: null,
@@ -342,7 +339,7 @@ function fileRouteFromLocation() {
   const compareRun = values.get("compareRun");
   return { path: filePath, revision, reviewRunId: reviewRunId || null,
     compareRun: /^[0-9a-f-]{36}$/i.test(compareRun || "") ? compareRun : null,
-    compareReturn: ["decisions", "activity", "workflows", "chat"].includes(values.get("return")) ? values.get("return") : "decisions",
+    compareReturn: ["decisions", "activity", "workflows"].includes(values.get("return")) ? values.get("return") : "decisions",
     backTo: ALLOWED_VIEWS.has(values.get("back") || "") ? values.get("back") : null,
     backToDecision: values.get("back") === "decisions",
     source: values.get("source") === "retained" && compareRun ? "retained" : "canonical",
@@ -354,7 +351,7 @@ function compareRouteFromLocation() {
   const match = path.match(/^compare\/([0-9a-f-]{36})$/i);
   if (!match) return null;
   const returnView = new URLSearchParams(query).get("return");
-  return { runId: match[1], returnView: ["decisions", "activity", "workflows", "chat"].includes(returnView) ? returnView : "decisions" };
+  return { runId: match[1], returnView: ["decisions", "activity", "workflows"].includes(returnView) ? returnView : "decisions" };
 }
 
 function taskRouteFromLocation() {
@@ -951,13 +948,10 @@ function workflowSearchMatch(value, query, className) {
 function renderRegistryWorkflows(registry, visibleRegistry, query, rawQuery) {
   if (!visibleRegistry.length) {
     const displayQuery = rawQuery.trim();
-    const ask = displayQuery.length >= 3
-      ? `<button type="button" data-ask-luna-workflow>Ask Luna for a ${escapeHtml(displayQuery)} workflow →</button>`
-      : "";
     return `<div class="registry-search-empty">
       <strong>No workflows match “${escapeHtml(displayQuery)}”.</strong>
       <span>Search looks at workflow names and ids across all ${registry.length} in the registry.</span>
-      <div><button type="button" data-clear-workflow-search>Clear search</button>${ask}</div>
+      <div><button type="button" data-clear-workflow-search>Clear search</button></div>
     </div>`;
   }
   const totals = new Map(
@@ -1936,7 +1930,6 @@ function render() {
     return;
   }
   if (!hasProject) return;
-  if (state.view === "chat") renderChat();
   if (state.view === "workflows" && !document.querySelector(".system-config-form")) renderWorkflows();
   if (state.view === "activity") renderActivity();
   if (state.view === "decisions") renderDecisions();
@@ -1975,193 +1968,6 @@ function renderPeople() {
 function personalProjectName() {
   const name = String(state.signedInName || "").trim().slice(0, 60);
   return name ? `${name}’s project` : "My project";
-}
-
-function renderChat({ scrollToLatest = false } = {}) {
-  const hasTurns = state.messages.length || state.sending;
-  const turns = hasTurns
-    ? `${state.messages.map(renderChatTurn).join("")}${state.sending ? renderTypingTurn() : ""}`
-    : `<div class="empty-chat">
-        <h1>What should we move forward?</h1>
-      </div>`;
-
-  let thread = document.querySelector("#chat-thread");
-  let form = document.querySelector("#chat-form");
-  let field = document.querySelector("#message");
-  let sendButton = form?.querySelector(".send-button");
-  const previousScrollTop = thread?.scrollTop || 0;
-  const followLatest = scrollToLatest || !thread
-    || thread.scrollHeight - thread.clientHeight - previousScrollTop <= 2;
-  if (!thread || !form || !field || !sendButton) {
-    main.innerHTML = `<section class="chat-view">
-      <div class="chat-sheet">
-        <div class="chat-thread" id="chat-thread" aria-live="polite" aria-busy="${state.sending}">${turns}</div>
-        <form class="chat-composer" id="chat-form">
-          <textarea class="composer-field" id="message" rows="1" maxlength="4000" placeholder="Message Tin…" aria-label="Message Tin">${escapeHtml(state.chatDraft)}</textarea>
-          <button class="send-button" type="submit" aria-label="Send message" ${state.sending ? "disabled" : ""}>
-            <svg aria-hidden="true" viewBox="0 0 18 18"><path d="M9 15V4M4.5 8L9 3.5 13.5 8" /></svg>
-          </button>
-        </form>
-      </div>
-    </section>`;
-    thread = document.querySelector("#chat-thread");
-    form = document.querySelector("#chat-form");
-    field = document.querySelector("#message");
-    sendButton = form.querySelector(".send-button");
-    form.addEventListener("submit", (event) => {
-      event.preventDefault();
-      sendMessage(field.value);
-    });
-    field.addEventListener("keydown", (event) => {
-      if (event.key === "Enter" && !event.shiftKey) {
-        event.preventDefault();
-        form.requestSubmit();
-      }
-    });
-    field.addEventListener("input", () => {
-      state.chatDraft = field.value;
-      if (state.project) state.chatDrafts.set(state.project.id, field.value);
-      resizeChatComposer(field);
-    });
-    resizeChatComposer(field);
-  } else {
-    thread.innerHTML = turns;
-    thread.setAttribute("aria-busy", String(state.sending));
-    sendButton.disabled = state.sending;
-    if (field.value !== state.chatDraft) {
-      field.value = state.chatDraft;
-      resizeChatComposer(field);
-    }
-  }
-  document.querySelectorAll("[data-open-run]").forEach((button) => {
-    button.addEventListener("click", () => navigate("workflows"));
-  });
-  document.querySelectorAll("[data-open-task]").forEach((button) => {
-    button.addEventListener("click", () => openTask(button.dataset.openTask));
-  });
-  document.querySelectorAll("[data-artifact-run]").forEach((button) => {
-    button.addEventListener("click", () => openRunArtifact(button.dataset.artifactRun, "chat"));
-  });
-  // Polling and arriving replies must not interrupt someone reading earlier text.
-  thread.scrollTo({
-    top: followLatest ? thread.scrollHeight : previousScrollTop,
-    behavior: "instant",
-  });
-}
-
-function resizeChatComposer(field) {
-  field.style.height = "auto";
-  field.style.height = `${Math.min(field.scrollHeight, 140)}px`;
-}
-
-function renderChatTurn(turn) {
-  if (turn.role === "user") {
-    return `<article class="chat-turn is-user">
-      <p class="turn-text">${escapeHtml(turn.message)}</p>
-      <time class="turn-time">${escapeHtml(turn.time)}</time>
-    </article>`;
-  }
-  const run = turn.run;
-  let receipt = "";
-  if (run) {
-    const workflow = workflowForRun(run);
-    let action = run.workflow_name === "project.task"
-      ? `<button class="open-button" type="button" data-open-task="${escapeHtml(run.id)}">Open</button>`
-      : `<button class="open-button" type="button" data-open-run="${escapeHtml(run.id)}">Open</button>`;
-    if (run.retained_output && !run.canonical_commit_sha) {
-      action = `<button type="button" data-artifact-run="${escapeHtml(run.id)}">${retainedOutputLabel(run)} →</button>`;
-    } else if (availableRunOutput(run)) {
-      action = `<button class="open-button" type="button" data-artifact-run="${escapeHtml(run.id)}">Open</button>`;
-    }
-    receipt = `<div class="run-receipt">
-      <span class="status-dot is-${escapeHtml(run.status)}"></span>
-      <code>${escapeHtml(shortRunId(run.id))} · ${escapeHtml(workflow?.key || run.workflow_name)} · ${escapeHtml(run.status)}</code>
-      ${action}
-    </div>`;
-  }
-  return `<article class="chat-turn is-agent">
-    <div class="tin-avatar" aria-hidden="true">t</div>
-    <p class="turn-text">${escapeHtml(turn.message)}</p>
-    ${receipt}
-  </article>`;
-}
-
-function renderTypingTurn() {
-  return `<article class="chat-turn is-agent">
-    <div class="tin-avatar" aria-hidden="true">t</div>
-    <span class="turn-typing" role="status" aria-label="Tin is typing">
-      <span aria-hidden="true"></span>
-      <span aria-hidden="true"></span>
-      <span aria-hidden="true"></span>
-    </span>
-  </article>`;
-}
-
-async function sendMessage(rawMessage) {
-  const draft = String(rawMessage || "");
-  const message = draft.trim();
-  if (!message || state.sending || !state.project) return;
-  const projectId = state.project.id;
-  const generation = state.projectGeneration;
-  const requestId = window.crypto.randomUUID();
-  state.messages.push({ role: "user", message, time: clockTime(), requestId });
-  state.chatDraft = "";
-  state.chatDrafts.set(projectId, "");
-  state.sending = true;
-  renderChat({ scrollToLatest: true });
-  try {
-    const result = await api("/api/chat", {
-      method: "POST",
-      body: JSON.stringify({
-        project_id: projectId,
-        request_id: requestId,
-        message,
-      }),
-    });
-    if (generation !== state.projectGeneration || state.project?.id !== projectId) return;
-    if (result.run) upsertRun(result.run);
-    state.messages.push({
-      role: "agent",
-      message: result.message,
-      run: result.run,
-      responseId: result.response_id,
-      requestId: result.request_id,
-    });
-    schedulePolling();
-  } catch (error) {
-    if (generation !== state.projectGeneration || state.project?.id !== projectId) return;
-    if (!state.chatDraft) {
-      state.chatDraft = draft;
-      state.chatDrafts.set(projectId, draft);
-    }
-    state.messages.push({
-      role: "agent",
-      message: `I couldn't complete that request: ${error.message}`,
-      run: null,
-    });
-  } finally {
-    if (generation !== state.projectGeneration || state.project?.id !== projectId) return;
-    state.sending = false;
-    if (state.view === "chat") renderChat();
-  }
-}
-
-function chatTurnFromMessage(item) {
-  if (item.role === "user") {
-    return {
-      role: "user",
-      message: item.content,
-      time: clockTime(item.created_at),
-      requestId: item.request_id,
-    };
-  }
-  return {
-    role: "agent",
-    message: item.content,
-    run: state.runs.find((run) => run.id === item.run_id) || null,
-    responseId: item.response_id,
-    requestId: item.request_id,
-  };
 }
 
 function clearWorkflowSearch() {
@@ -2217,18 +2023,6 @@ function bindWorkflowResultControls(root) {
   });
   root.querySelectorAll("[data-toggle-system-group]").forEach((button) => {
     button.addEventListener("click", () => toggleSystemGroup(button));
-  });
-  root.querySelectorAll("[data-ask-luna-workflow]").forEach((button) => {
-    button.addEventListener("click", () => {
-      const workflowQuery = state.workflowSearch.trim();
-      state.chatDraft = `Help me find or create a workflow for ${workflowQuery}.`;
-      navigate("chat");
-      window.requestAnimationFrame(() => {
-        const field = document.querySelector("#message");
-        field?.focus();
-        field?.setSelectionRange(field.value.length, field.value.length);
-      });
-    });
   });
   root.querySelectorAll("[data-start-workflow]").forEach((button) => {
     button.addEventListener("click", () => startWorkflow(button.dataset.startWorkflow, button));
@@ -7718,13 +7512,6 @@ function upsertRun(run) {
   else state.runs.unshift(run);
 }
 
-function updateMessageRuns() {
-  const runs = new Map(state.runs.map((run) => [run.id, run]));
-  for (const message of state.messages) {
-    if (message.run && runs.has(message.run.id)) message.run = runs.get(message.run.id);
-  }
-}
-
 function schedulePolling({ immediate = false } = {}) {
   window.clearTimeout(state.pollTimer);
   state.pollTimer = null;
@@ -7765,7 +7552,6 @@ function runsHaveChanged(previous, next) {
 
 function renderPolledRuns({ collectionsChanged, summaryChanged }) {
   updateRail();
-  if (state.view === "chat") renderChat();
   if (state.view === "workflows" && (collectionsChanged || summaryChanged)) renderWorkflows({ preserveEditor: true });
   if (state.view === "activity" && collectionsChanged) renderActivity();
   if (state.view === "decisions" && collectionsChanged) renderDecisions();
@@ -7808,7 +7594,6 @@ async function pollRuns() {
       state.taskDetail = taskDetail;
       upsertRun(taskDetail.run);
     }
-    updateMessageRuns();
     const expandedRun = state.expandedRun
       ? results.find((run) => run.id === state.expandedRun.runId)
       : null;
@@ -7888,7 +7673,6 @@ function resetProjectState(project) {
   const initialProjectLoad = !state.project;
   state.comparePage?.destroy();
   state.comparePage = null;
-  if (state.project) state.chatDrafts.set(state.project.id, state.chatDraft);
   window.clearTimeout(state.pollTimer);
   state.pollTimer = null;
   stopLockPolling();
@@ -7908,7 +7692,6 @@ function resetProjectState(project) {
   state.decisions = [];
   state.websiteChanges = [];
   state.judgmentCalls = [];
-  state.messages = [];
   state.integrations = [];
   state.billing = null;
   state.taskDetail = null;
@@ -7942,8 +7725,6 @@ function resetProjectState(project) {
   if (integrationProjectDialog.open) integrationProjectDialog.close();
   if (projectCreateDialog.open) projectCreateDialog.close();
   if (projectInviteDialog.open) projectInviteDialog.close();
-  state.chatDraft = state.chatDrafts.get(project.id) || "";
-  state.sending = false;
   state.pendingReviewRunIds = new Set();
   state.deferredReviewRunIds = [];
   state.pollInFlight = false;
@@ -7982,14 +7763,13 @@ async function loadProject(project, { announce = false, integrationReturn = null
     return [];
   });
   try {
-    const [workflows, projectWorkflows, systemSummary, runs, activity, decisions, messages, integrations, websiteChanges] = await Promise.all([
+    const [workflows, projectWorkflows, systemSummary, runs, activity, decisions, integrations, websiteChanges] = await Promise.all([
       api(`/api/workflows?project_id=${projectId}`),
       api(`/api/projects/${projectId}/workflows`),
       api(`/api/projects/${projectId}/system`),
       api(`/api/projects/${projectId}/runs?limit=100`),
       api(`/api/projects/${projectId}/activity?limit=100`),
       decisionsRequest,
-      api(`/api/projects/${projectId}/chat/messages?limit=100`),
       api(`/api/projects/${projectId}/integrations`),
       fetchWebsiteChanges(projectId),
     ]);
@@ -8005,7 +7785,6 @@ async function loadProject(project, { announce = false, integrationReturn = null
     state.websiteChanges = websiteChanges.changes;
     state.judgmentCalls = websiteChanges.questions;
     state.linkedInRequests = websiteChanges.requests;
-    state.messages = messages.map(chatTurnFromMessage);
     state.integrations = integrations;
     await loadRunWorkflows(allRuns);
     if (generation !== state.projectGeneration || state.project?.id !== project.id) return false;
