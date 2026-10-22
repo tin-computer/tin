@@ -66,6 +66,8 @@ X_PROVIDER = "social.x"
 LINKEDIN_POSTING_PROVIDER = "social.linkedin"
 # A founder's own GitHub account, through Tin's GitHub OAuth App (see github_account.py).
 GITHUB_USER_PROVIDER = "infra.github_user"
+# Visits to the founder's site through Agent Traffic's edge service (agent_traffic_connection.py).
+AGENT_TRAFFIC_PROVIDER = "analytics.agent_traffic"
 PROVIDER_KEYS = frozenset(
     {
         LINKEDIN_PROVIDER,
@@ -78,6 +80,7 @@ PROVIDER_KEYS = frozenset(
         X_PROVIDER,
         LINKEDIN_POSTING_PROVIDER,
         GITHUB_USER_PROVIDER,
+        AGENT_TRAFFIC_PROVIDER,
     }
 )
 # Read-only Stripe capabilities; each names the Stripe resources its operation reads.
@@ -92,6 +95,8 @@ STRIPE_CAPABILITIES = (
 POSTHOG_CAPABILITIES = ("query.read", "definitions.read", "insights.read")
 X_CAPABILITIES = ("x.posts.read", "x.posts.publish", "x.media.upload")
 LINKEDIN_POSTING_CAPABILITIES = ("linkedin.posts.publish", "linkedin.media.upload")
+# Reads of the project's own site; the site is always the connection's.
+AGENT_TRAFFIC_CAPABILITIES = ("status.read", "reports.read")
 ADS_CAPABILITIES = ("account.read", "campaigns.read", "campaigns.write")
 # Only what an approved list submission needs; nothing on the founder's own repositories.
 GITHUB_USER_CAPABILITIES = ("forks.write", "public_pull_requests.write", "public_issues.write")
@@ -516,6 +521,18 @@ def registered_integrations() -> tuple[IntegrationDefinition, ...]:
             capabilities=GITHUB_USER_CAPABILITIES,
             unlocks=("Awesome list submissions",),
         ),
+        IntegrationDefinition(
+            key=AGENT_TRAFFIC_PROVIDER,
+            name="Analytics",
+            badge="AN",
+            description=(
+                "See who visits your site, including AI agents, crawlers and visits from "
+                "AI assistants' answers."
+            ),
+            access_label="Visits to your site · no sign-in",
+            capabilities=AGENT_TRAFFIC_CAPABILITIES,
+            unlocks=("the Analytics page", "visits from AI assistants"),
+        ),
     )
 
 
@@ -718,6 +735,10 @@ class IntegrationService:
             from tin_lite.github_account import oauth_ready as github_oauth_ready
 
             return self._cipher is not None and github_oauth_ready(self._settings)
+        if provider_key == AGENT_TRAFFIC_PROVIDER:
+            from tin_lite.agent_traffic_connection import ready
+
+            return self._cipher is not None and ready(self._settings)
         if provider_key == ADS_PROVIDER:
             from tin_lite.google_ads import manager_oauth_client
 
@@ -780,8 +801,14 @@ class IntegrationService:
 
         return GitHubAccounts(self)
 
+    @property
+    def agent_traffic(self):
+        from tin_lite.agent_traffic_connection import AgentTrafficConnections
+
+        return AgentTrafficConnections(self)
+
     def definitions(self, connections, *, project_id=None):
-        from tin_lite import linkedin_posting
+        from tin_lite import agent_traffic_connection, linkedin_posting
         from tin_lite.connection_collection import enabled
         from tin_lite.project_connections import CUSTOM_KEY, custom_definition
 
@@ -789,6 +816,8 @@ class IntegrationService:
             LINKEDIN_PROVIDER: enabled,
             # Zernio bills Tin per connected account, so only listed projects see the card.
             LINKEDIN_POSTING_PROVIDER: linkedin_posting.enabled,
+            # A pilot until Agent Traffic's service has run on founder sites.
+            AGENT_TRAFFIC_PROVIDER: agent_traffic_connection.enabled,
         }
         return (
             *(
@@ -893,6 +922,18 @@ class IntegrationService:
                 if not linkedin_posting.enabled(self._settings, project_id):
                     raise IntegrationNotConfiguredError("LinkedIn posting is unavailable.")
                 continue
+            if requirement.provider_key == AGENT_TRAFFIC_PROVIDER:
+                from tin_lite import agent_traffic_connection
+
+                if not agent_traffic_connection.enabled(self._settings, project_id):
+                    raise IntegrationNotConfiguredError("Analytics is unavailable.")
+                if connection.credential_ciphertext is None or set(
+                    requirement.capabilities
+                ) - _granted(connection):
+                    raise IntegrationAuthorizationError(
+                        "Set up Analytics again before starting this workflow"
+                    )
+                continue
             if requirement.provider_key == X_PROVIDER:
                 if connection.credential_ciphertext is None or set(
                     requirement.capabilities
@@ -979,6 +1020,18 @@ class IntegrationService:
         if provider_key == LINKEDIN_POSTING_PROVIDER:
             return await self.linkedin_posting.start(
                 project_id=project_id, clerk_user_id=clerk_user_id
+            )
+        if provider_key == AGENT_TRAFFIC_PROVIDER:
+            # No sign-in: the founder presses Set up on the card, which shows what happens next.
+            from tin_lite import agent_traffic_connection
+            from tin_lite.product_urls import dashboard_url
+
+            if not agent_traffic_connection.enabled(self._settings, project_id):
+                raise IntegrationNotConfiguredError(
+                    "Analytics is not available for this project yet"
+                )
+            return ConnectStart(
+                authorization_url=f"{dashboard_url(self._settings)}/integrations?project={project_id}"
             )
         if provider_key == STRIPE_PROVIDER:
             # A restricted key is pasted only in Tin's own page, never through chat or MCP.
@@ -4474,6 +4527,14 @@ class IntegrationService:
             )
             if connection is not None:
                 await self.github_account.revoke(connection)
+        if provider_key == AGENT_TRAFFIC_PROVIDER:
+            connection = await self._database.get_integration_connection(
+                project_id=project_id, provider_key=provider_key
+            )
+            if connection is not None:
+                # Not best effort: the site's data has to be deleted, so the removal is queued
+                # durably and retried until the service accepts it, after the project is gone.
+                await self.agent_traffic.stop(connection)
         # Google (Search Console, Workspace) is not revoked upstream. Revoking any token ends
         # the founder's whole grant to Tin's app, which every other project they connected with
         # the same Google account shares. Deleting the stored credential below is the

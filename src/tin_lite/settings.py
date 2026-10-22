@@ -6,7 +6,7 @@ from binascii import Error as Base64Error
 from functools import cached_property
 from pathlib import Path
 from typing import Literal
-from urllib.parse import quote
+from urllib.parse import quote, urlsplit
 from uuid import UUID
 
 from pydantic import AliasChoices, Field, SecretStr, field_validator, model_validator
@@ -291,6 +291,36 @@ class Settings(BaseSettings):
             item.split("=", 1) for item in self.zernio_profile_map_raw.split(",") if item.strip()
         )
         return {str(UUID(project.strip())): profile.strip() for project, profile in pairs}
+
+    # Analytics through Agent Traffic's edge service; see docs/agent-traffic-connection.md.
+    # The service token reaches only the admin calls; set it in the host settings, never chat.
+    agent_traffic_url: str = Field(
+        default="https://edge.tin.computer", alias="TIN_LITE_AGENT_TRAFFIC_URL"
+    )
+    agent_traffic_service_token: SecretStr | None = Field(
+        default=None, alias="TIN_LITE_AGENT_TRAFFIC_SERVICE_TOKEN"
+    )
+    # A pilot: only these projects see the Analytics card.
+    agent_traffic_projects_raw: str = Field(default="", alias="TIN_LITE_AGENT_TRAFFIC_PROJECTS")
+
+    @field_validator("agent_traffic_url")
+    @classmethod
+    def _agent_traffic_url(cls, value: str) -> str:
+        parts = urlsplit(value.strip())
+        local = parts.hostname in {"127.0.0.1", "localhost"}
+        if (
+            parts.scheme not in ({"https", "http"} if local else {"https"})
+            or not parts.hostname
+            or parts.query
+            or parts.fragment
+            or parts.path not in {"", "/"}
+        ):
+            raise ValueError("TIN_LITE_AGENT_TRAFFIC_URL must be an https origin")
+        return value.strip().rstrip("/")
+
+    @property
+    def agent_traffic_projects(self) -> tuple[str, ...]:
+        return tuple(v.strip() for v in self.agent_traffic_projects_raw.split(",") if v.strip())
 
     private_workflow_projects_raw: str = Field(
         default="", alias="TIN_LITE_PRIVATE_WORKFLOW_PROJECTS"

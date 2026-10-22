@@ -30,6 +30,7 @@ from tin_lite.executor_gates import (
     paid_ads_gate,
 )
 from tin_lite.integrations import (
+    AGENT_TRAFFIC_PROVIDER,
     LINKEDIN_POSTING_PROVIDER,
     LINKEDIN_PROVIDER,
     connection_readiness,
@@ -66,7 +67,7 @@ def tin_state(
         {"provider_key": item.key, "name": item.name, "connected": item.key in connected}
         for item in registered_integrations()
         # These connections belong to separately enabled projects, not the starter plan.
-        if item.key not in {LINKEDIN_PROVIDER, LINKEDIN_POSTING_PROVIDER}
+        if item.key not in {LINKEDIN_PROVIDER, LINKEDIN_POSTING_PROVIDER, AGENT_TRAFFIC_PROVIDER}
     ]
     rows: list[dict[str, Any]] = []
     ordered = sorted(

@@ -1,0 +1,41 @@
+{
+  "project_ref": "tin:3f9c2a1e-7b4d-4c1a-9e2f-5a6b7c8d9e0f",
+  "site_id": "st-8k3m9q2x7v4c",
+  "state": "waiting",
+  "linked": false,
+  "url": "https://www.example.com",
+  "counted_hosts": [
+    "example.com",
+    "*.example.com"
+  ],
+  "script": "<script async src=\"https://edge.tin.computer/sdk/v1.js\" data-site=\"st-8k3m9q2x7v4c\"></script>",
+  "csp": {
+    "script-src": [
+      "https://edge.tin.computer"
+    ],
+    "connect-src": [
+      "https://edge.tin.computer"
+    ]
+  },
+  "read_token": "kq3VsyntheticReadTokenForTinTests0000000043",
+  "reporter": {
+    "env_name": "TIN_REPORTER_TOKEN",
+    "connected": false,
+    "variants": [
+      {
+        "variant": "nextjs",
+        "version": "1",
+        "url": "https://edge.tin.computer/reporter/v1/nextjs.js",
+        "sha256": "5f0c000000000000000000000000000000000000000000000000000000000000"
+      },
+      {
+        "variant": "cloudflare-worker",
+        "version": "1",
+        "url": "https://edge.tin.computer/reporter/v1/cloudflare-worker.js",
+        "sha256": "a91e111111111111111111111111111111111111111111111111111111111111"
+      }
+    ]
+  },
+  "created_at": "2026-10-21T09:14:02Z",
+  "updated_at": "2026-10-21T09:14:02Z"
+}

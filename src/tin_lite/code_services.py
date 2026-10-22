@@ -9,11 +9,17 @@ from datetime import UTC, datetime
 
 import httpx
 
-from tin_lite import managed_services, posthog_connection, stripe_connection
+from tin_lite import (
+    agent_traffic_connection,
+    managed_services,
+    posthog_connection,
+    stripe_connection,
+)
 from tin_lite.billing_contracts import BillingError, digest
 from tin_lite.connection_records import ServiceArgumentError
 from tin_lite.failures import billing_refusal
 from tin_lite.integrations import (
+    AGENT_TRAFFIC_PROVIDER,
     POSTHOG_PROVIDER,
     STRIPE_PROVIDER,
     IntegrationError,
@@ -67,6 +73,11 @@ OPERATIONS = {
         (POSTHOG_PROVIDER, name): (op.capability, op.arguments)
         for name, op in posthog_connection.OPERATIONS.items()
     },
+    # The project's own site through Analytics; the site is the connection's, never an argument.
+    **{
+        (AGENT_TRAFFIC_PROVIDER, name): (op.capability, op.arguments)
+        for name, op in agent_traffic_connection.OPERATIONS.items()
+    },
     # Services Tin holds the key for; see managed_services.py.
     **{key: (op.capability, op.arguments) for key, op in managed_services.OPERATIONS.items()},
 }
@@ -84,6 +95,7 @@ def _check_google_arguments(operation, args):
 ARGUMENT_CHECKS = {
     STRIPE_PROVIDER: stripe_connection.check_arguments,
     POSTHOG_PROVIDER: posthog_connection.check_arguments,
+    AGENT_TRAFFIC_PROVIDER: agent_traffic_connection.check_arguments,
     "analytics.gsc": _check_google_arguments,
     "workspace.google": _check_google_arguments,
     **{provider: managed_services.check_arguments for provider in managed_services.DEFINITIONS},
@@ -570,8 +582,14 @@ class CodeServices:
 
     async def adapter(self, provider, operation, args, run, connection, key, *, max_response_bytes):
         service = self.integrations
-        if provider in {STRIPE_PROVIDER, POSTHOG_PROVIDER}:
-            adapter = service.stripe if provider == STRIPE_PROVIDER else service.posthog
+        if provider in {STRIPE_PROVIDER, POSTHOG_PROVIDER, AGENT_TRAFFIC_PROVIDER}:
+            adapter = (
+                service.stripe
+                if provider == STRIPE_PROVIDER
+                else service.posthog
+                if provider == POSTHOG_PROVIDER
+                else service.agent_traffic
+            )
             return await adapter.call(
                 operation,
                 args,

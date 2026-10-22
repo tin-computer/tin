@@ -67,7 +67,7 @@ from tin_lite.growth_onboarding_control import (
 from tin_lite.growth_onboarding_control import (
     record_onboarding_picks as record_picks,
 )
-from tin_lite.integrations import IntegrationError
+from tin_lite.integrations import AGENT_TRAFFIC_PROVIDER, IntegrationError
 from tin_lite.keyword_plan_control import stop_keyword_plan as stop_keyword_plan_service
 from tin_lite.linkedin_posting import visible as linkedin_visible
 from tin_lite.linkedin_posts import LinkedInPosts
@@ -416,7 +416,12 @@ def _project_task_result(run: Any, entries: list[Any] | None = None) -> dict[str
 
 
 def _mcp_integration_view(
-    definition: Any, connection: Any | None, *, configured: bool, viewer: str | None = None
+    definition: Any,
+    connection: Any | None,
+    *,
+    configured: bool,
+    viewer: str | None = None,
+    analytics: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     from tin_lite.integrations import LINKEDIN_POSTING_PROVIDER, connection_readiness
     from tin_lite.linkedin_posting import member_view
@@ -449,6 +454,8 @@ def _mcp_integration_view(
             else None
         ),
         "last_error_code": connection.last_error_code if connection is not None else None,
+        # Analytics only: the card's state (waiting, live, quiet, needs_attention, ...).
+        **({"analytics": analytics} if analytics is not None else {}),
     }
 
 
@@ -5291,16 +5298,24 @@ def create_mcp_app(
             item.provider_key: item
             for item in await service.list_connections(parsed_project_id, member=clerk_user_id)
         }
+        definitions = service.definitions(connections.values(), project_id=parsed_project_id)
+        # Reading it is like opening the card: Tin asks the service again when it is due.
+        analytics = (
+            await service.agent_traffic.card(
+                parsed_project_id, connections.get(AGENT_TRAFFIC_PROVIDER)
+            )
+            if any(definition.key == AGENT_TRAFFIC_PROVIDER for definition in definitions)
+            else None
+        )
         return [
             _mcp_integration_view(
                 definition,
                 connections.get(definition.key),
                 configured=service.is_configured(definition.key),
                 viewer=clerk_user_id,
+                analytics=analytics if definition.key == AGENT_TRAFFIC_PROVIDER else None,
             )
-            for definition in service.definitions(
-                connections.values(), project_id=parsed_project_id
-            )
+            for definition in definitions
         ]
 
     @server.tool()
@@ -5377,6 +5392,21 @@ def create_mcp_app(
                         "its link to create a read-only restricted key in Stripe, then paste "
                         "the key on that page, never in this chat. Tell me when it says "
                         "connected."
+                    )
+                ),
+            }
+        if provider_key == AGENT_TRAFFIC_PROVIDER:
+            # No sign-in: the founder presses Set up on the card, which then shows the script.
+            return {
+                "setup_url": started.authorization_url,
+                "authorization_url": started.authorization_url,
+                "open_command": _open_command(started.authorization_url),
+                **_founder_words(
+                    relay=(
+                        f"I am opening Tin's Integrations page for "
+                        f"{project.name if project else 'your project'}. Press Set up on the "
+                        "Analytics card; there is nothing to sign in to. Tin then shows the one "
+                        "script line for your site."
                     )
                 ),
             }

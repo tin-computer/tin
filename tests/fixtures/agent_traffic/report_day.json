@@ -1,0 +1,256 @@
+{
+  "report_version": "site-report.v1",
+  "site_id": "st-8k3m9q2x7v4c",
+  "period": "day",
+  "start": "2026-10-20",
+  "end": "2026-10-20",
+  "tz": "Europe/Istanbul",
+  "complete": true,
+  "built_at": "2026-10-21T00:10:12Z",
+  "summary": "48 visits and 91 page views. 6 visits came from AI assistants' answers, and 3 came from automated browsers.",
+  "needs_you": [],
+  "totals": {
+    "visits": 48,
+    "page_views": 91,
+    "pages_per_visit": 1.9,
+    "one_page_share": 0.58,
+    "median_seconds_per_page": 24,
+    "mobile_share": 0.41
+  },
+  "kinds": {
+    "no_automation_seen": {
+      "visits": 43,
+      "page_views": 84
+    },
+    "automated_browser": {
+      "visits": 3,
+      "page_views": 5,
+      "named": [
+        {
+          "operator": "openai",
+          "visits": 2,
+          "evidence": "signature"
+        }
+      ]
+    },
+    "declared_crawler": {
+      "visits": 2,
+      "page_views": 2
+    }
+  },
+  "detector": {
+    "provisional": true,
+    "visits": {
+      "human": 38,
+      "nonhuman": 2,
+      "unknown": 2,
+      "unscored": 1
+    }
+  },
+  "hours": {
+    "no_automation_seen": [
+      0,
+      0,
+      0,
+      0,
+      0,
+      0,
+      1,
+      2,
+      3,
+      4,
+      5,
+      5,
+      4,
+      4,
+      4,
+      3,
+      3,
+      2,
+      1,
+      1,
+      1,
+      0,
+      0,
+      0
+    ],
+    "automated_browser": [
+      0,
+      0,
+      0,
+      1,
+      0,
+      0,
+      0,
+      0,
+      0,
+      1,
+      0,
+      0,
+      0,
+      0,
+      0,
+      1,
+      0,
+      0,
+      0,
+      0,
+      0,
+      0,
+      0,
+      0
+    ],
+    "declared_crawler": [
+      0,
+      0,
+      1,
+      0,
+      0,
+      0,
+      0,
+      0,
+      0,
+      0,
+      0,
+      0,
+      0,
+      0,
+      1,
+      0,
+      0,
+      0,
+      0,
+      0,
+      0,
+      0,
+      0,
+      0
+    ]
+  },
+  "top_pages": [
+    {
+      "path": "/",
+      "visits": 31,
+      "page_views": 34
+    },
+    {
+      "path": "/pricing",
+      "visits": 12,
+      "page_views": 13
+    },
+    {
+      "path": "/docs/start",
+      "visits": 8,
+      "page_views": 11
+    }
+  ],
+  "landing_pages": [
+    {
+      "path": "/",
+      "visits": 29
+    },
+    {
+      "path": "/docs/start",
+      "visits": 7
+    }
+  ],
+  "came_from": [
+    {
+      "host": "google.com",
+      "visits": 14,
+      "assistant": false
+    },
+    {
+      "host": "chatgpt.com",
+      "visits": 4,
+      "assistant": true
+    },
+    {
+      "host": "claude.ai",
+      "visits": 2,
+      "assistant": true
+    },
+    {
+      "host": "news.ycombinator.com",
+      "visits": 2,
+      "assistant": false
+    }
+  ],
+  "crawlers": [
+    {
+      "name": "Googlebot",
+      "pages": 1,
+      "network_matches": 1
+    },
+    {
+      "name": "bingbot",
+      "pages": 1,
+      "network_matches": 1
+    }
+  ],
+  "regions": [
+    {
+      "name": "Europe",
+      "visits": 27
+    },
+    {
+      "name": "America",
+      "visits": 18
+    },
+    {
+      "name": "Asia",
+      "visits": 3
+    }
+  ],
+  "requests": {
+    "page_loads": 412,
+    "by_class": {
+      "verified_bot": 61,
+      "declared_bot": 88,
+      "says_bot": 39,
+      "browser_like": 224
+    },
+    "script": {
+      "seen": 51,
+      "browser_like_not_seen": 173
+    },
+    "operators": [
+      {
+        "operator": "openai",
+        "role": "user_retrieval",
+        "ai": true,
+        "verified": 22,
+        "declared": 30
+      },
+      {
+        "operator": "google",
+        "role": "indexing",
+        "ai": false,
+        "verified": 18,
+        "declared": 12
+      },
+      {
+        "operator": "anthropic",
+        "role": "training",
+        "ai": true,
+        "verified": 14,
+        "declared": 25
+      }
+    ],
+    "ai_pages": [
+      {
+        "path": "/docs/start",
+        "loads": 19,
+        "by_operator": {
+          "openai": 12,
+          "anthropic": 7
+        }
+      }
+    ]
+  },
+  "notes": [
+    "Request records come from the reporter on the site's server. Requests the host answers or blocks before the site's code runs aren't recorded.",
+    "A visit ends after 30 minutes without activity."
+  ],
+  "markdown": "# example.com, 20 October 2026\n\n48 visits and 91 page views. ..."
+}

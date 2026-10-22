@@ -6989,6 +6989,10 @@ class Database:
             "DELETE FROM connection_extension_devices WHERE project_id = $1",
             "DELETE FROM integration_auth_attempts WHERE project_id = $1",
             "DELETE FROM integration_call_receipts WHERE project_id = $1",
+            # Analytics' stored status and reports. Its removals stay: Tin keeps sending them
+            # until the service accepts them, after the project is gone.
+            "DELETE FROM agent_traffic_reports WHERE project_id = $1",
+            "DELETE FROM agent_traffic_sites WHERE project_id = $1",
             # Failed-payment recovery keeps Stripe and mailbox evidence in its run receipts and
             # one send receipt per invoice, keyed payment_recovery:<run or project>:...
             "DELETE FROM effect_receipts WHERE operation = 'revenue.payment_recovery' AND "
