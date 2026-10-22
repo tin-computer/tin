@@ -1,5 +1,6 @@
 """Continuing, project-bound collection permission and encrypted session lifecycle."""
 
+import json
 from datetime import UTC, datetime, timedelta
 from uuid import uuid4
 
@@ -76,6 +77,14 @@ async def default_inputs(database, project_id, inputs, *, member):
     return {**inputs, "execution": mode} if mode in MODES else inputs
 
 
+def renamed_actor(actor: dict, key: str) -> dict:
+    """The account as Tin for Chrome now names it: a profile link, or the profile photo's marker
+    when the page shows no link. The display name stays."""
+
+    url = key if key.startswith("https://www.linkedin.com/in/") else None
+    return {**actor, "key": key, "profile_url": url}
+
+
 class CollectionConnection:
     def __init__(self, store, cipher=None, *, verify=None):
         from tin_lite.linkedin_session import check_account
@@ -139,10 +148,15 @@ class CollectionConnection:
             grant = permission(config)
             if not grant or grant["mode"] == "local_only":
                 raise CollectionError("cloud_permission_required")
-            if (
+            # The member ID recorded with the last saved session, when there is one. Tin for
+            # Chrome names the account by its profile link or photo, which can change; the ID
+            # can't, so a new link or photo with the same ID is still this member.
+            known = self._known_member(project_id, row)
+            renamed = (
                 value["actor_key"] != device["actor"]["key"]
                 or value["actor_key"] != grant["actor"]["key"]
-            ):
+            )
+            if renamed and not known:
                 raise CollectionError("account_changed")
             if value["expected_generation"] != config.get("session_generation"):
                 raise CollectionError("session_superseded")
@@ -157,13 +171,32 @@ class CollectionConnection:
                 raise CollectionError("collection_active")
             # This fixed read checks the transferred login, not a submitted account label.
             # Keep the connection lock until storage commits so replacement cannot race it.
-            await self.verify(session, device["actor"])
+            actor = (
+                renamed_actor(device["actor"], value["actor_key"]) if renamed else device["actor"]
+            )
+            member = await self.verify(
+                session, {**actor, "member": known} if known else device["actor"]
+            )
+            if renamed:
+                # The same member under a new link or photo: everything that names the account
+                # follows it.
+                await conn.execute(
+                    "UPDATE connection_extension_devices SET actor=$2::jsonb WHERE id=$1",
+                    device["id"],
+                    canonical_json(actor),
+                )
+                grant["actor"] = actor
+                config["collection_permission"] = grant
+                if isinstance(config.get("actor"), dict):
+                    config["actor"] = {**config["actor"], **actor}
+            if member:
+                actor = {**actor, "member": member}
             generation = str(uuid4())
             sealed = {
                 "version": 2,
                 "generation": generation,
                 "session": session,
-                "actor": device["actor"],
+                "actor": actor,
                 "device_id": str(device["id"]),
                 "query_id": query_id,
                 "expires_at": expiry.isoformat(),
@@ -190,6 +223,23 @@ class CollectionConnection:
                 canonical_json(config),
             )
             return status(config, self.settings)
+
+    def _known_member(self, project_id, row) -> str | None:
+        """The member ID sealed with the connection's last saved session, if any."""
+
+        if not row["credential_ciphertext"]:
+            return None
+        try:
+            sealed = json.loads(
+                self.cipher.decrypt(
+                    row["credential_ciphertext"],
+                    context=f"credential:{project_id}:network.linkedin",
+                )
+            )
+        except Exception:  # noqa: BLE001 — an unreadable old credential names no member
+            return None
+        member = (sealed.get("actor") or {}).get("member") if isinstance(sealed, dict) else None
+        return member if isinstance(member, str) and member else None
 
     async def preferences(self, project_id, user, value):
         choice = setup_choice(value)

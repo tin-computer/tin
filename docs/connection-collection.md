@@ -129,7 +129,19 @@ business.linkedin.com) or for part of the site is left out, and of two copies it
 set for www.linkedin.com. A login it still refuses (`invalid_session`) is logged with the check
 that failed and each cookie's name and domain, never a value, and the setup screen says so.
 The trusted service checks the transferred account with one bounded read of `/voyager/api/me`
-before reporting cloud access ready. Every E2B page checks it again. Tin encrypts the session
+before reporting cloud access ready. Every E2B page checks it again.
+
+**Which account it is.**
+- Tin for Chrome names the account by the profile link in LinkedIn's header, or by its profile
+  photo when the page shows no link (`avatar:` markers).
+- A link or a photo can change; LinkedIn's member ID can't. So the first check also records the
+  member ID from `/me` (`linkedin_session.member_id`) with the sealed session, and from then on
+  the ID decides (`identity_matches`).
+- When Tin for Chrome later names the account differently (a new photo or link), the save is
+  accepted only if `/me` still answers with the recorded ID. The device, the permission and the
+  sealed session then carry the new name. Another ID is `account_changed`, as before.
+- A connection saved before the ID was recorded still matches by link or photo until its next
+  save; after a new photo it needs one reconnect. Tin encrypts the session
 with the existing integration cipher and binds it to the project, account,
 permission and paired device. Retention is at most seven days, capped by the login-cookie
 and device expiry; a session cookie without a declared expiry is kept for at most one day.

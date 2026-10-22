@@ -45,7 +45,10 @@ async def _step(store, runtime, cipher, run_id):
             grant = permission(config)
             if not grant or grant["mode"] == "local_only":
                 raise CollectionError("cloud_permission_required")
-            if sealed.get("version") != 2 or sealed.get("actor") != job["actor"]:
+            # The sealed account also carries the member ID Tin recorded (`member`); the job
+            # pinned the paired device's account, which names it without the ID.
+            named = {k: v for k, v in (sealed.get("actor") or {}).items() if k != "member"}
+            if sealed.get("version") != 2 or named != job["actor"]:
                 raise CollectionError("account_changed")
             if (
                 sealed.get("generation") != job["credential_generation"]

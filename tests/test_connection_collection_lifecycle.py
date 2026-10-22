@@ -293,12 +293,19 @@ async def test_cloud_prepares_new_friend_and_collects_without_browser(collection
     ]
 
 
+# With and without the member ID a save records: the job pins the device's account.
+@pytest.mark.parametrize("member", [None, "ACoAAOwner0001"])
 async def test_document_cloud_preparation_without_query_preserves_pages_and_deduplicates(
-    collection_db,
+    collection_db, member
 ):
     from test_linkedin_document import PROFILE, friend_html, results
 
     f = await prepared(collection_db)
+
+    async def verify(*_):
+        return member
+
+    f.connection.verify = verify
     await f.connection.save_session(
         f.project.id,
         TOKEN,
@@ -589,3 +596,56 @@ async def test_failed_setup_check_cannot_mark_a_session_ready(collection_db, exi
     after = await config(f)
     assert after["credential_ciphertext"] == before["credential_ciphertext"]
     assert after["configuration"] == before["configuration"]
+
+
+async def test_a_new_photo_or_link_for_the_same_member_keeps_the_connection(collection_db):
+    """Tin for Chrome names the account by its profile link or photo; LinkedIn's member ID
+    decides. A new photo with the same ID is still the member; another ID never is."""
+
+    f = await prepared(collection_db)
+    signed_in = {"member": "ACoAAMember0001"}
+
+    async def me(session, actor):
+        # What /me answers for the uploaded session, checked as check_account checks it.
+        if actor.get("member") and actor["member"] != signed_in["member"]:
+            raise CollectionError("account_changed")
+        return signed_in["member"]
+
+    f.connection.verify = me
+
+    def sealed():
+        return json.loads(
+            f.cipher.decrypt(
+                f.db_row["credential_ciphertext"],
+                context=f"credential:{f.project.id}:network.linkedin",
+            )
+        )
+
+    async def saved(**changes):
+        packet = {**f.upload, "expected_generation": f.status["session_generation"], **changes}
+        f.status = await f.connection.save_session(f.project.id, TOKEN, packet)
+        f.db_row = await f.db.pool.fetchrow(
+            "SELECT * FROM integration_connections WHERE project_id=$1", f.project.id
+        )
+
+    # A save records the member's ID with the session.
+    await saved()
+    assert sealed()["actor"]["member"] == "ACoAAMember0001"
+
+    # A new profile photo: Tin for Chrome names the account anew, LinkedIn's ID is the same.
+    photo = "avatar:/dms/image/v2/new-photo"
+    await saved(actor_key=photo)
+    assert sealed()["actor"]["key"] == photo and sealed()["actor"]["member"] == "ACoAAMember0001"
+    device = await f.db.pool.fetchval(
+        "SELECT actor FROM connection_extension_devices WHERE project_id=$1", f.project.id
+    )
+    assert json.loads(device)["key"] == photo
+    assert document(f.db_row["configuration"])["collection_permission"]["actor"]["key"] == photo
+    # The next save under the new name is ordinary.
+    await saved(actor_key=photo)
+
+    # Another account under another name is refused, and nothing changes.
+    signed_in["member"] = "ACoAAOther00002"
+    with pytest.raises(CollectionError, match="account_changed"):
+        await saved(actor_key=FRIEND)
+    assert sealed()["actor"]["key"] == photo and sealed()["actor"]["member"] == "ACoAAMember0001"

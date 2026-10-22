@@ -553,6 +553,35 @@ def test_cloud_identity_matches_signed_in_avatar_without_profile_link(normalized
     assert not identity_matches(payload, actor)
 
 
+def test_cloud_identity_matches_the_member_id_once_tin_recorded_it():
+    from tin_lite.linkedin_session import identity_matches, member_id
+
+    mini = {
+        "entityUrn": "urn:li:fs_miniProfile:ACoAAOwner0001",
+        "publicIdentifier": "owner",
+        "picture": {
+            "com.linkedin.common.VectorImage": {
+                "rootUrl": "https://media.licdn.com/dms/image/v2/new-photo/",
+                "artifacts": [
+                    {"fileIdentifyingUrlPathSegment": "profile-displayphoto-shrink_100/0/fixture"}
+                ],
+            }
+        },
+    }
+    payload = {"miniProfile": mini}
+    assert member_id(payload) == "ACoAAOwner0001"
+    # Recorded when the session was saved, the ID decides: an older photo or link doesn't matter.
+    stale = {"key": "avatar:/dms/image/v2/old-photo", "profile_url": None}
+    assert not identity_matches(payload, stale)
+    assert identity_matches(payload, {**stale, "member": "ACoAAOwner0001"})
+    assert identity_matches(payload, {**ACTOR, "key": FRIEND, "member": "ACoAAOwner0001"})
+    # Another member is refused, whatever their link or photo says.
+    assert not identity_matches(payload, {**ACTOR, "member": "ACoAAOther0002"})
+    mini["entityUrn"] = "urn:li:fsd_profile:ACoAAOwner0001"
+    assert member_id(payload) is None
+    assert not identity_matches(payload, {**ACTOR, "member": "ACoAAOwner0001"})
+
+
 @pytest.mark.parametrize("override", [False, True])
 async def test_dedicated_cloud_image_receipts_cleanup_and_secret_boundary(
     collection_db, monkeypatch, override
