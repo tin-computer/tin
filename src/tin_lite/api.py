@@ -62,6 +62,7 @@ from tin_lite.growth_onboarding import expectation as workflow_expectation
 from tin_lite.growth_onboarding_control import OnboardingPickError, ensure_onboarding_approvable
 from tin_lite.integrations import (
     ADS_PROVIDER,
+    AGENT_TRAFFIC_PROVIDER,
     GITHUB_PROVIDER,
     GITHUB_USER_PROVIDER,
     GOOGLE_WORKSPACE_PROVIDER,
@@ -477,6 +478,8 @@ ASSET_VERSION = hashlib.sha256(
             "output-comparison.js",
             "people.css",
             "people.js",
+            "analytics.css",
+            "analytics.js",
             "linkedin-requests.css",
             "linkedin-requests.js",
             "pierre-trees.js",
@@ -513,6 +516,7 @@ def _static_page(filename: str, request: Request) -> Response:
                 "/activity",
                 "/decisions",
                 "/people",
+                "/analytics",
                 "/files",
                 "/integrations",
                 "/billing",
@@ -1436,6 +1440,8 @@ class IntegrationView(BaseModel):
     connected_at: datetime | None = None
     last_checked_at: datetime | None = None
     last_error_code: str | None = None
+    # The Analytics card's state (agent_traffic_connection.card); no token is ever in it.
+    analytics: dict | None = None
 
 
 class IntegrationConnectView(BaseModel):
@@ -1446,6 +1452,19 @@ class IntegrationConnectRequest(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     capabilities: list[str] | None = Field(default=None, min_length=1)
+
+
+class AnalyticsSetupRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    # Only for a project without Start here's address; otherwise Tin uses that one.
+    url: str | None = Field(default=None, min_length=1, max_length=2048)
+
+
+class AnalyticsHostRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    host: str = Field(min_length=1, max_length=253)
 
 
 class GoogleIntegrationComplete(BaseModel):
@@ -1516,6 +1535,7 @@ class GoogleAdsLinkRequest(BaseModel):
 @router.api_route("/activity", methods=["GET", "HEAD"], include_in_schema=False)
 @router.api_route("/decisions", methods=["GET", "HEAD"], include_in_schema=False)
 @router.api_route("/people", methods=["GET", "HEAD"], include_in_schema=False)
+@router.api_route("/analytics", methods=["GET", "HEAD"], include_in_schema=False)
 @router.api_route("/files", methods=["GET", "HEAD"], include_in_schema=False)
 @router.api_route("/integrations", methods=["GET", "HEAD"], include_in_schema=False)
 @router.api_route("/billing", methods=["GET", "HEAD"], include_in_schema=False)
@@ -1873,14 +1893,22 @@ async def list_project_integrations(
         item.provider_key: item
         for item in await service.list_connections(project_id, member=user.clerk_user_id)
     }
+    definitions = service.definitions(connections.values(), project_id=project_id)
+    # Opening the card asks the service again when Tin's stored status is due.
+    analytics = (
+        await service.agent_traffic.card(project_id, connections.get(AGENT_TRAFFIC_PROVIDER))
+        if any(definition.key == AGENT_TRAFFIC_PROVIDER for definition in definitions)
+        else None
+    )
     return [
         _integration_view(
             definition,
             connections.get(definition.key),
             configured=service.is_configured(definition.key),
             viewer=user.clerk_user_id,
+            analytics=analytics if definition.key == AGENT_TRAFFIC_PROVIDER else None,
         )
-        for definition in service.definitions(connections.values(), project_id=project_id)
+        for definition in definitions
     ]
 
 
@@ -2268,6 +2296,107 @@ async def refresh_stripe_key(
     except IntegrationError as exc:
         raise _integration_http_error(exc) from exc
     return _integration_view(service._definition(STRIPE_PROVIDER), connection, configured=True)
+
+
+def _analytics_http_error(exc: IntegrationError) -> HTTPException:
+    """The card's refusals keep their code (such as `staging_limit`) beside Tin's sentence."""
+    error = _integration_http_error(exc)
+    code = getattr(exc, "code", None)
+    if code is None:
+        return error
+    return HTTPException(error.status_code, detail={"message": error.detail, "code": code})
+
+
+async def _analytics_view(runtime, project_id: UUID) -> IntegrationView:
+    service = runtime.integrations
+    connection = await runtime.database.get_integration_connection(
+        project_id=project_id, provider_key=AGENT_TRAFFIC_PROVIDER
+    )
+    return _integration_view(
+        service._definition(AGENT_TRAFFIC_PROVIDER),
+        connection,
+        configured=service.is_configured(AGENT_TRAFFIC_PROVIDER),
+        analytics=await service.agent_traffic.card(project_id, connection),
+    )
+
+
+@router.post(
+    "/api/projects/{project_id}/integrations/analytics.agent_traffic/setup",
+    response_model=IntegrationView,
+)
+async def set_up_analytics(
+    project_id: UUID,
+    request: Request,
+    payload: AnalyticsSetupRequest | None = None,
+    user: AuthContext = AUTHENTICATED_USER,
+) -> IntegrationView:
+    """Set up analytics, or set it up again after Needs attention; sends the site's address."""
+    await _require_project_access(project_id, request, user)
+    service = request.app.state.runtime.integrations
+    try:
+        await service.agent_traffic.set_up(
+            project_id=project_id,
+            clerk_user_id=user.clerk_user_id,
+            url=payload.url if payload is not None else None,
+        )
+    except IntegrationError as exc:
+        raise _analytics_http_error(exc) from None
+    return await _analytics_view(request.app.state.runtime, project_id)
+
+
+@router.post(
+    "/api/projects/{project_id}/integrations/analytics.agent_traffic/address",
+    response_model=IntegrationView,
+)
+async def count_analytics_host(
+    project_id: UUID,
+    payload: AnalyticsHostRequest,
+    request: Request,
+    user: AuthContext = AUTHENTICATED_USER,
+) -> IntegrationView:
+    """Count the address the script moved to instead, from the card's offer."""
+    await _require_project_access(project_id, request, user)
+    service = request.app.state.runtime.integrations
+    try:
+        await service.agent_traffic.count_host(
+            project_id=project_id, clerk_user_id=user.clerk_user_id, host=payload.host
+        )
+    except IntegrationError as exc:
+        raise _analytics_http_error(exc) from None
+    return await _analytics_view(request.app.state.runtime, project_id)
+
+
+@router.post(
+    "/api/projects/{project_id}/integrations/analytics.agent_traffic/refresh",
+    response_model=IntegrationView,
+)
+async def refresh_analytics(
+    project_id: UUID,
+    request: Request,
+    user: AuthContext = AUTHENTICATED_USER,
+) -> IntegrationView:
+    """The card's state; asks the service again only when Tin's stored status is due."""
+    await _require_project_access(project_id, request, user)
+    try:
+        return await _analytics_view(request.app.state.runtime, project_id)
+    except IntegrationError as exc:
+        raise _integration_http_error(exc) from None
+
+
+@router.get("/api/projects/{project_id}/analytics")
+async def analytics_page(
+    project_id: UUID,
+    request: Request,
+    view: str = "today",
+    user: AuthContext = AUTHENTICATED_USER,
+) -> dict:
+    """The Analytics page: the card's state and Tin's stored report for one tab (Today,
+    Yesterday or the last 7 days). No token is ever in it."""
+    await _require_project_access(project_id, request, user)
+    try:
+        return await request.app.state.runtime.integrations.agent_traffic.page(project_id, view)
+    except IntegrationError as exc:
+        raise _integration_http_error(exc) from None
 
 
 @router.post(
@@ -5360,6 +5489,7 @@ def _integration_view(
     *,
     configured: bool,
     viewer: str | None = None,
+    analytics: dict | None = None,
 ) -> IntegrationView:
     configuration = getattr(connection, "configuration", {})
     if connection is not None and definition.key == LINKEDIN_POSTING_PROVIDER:
@@ -5382,6 +5512,7 @@ def _integration_view(
         connected_at=getattr(connection, "created_at", None),
         last_checked_at=getattr(connection, "last_checked_at", None),
         last_error_code=getattr(connection, "last_error_code", None),
+        analytics=analytics,
     )
 
 

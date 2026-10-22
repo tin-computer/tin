@@ -76,6 +76,9 @@ your own accounts before use; ordinary contributor tests need no production cred
 - [Project API connections](project-api-connections.md): secure credentials and external requests.
 - [Stripe and PostHog connections](stripe-and-posthog-connections.md): the first-party read-only
   connections, their operations, projected records and offline test fakes.
+- [Analytics (Agent Traffic)](agent-traffic-connection.md): the pilot connection to Agent
+  Traffic's edge service, its card, the Analytics page, durable removals, workflow reads and
+  MCP's report.
 - [Failed-payment recovery](payment-recovery.md): the Revenue system's first workflow, from
   Stripe's failed payments to approved emails sent from the founder's Gmail.
 - [Paid ads assessment](paid-ads-assessment-implementation.md): the native LLM flow that decides

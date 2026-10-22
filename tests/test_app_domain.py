@@ -151,6 +151,7 @@ async def test_new_origin_shell_and_no_host_header_redirect_target():
         "/activity",
         "/decisions",
         "/people",
+        "/analytics",
         "/files",
         "/integrations",
         "/billing",

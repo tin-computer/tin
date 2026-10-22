@@ -62,11 +62,11 @@ const MCP_URL = document.documentElement.dataset.mcpUrl?.startsWith("http")
 function configuredOrigin(value) {
   return value && !value.startsWith("{{") ? new URL(value).origin : window.location.origin;
 }
-const ALLOWED_VIEWS = new Set(["workflows", "activity", "decisions", "people", "files", "integrations"]);
+const ALLOWED_VIEWS = new Set(["workflows", "activity", "decisions", "people", "analytics", "files", "integrations"]);
 if (BILLING_ENABLED) ALLOWED_VIEWS.add("billing");
 // One small History API router. Legacy bookmarks are input-only compatibility;
 // new links use paths. Document heading fragments are not application routes.
-const DASHBOARD_ROUTE = /^(?:system|workflows|chat|activity|decisions|people|files|integrations|connect|billing|file|(?:document|task|compare)\/[^/?]+)(?:\?|$)/;
+const DASHBOARD_ROUTE = /^(?:system|workflows|chat|activity|decisions|people|analytics|files|integrations|connect|billing|file|(?:document|task|compare)\/[^/?]+)(?:\?|$)/;
 // `carry` names the only current query parameters that survive; null keeps the rest.
 function routeUrl(route, base = window.location.href, carry = null) {
   const url = new URL(base);
@@ -296,6 +296,13 @@ const state = {
   integrationSearch: "",
   expandedIntegration: null,
   linkedInManaging: false,
+  // Tin Analytics' card: a request in flight, its last refusal, the typed address, the script
+  // line shown, and the Stop measuring confirmation.
+  analyticsBusy: false,
+  analyticsError: null,
+  analyticsAddress: "",
+  analyticsLine: false,
+  analyticsConfirm: false,
   githubInstallationChoice: null,
   resourceChoice: null,
   stripeKeyChoice: null,
@@ -1311,6 +1318,9 @@ function updateRail() {
   // viewers (gated per project) or visitor journeys.
   document.querySelector('.nav-item[data-view="people"]').hidden =
     state.view !== "people" && !state.workflows.some((workflow) => PEOPLE_WORKFLOWS.has(workflow.key));
+  // Analytics shows once the project has set it up; before that its card in Integrations leads.
+  document.querySelector('.nav-item[data-view="analytics"]').hidden =
+    state.view !== "analytics" && !state.integrations.some((item) => item.key === ANALYTICS_KEY && item.connection_id);
   updateAgentRail();
 }
 
@@ -1904,6 +1914,7 @@ function render() {
     window.TinLinkedInPosts?.close();
   }
   if (state.view !== "people" || state.projectAccess !== "ready") window.TinPeople?.close();
+  if (state.view !== "analytics" || state.projectAccess !== "ready") window.TinAnalytics?.close();
   state.comparePage?.destroy();
   state.comparePage = null;
   disposeDocument();
@@ -1934,6 +1945,7 @@ function render() {
   if (state.view === "activity") renderActivity();
   if (state.view === "decisions") renderDecisions();
   if (state.view === "people") renderPeople();
+  if (state.view === "analytics") renderAnalytics();
   if (state.view === "files") renderFiles();
   if (state.view === "integrations") renderIntegrations();
   if (state.view === "billing") window.TinBilling.mount(main, {
@@ -1962,6 +1974,23 @@ function renderPeople() {
     requests: () => state.linkedInRequests,
     openLinkedInCard: requests.openLinkedInCard,
     refreshRequests: requests.refresh,
+  });
+}
+
+function renderAnalytics() {
+  window.TinAnalytics.mount(main, {
+    api,
+    projectId: state.project.id,
+    toast: showToast,
+    openIntegrations: () => {
+      state.expandedIntegration = ANALYTICS_KEY;
+      navigate("integrations");
+    },
+    // Counting the host the script moved to, or setting up again, is the card's own request.
+    countHost: async (host) => {
+      await analyticsRequest("address", { host });
+      return state.analyticsError ? null : state.integrations.find((item) => item.key === ANALYTICS_KEY)?.analytics;
+    },
   });
 }
 
@@ -6685,6 +6714,7 @@ function bindIntegrationCardControls() {
   document.querySelectorAll("[data-linkedin-disconnect]").forEach((button) => {
     button.addEventListener("click", disconnectLinkedIn);
   });
+  bindAnalyticsCard();
 }
 
 function renderIntegrations() {
@@ -6753,6 +6783,7 @@ function renderIntegrations() {
 
 function renderIntegrationCard(integration) {
   if (integration.merged) return renderLinkedInCard(integration);
+  if (integration.key === ANALYTICS_KEY) return renderAnalyticsCard(integration);
   const expanded = state.expandedIntegration === integration.key;
   const connected = Boolean(integration.connection_id);
   const selected = integrationSelection(integration);
@@ -6812,6 +6843,258 @@ function renderIntegrationCard(integration) {
     </div>
     ${expanded && connected ? renderIntegrationExpanded(integration) : ""}
   </article>`;
+}
+
+// Tin Analytics (Paper CARD-1 to CARD-4). Its state comes from integration.analytics, which the
+// server reads from Agent Traffic when it is due: waiting, live or quiet once set up, needs
+// attention when a read was refused. Set up sends Start here's address, or the one typed here.
+const ANALYTICS_KEY = "analytics.agent_traffic";
+const ANALYTICS_LOGO = '<svg class="analytics-logo" aria-hidden="true" viewBox="0 0 16 16"><path d="M2.5 13.5V8.5M6.2 13.5V4M9.8 13.5V6.5M13.5 13.5V2.5" /></svg>';
+const ANALYTICS_MONTHS = ["jan", "feb", "mar", "apr", "may", "jun", "jul", "aug", "sep", "oct", "nov", "dec"];
+const ANALYTICS_SET_UP = new Set(["waiting", "live", "quiet", "needs_attention"]);
+
+function analyticsDay(value, { time = false } = {}) {
+  const date = new Date(value);
+  if (!value || Number.isNaN(date.getTime())) return "";
+  const day = `${ANALYTICS_MONTHS[date.getMonth()]} ${date.getDate()}`;
+  return time ? `${day}, ${ledgerTime(date)}` : day;
+}
+
+function analyticsHost(address) {
+  try {
+    return new URL(address).hostname;
+  } catch (_error) {
+    return "";
+  }
+}
+
+// What's counted, in words: the domain and every subdomain, or one exact host on shared hosting.
+function analyticsCounted(view) {
+  const host = analyticsHost(view.address);
+  const domain = host.replace(/^www\./, "");
+  return (view.counted_hosts || []).some((item) => item.startsWith("*.")) ? `${domain} and every subdomain` : host;
+}
+
+function analyticsHealth(view) {
+  if (state.analyticsError) return [state.analyticsError.code === "staging_limit" ? "couldn't set up on staging" : "couldn't set up"];
+  if (view.state === "unavailable") return ["Analytics isn't set up on this deployment"];
+  if (view.state === "needs_attention") return ["Tin can no longer read this site's numbers"];
+  if (view.state === "quiet") return ["No visits recorded in 7 days. Check that the script is still on the site."];
+  if (view.state === "waiting") return [`waiting for the first visit${view.checked_at ? ` · checked ${ledgerTime(view.checked_at)}` : ""}`];
+  if (view.state === "live") {
+    const moved = (view.moved_hosts || [])[0];
+    return [
+      `${view.pages_today ?? "–"} pages today`,
+      moved ? `${moved.host} isn't counted`
+        : view.reporter_connected ? `reporter on · last request ${ledgerTime(view.requests_last_at)}` : "",
+    ];
+  }
+  const removal = view.removal;
+  if (removal?.state === "unlinked") return [`stopped ${analyticsDay(removal.requested_at)} · history kept`];
+  if (removal?.state === "pending") return ["stopping · Tin keeps asking until the deletion is confirmed"];
+  if (removal?.state === "removing" && removal.deleted_by && Date.parse(removal.deleted_by) > Date.now()) {
+    return [`stopped ${analyticsDay(removal.requested_at)} · numbers deleted by ${analyticsDay(removal.deleted_by, { time: true })}`];
+  }
+  return null;
+}
+
+function renderAnalyticsCard(integration) {
+  const view = integration.analytics || { state: "unavailable" };
+  const expanded = state.expandedIntegration === ANALYTICS_KEY && view.state !== "needs_attention";
+  const setUp = ANALYTICS_SET_UP.has(view.state);
+  const host = analyticsHost(view.address);
+  const health = analyticsHealth(view);
+  const stopping = view.removal?.state === "pending";
+  const typed = view.state === "not_set_up" && !view.address && !stopping;
+  const busy = state.analyticsBusy ? " disabled" : "";
+  const action = view.state === "needs_attention"
+    ? `<button class="analytics-again" type="button" data-analytics-setup${busy}>Set up again</button>`
+    : setUp
+      ? `<button class="integration-row-action" type="button" data-integration-expand="${ANALYTICS_KEY}" aria-expanded="${expanded}">Configure</button>`
+      : view.state === "not_set_up" && view.address && !stopping
+        ? `<button class="integration-connect" type="button" data-analytics-setup${busy}>${state.analyticsError ? "Try again" : "Set up"}</button>`
+        : "";
+  const mark = view.state === "live" || view.state === "quiet" || view.state === "needs_attention" || view.state === "waiting"
+    ? view.state : "off";
+  return `<article class="integration-card analytics-card ${setUp ? "is-connected" : "is-available"} ${view.state === "needs_attention" ? "is-needs" : ""} ${expanded ? "is-expanded" : ""}">
+    <div class="integration-card-row">
+      <span class="integration-badge" aria-hidden="true">${ANALYTICS_LOGO}</span>
+      <span class="integration-identity">
+        <strong class="integration-name">${escapeHtml(integration.name)}</strong>
+        <code class="integration-key">${ANALYTICS_KEY}</code>
+      </span>
+      <span class="analytics-mark is-${mark}" aria-hidden="true"></span>
+      <span class="integration-primary ${host ? "" : "is-muted"}">${escapeHtml(host || "no address yet")}</span>
+      ${health
+        ? `<span class="analytics-health"><span>${escapeHtml(health[0])}</span>${health[1] ? `<small>${escapeHtml(health[1])}</small>` : ""}</span>`
+        : `<span class="integration-unlocks">would unlock ${escapeHtml((integration.unlocks || []).join(" · "))}</span>`}
+      ${action}
+    </div>
+    ${typed ? renderAnalyticsAddress() : ""}
+    ${state.analyticsError ? `<div class="analytics-prompt" role="status">${escapeHtml(state.analyticsError.message)}</div>` : ""}
+    ${expanded && setUp ? renderAnalyticsExpanded(integration, view) : ""}
+  </article>`;
+}
+
+// A project without Start here's address types one; "no form" meant no sign-in or credential.
+function renderAnalyticsAddress() {
+  return `<form class="analytics-rows" data-analytics-address>
+    <div class="linkedin-part">
+      <label class="linkedin-part-label" for="analytics-website">Website</label>
+      <div class="linkedin-part-body">
+        <input class="analytics-input" id="analytics-website" name="url" type="text" inputmode="url" autocomplete="url" placeholder="https://example.com" value="${escapeHtml(state.analyticsAddress || "")}" required />
+        <code class="linkedin-part-meta">Tin counts this address and every subdomain of it</code>
+      </div>
+      <button class="integration-connect" type="submit"${state.analyticsBusy ? " disabled" : ""}>Set up</button>
+    </div>
+  </form>`;
+}
+
+function renderAnalyticsExpanded(integration, view) {
+  const moved = (view.moved_hosts || [])[0];
+  const source = { setup: "from setup · a new address there is counted from then on", entered: "entered on this card", uncounted_host: "counted instead of the address from setup" }[view.address_source] || "";
+  const seen = view.hosts_seen || [];
+  const hosts = seen.map((item, index) => `${item.host} ${item.pages_7d ?? "–"}${index ? "" : " pages"}`).join(", ");
+  const rows = [
+    moved
+      ? linkedInPart("Address", `The script also ran on ${moved.host}, which isn't counted: ${moved.pages_7d ?? "–"} pages in the last 7 days.`, {
+        meta: `counting ${analyticsCounted(view)} now · the script line stays the same`,
+        action: `<button class="analytics-count" type="button" data-analytics-count="${escapeHtml(moved.host)}"${state.analyticsBusy ? " disabled" : ""}>Count ${escapeHtml(moved.host)} instead</button>`,
+      })
+      : linkedInPart("Address", analyticsCounted(view), { meta: source }),
+    linkedInPart("Script", view.first_page_at
+      ? `On the site since ${analyticsDay(view.first_page_at)} · last page ${ledgerTime(view.last_page_at)}`
+      : "Not on the site yet", {
+      meta: `site ${view.site_id}${hosts ? ` · last 7 days: ${hosts}` : ""}`,
+      extra: state.analyticsLine ? `<div class="analytics-line"><code>${escapeHtml(view.script || "")}</code><button type="button" data-analytics-copy>Copy</button></div>` : "",
+      action: `<button class="linkedin-part-action" type="button" data-analytics-line aria-expanded="${Boolean(state.analyticsLine)}">${state.analyticsLine ? "Hide the line" : "See the line"}</button>`,
+    }),
+    view.reporter_connected
+      ? linkedInPart("Reporter", "Every page request, including crawlers that don't run scripts", { meta: `last request ${ledgerTime(view.requests_last_at)}` })
+      : "",
+  ];
+  const domain = analyticsHost(view.address).replace(/^www\./, "");
+  // A linked site was measured before Tin: stopping only unlinks it, and its history stays.
+  const confirm = view.linked
+    ? {
+      title: "Stop showing Tin Analytics for this project?",
+      text: "Tin stops reading this site's numbers and deletes its own copies. The site's history stays, because the site was measured before Tin. If you set it up again, the numbers come back.",
+      button: `<button class="analytics-stop is-outlined" type="button" data-analytics-stop-confirm${state.analyticsBusy ? " disabled" : ""}>Stop</button>`,
+      footnote: "Visits are recorded on Tin's analytics service. This site was measured before Tin, so stopping keeps its history.",
+    }
+    : {
+      title: `Stop measuring ${domain}?`,
+      text: "The script turns itself off on the next page load, and the site's numbers are deleted within a day.",
+      button: `<button class="analytics-stop" type="button" data-analytics-stop-confirm${state.analyticsBusy ? " disabled" : ""}>Stop and delete</button>`,
+      footnote: "Visits are recorded on Tin's analytics service. Stopping deletes this site's numbers within a day.",
+    };
+  const footer = state.analyticsConfirm
+    ? `<div class="analytics-confirm">
+      <div>
+        <strong>${escapeHtml(confirm.title)}</strong>
+        <p>${escapeHtml(confirm.text)}</p>
+      </div>
+      <button class="analytics-keep" type="button" data-analytics-keep>Keep measuring</button>
+      ${confirm.button}
+    </div>`
+    : `<div class="integration-control-footer">
+      <span class="linkedin-footnote">${escapeHtml(confirm.footnote)}</span>
+      <button class="integration-reconnect" type="button" data-analytics-open>Open Analytics</button>
+      <button class="integration-disconnect" type="button" data-analytics-stop>Stop measuring</button>
+      <button class="integration-done" type="button" data-integration-expand="${ANALYTICS_KEY}">Done</button>
+    </div>`;
+  return `<div class="integration-expanded analytics-expanded">${rows.join("")}${footer}</div>`;
+}
+
+function analyticsPath(action) {
+  return `/api/projects/${encodeURIComponent(state.project.id)}/integrations/${ANALYTICS_KEY}/${action}`;
+}
+
+function replaceIntegration(updated) {
+  const index = state.integrations.findIndex((item) => item.key === updated.key);
+  if (index >= 0) state.integrations[index] = updated;
+}
+
+async function analyticsRequest(action, body) {
+  const context = currentProjectContext();
+  if (!context.projectId || state.analyticsBusy) return;
+  state.analyticsBusy = true;
+  if (state.view === "integrations") renderIntegrations();
+  try {
+    const updated = await api(analyticsPath(action), { method: "POST", body: JSON.stringify(body || {}) });
+    if (!isCurrentProjectContext(context)) return;
+    replaceIntegration(updated);
+    state.analyticsError = null;
+    state.analyticsAddress = "";
+    if (action === "address") showToast(`Now counting ${analyticsCounted(updated.analytics)}. The script line on your site stays the same.`);
+  } catch (error) {
+    if (!isCurrentProjectContext(context)) return;
+    state.analyticsError = { message: error.message, code: error.code };
+  } finally {
+    state.analyticsBusy = false;
+  }
+  if (isCurrentProjectContext(context) && state.view === "integrations") renderIntegrations();
+  updateRail();
+}
+
+async function stopAnalytics() {
+  const context = currentProjectContext();
+  if (!context.projectId || state.analyticsBusy) return;
+  state.analyticsBusy = true;
+  if (state.view === "integrations") renderIntegrations();
+  try {
+    await api(`/api/projects/${encodeURIComponent(context.projectId)}/integrations/${ANALYTICS_KEY}`, { method: "DELETE" });
+    if (!isCurrentProjectContext(context)) return;
+    state.integrations = await api(`/api/projects/${encodeURIComponent(context.projectId)}/integrations`);
+    if (!isCurrentProjectContext(context)) return;
+    state.expandedIntegration = null;
+    state.analyticsConfirm = false;
+  } catch (error) {
+    if (!isCurrentProjectContext(context)) return;
+    showToast(`Could not stop measuring: ${error.message}`);
+  } finally {
+    state.analyticsBusy = false;
+  }
+  if (isCurrentProjectContext(context) && state.view === "integrations") renderIntegrations();
+  updateRail();
+}
+
+function bindAnalyticsCard() {
+  document.querySelectorAll("[data-analytics-setup]").forEach((button) => {
+    button.addEventListener("click", () => analyticsRequest("setup"));
+  });
+  document.querySelector("[data-analytics-address]")?.addEventListener("submit", (event) => {
+    event.preventDefault();
+    const url = new FormData(event.currentTarget).get("url");
+    state.analyticsAddress = String(url || "");
+    analyticsRequest("setup", { url: state.analyticsAddress.trim() });
+  });
+  document.querySelectorAll("[data-analytics-count]").forEach((button) => {
+    button.addEventListener("click", () => analyticsRequest("address", { host: button.dataset.analyticsCount }));
+  });
+  document.querySelector("[data-analytics-line]")?.addEventListener("click", () => {
+    state.analyticsLine = !state.analyticsLine;
+    renderIntegrations();
+  });
+  document.querySelector("[data-analytics-copy]")?.addEventListener("click", async () => {
+    const line = state.integrations.find((item) => item.key === ANALYTICS_KEY)?.analytics?.script || "";
+    try {
+      await navigator.clipboard.writeText(line);
+      showToast("Copied the script line.");
+    } catch (_error) {
+      showToast("Could not copy. Select the line and copy it.");
+    }
+  });
+  document.querySelector("[data-analytics-open]")?.addEventListener("click", () => navigate("analytics"));
+  document.querySelector("[data-analytics-stop]")?.addEventListener("click", () => {
+    state.analyticsConfirm = true;
+    renderIntegrations();
+  });
+  document.querySelector("[data-analytics-keep]")?.addEventListener("click", () => {
+    state.analyticsConfirm = false;
+    renderIntegrations();
+  });
+  document.querySelector("[data-analytics-stop-confirm]")?.addEventListener("click", stopAnalytics);
 }
 
 function googleAdsHealth(integration) {
@@ -7176,6 +7459,8 @@ async function toggleIntegration(providerKey) {
     await openCustomApi(state.integrations.find(item => item.key === providerKey));
     return;
   }
+  state.analyticsLine = false;
+  state.analyticsConfirm = false;
   if (state.expandedIntegration === providerKey) {
     state.expandedIntegration = null;
     renderIntegrations();
@@ -7693,6 +7978,7 @@ function resetProjectState(project) {
   state.websiteChanges = [];
   state.judgmentCalls = [];
   state.integrations = [];
+  Object.assign(state, { analyticsError: null, analyticsAddress: "", analyticsLine: false, analyticsConfirm: false });
   state.billing = null;
   state.taskDetail = null;
   state.taskLoadingRunId = null;

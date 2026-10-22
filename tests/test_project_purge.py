@@ -28,6 +28,8 @@ KEPT = {
     # after the project is gone is a paid-ads decision, made separately.
     "paid_ads_campaigns",
     "paid_ads_proposals",
+    # Removals of a site's data that Agent Traffic hasn't accepted yet; Tin keeps sending them.
+    "agent_traffic_removals",
 }
 
 

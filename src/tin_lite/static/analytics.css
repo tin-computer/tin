@@ -1,0 +1,748 @@
+/* Analytics (Paper REP-V2, V2b, V2c, V2d, V2e) and the Tin Analytics card (CARD-1 to CARD-4).
+   Board colors map to the theme: cream to ink, coal card to paper card, the board's hot to
+   danger and its ember to hot. */
+
+.analytics-view {
+  display: flex;
+  flex-direction: column;
+  gap: 22px;
+}
+
+.analytics-view .workspace-header { margin-bottom: 0; }
+
+.analytics-body {
+  display: flex;
+  min-width: 0;
+  flex-direction: column;
+  gap: 22px;
+}
+
+.analytics-empty {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 12px;
+  margin: 0;
+  color: var(--ink-secondary);
+  font: 14px/20px var(--sans);
+}
+
+.analytics-empty p { margin: 0; }
+
+.analytics-link,
+.analytics-count {
+  flex: 0 0 auto;
+  padding: 0;
+  background: transparent;
+  color: var(--ink-secondary);
+  font: 13px/16px var(--sans);
+  cursor: pointer;
+}
+
+.analytics-link:hover { color: var(--ink); }
+
+.analytics-count {
+  color: var(--accent-text);
+  font-weight: 700;
+}
+
+/* Tabs on the left, the facts of the report on the right, one hairline under both. */
+.analytics-tabs {
+  display: flex;
+  align-items: flex-end;
+  gap: 16px;
+  border-bottom: 1px solid rgb(var(--ink-rgb) / 10%);
+}
+
+.analytics-tabs.is-bare { justify-content: flex-end; }
+
+.analytics-sections {
+  margin: 0 auto 0 0;
+  border-bottom: 0;
+}
+
+.analytics-meta {
+  padding-bottom: 10px;
+  color: var(--ink-muted);
+  font: 12px/16px var(--mono);
+  text-align: right;
+}
+
+.analytics-summary {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding-top: 4px;
+}
+
+.analytics-summary p {
+  max-width: 880px;
+  margin: 0;
+  color: var(--ink);
+  font: 17px/25px var(--sans);
+}
+
+.analytics-heading {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 10px;
+}
+
+.analytics-heading h2 {
+  margin: 0;
+  color: var(--ink);
+  font: 700 17px/22px var(--sans);
+}
+
+.analytics-heading > span {
+  color: var(--ink-muted);
+  font: 12px/16px var(--mono);
+}
+
+.analytics-heading.is-section { padding-top: 10px; }
+
+.analytics-ring {
+  width: 7px;
+  height: 7px;
+  flex: 0 0 7px;
+  align-self: center;
+  border: 1.3px solid var(--ink-secondary);
+  border-radius: 4px;
+}
+
+/* REP-V2e: one row per item the report says needs the founder; a quiet line when none does. */
+.analytics-needs {
+  display: flex;
+  flex-direction: column;
+  padding: 0 16px;
+  background: var(--paper-card);
+  border: 1px solid var(--card-border);
+  border-radius: var(--radius-card);
+}
+
+.analytics-needs-row {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 13px 0;
+}
+
+.analytics-needs-row + .analytics-needs-row { border-top: 1px solid var(--card-border); }
+
+.analytics-needs-row > span {
+  width: 7px;
+  height: 7px;
+  flex: 0 0 7px;
+  background: var(--hot);
+  border-radius: 4px;
+}
+
+.analytics-needs-row.is-done > span { background: var(--accent-deep); }
+
+.analytics-needs-row p {
+  min-width: 0;
+  flex: 1 1 auto;
+  margin: 0;
+  color: var(--ink);
+  font: 14px/19px var(--sans);
+}
+
+.analytics-needs-row p.is-quiet { color: var(--ink-secondary); }
+
+.analytics-needs-row code {
+  color: var(--ink-muted);
+  font: 12px/16px var(--mono);
+}
+
+/* Four numbers, each with its change from the period before or its own detail. */
+.analytics-tiles,
+.analytics-classes {
+  display: flex;
+  background: var(--paper-card);
+  border: 1px solid var(--card-border);
+  border-radius: var(--radius-card);
+}
+
+.analytics-tile,
+.analytics-class {
+  display: flex;
+  min-width: 0;
+  flex: 1 1 0;
+  flex-direction: column;
+  gap: 6px;
+  padding: 18px 20px;
+}
+
+.analytics-tile + .analytics-tile,
+.analytics-class + .analytics-class { border-left: 1px solid var(--card-border); }
+
+.analytics-tile span {
+  color: var(--ink-secondary);
+  font: 13px/16px var(--sans);
+}
+
+.analytics-tile strong {
+  color: var(--ink);
+  font: 700 30px/34px var(--sans);
+  letter-spacing: -0.03em;
+}
+
+.analytics-tile code {
+  min-height: 16px;
+  color: var(--ink-muted);
+  font: 12px/16px var(--mono);
+}
+
+.analytics-class {
+  gap: 4px;
+  padding: 14px 20px;
+}
+
+.analytics-class.is-wide { flex-grow: 1.4; }
+
+.analytics-class strong {
+  color: var(--ink);
+  font: 700 22px/28px var(--sans);
+  letter-spacing: -0.02em;
+}
+
+.analytics-class span {
+  color: var(--ink-secondary);
+  font: 13px/16px var(--sans);
+}
+
+/* Hour by hour, or day by day for a week. */
+.analytics-chart {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  padding: 18px 20px;
+  background: var(--paper-card);
+  border: 1px solid var(--card-border);
+  border-radius: var(--radius-card);
+}
+
+.analytics-card-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+}
+
+.analytics-card-head h3 {
+  margin: 0;
+  color: var(--ink);
+  font: 700 15px/20px var(--sans);
+}
+
+.analytics-card-head > code {
+  color: var(--ink-muted);
+  font: 12px/16px var(--mono);
+}
+
+.analytics-legend {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 18px;
+}
+
+.analytics-legend span {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  color: var(--ink-secondary);
+  font: 13px/16px var(--sans);
+}
+
+.analytics-legend i {
+  width: 8px;
+  height: 8px;
+  border-radius: 2px;
+}
+
+.analytics-view .is-none { background: var(--ink-secondary); }
+.analytics-view .is-automated { background: var(--accent-deep); }
+.analytics-view .is-declared { background: rgb(var(--accent-deep-rgb) / 35%); }
+
+.analytics-bars {
+  display: flex;
+  height: 132px;
+  flex: 0 0 auto;
+  align-items: flex-end;
+  gap: 6px;
+}
+
+.analytics-bar {
+  display: flex;
+  min-width: 0;
+  flex: 1 1 0;
+  flex-direction: column;
+  justify-content: flex-end;
+  gap: 2px;
+  height: 132px;
+}
+
+.analytics-bar i {
+  display: block;
+  flex: 0 0 auto;
+  border-radius: 2px;
+}
+
+.analytics-bar.is-empty {
+  height: 2px;
+  background: rgb(var(--ink-rgb) / 12%);
+  border-radius: 2px;
+}
+
+.analytics-bar.is-empty.is-future { background: rgb(var(--ink-rgb) / 8%); }
+
+.analytics-axis {
+  display: flex;
+  justify-content: space-between;
+  color: var(--ink-muted);
+  font: 12px/16px var(--mono);
+}
+
+.analytics-days {
+  display: flex;
+  gap: 20px;
+}
+
+.analytics-day {
+  display: flex;
+  min-width: 0;
+  flex: 1 1 0;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.analytics-day-bar {
+  display: flex;
+  height: 132px;
+}
+
+.analytics-day-label {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 8px;
+  font: 12px/16px var(--mono);
+}
+
+.analytics-day-label span {
+  overflow: hidden;
+  color: var(--ink-muted);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.analytics-day-label strong {
+  color: var(--ink);
+  font-weight: 400;
+}
+
+.analytics-detector {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 10px;
+  margin-top: 2px;
+  padding-top: 12px;
+  border-top: 1px solid var(--card-border);
+  color: var(--ink-secondary);
+  font: 13px/16px var(--sans);
+}
+
+.analytics-detector code {
+  color: var(--ink);
+  font: 12px/16px var(--mono);
+}
+
+.analytics-detector i { flex: 1 1 0; }
+
+.analytics-detector code.is-muted { color: var(--ink-muted); }
+
+/* Two tables side by side: pages and where visits came from; companies and their pages. */
+.analytics-pair {
+  display: flex;
+  align-items: flex-start;
+  gap: 24px;
+}
+
+.analytics-table {
+  display: flex;
+  min-width: 0;
+  flex: 1 1 0;
+  flex-direction: column;
+  overflow: clip;
+  background: var(--paper-card);
+  border: 1px solid var(--card-border);
+  border-radius: var(--radius-card);
+}
+
+.analytics-table .analytics-card-head { padding: 14px 16px; }
+
+.analytics-row {
+  display: flex;
+  height: 44px;
+  flex: 0 0 auto;
+  align-items: center;
+  gap: 12px;
+  padding: 0 16px;
+  border-top: 1px solid var(--card-border);
+}
+
+.analytics-row.is-head {
+  height: 34px;
+  background: var(--table-sticky);
+  color: var(--ink);
+  font: 700 13px/16px var(--sans);
+}
+
+.analytics-row.is-head > span:first-child { flex: 1 1 0; }
+
+.analytics-name {
+  display: flex;
+  min-width: 0;
+  flex: 1 1 0;
+  align-items: baseline;
+  gap: 8px;
+  overflow: hidden;
+  color: var(--ink);
+  font: 14px/19px var(--sans);
+  white-space: nowrap;
+}
+
+.analytics-name > span {
+  min-width: 0;
+  flex: 0 1 auto;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.analytics-name > span.is-label {
+  color: var(--ink-secondary);
+  font-size: 13px;
+  line-height: 16px;
+}
+
+/* On a narrow row the tags give way, and a name with tags (a company, a site) keeps its width. */
+.analytics-name > span:not(:only-child) { flex-shrink: 0; }
+
+.analytics-name code {
+  min-width: 0;
+  flex: 0 100 auto;
+  overflow: hidden;
+  color: var(--ink-muted);
+  font: 12px/16px var(--mono);
+  text-overflow: ellipsis;
+}
+
+.analytics-name code.analytics-tag { color: var(--accent-text); }
+
+.analytics-num {
+  flex: 0 0 auto;
+  color: var(--ink);
+  font: 12.5px/16px var(--mono);
+  text-align: right;
+}
+
+.analytics-row.is-head .analytics-num { font: 700 13px/16px var(--sans); }
+
+/* The regions line keeps its label whole and wraps its numbers under it when they don't fit. */
+.analytics-row.is-regions {
+  height: auto;
+  min-height: 44px;
+  flex-wrap: wrap;
+  row-gap: 2px;
+  padding-top: 12px;
+  padding-bottom: 12px;
+}
+
+.analytics-row.is-regions .analytics-name { flex: 1 0 auto; }
+
+.analytics-regions {
+  margin-left: auto;
+  color: var(--ink);
+  font: 12px/16px var(--mono);
+}
+
+.analytics-num.is-withheld { color: var(--ink-muted); }
+
+.analytics-regions {
+  color: var(--ink);
+  font: 12.5px/16px var(--mono);
+  white-space: nowrap;
+}
+
+.analytics-notes {
+  margin: 0;
+  color: var(--ink-muted);
+  font: 12px/16px var(--mono);
+}
+
+/* REP-V2c: the line, where it goes, a CSP and what's counted. */
+.analytics-install {
+  display: flex;
+  flex-direction: column;
+  padding: 0 20px;
+  background: var(--paper-card);
+  border: 1px solid var(--card-border);
+  border-radius: var(--radius-card);
+}
+
+.analytics-install-row {
+  display: flex;
+  align-items: center;
+  gap: 16px;
+  padding: 12px 0;
+}
+
+.analytics-install-row:first-child { padding: 16px 0; }
+
+.analytics-install-row + .analytics-install-row { border-top: 1px solid var(--card-border); }
+
+.analytics-install-label {
+  width: 120px;
+  flex: 0 0 120px;
+  color: var(--ink-secondary);
+  font: 13px/18px var(--sans);
+}
+
+.analytics-install-main {
+  display: flex;
+  min-width: 0;
+  flex: 1 1 0;
+  flex-direction: column;
+  gap: 4px;
+  color: var(--ink);
+  font: 13px/18px var(--sans);
+}
+
+.analytics-install-main code {
+  color: var(--ink-muted);
+  font: 11.5px/14px var(--mono);
+}
+
+.analytics-script {
+  min-width: 0;
+  flex: 1 1 0;
+  padding: 10px 12px;
+  overflow-x: auto;
+  background: var(--paper-well);
+  border-radius: var(--radius-chip);
+  color: var(--ink);
+  font: 12.5px/18px var(--mono);
+  white-space: nowrap;
+}
+
+.analytics-install-row > button,
+.analytics-install-slot {
+  width: 64px;
+  flex: 0 0 64px;
+}
+
+.analytics-install-row > button {
+  padding: 0;
+  background: transparent;
+  color: var(--ink-secondary);
+  font: 12.5px/16px var(--sans);
+  text-align: right;
+  cursor: pointer;
+}
+
+/* The card (CARD-1 to CARD-4), in the integration rows' grammar. */
+.analytics-logo {
+  width: 14px;
+  height: 14px;
+  fill: none;
+  stroke: var(--ink);
+  stroke-linecap: round;
+  stroke-width: 1.6;
+}
+
+.analytics-mark {
+  width: 7px;
+  height: 7px;
+  flex: 0 0 7px;
+  border: 1px solid rgb(var(--ink-rgb) / 40%);
+  border-radius: var(--radius-pill);
+}
+
+.analytics-mark.is-waiting { border: 1.5px solid var(--accent-deep); }
+.analytics-mark.is-live { background: var(--accent-deep); border-color: var(--accent-deep); }
+.analytics-mark.is-quiet { background: var(--ink-muted); border-color: var(--ink-muted); }
+.analytics-mark.is-needs_attention { background: var(--danger); border-color: var(--danger); }
+
+.analytics-card .integration-primary.is-muted { color: var(--ink-muted); }
+
+.analytics-health {
+  display: flex;
+  min-width: 0;
+  flex: 1 1 auto;
+  flex-direction: column;
+  gap: 2px;
+  color: var(--ink-muted);
+  font: 11.5px/14px var(--mono);
+}
+
+.analytics-health > span,
+.analytics-health small {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.integration-card.analytics-card.is-connected .analytics-health > span:first-child:not(:only-child) { color: var(--ink); }
+
+.analytics-health small { font-size: 11px; }
+
+/* A one-line state is a sentence to act on (Quiet's "Check that the script is still on the
+   site."), so it wraps rather than being cut. */
+.analytics-health > span:only-child { white-space: normal; }
+
+.integration-card.analytics-card.is-needs {
+  background: rgb(var(--danger-rgb) / 8%);
+  border-color: rgb(var(--danger-rgb) / 20%);
+}
+
+.analytics-again {
+  flex: 0 0 auto;
+  padding: 0;
+  background: transparent;
+  color: var(--danger);
+  font: 700 12.5px/16px var(--sans);
+  cursor: pointer;
+}
+
+.analytics-rows { padding: 0 18px; }
+
+.analytics-input {
+  width: min(420px, 100%);
+  height: 32px;
+  padding: 0 10px;
+  background: var(--input-bg, var(--paper-well));
+  border: 1px solid rgb(var(--ink-rgb) / 18%);
+  border-radius: var(--radius-chip);
+  color: var(--ink);
+  font: 13px/16px var(--sans);
+}
+
+.analytics-prompt {
+  margin: 0 18px 12px;
+  padding: 11px 13px;
+  background: rgb(var(--danger-rgb) / 8%);
+  border-radius: var(--radius-chip);
+  color: var(--ink-secondary);
+  font: 12.5px/18px var(--sans);
+}
+
+.analytics-line {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  margin-top: 6px;
+}
+
+.analytics-line code {
+  min-width: 0;
+  flex: 1 1 auto;
+  padding: 8px 10px;
+  overflow-x: auto;
+  background: var(--paper-well);
+  border-radius: var(--radius-chip);
+  color: var(--ink);
+  font: 12px/16px var(--mono);
+  white-space: nowrap;
+}
+
+.analytics-line button {
+  padding: 0;
+  background: transparent;
+  color: var(--ink-secondary);
+  font: 12.5px/16px var(--sans);
+  cursor: pointer;
+}
+
+/* CARD-4: the confirmation takes the footer's place, on a danger wash. */
+.analytics-confirm {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  margin: 0 -18px -12px;
+  padding: 12px 18px;
+  background: rgb(var(--danger-rgb) / 8%);
+  border-top: 1px solid rgb(var(--danger-rgb) / 25%);
+  border-radius: 0 0 var(--radius-card) var(--radius-card);
+}
+
+.analytics-confirm > div {
+  display: flex;
+  min-width: 0;
+  flex: 1 1 auto;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.analytics-confirm strong {
+  color: var(--ink);
+  font: 700 13px/18px var(--sans);
+}
+
+.analytics-confirm p {
+  margin: 0;
+  color: var(--ink-secondary);
+  font: 12.5px/18px var(--sans);
+}
+
+.analytics-keep,
+.analytics-stop {
+  flex: 0 0 auto;
+  border-radius: var(--radius-chip);
+  font: 12.5px/16px var(--sans);
+  cursor: pointer;
+}
+
+.analytics-keep {
+  padding: 5px 10px;
+  background: transparent;
+  border: 1px solid rgb(var(--ink-rgb) / 30%);
+  color: var(--ink);
+}
+
+.analytics-stop {
+  padding: 6px 11px;
+  background: var(--danger);
+  color: var(--paper-bg);
+  font-weight: 700;
+}
+
+/* A linked site's Stop deletes nothing, so it isn't filled. */
+.analytics-stop.is-outlined {
+  padding: 5px 10px;
+  background: transparent;
+  border: 1px solid rgb(var(--danger-rgb) / 40%);
+  color: var(--danger);
+  font-weight: 400;
+}
+
+@media (max-width: 760px) {
+  .analytics-tabs { flex-wrap: wrap; }
+  .analytics-meta { text-align: left; }
+  .analytics-tiles,
+  .analytics-classes { flex-wrap: wrap; }
+  .analytics-tile,
+  .analytics-class { flex-basis: 50%; }
+  .analytics-tile + .analytics-tile,
+  .analytics-class + .analytics-class { border-left: 0; }
+  .analytics-pair { flex-direction: column; }
+  .analytics-table { width: 100%; }
+  .analytics-legend { display: none; }
+  .analytics-bars { gap: 2px; }
+  .analytics-days { gap: 6px; }
+  .analytics-day-label strong { display: none; }
+  .analytics-install-row { flex-wrap: wrap; }
+  .analytics-install-label { width: 100%; flex-basis: 100%; }
+  .analytics-confirm { flex-wrap: wrap; }
+}

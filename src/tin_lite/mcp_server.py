@@ -68,7 +68,7 @@ from tin_lite.growth_onboarding_control import (
 from tin_lite.growth_onboarding_control import (
     record_onboarding_picks as record_picks,
 )
-from tin_lite.integrations import IntegrationError
+from tin_lite.integrations import AGENT_TRAFFIC_PROVIDER, IntegrationError
 from tin_lite.keyword_plan_control import stop_keyword_plan as stop_keyword_plan_service
 from tin_lite.linkedin_posting import visible as linkedin_visible
 from tin_lite.linkedin_posts import LinkedInPosts
@@ -417,7 +417,12 @@ def _project_task_result(run: Any, entries: list[Any] | None = None) -> dict[str
 
 
 def _mcp_integration_view(
-    definition: Any, connection: Any | None, *, configured: bool, viewer: str | None = None
+    definition: Any,
+    connection: Any | None,
+    *,
+    configured: bool,
+    viewer: str | None = None,
+    analytics: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     from tin_lite.integrations import LINKEDIN_POSTING_PROVIDER, connection_readiness
     from tin_lite.linkedin_posting import member_view
@@ -450,6 +455,8 @@ def _mcp_integration_view(
             else None
         ),
         "last_error_code": connection.last_error_code if connection is not None else None,
+        # Analytics only: the card's state (waiting, live, quiet, needs_attention, ...).
+        **({"analytics": analytics} if analytics is not None else {}),
     }
 
 
@@ -5303,16 +5310,24 @@ def create_mcp_app(
             item.provider_key: item
             for item in await service.list_connections(parsed_project_id, member=clerk_user_id)
         }
+        definitions = service.definitions(connections.values(), project_id=parsed_project_id)
+        # Reading it is like opening the card: Tin asks the service again when it is due.
+        analytics = (
+            await service.agent_traffic.card(
+                parsed_project_id, connections.get(AGENT_TRAFFIC_PROVIDER)
+            )
+            if any(definition.key == AGENT_TRAFFIC_PROVIDER for definition in definitions)
+            else None
+        )
         return [
             _mcp_integration_view(
                 definition,
                 connections.get(definition.key),
                 configured=service.is_configured(definition.key),
                 viewer=clerk_user_id,
+                analytics=analytics if definition.key == AGENT_TRAFFIC_PROVIDER else None,
             )
-            for definition in service.definitions(
-                connections.values(), project_id=parsed_project_id
-            )
+            for definition in definitions
         ]
 
     @server.tool()
@@ -5348,6 +5363,39 @@ def create_mcp_app(
         if value is None:
             raise LookupError("integration not found")
         return value
+
+    @server.tool()
+    async def get_site_analytics(
+        project_id: str, period: str = "day", date: str | None = None
+    ) -> dict[str, Any]:
+        """Read the project's site report from Tin Analytics: visits, page views, visits from AI
+        assistants, automated browsers, crawlers and, with the request reporter, every page
+        request, each compared with the period before.
+
+        `period` is `day` (midnight to midnight) or `week` (the 7 days ending on `date`).
+        `date` is YYYY-MM-DD in the founder's time zone, today when omitted, within the last 180
+        days. The result is Tin's stored copy, read again once it is ten minutes old, with the
+        report's own `markdown`. A null number was withheld for covering too few visits.
+        """
+        from tin_lite.agent_traffic_connection import ServiceArgumentError, report_date
+
+        token = await caller()
+        parsed_project_id = _mcp_uuid(project_id, field="project_id")
+        await require_project(parsed_project_id, token, tool_name="get_site_analytics")
+        if period not in {"day", "week"}:
+            raise ToolError("period must be day or week")
+        try:
+            day = report_date(date)
+        except ServiceArgumentError as exc:
+            raise ToolError(str(exc)) from None
+        service = runtime().integrations.agent_traffic
+        try:
+            stored = await service.report(parsed_project_id, period=period, day=day)
+        except IntegrationError as exc:
+            raise ToolError(str(exc)) from exc
+        if stored is None:
+            raise ToolError("Tin Analytics has no report for that period yet")
+        return {"project_id": str(parsed_project_id), "period": period, **stored}
 
     @server.tool()
     async def start_integration_connection(
@@ -5389,6 +5437,21 @@ def create_mcp_app(
                         "its link to create a read-only restricted key in Stripe, then paste "
                         "the key on that page, never in this chat. Tell me when it says "
                         "connected."
+                    )
+                ),
+            }
+        if provider_key == AGENT_TRAFFIC_PROVIDER:
+            # No sign-in: the founder presses Set up on the card, which then shows the script.
+            return {
+                "setup_url": started.authorization_url,
+                "authorization_url": started.authorization_url,
+                "open_command": _open_command(started.authorization_url),
+                **_founder_words(
+                    relay=(
+                        f"I am opening Tin's Integrations page for "
+                        f"{project.name if project else 'your project'}. Press Set up on the "
+                        "Tin Analytics card; there is nothing to sign in to. Tin then shows "
+                        "the one script line for your site."
                     )
                 ),
             }
