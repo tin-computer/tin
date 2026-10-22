@@ -2519,6 +2519,52 @@ class IntegrationService:
             and re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9_.-]{0,120}\.mdx?", item["name"])
         ][:50]
 
+    async def github_root_files(self, *, project_id: UUID, repository: str) -> dict[str, Any]:
+        """The names at the root of the selected repository's default branch, with the text of
+        its package.json and Wrangler settings when present: what Tin needs to tell which
+        framework and host a site runs on. Reads only; nothing is cloned."""
+        token = await self._selected_repository_token(project_id, repository)
+        root = f"https://api.github.com/repos/{quote(repository, safe='/')}/contents"
+        response = await self._client.get(f"{root}/", headers=self._github_headers(token))
+        try:
+            listing = response.json() if response.status_code == 200 else None
+        except ValueError:
+            listing = None
+        if not isinstance(listing, list):
+            raise IntegrationUpstreamError("The repository's files could not be listed")
+        names = [
+            item["name"]
+            for item in listing[:1000]
+            if isinstance(item, dict)
+            and isinstance(item.get("name"), str)
+            and re.fullmatch(r"[A-Za-z0-9._-]{1,120}", item["name"])
+        ]
+        found: dict[str, Any] = {"names": names}
+        wanted = {"package.json": "package.json"}
+        wrangler = next(
+            (
+                name
+                for name in ("wrangler.toml", "wrangler.json", "wrangler.jsonc")
+                if name in names
+            ),
+            None,
+        )
+        if wrangler:
+            wanted["wrangler"] = wrangler
+        for key, name in wanted.items():
+            if name not in names:
+                continue
+            file_response = await self._client.get(
+                f"{root}/{quote(name, safe='')}",
+                headers={
+                    **self._github_headers(token),
+                    "Accept": "application/vnd.github.raw+json",
+                },
+            )
+            if file_response.status_code == 200 and len(file_response.content) <= 100_000:
+                found[key] = file_response.content.decode("utf-8", "replace")
+        return found
+
     async def github_repository_bundle(
         self,
         *,

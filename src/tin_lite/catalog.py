@@ -712,7 +712,8 @@ BUILTIN_WORKFLOWS = (
         "answer page, adapted to the site's own format at the address its plan gave it, with "
         "its wording kept; the technical fixes the latest audit found; the "
         "redirects and noindex changes your page decisions and site plan made; the copy fix "
-        "planned from what people said about your product; or the blog index plan. Each fix, "
+        "planned from what people said about your product; Tin Analytics' line and request "
+        "reporter, or taking them out again; or the blog index plan. Each fix, "
         "planned change or plan is a change you approve or decline once in Tin. What you "
         "approved publishes: Tin merges the pull request once your repository's required "
         "checks pass, then checks the live site. Anything else, a page whose wording Tin "
@@ -720,9 +721,10 @@ BUILTIN_WORKFLOWS = (
         "to the project's protected pages, opens a pull request for you to merge. Deleting a "
         "page stays with you.",
         executor=CODEX_PROCEDURE_EXECUTOR,
-        # 1.12.0: entity data from the audit writes only the profiles and company someone
-        # confirmed (official_profiles).
-        version_label="1.12.0",
+        # 1.13.0: Tin Analytics (`source: analytics`), proposed at Set up and held to its
+        # pieces by website_change_analytics. 1.12.0: entity data from the audit writes only
+        # the profiles and company someone confirmed (official_profiles).
+        version_label="1.13.0",
         system=ORGANIC_TRAFFIC_SYSTEM,
         schedule_modes=("on_demand",),
         # Agents start it for an approved change; the catalog has no picker for change rows.
@@ -741,8 +743,16 @@ BUILTIN_WORKFLOWS = (
                     "the technical fixes the latest organic audit found. planned: the "
                     "redirects and noindex changes page decisions made. feedback: the copy "
                     "fix the newest qa.feedback_to_fix run planned; approving it in Tin starts "
-                    "this. blog_index: retired; kept for runs that pinned it. Preview audit, "
-                    "planned and feedback with preflight_website_change.",
+                    "this. analytics: an approved Tin Analytics change (change_id); approving "
+                    "it in Tin starts this. blog_index: retired; kept for runs that pinned it. "
+                    "Preview audit, planned and feedback with preflight_website_change.",
+                },
+                "change_id": {
+                    "type": "string",
+                    "default": "",
+                    "pattern": r"^(|an_[0-9a-f]{20})$",
+                    "title": "Approved analytics change",
+                    "description": "For analytics: the change row the founder approved.",
                 },
                 "source_run_id": {
                     "type": "string",

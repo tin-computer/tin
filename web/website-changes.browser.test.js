@@ -38,9 +38,19 @@ const QUESTION = {
   suggestion: "allow", why: "Blocking them keeps the site out of ChatGPT search answers.",
 };
 
-async function serve() {
+// Tin Analytics' change (Paper INST-2): the pieces an approval covers, proposed at Set up.
+const ANALYTICS = {change_id: "an_" + "5".repeat(20), source: "analytics", kind: "install", title: "Add Tin Analytics to sheepdogs.io",
+  paths: ["/"], content_sha256: sha("e"), content_revision: null, status: "pending", proposed_at: minutesAgo(2), protected: null,
+  detail: {repository: "owner/site", host: "sheepdogs.io", site_id: "st-8k3m9q2x7v4c",
+    script: '<script async src="https://edge.tin.computer/sdk/v1.js" data-site="st-8k3m9q2x7v4c"></script>',
+    csp: {"script-src": ["https://edge.tin.computer"], "connect-src": ["https://edge.tin.computer"]},
+    reporter: {variant: "nextjs", version: "1", url: "https://edge.tin.computer/reporter/v1/nextjs.js",
+      sha256: "0d856c48595e43afe177d787da212849170ea72b0ec1a2d4e28fd9bb695b8677", label: "Next.js", where: "copied unchanged and added to the site's middleware"},
+    reporter_host: "vercel"}};
+
+async function serve(list = rows(), {questions = [QUESTION], next = null} = {}) {
   const project = {id: "project-1", name: "Example project", workspace_id: "ws", workspace_name: "Example", member_count: 1, hidden: false};
-  const pending = rows();
+  const pending = list;
   const writes = [];
   const server = http.createServer(async (request, response) => {
     const url = new URL(request.url, "http://localhost");
@@ -65,12 +75,12 @@ async function serve() {
         const row = pending.find(item => item.change_id === decided[1]);
         if (!row) return send({detail: "change not found"}, 404);
         pending.splice(pending.indexOf(row), 1);
-        return send({...row, status: decided[2] === "approve" ? "approved" : "declined", decided_by: "member"});
+        return send({...row, status: decided[2] === "approve" ? "approved" : "declined", decided_by: "member", ...(next ? {next} : {})});
       }
       return send({});
     }
     if (url.pathname === "/api/projects") return send([project]);
-    if (url.pathname.endsWith("/website-changes/questions")) return send({questions: [QUESTION]});
+    if (url.pathname.endsWith("/website-changes/questions")) return send({questions});
     if (url.pathname.endsWith("/website-changes")) return send(url.searchParams.get("status") === "pending" ? pending : []);
     if (url.pathname.endsWith("/system")) return send({workflow_count: 1, running_count: 0, waiting_count: 0, runs_this_month: 0, timezone: "UTC"});
     if (url.pathname.startsWith("/api/")) return send([]);
@@ -169,6 +179,35 @@ test("a judgment call shows its question and options, with Tin's suggestion and 
     assert.equal(await card.locator("button").count(), 0);
     assert.match(await card.innerText(), /Your coding agent answers this with the next website change run/);
     assert.deepEqual(writes, []);
+    assert.deepEqual(errors, []);
+    await context.close();
+  } finally {await browser.close(); server.close();}
+});
+
+test("Tin Analytics' change shows the exact pieces the approval covers", async () => {
+  const {server, base, writes} = await serve([ANALYTICS], {questions: [], next: {run_id: "run-1", reason: null}});
+  const browser = await chromium.launch({headless: true});
+  try {
+    const {page, context, errors} = await open(browser, base);
+    const card = page.locator(".decision-detail-card");
+    await card.waitFor({timeout: 5000});
+    assert.equal(await card.locator(":scope > header strong").textContent(), "Add Tin Analytics to sheepdogs.io");
+    assert.equal(await card.locator(":scope > header code").textContent(), "Analytics · install");
+    assert.equal(await card.locator(".decision-summary").textContent(), "Tin adds its analytics line to every page, and the reporter that counts crawlers and AI assistants that don't run scripts. Nothing else on the site changes.");
+    // The site path "/" says nothing; the pieces say what changes.
+    assert.equal(await card.locator(".website-change-paths").count(), 0);
+    const pieces = card.locator(".website-change-piece");
+    assert.deepEqual(await pieces.locator(".website-change-piece-label").allTextContents(), ["The line", "CSP", "Reporter"]);
+    assert.equal(await pieces.nth(0).locator(".website-change-piece-code").textContent(), ANALYTICS.detail.script);
+    assert.match(await pieces.nth(0).innerText(), /in the head of the layout file every page uses$/);
+    assert.match(await pieces.nth(1).innerText(), /Tin's address in script-src and connect-src\s*only where the site already sets a Content-Security-Policy/);
+    assert.match(await pieces.nth(2).innerText(), /The Next\.js reporter, copied unchanged and added to the site's middleware\s*nextjs\.js version 1 · sha256 0d856c48…bb695b8677/);
+    assert.match(await card.locator(".decision-note").last().textContent(), /^Approving lets Tin add exactly these to your repository and merge the pull request once your site's build and your repository's required checks pass\. Any other edit waits for your review\./);
+    assert.deepEqual(await card.locator("footer button").allTextContents(), ["Decline", "Approve"]);
+    await card.getByRole("button", {name: "Approve", exact: true}).click();
+    await page.locator(".toast, [role=status]").getByText(/Tin is making the change/).waitFor();
+    assert.equal(writes[0].path, `/api/projects/project-1/website-changes/${ANALYTICS.change_id}/approve`);
+    assert.equal(writes[0].body.content_sha256, sha("e"));
     assert.deepEqual(errors, []);
     await context.close();
   } finally {await browser.close(); server.close();}

@@ -3,7 +3,7 @@
 In the organic traffic system every change to the site is meant to flow through here after
 the founder approves it: content drafts, page decisions (URL changes), the page tree, the blog
 index and technical fixes. Each is a change row: a source, a stable ID, a kind, the site
-paths it touches and its approval (ChangeRow). Two sources are implemented:
+paths it touches and its approval (ChangeRow). These sources are implemented:
 
 - `content_draft` (phase 1): an approved content.generate article or answer page, adapted
   into the site's own format at the address its plan gave it (content_repository_delivery);
@@ -14,7 +14,9 @@ paths it touches and its approval (ChangeRow). Two sources are implemented:
 - `blog_index` (phase 3, website_change_blog_index): the newest blog index plan, one row,
   its files applied as they are;
 - `feedback` (website_change_feedback): the newest copy fix qa.feedback_to_fix planned from
-  what people said in public, one row, its files applied as they are once approved.
+  what people said in public, one row, its files applied as they are once approved;
+- `analytics` (website_change_analytics): Tin Analytics' line, CSP entries and request
+  reporter, proposed when the founder sets analytics up and taken out after Stop measuring.
 
 Two modes, decided by whether the change is pre-approved to commit to main:
 
@@ -60,10 +62,12 @@ SOURCES: dict[str, tuple[str, ...]] = {
     "planned": ("redirect", "noindex"),
     "blog_index": ("index",),
     "feedback": ("copy",),
+    "analytics": ("install", "replace", "remove"),
 }
 # Sources website.change takes: an approved page, the latest audit's fixes, the URL changes
-# page decisions and the site architecture plan made, the blog index plan and the copy fix.
-IMPLEMENTED_SOURCES = ("content_draft", "audit", "planned", "blog_index", "feedback")
+# page decisions and the site architecture plan made, the blog index plan, the copy fix and
+# Tin Analytics.
+IMPLEMENTED_SOURCES = ("content_draft", "audit", "planned", "blog_index", "feedback", "analytics")
 # Sources whose plan names its files, applied as they are (website_change_patch).
 PATCH_SOURCES = ("blog_index", "feedback")
 # Sources whose approval is a row in website_changes. A page's approval is its own review.
@@ -532,7 +536,17 @@ async def select_source(*, database, storage, integrations, project_id, inputs) 
     if source_kind not in IMPLEMENTED_SOURCES:
         raise ValueError(
             "website.change makes approved pages, audit fixes, planned URL changes, the "
-            "blog index and copy fixes."
+            "blog index, copy fixes and Tin Analytics."
+        )
+    if source_kind == "analytics":
+        from tin_lite import website_change_analytics
+
+        return await website_change_analytics.select_source(
+            database=database,
+            storage=storage,
+            integrations=integrations,
+            project_id=project_id,
+            inputs=inputs,
         )
     if source_kind in PATCH_SOURCES:
         return await patch_module(source_kind).select_source(
@@ -602,6 +616,12 @@ async def select_source(*, database, storage, integrations, project_id, inputs) 
 
 async def guard_source(conn, *, project_id, inputs, source) -> None:
     """Called under create_run's project lock, in the run/budget/receipt transaction."""
+    if "analytics" in {inputs.get("source"), source.get("source")}:
+        from tin_lite import website_change_analytics
+
+        return await website_change_analytics.guard_source(
+            conn, project_id=project_id, inputs=inputs, source=source
+        )
     patched = next(
         (kind for kind in (inputs.get("source"), source.get("source")) if kind in PATCH_SOURCES),
         None,

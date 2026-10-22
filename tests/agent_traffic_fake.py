@@ -16,6 +16,7 @@ linked to `organic-tin`: PUT answers with that site and no `url` or dates, and D
 from __future__ import annotations
 
 import copy
+import hashlib
 import json
 import re
 from pathlib import Path
@@ -32,6 +33,38 @@ def example(name: str):
     return json.loads((FIXTURES / name).read_text())
 
 
+# Synthetic reporter files the fake serves at their URLs. Their header comments say how to wire
+# them in, like the published ones; the PUT answer lists each with its real SHA-256.
+REPORTER_FILES = {
+    "nextjs": (
+        "// Tin request reporter for Next.js (synthetic, for Tin's tests). Save this file as\n"
+        "// tin-reporter.js next to middleware.ts.\n"
+        "//\n"
+        '//   import { withTinReporter } from "./tin-reporter.js";\n'
+        "//   export default withTinReporter();\n"
+        "//   export const config = {\n"
+        '//     matcher: ["/((?!api/|_next/static|_next/image|.*\\\\.(?:js|css)$).*)"],\n'
+        "//   };\n"
+        "\n"
+        "export function withTinReporter(handler) {\n"
+        "  return handler;\n"
+        "}\n"
+    ),
+    "cloudflare-worker": (
+        "// Tin request reporter for a Cloudflare Worker (synthetic, for Tin's tests).\n"
+        "//   export default withTinReporter({ async fetch(request, env, ctx) { ... } });\n"
+        "\n"
+        "export function withTinReporter(handler) {\n"
+        "  return handler;\n"
+        "}\n"
+    ),
+}
+
+
+def reporter_sha256(variant: str) -> str:
+    return hashlib.sha256(REPORTER_FILES[variant].encode()).hexdigest()
+
+
 class FakeAgentTraffic:
     def __init__(self) -> None:
         self.calls: list[httpx.Request] = []
@@ -45,6 +78,8 @@ class FakeAgentTraffic:
         # method or "status"/"report" -> error statuses to answer, in order.
         self.refuse: dict[str, list[int]] = {}
         self.issued = 0
+        # site ID -> reporter tokens issued for it, newest last.
+        self.reporter_tokens: dict[str, list[str]] = {}
 
     @staticmethod
     def reply(status: int, body=None, headers=None) -> httpx.Response:
@@ -73,6 +108,18 @@ class FakeAgentTraffic:
         assert request.headers["accept-encoding"] == "identity"
         path, method = request.url.path, request.method
         bearer = request.headers.get("authorization", "").removeprefix("Bearer ")
+        published = re.fullmatch(r"/reporter/v1/([a-z-]+)\.js", path)
+        if published and method == "GET":
+            # The reporter files need no credential.
+            text = REPORTER_FILES.get(published.group(1))
+            if text is None:
+                return self.reply(404, {"error": "not_found"})
+            return httpx.Response(200, stream=httpx.ByteStream(text.encode()))
+        reporter = re.fullmatch(r"/v1/admin/projects/([^/]+)/site/reporter-token", path)
+        if reporter and method == "POST":
+            if bearer != SERVICE_CREDENTIAL:
+                return self.reply(401, {"error": "unauthorized"})
+            return self._reporter_token(unquote(reporter.group(1)))
         admin = re.fullmatch(r"/v1/admin/projects/([^/]+)/site", path)
         if admin:
             if bearer != SERVICE_CREDENTIAL:
@@ -124,12 +171,32 @@ class FakeAgentTraffic:
             read_token=token,
             script=site["script"].replace("st-8k3m9q2x7v4c", site_id),
         )
+        for item in site["reporter"]["variants"]:
+            item["sha256"] = reporter_sha256(item["variant"])
         if ref in self.linked:
             site.update(linked=True, url=None, created_at=None, updated_at=None)
         self.sites[ref] = site
         self.tokens[token] = site_id
         self.removed.pop(ref, None)
         return self.reply(200 if existing else 201, site)
+
+    def _reporter_token(self, ref: str) -> httpx.Response:
+        site = self.sites.get(ref)
+        if site is None:
+            return self.reply(404, {"error": "not_found"})
+        if ref in self.linked:
+            return self.reply(409, {"error": "reporter_not_needed"})
+        issued = self.reporter_tokens.setdefault(site["site_id"], [])
+        issued.append(f"reporter-token-{site['site_id']}-{len(issued) + 1:04d}-synthetic")
+        return self.reply(
+            200,
+            {
+                **example("reporter_token.json"),
+                "site_id": site["site_id"],
+                "reporter_token": issued[-1],
+                "previous_expires_at": "2026-10-23T10:00:00Z" if len(issued) > 1 else None,
+            },
+        )
 
     def _delete(self, ref: str) -> httpx.Response:
         site = self.sites.pop(ref, None)

@@ -118,7 +118,8 @@ function noted(person) {
 }
 
 // `analytics` answers the Analytics page and card: {pages: {today, yesterday, week}, writes: [],
-// answer(action, body) → {status, body}} for the card's setup and address requests.
+// answer(action, body) → {status, body}} for the card's requests: setup, address, the reporter's
+// value, the site builder and starting the analytics change again.
 export async function serveApp({decisionCount = 4, people = syntheticPeople(), engagers = false, visitors = false, integrations = [], removed = [], requests = null, requestWrites = [], analytics = null} = {}) {
   const project = {id: "project", name: "Example Co", workspace_id: "ws", workspace_name: "Example", member_count: 1, hidden: false};
   const catalog = [{id: "wf-answer", key: "content.generate", title: "Draft planned content", description: "Draft the next planned page for review.", definition: {schedule_modes: ["weekly", "on_demand"]}}];
@@ -258,7 +259,7 @@ export async function serveApp({decisionCount = 4, people = syntheticPeople(), e
         return send({status: decided[2] === "approve" ? "approved" : "discarded", queued: body.people?.length || 0});
       }
     }
-    const analyticsAction = url.pathname.match(/^\/api\/projects\/[^/]+\/integrations\/analytics\.agent_traffic\/(setup|address)$/);
+    const analyticsAction = url.pathname.match(/^\/api\/projects\/[^/]+\/integrations\/analytics\.agent_traffic\/(setup|address|reporter-token|builder|install)$/);
     if (analytics && request.method === "POST" && analyticsAction) {
       const body = await read();
       analytics.writes?.push({action: analyticsAction[1], body});

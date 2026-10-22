@@ -12,6 +12,10 @@ trusted context first:
   outcome `patch` with reason `""`, or outcome `no_change` with reason `no_safe_patch` and
   no files. Never write marketing copy, and never touch a path in
   `workspace.website_change.protected_paths`.
+- `analytics`: run the site-analytics skill instead. It puts Tin Analytics' script line, CSP
+  entries and request reporter on the site (or takes them out) exactly as
+  `workspace.website_change.analytics` gives them, and nothing else. Return outcome `patch`
+  with reason `""`, or outcome `no_change` with reason `no_safe_patch` and no files.
 
 The context holds the change row (`change`: its source, stable ID, kind and site paths),
 the approved copy (`article`, in Markdown), its source identity, the destination repository,

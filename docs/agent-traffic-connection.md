@@ -28,8 +28,10 @@ that limit says so on the card (`409 staging_limit`).
   minutes. Tin seals it with the connection (`seal_credential`) in the same statement that
   stores the rest of the connection, under the project's integration lock.
 - Neither token goes into a log, the browser, a workflow input, an MCP response or an agent's
-  chat. The reporter token (step 3) is the one exception: Tin shows it to project members in the
-  reporter step, so the founder can paste it on their host.
+  chat.
+- The reporter token is the one token the browser gets: Tin shows it to project members in the
+  reporter step, so the founder can paste it on their host (see
+  [The reporter's one paste](#the-reporters-one-paste)).
 
 ## The connection
 
@@ -68,10 +70,13 @@ another host.
 | `needs_attention` | A read got `401` or `404` without Tin asking to stop. **Set up again** sends PUT. |
 
 The card is **Tin Analytics** in Integrations (`app.js`, `renderAnalyticsCard`; Paper CARD-1 to
-CARD-4 on the "Analytics · daily report" page). Configure opens rows for the address (with the
-offer to count a moved host), the script (its line shown on request) and, once records arrive,
-the reporter. Stop measuring confirms in the card's foot; only that confirmation's "Stop and
-delete" is filled. The card's data comes from `GET /api/projects/{id}/integrations` (the
+CARD-4 and INST-1, INST-4 and INST-5 on the "Analytics · daily report" page). While the site
+waits, its second line says where the line stands: waiting in Decisions, being added in a pull
+request, added, or to paste. Configure opens rows for the address (with the offer to count a
+moved host), the script (its line shown on request) and the reporter (its one paste, or that it
+is on). Stop measuring confirms in the card's foot; only that confirmation's "Stop and delete" is
+filled, and when Tin's change put the line on the site it adds that Tin then prepares a change
+that removes it. The card's data comes from `GET /api/projects/{id}/integrations` (the
 `analytics` field) and
 `POST .../integrations/analytics.agent_traffic/refresh`. Set up is `POST .../setup` (with `url`
 only for a project without Start here's address), and counting a moved host is
@@ -86,15 +91,16 @@ doubling up to an hour. Meanwhile the card shows the stored copy with `stale: tr
 
 ## The Analytics page
 
-`/analytics` (`analytics.js`, `analytics.css`; Paper REP-V2, V2b, V2c, V2d and V2e) shows in the
+`/analytics` (`analytics.js`, `analytics.css`; Paper REP-V2, V2b, V2c, V2d, V2e and INST-3) shows in the
 rail once the project has set analytics up; before that the card is the way in. It reads
 `GET /api/projects/{id}/analytics?view=today|yesterday|week`: the card's state (opening the page
 asks for status when it is due, as opening the card does) and, once a visit has arrived, Tin's
 stored report for the tab, in the founder's time zone. Today and Yesterday read a day; the last 7
 days read a week ending today.
 
-- While no visit has arrived, the page has no tabs: it shows the script line, where it goes, the
-  CSP entries and what's counted.
+- While no visit has arrived, the page has no tabs: it shows the script line, where it goes (in
+  the founder's site builder when Tin isn't adding it through GitHub), the CSP entries and what's
+  counted.
 - Four numbers. Visits and visits from AI assistants show their change from the period before.
   Page views shows pages per visit, since its change would mostly repeat the visits'. Automated
   browsers shows the companies that signed or came from their network, named only where the
@@ -117,7 +123,83 @@ days read a week ending today.
 `list_integrations` and `get_integration` carry the card's state as `analytics`.
 `get_site_analytics(project_id, period, date)` returns Tin's stored report (`day` or `week`,
 `date` in the founder's time zone, today by default) with its `markdown` and the `comparison`.
-Neither returns a token.
+`get_analytics_install(project_id)` is for a coding agent that puts the line on the site itself:
+the script line and where it goes, the CSP entries, the published reporter files (url, sha256,
+which host each is for, the file name) and how each is wired in, and `tin_change`, where Tin's
+own change stands, so the agent doesn't make it twice. None of them returns a token: the agent
+asks the founder to copy the reporter's value from the card. Asking for the guide opens the
+reporter step on the card.
+
+## Putting the line on the site
+
+Tin Analytics counts a site through its script line and, on hosts that can run it, the request
+reporter. How they get onto the site depends on what Tin can reach.
+
+**With GitHub** (`website_change_analytics.py`; Paper INST-1 and INST-2). When the project's
+website repository (the one chosen on Integrations, with pull-request access) is connected, Set
+up proposes one `analytics` change row in Decisions. Opening the card while it waits proposes it
+too, for a repository connected after Set up. A linked site gets no row: its line is already
+there.
+
+- The row's pieces are the script line, the CSP entries and the reporter variant for the site's
+  host, by its SHA-256. Tin picks the variant from the repository's root files: a `next`
+  dependency or `next.config.*` means `nextjs` on any host; otherwise `netlify.toml` means
+  `netlify`, a Wrangler file with `main` means `cloudflare-worker`, `vercel.json` (or the setup
+  answer naming Vercel) means `vercel`, and an Express or Connect dependency means `node`. With
+  none, the change carries the line alone. The host for the reporter's value comes from the same
+  files, then from the setup answer (`system_hosting`).
+- The approval covers those pieces (`content_sha256`), not the files the run writes. Approving,
+  in Decisions or with `approve_website_change`, starts website.change with `source: analytics`.
+  If the start is refused (credits, a disconnected repository), the approval stands and the
+  card's Configure offers **Start again**.
+- The run downloads the reporter file before its Codex session and checks it against the
+  approved SHA-256; a file that doesn't match stops the run there. The `site-analytics` skill
+  adds the line to the layout every page uses, the CSP entries where the site already sets a
+  policy, and the reporter with its wiring.
+- `check_patch` holds the patch to the pieces: an insert-only diff of the line, the CSP sources,
+  the reporter's import and its wiring words, plus the reporter's copy, which Tin replaces with
+  the published bytes whatever the session wrote. Dependency files, CI, `.github/` and
+  environment files are refused outright. Any other edit still opens the pull request, but it
+  waits for the founder with the reason; Tin merges only a patch that holds just the pieces, once
+  the site's build and the repository's required checks pass, under website.change's rules. A
+  site that stopped measuring before the merge also leaves the pull request to the founder.
+- The merge receipt records the files, the files the change added and where the reporter went,
+  which the card reads ("line added oct 22 · pull request #41") and a later remove uses.
+
+**Set up again after stopping.** A new site has a new site ID, so its line differs. When Tin's
+line for the old site is still on the site, the proposal is a `replace` (the old line for the new
+one, nothing else); otherwise a new `install`.
+
+**Stop measuring** proposes a `remove` row when Tin's change put the line on the site: the line,
+the CSP entries and the reporter's wiring come out, and a pending install is withdrawn. Codex
+procedures can't delete files, so the reporter's copy and any file Tin's change added (such as a
+middleware file of its own) stay; the Decisions card and the pull request name them for the
+founder to delete. They do nothing once the site is removed, because every reporter token stops
+with it.
+
+**Without GitHub** (Paper INST-3). The card says to paste the line, and the waiting page says
+where in the founder's site builder: Webflow, Framer, WordPress, Squarespace, Wix, Shopify or
+Ghost, matched from the setup answer or the site's address, else a general entry. **Change**
+picks another (`POST .../analytics.agent_traffic/builder`, kept with the site). Site builders get
+no reporter.
+
+## The reporter's one paste
+
+Once the reporter is on the site (Tin's merged change added it, or a coding agent asked for it
+over MCP), Configure shows the reporter step (Paper INST-4): the name `TIN_REPORTER_TOKEN`, the
+value hidden until **Show** or **Copy**, and where it goes on the host (Vercel, Netlify,
+Cloudflare, or the server's environment). The card's second line says "reporter: one paste left
+on Vercel" until the first record arrives; then the row says the reporter is on, and the step
+opens on request.
+
+- The value comes from `POST .../analytics.agent_traffic/reporter-token`, which only browser
+  sessions reach (the dashboard API takes no OAuth tokens) and which answers with
+  `Cache-Control: private, no-store`. The first request calls the service's reporter-token
+  endpoint; Tin seals the token with the integration cipher (its own context, apart from the
+  read token) in `agent_traffic_sites`, so a member can show it again. `{"new": true}` asks the
+  service for a new one; the previous one keeps working for 24 hours.
+- A linked site answers `409 reporter_not_needed`, and the card shows no step.
+- The token goes with the site: Stop measuring deletes the row, and a new site starts without one.
 
 ## Stored reports and comparisons
 

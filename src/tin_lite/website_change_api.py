@@ -92,6 +92,18 @@ async def _decide(project_id, change_id, action, payload, request, user):
             actor=user.clerk_user_id,
         )
         row["next"] = {"run_id": str(run.id) if run else None, "reason": reason}
+    if action == "approve" and row["source"] == "analytics":
+        from tin_lite import website_change_analytics
+
+        # Approving the pieces starts the run that writes them in the repository.
+        run, reason = await website_change_analytics.start_after_approval(
+            runtime=request.app.state.runtime,
+            settings=request.app.state.settings,
+            project_id=project_id,
+            change=row,
+            actor=user.clerk_user_id,
+        )
+        row["next"] = {"run_id": str(run.id) if run else None, "reason": reason}
     return row
 
 

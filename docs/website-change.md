@@ -6,7 +6,8 @@
 to the founder's website: content drafts, page decisions (URL changes) and technical fixes
 all reach the site through it, after the founder approves them. Today it makes four kinds of
 change: approved pages, the technical fixes the latest audit found, the URL changes page
-decisions made and the copy fixes Product QA planned from what people said about the product. organic.site_architecture and content.blog_index are retired for new work
+decisions made, the copy fixes Product QA planned from what people said about the product and
+Tin Analytics' line and reporter. organic.site_architecture and content.blog_index are retired for new work
 (see [Retired](#retired-the-page-tree-and-the-blog-index)). Every approval that adapts a page
 starts website.change ([Approved pages](#approved-pages-reach-the-site-through-websitechange)).
 
@@ -26,6 +27,8 @@ the founder, approved or not.
   Decisions ([Decisions](#decisions-cards)).
 - 1.9.0 adds copy fixes from public feedback
   ([Copy fixes](#copy-fixes-from-public-feedback-source-feedback)).
+- 1.13.0 adds Tin Analytics' line and request reporter
+  ([Tin Analytics](#tin-analytics-source-analytics)).
 
 ## Decided (Emre, 10/1)
 
@@ -256,9 +259,9 @@ as site-wide wherever they sit.
 
 | Field | Meaning |
 | --- | --- |
-| `change_id` | Stable across runs: two letters, `_`, 20 hex digits. `pg_` for a page (a digest of its run ID); the audit's `oa_` finding IDs for repairs; `planned_url_changes.finding_id`'s `oa_` IDs for planned URL changes; `bi_` for a blog index plan; `fb_` for a copy fix. |
-| `source` | `content_draft`, `audit`, `planned`, `blog_index` or `feedback` (migration 056 renamed the unused `technical_fix` placeholder to `audit`, migration 057 `planned_url_change` to `planned`, migration 061 added `feedback`). |
-| `kind` | Per source: `page`; the site-fix-v5 repair (`html_noindex`, `sitemap_add_urls`, `merge_redirect`, …); `redirect` or `noindex`; `index`; `copy`. |
+| `change_id` | Stable across runs: two letters, `_`, 20 hex digits. `pg_` for a page (a digest of its run ID); the audit's `oa_` finding IDs for repairs; `planned_url_changes.finding_id`'s `oa_` IDs for planned URL changes; `bi_` for a blog index plan; `fb_` for a copy fix; `an_` for Tin Analytics (a digest of the kind and the site ID). |
+| `source` | `content_draft`, `audit`, `planned`, `blog_index`, `feedback` or `analytics` (migration 056 renamed the unused `technical_fix` placeholder to `audit`, migration 057 `planned_url_change` to `planned`, migration 061 added `feedback`, migration 076 `analytics`). |
+| `kind` | Per source: `page`; the site-fix-v5 repair (`html_noindex`, `sitemap_add_urls`, `merge_redirect`, …); `redirect` or `noindex`; `index`; `copy`; `install`, `replace` or `remove`. |
 | `title` | What the founder reads. |
 | `paths` | Site paths or route patterns it touches (`/blog/{slug}`). |
 | `content_sha256`, `content_revision` | The exact content an approval covers. |
@@ -446,15 +449,35 @@ file, one person, a product change or a new file.
 - From there it is the blog index's machinery (`website_change_patch`): no Codex session, the
   plan's files as they are, the same staleness check, protected pages and merge rule.
 
+## Tin Analytics (`source: analytics`)
+
+Set up of Tin Analytics proposes one `analytics` row when the website repository takes pull
+requests; Stop measuring proposes taking it out again (`website_change_analytics`; the whole flow
+is in [the connection's guide](agent-traffic-connection.md#putting-the-line-on-the-site)).
+
+- The row's kind is `install`, `replace` (a new site's line in place of the old one) or `remove`.
+  Its path is `/`. Its `content_sha256` covers the pieces: the script line, the CSP entries, the
+  reporter variant by SHA-256 and, for a replace or remove, the line already on the site.
+- Approving it starts website.change with `source: analytics` and the row's `change_id`. One
+  analytics run works at a time, and a change Tin already made isn't made again.
+- A Codex session writes the patch with the `site-analytics` skill (the `site-repair` skill
+  forbids analytics edits). Tin downloads the reporter file first and checks its SHA-256, writes
+  its published bytes into the patch itself, and `check_patch` holds the rest to the pieces.
+- Tin merges it under the same rules as the other sources: a recorded approval that still stands,
+  no protected page, the patch holding only the pieces, the site still measured, then the
+  required-checks rule and the site's own build. Anything else opens a pull request for the
+  founder, with the reason.
+
 ### Decisions cards
 
 Pending rows and open judgment calls wait in Decisions beside run reviews, in the same list
 and detail card:
 
-- A change card shows its source (Audit fix, Planned URL change, Blog index, Copy fix) and
-  kind, what it does in one line, its pages, a copy fix's before and after wording with links
-  to the threads behind it, the planned files, and "Protected: … opens a pull request for you
-  to merge" when a protected page touches it. The list endpoint reports that page
+- A change card shows its source (Audit fix, Planned URL change, Blog index, Copy fix,
+  Analytics) and kind, what it does in one line, its pages, a copy fix's before and after
+  wording with links to the threads behind it, the planned files, an analytics change's pieces
+  (the line, the CSP entries, the reporter with its SHA-256; Paper INST-2), and "Protected: …
+  opens a pull request for you to merge" when a protected page touches it. The list endpoint reports that page
   (`protected`).
 - Its button row is Decline and Approve, nothing else. Either posts to the existing
   approve/decline route with a new request ID and the `content_sha256` the card showed, so
