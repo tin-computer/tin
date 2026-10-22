@@ -462,19 +462,16 @@
 
 .analytics-row.is-regions .analytics-name { flex: 1 0 auto; }
 
+/* Many regions wrap within the row rather than run past the table's edge. */
 .analytics-regions {
+  max-width: 100%;
   margin-left: auto;
   color: var(--ink);
-  font: 12px/16px var(--mono);
+  font: 12.5px/16px var(--mono);
+  text-align: right;
 }
 
 .analytics-num.is-withheld { color: var(--ink-muted); }
-
-.analytics-regions {
-  color: var(--ink);
-  font: 12.5px/16px var(--mono);
-  white-space: nowrap;
-}
 
 .analytics-notes {
   margin: 0;
