@@ -231,7 +231,25 @@ def identity_profile(payload):
     return candidates[0]
 
 
+MEMBER = re.compile(r"[A-Za-z0-9_-]{1,100}")
+
+
+def member_id(payload) -> str | None:
+    """The signed-in member's LinkedIn ID from /me (urn:li:fs_miniProfile:<ID>). Unlike a profile
+    photo or a profile link, it never changes."""
+
+    urn = identity_profile(payload).get("entityUrn")
+    if not isinstance(urn, str) or not urn.startswith("urn:li:fs_miniProfile:"):
+        return None
+    member = urn.rsplit(":", 1)[-1]
+    return member if MEMBER.fullmatch(member) else None
+
+
 def identity_matches(payload, actor):
+    # The member ID Tin recorded when it saved the session decides when there is one: a photo or
+    # a profile link can change, the account's ID can't.
+    if actor.get("member"):
+        return member_id(payload) == actor["member"]
     profile = identity_profile(payload)
     url = profile_url(
         "https://www.linkedin.com/in/" + quote(profile["publicIdentifier"], safe="-._~")
@@ -469,13 +487,16 @@ async def _get(client, session, path, params=None, *, request_headers=None):
 
 
 async def check_account(session, actor, *, client=None):
-    """One bounded, read-only identity check before marking saved access ready."""
+    """One bounded, read-only identity check before marking saved access ready. Returns the
+    member's LinkedIn ID, which Tin records with the session."""
     own = client is None
     client = client or httpx.AsyncClient(timeout=8, follow_redirects=False, trust_env=False)
     try:
         async with asyncio.timeout(10):
-            if not identity_matches(await _get(client, session, "/voyager/api/me"), actor):
+            me = await _get(client, session, "/voyager/api/me")
+            if not identity_matches(me, actor):
                 raise CollectionError("account_changed")
+            return member_id(me)
     except (httpx.HTTPError, TimeoutError):
         raise CollectionError("cloud_unavailable") from None
     finally:

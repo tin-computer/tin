@@ -68,7 +68,8 @@ SAYS = {
     ),
     "account_changed": (
         "The LinkedIn account signed in to Chrome isn't the one connected to this project. "
-        "Sign in to LinkedIn as yourself in Chrome, then run this again."
+        "Sign in to LinkedIn as yourself in Chrome, or reconnect LinkedIn under Integrations, "
+        "then run this again."
     ),
     "challenge": (
         "LinkedIn asked to verify your account, so Tin stopped reading. Open LinkedIn in "
