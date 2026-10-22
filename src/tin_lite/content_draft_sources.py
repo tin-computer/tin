@@ -420,18 +420,9 @@ class ContentDraftSources:
         return receipt.result if receipt and receipt.status == "completed" else None
 
     async def draft_member(self, run):
-        """Whether the member behind this draft can still read the project.
-
-        A scheduled occurrence has no starter of its own; it drafts for the member who saved
-        the schedule, so that member must still belong to the project.
-        """
+        """Whether the member behind this draft can still read the project. A scheduled
+        occurrence starts as the member who saved the schedule."""
         actor = run.started_by_clerk_user_id
-        if actor is None and run.trigger_source == "schedule" and run.project_workflow_id:
-            configured = await self.db.get_project_workflow(
-                run.project_workflow_id, include_archived=True
-            )
-            if configured is not None and configured.project_id == run.project_id:
-                actor = configured.created_by_clerk_user_id
         return actor is not None and await self.db.has_project_access(
             project_id=run.project_id, clerk_user_id=actor
         )
@@ -460,7 +451,7 @@ class ContentDraftSources:
                     raise ValueError("Draft contract changed after preparation.")
                 return receipt.result
             if not await self.draft_member(run):
-                if run.started_by_clerk_user_id is None:
+                if run.trigger_source == "schedule":
                     raise LookupError(
                         "The member who saved this schedule no longer has project access."
                     )
