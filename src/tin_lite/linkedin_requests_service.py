@@ -4,7 +4,9 @@ A member sees and decides only requests their own LinkedIn would send; turning s
 their own tick of the consent box, so it happens on the LinkedIn card, never over MCP.
 Approving a batch, or choosing people in People, hands it to the member's
 `social.linkedin_requests` run on the project, which sends their requests in one line; a new
-run starts when none still has requests waiting.
+run starts when none still has requests waiting. A member who turned on `auto_approve` lets
+Tin approve the people their own LinkedIn reads propose, right after each read
+(`ConnectionRequests.auto_approve`), as they would in Decisions.
 """
 
 from __future__ import annotations
@@ -12,7 +14,7 @@ from __future__ import annotations
 import logging
 from datetime import UTC, datetime
 from typing import Any
-from uuid import UUID
+from uuid import UUID, uuid5
 
 from tin_lite import linkedin_requests as requests
 from tin_lite.connection_collection import PROVIDER, enabled
@@ -29,6 +31,10 @@ RISK_TEXT = (
     "LinkedIn's terms don't allow automated requests. Few, paced requests that stop at the "
     "first warning lower the risk to your account; they don't remove it."
 )
+
+
+# The namespace of the request ID an automatic approval decides with, one per LinkedIn read.
+AUTO_APPROVE = UUID("5d0f3c1e-8a47-4b2f-9e61-2c7a4f8d9b30")
 
 
 class RequestsRefused(Exception):
@@ -117,6 +123,7 @@ class ConnectionRequests:
                         "start_minute",
                         "end_minute",
                         "timezone",
+                        "auto_approve",
                     )
                 },
             },
@@ -141,6 +148,7 @@ class ConnectionRequests:
         enabled_: bool,
         consent_version: int | None = None,
         limits: dict[str, int] | None = None,
+        auto_approve: bool | None = None,
     ) -> dict[str, Any]:
         await self._project(project_id, member)
         if enabled_ and await self._reading(project_id, member) != "cloud":
@@ -154,6 +162,7 @@ class ConnectionRequests:
                     enabled=enabled_,
                     consent_version=consent_version,
                     limits=limits,
+                    auto_approve=auto_approve,
                 )
         except requests.RequestError as error:
             raise _refused(error) from None
@@ -235,6 +244,63 @@ class ConnectionRequests:
                 ) from None
             decided["run_id"] = str(run_id)
         return decided
+
+    async def auto_approve(self, project_id: UUID, member: str, *, run_id: UUID) -> int:
+        """Approve the people the member's own LinkedIn read just proposed, when the member
+        turned on `auto_approve` and sending is on and not paused until they resume it. Tin
+        decides as the member would in Decisions, as the member, so their caps, window, wait
+        and pauses apply as usual. Only people who still fit and wait to be asked are approved;
+        the rest of the batch is declined, as unticked people are.
+
+        The read's run keys the decision: a retried read repeats the same approval and starts
+        no second run. Returns how many people the approval queued. A refusal leaves the batch
+        in Decisions, where the member reads why."""
+
+        request_id = uuid5(AUTO_APPROVE, f"auto-approve:{run_id}")
+        people = None
+        async with self.db.pool.acquire() as conn:
+            batch_id = await conn.fetchval(
+                """SELECT id FROM linkedin_request_batches
+                   WHERE project_id = $1 AND member = $2 AND decision_request_id = $3""",
+                project_id,
+                member,
+                request_id,
+            )
+            if batch_id is None:
+                sending = await requests.sending(conn, project_id, member)
+                if not (sending["on"] and sending["auto_approve"]) or sending["held"]:
+                    return 0
+                batch_id = await conn.fetchval(
+                    """SELECT id FROM linkedin_request_batches
+                       WHERE project_id = $1 AND member = $2 AND status = 'open'""",
+                    project_id,
+                    member,
+                )
+                if batch_id is None:
+                    return 0
+                people = await requests.auto_approvable(conn, batch_id, member)
+                if not people:
+                    return 0
+        try:
+            decided = await self.decide(
+                project_id,
+                batch_id,
+                member,
+                request_id=request_id,
+                approve=True,
+                people=people,
+                trigger_source="auto_approve",
+            )
+        except RequestsRefused as error:
+            logger.warning("connection requests: automatic approval refused: %s", error.message)
+            return 0
+        if decided["status"] != "approved":
+            return 0
+        return await self.db.pool.fetchval(
+            """SELECT count(*) FROM linkedin_requests
+               WHERE batch_id = $1 AND status <> 'declined'""",
+            batch_id,
+        )
 
     async def send(
         self,

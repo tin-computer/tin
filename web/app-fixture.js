@@ -231,6 +231,9 @@ export async function serveApp({decisionCount = 4, people = syntheticPeople(), e
       if (rest === "/sending") {
         if (body.enabled && body.consent_version !== 1) return refuse(422, "Tick the box to agree to sending first.");
         Object.assign(requests.sending, {on: body.enabled, ...(body.limits || {})});
+        // Approving automatically needs sending on; turning sending off turns it off too.
+        if (body.auto_approve !== undefined) requests.sending.auto_approve = body.auto_approve;
+        if (!body.enabled) requests.sending.auto_approve = false;
         return send(requests);
       }
       if (rest === "/sending/resume") {

@@ -154,8 +154,20 @@ window.TinRequests = (() => {
 
   // The Sending row on the LinkedIn card.
 
-  function toggle(on, { disabled = false, label = "Send connection requests" } = {}) {
-    return `<button class="requests-switch ${on ? "is-on" : ""}" type="button" role="switch" aria-checked="${on}" aria-label="${escape(label)}" data-requests-switch ${disabled ? "disabled" : ""}><span></span></button>`;
+  function toggle(on, { disabled = false, label = "Send connection requests", data = "data-requests-switch" } = {}) {
+    return `<button class="requests-switch ${on ? "is-on" : ""}" type="button" role="switch" aria-checked="${on}" aria-label="${escape(label)}" ${data} ${disabled ? "disabled" : ""}><span></span></button>`;
+  }
+
+  // Tin approves the people the member's own LinkedIn reads propose, right after each read,
+  // instead of leaving them in Decisions. Needs sending on; turning sending off turns it off.
+  function autoRow(sending) {
+    const on = Boolean(sending.auto_approve);
+    const label = "Approve people who fit automatically";
+    const line = on
+      ? "after each LinkedIn read, Tin approves the people who fit and aren’t connected · they go out on the schedule above"
+      : "people who fit wait in Decisions for you to approve";
+    return `<div class="requests-head requests-auto">${toggle(on, { label, data: "data-requests-auto", disabled: ui.saving })}<span>${escape(label)}</span></div>
+        <span class="requests-line">${escape(line)}</span>`;
   }
 
   function sendingRow(data) {
@@ -177,6 +189,7 @@ window.TinRequests = (() => {
         <span class="requests-line">${escape(limitsLine(sending))}</span>
         <span class="requests-line">stops at LinkedIn’s first warning · requests not sent within 14 days drop off</span>
         ${held}
+        ${autoRow(sending)}
         ${ui.editingLimits ? limitsForm(sending) : '<button class="requests-settings-link" type="button" data-requests-limits>Change limits</button>'}`;
     } else if (ui.consenting) {
       body = `${head(toggle(false), "Connection requests you approve")}
@@ -270,6 +283,12 @@ window.TinRequests = (() => {
     row.querySelector("[data-requests-on]")?.addEventListener("click", () => {
       ui.consenting = false;
       save(`${base}/sending`, { method: "PUT", body: JSON.stringify({ enabled: true, consent_version: ctx.data().consent.version }) }, "Sending is on. Tin sends the requests you approve, one at a time.");
+    });
+    row.querySelector("[data-requests-auto]")?.addEventListener("click", () => {
+      const auto = !ctx.data()?.sending?.auto_approve;
+      save(`${base}/sending`, { method: "PUT", body: JSON.stringify({ enabled: true, consent_version: ctx.data().consent.version, auto_approve: auto }) }, auto
+        ? "Tin approves the people who fit after each LinkedIn read and sends them one at a time."
+        : "People who fit wait in Decisions for you again.");
     });
     row.querySelector("[data-requests-off]")?.addEventListener("click", () => {
       save(`${base}/sending`, { method: "PUT", body: JSON.stringify({ enabled: false }) }, "Sending is off.");

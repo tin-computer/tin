@@ -353,6 +353,18 @@ async def build_runtime(settings: Settings) -> RuntimeServices:
         cloud=LinkedInCloud(database, settings),
         cipher=integrations._cipher,
     )
+    from types import SimpleNamespace
+
+    from tin_lite.linkedin_requests_service import ConnectionRequests
+
+    # Approves a member's proposals after their LinkedIn reads when they asked Tin to, which
+    # starts their sending run as an approval in Decisions would.
+    connection_requests = ConnectionRequests(
+        SimpleNamespace(
+            database=database, storage=storage, integrations=integrations, temporal=temporal
+        ),
+        settings,
+    )
     engagers_activities = LinkedInEngagersActivities(
         database=database,
         storage=storage,
@@ -360,6 +372,7 @@ async def build_runtime(settings: Settings) -> RuntimeServices:
         cloud=LinkedInCloud(database, settings),
         cipher=integrations._cipher,
         router=model_router if settings.luna_api_key is not None else None,
+        connection_requests=connection_requests,
     )
     viewers_activities = LinkedInProfileViewersActivities(
         database=database,
@@ -368,6 +381,7 @@ async def build_runtime(settings: Settings) -> RuntimeServices:
         cloud=LinkedInCloud(database, settings),
         cipher=integrations._cipher,
         router=model_router if settings.luna_api_key is not None else None,
+        connection_requests=connection_requests,
     )
     requests_activities = LinkedInRequestsActivities(
         database=database,

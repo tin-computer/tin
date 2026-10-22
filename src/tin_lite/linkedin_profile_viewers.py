@@ -388,4 +388,4 @@ def sentence(notes: dict) -> str:
             if count != 1
             else " 1 person who fits and isn't connected waits"
         ) + " in Decisions for your connection requests."
-    return text
+    return text + engagers.approved_text(notes.get("auto_approved", 0))

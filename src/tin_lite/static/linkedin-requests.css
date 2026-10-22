@@ -104,6 +104,8 @@
 
 .requests-head .is-muted { color: var(--ink-muted); }
 
+.requests-auto { margin-top: 4px; }
+
 .requests-switch {
   position: relative;
   width: 28px;

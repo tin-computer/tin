@@ -64,6 +64,8 @@ DEFAULTS = {
     "end_minute": 17 * 60,
     "paused_reason": None,
     "paused_until": None,
+    # Tin approves the people the member's own LinkedIn reads propose, while sending is on.
+    "auto_approve": False,
 }
 # Requests that count against the member's caps: every one Tin tried to send.
 ATTEMPTED = ("sending", "sent", "accepted", "not_pending", "uncertain", "not_sent", "refused")
@@ -146,11 +148,19 @@ async def set_sending(
     enabled: bool,
     consent_version: int | None = None,
     limits: dict[str, int] | None = None,
+    auto_approve: bool | None = None,
 ) -> dict[str, Any]:
-    """Turn sending on (only with the current consent) or off, or change its limits."""
+    """Turn sending on (only with the current consent) or off, change its limits, or let Tin
+    approve the people the member's own LinkedIn reads propose. That needs sending on, with
+    its consent; turning sending off turns it off too, so turning sending on again later
+    doesn't bring it back unasked. None keeps it as it was."""
 
     if enabled and consent_version != CONSENT_VERSION:
         raise RequestError("consent_required", "Tick the box to agree to sending first.")
+    if auto_approve and not enabled:
+        raise RequestError(
+            "consent_required", "Turn on sending to approve people who fit automatically."
+        )
     limits = dict(limits or {})
     if set(limits) - {"daily_cap", "weekly_cap", "start_minute", "end_minute"}:
         raise RequestError("invalid", "Unknown sending limit.")
@@ -164,10 +174,13 @@ async def set_sending(
         and 0 <= values["start_minute"] < values["end_minute"] <= 1440
     ):
         raise RequestError("invalid", "Choose limits within 1–25 a day, 1–100 a week.")
+    if auto_approve is None:
+        auto_approve = current["auto_approve"]
+    approving = bool(enabled and auto_approve)
     await conn.execute(
         """INSERT INTO linkedin_sending (project_id, member, enabled, consent_version,
-               consented_at, daily_cap, weekly_cap, start_minute, end_minute)
-           VALUES ($1, $2, $3, $4, CASE WHEN $3 THEN now() END, $5, $6, $7, $8)
+               consented_at, daily_cap, weekly_cap, start_minute, end_minute, auto_approve)
+           VALUES ($1, $2, $3, $4, CASE WHEN $3 THEN now() END, $5, $6, $7, $8, $9)
            ON CONFLICT (project_id, member) DO UPDATE SET
                enabled = EXCLUDED.enabled,
                consent_version = CASE WHEN EXCLUDED.enabled THEN EXCLUDED.consent_version
@@ -176,7 +189,7 @@ async def set_sending(
                                    THEN now() ELSE linkedin_sending.consented_at END,
                daily_cap = EXCLUDED.daily_cap, weekly_cap = EXCLUDED.weekly_cap,
                start_minute = EXCLUDED.start_minute, end_minute = EXCLUDED.end_minute,
-               updated_at = now()""",
+               auto_approve = EXCLUDED.auto_approve, updated_at = now()""",
         project_id,
         member,
         enabled,
@@ -185,6 +198,7 @@ async def set_sending(
         values["weekly_cap"],
         values["start_minute"],
         values["end_minute"],
+        approving,
     )
     return await sending(conn, project_id, member)
 
@@ -392,6 +406,32 @@ async def propose(conn, project_id: UUID, member: str, *, run_id: UUID | None = 
             )
         )
     return added
+
+
+async def auto_approvable(conn, batch_id: UUID, member: str) -> list[UUID]:
+    """The people in the member's open batch Tin may approve for them, judged now rather than
+    when they were proposed: still proposed, a fit of 0.6 or more, not a customer, and not the
+    member's connection or invitee as far as Tin knows."""
+
+    rows = await conn.fetch(
+        """SELECT q.record_id FROM linkedin_requests q
+           JOIN records m ON m.id = q.record_id
+           WHERE q.batch_id = $1 AND q.member = $2 AND q.status = 'proposed'
+             AND EXISTS (SELECT 1 FROM record_values v
+                         WHERE v.record_id = COALESCE(m.merged_into, m.id)
+                           AND v.field = 'icp_fit' AND v.value_number >= $3)
+             AND NOT EXISTS (SELECT 1 FROM record_values v
+                             WHERE v.record_id = COALESCE(m.merged_into, m.id)
+                               AND v.field = 'customer' AND v.value_text = 'yes')
+             AND NOT EXISTS (SELECT 1 FROM record_relationships x
+                             WHERE x.record_id IN (m.id, COALESCE(m.merged_into, m.id))
+                               AND x.member = $2 AND x.state IN ('connected', 'pending'))
+           ORDER BY q.created_at, q.id""",
+        batch_id,
+        member,
+        FIT,
+    )
+    return [row["record_id"] for row in rows]
 
 
 # People a member picks themselves.

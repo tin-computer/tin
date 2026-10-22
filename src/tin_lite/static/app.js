@@ -2460,6 +2460,7 @@ function systemRunProgressLabel(run) {
 function systemStartedBy(run) {
   if (run.trigger_source === "schedule") return "scheduled";
   if (run.trigger_source === "chat") return "from chat";
+  if (run.trigger_source === "auto_approve") return "approved automatically";
   if (run.trigger_client === "claude_code") return "from Claude Code";
   if (run.trigger_client === "codex") return "from Codex";
   if (["mcp", "api"].includes(run.trigger_source)) return "from the API";
@@ -2483,7 +2484,8 @@ function systemRunningSentence(run, title) {
   const source = systemStartedBy(run);
   const startPhrase = source === "manual" ? `Started ${started}`
     : source === "scheduled" ? `Started ${started} on schedule`
-      : `Started ${source} at ${started}`;
+      : source === "approved automatically" ? `Approved automatically, started ${started}`
+        : `Started ${source} at ${started}`;
   return `${clause.replace(/[.\s]+$/, "")}. ${startPhrase}.`;
 }
 
@@ -3686,6 +3688,7 @@ function runTriggerLabel(run) {
     mcp: "via MCP",
     schedule: "by schedule",
     manual: "via dashboard",
+    auto_approve: "approved automatically",
   };
   return labels[run?.trigger_source] || "via Tin";
 }

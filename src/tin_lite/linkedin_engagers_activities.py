@@ -216,9 +216,14 @@ class LinkedInEngagersActivities:
     score_step = (2, 4)
     fallback = FALLBACK
 
-    def __init__(self, *, database, storage, settings, cipher, cloud, router):
+    def __init__(
+        self, *, database, storage, settings, cipher, cloud, router, connection_requests=None
+    ):
         self.db, self.storage, self.settings = database, storage, settings
         self.cipher, self.cloud, self.router = cipher, cloud, router
+        # `linkedin_requests_service.ConnectionRequests`, which approves the starter's
+        # proposals for them when they asked Tin to.
+        self.connection_requests = connection_requests
 
     async def _active(self, run_id, *, conn=None):
         run = await self.db.get_run(UUID(str(run_id)), conn=conn)
@@ -542,6 +547,7 @@ class LinkedInEngagersActivities:
             await requests.propose(
                 conn, run.project_id, run.started_by_clerk_user_id, run_id=run.id
             )
+        notes["auto_approved"] = await self._auto_approve(run)
         notes["proposed"] = await self.db.pool.fetchval(
             """SELECT count(*) FROM linkedin_requests q
                JOIN linkedin_request_batches b ON b.id = q.batch_id
@@ -619,6 +625,17 @@ class LinkedInEngagersActivities:
                 summary=summary.strip(),
                 workflow_key=KEY,
             )
+
+    async def _auto_approve(self, run) -> int:
+        """After the proposals commit, approve them for the starter when they asked Tin to:
+        approving starts or joins their sending run, which can't happen inside `propose`'s
+        transaction. Keyed to this run, so a retry approves nothing twice."""
+
+        if self.connection_requests is None:
+            return 0
+        return await self.connection_requests.auto_approve(
+            run.project_id, run.started_by_clerk_user_id, run_id=run.id
+        )
 
     async def _accepted(self, run_id: str) -> dict:
         """Who accepted the starter's connection requests on the project, read about once a day
