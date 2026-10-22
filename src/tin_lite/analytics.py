@@ -3,7 +3,8 @@
 Events go to PostHog through its batch endpoint from a background task, so nothing on the
 request path waits on the network. The person is the project (its id as `distinct_id`), since
 a project is what a founder and their agent share; calls that have no project use the Clerk
-user id. Without an API key everything here is a no-op.
+user id, and those people carry their primary email so PostHog names them by it. Without an
+API key everything here is a no-op.
 """
 
 from __future__ import annotations
@@ -12,7 +13,9 @@ import asyncio
 import json
 import logging
 import re
+import time
 from collections import deque
+from collections.abc import Awaitable, Callable
 from datetime import UTC, datetime
 from typing import Any
 from uuid import UUID
@@ -90,6 +93,39 @@ METADATA_FIELDS = frozenset(
     }
 )
 
+PERSON_FIELDS = frozenset({"email"})
+"""Person properties Tin sets (`$set`); PostHog shows a person by their email."""
+
+
+class PersonEmails:
+    """Primary emails for analytics people, fetched at most hourly per Clerk user."""
+
+    TTL = 3600.0
+    WAIT = 1.5
+    MAX_ENTRIES = 10_000
+
+    def __init__(self, fetch: Callable[[str], Awaitable[str | None]]) -> None:
+        self._fetch = fetch
+        self._entries: dict[str, tuple[float, asyncio.Future[str | None]]] = {}
+
+    async def get(self, clerk_user_id: str) -> str | None:
+        """The email, or None when analytics is off, Clerk has none or Clerk is slow; a slow
+        lookup still fills the cache for the next event."""
+        if not current().enabled:
+            return None
+        now = time.monotonic()
+        try:
+            entry = self._entries.get(clerk_user_id)
+            if entry is None or entry[0] < now:
+                if len(self._entries) >= self.MAX_ENTRIES:
+                    self._entries.clear()
+                entry = (now + self.TTL, asyncio.ensure_future(self._fetch(clerk_user_id)))
+                self._entries[clerk_user_id] = entry
+            async with asyncio.timeout(self.WAIT):
+                return await asyncio.shield(entry[1])
+        except Exception:
+            return None
+
 
 class Analytics:
     def __init__(
@@ -120,6 +156,7 @@ class Analytics:
         distinct_id: str | UUID | None,
         properties: dict[str, Any] | None = None,
         project_id: str | UUID | None = None,
+        person: dict[str, Any] | None = None,
     ) -> None:
         """Queue one event. Safe to call from anywhere; drops silently when disabled."""
         if not self.enabled or distinct_id is None:
@@ -138,6 +175,13 @@ class Analytics:
                 and isinstance(value, str | int | float | bool | type(None))
             }
         )
+        person_set = {
+            key: value
+            for key, value in (person or {}).items()
+            if key in PERSON_FIELDS and isinstance(value, str) and value
+        }
+        if person_set:
+            props["$set"] = person_set
         if len(self._queue) == self._queue.maxlen:
             self.dropped += 1
         self._queue.append(
@@ -224,8 +268,15 @@ def capture(
     distinct_id: str | UUID | None,
     properties: dict[str, Any] | None = None,
     project_id: str | UUID | None = None,
+    person: dict[str, Any] | None = None,
 ) -> None:
-    _current.capture(event, distinct_id=distinct_id, properties=properties, project_id=project_id)
+    _current.capture(
+        event,
+        distinct_id=distinct_id,
+        properties=properties,
+        project_id=project_id,
+        person=person,
+    )
 
 
 async def aclose() -> None:

@@ -305,8 +305,11 @@ def test_missing_founder_answers_become_stated_defaults() -> None:
 
 
 def test_posthog_mcp_analytics_installs_without_touching_the_tool_contract(monkeypatch) -> None:
+    import asyncio
+
     import posthog.mcp
 
+    from tin_lite.analytics import Analytics, PersonEmails
     from tin_lite.mcp_server import install_posthog_mcp_analytics
 
     calls: list[tuple] = []
@@ -322,7 +325,26 @@ def test_posthog_mcp_analytics_installs_without_touching_the_tool_contract(monke
         # No injected `context` argument, no virtual feedback tool, no duplicate exceptions.
         assert options.context is False and options.collect_feedback is False
         assert options.enable_exception_autocapture is False
-        assert options.identify(None, None) is None  # no access token outside a request
+        # No access token outside a request.
+        assert asyncio.run(options.identify(None, None)) is None
         assert options.event_properties(None, None)["source"] == "tin-lite"
+    finally:
+        client.shutdown()
+
+    # With a signed-in caller, the person carries their Clerk primary email.
+    async def fetch(user_id: str) -> str:
+        return f"{user_id}@example.com"
+
+    monkeypatch.setattr(
+        "tin_lite.mcp_server.get_access_token", lambda: SimpleNamespace(subject="user_1")
+    )
+    monkeypatch.setattr("tin_lite.analytics._current", Analytics("phc_test"))
+    client = install_posthog_mcp_analytics(
+        server, SimpleNamespace(posthog_api_key="phc_test"), PersonEmails(fetch)
+    )
+    try:
+        identity = asyncio.run(calls[-1][2].identify(None, None))
+        assert identity.distinct_id == "user_1"
+        assert identity.properties == {"clerk_user_id": "user_1", "email": "user_1@example.com"}
     finally:
         client.shutdown()

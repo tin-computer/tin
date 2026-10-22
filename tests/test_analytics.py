@@ -7,7 +7,7 @@ import httpx
 import pytest
 
 from tin_lite import analytics
-from tin_lite.analytics import PAYLOAD_CAP, Analytics, clip, redact
+from tin_lite.analytics import PAYLOAD_CAP, Analytics, PersonEmails, clip, redact
 from tin_lite.mcp_server import analytics_middleware
 
 
@@ -57,7 +57,59 @@ async def test_capture_batches_to_posthog() -> None:
     assert event["properties"]["$groups"] == {"project": "11111111-1111-4111-8111-111111111111"}
     assert "arguments" not in event["properties"]
     assert event["properties"]["source"] == "test"
+    assert "$set" not in event["properties"]
     await client.aclose()
+
+
+@pytest.mark.asyncio
+async def test_capture_sets_only_the_person_email() -> None:
+    posted: list[dict] = []
+
+    async def handler(request: httpx.Request) -> httpx.Response:
+        posted.append(json.loads(request.content))
+        return httpx.Response(200, json={"status": 1})
+
+    client = Analytics("phc_test", "https://ph.example")
+    client._client = httpx.AsyncClient(transport=httpx.MockTransport(handler))
+    client.capture("x", distinct_id="user_1", person={"email": "a@b.co", "name": "A"})
+    client.capture("x", distinct_id="user_1", person={"email": None})
+    await client.flush()
+    first, second = posted[0]["batch"]
+    assert first["properties"]["$set"] == {"email": "a@b.co"}
+    assert "$set" not in second["properties"]
+    await client.aclose()
+
+
+@pytest.mark.asyncio
+async def test_person_emails_fetch_once_and_survive_a_slow_or_failing_clerk() -> None:
+    import asyncio
+
+    fetched: list[str] = []
+    release = asyncio.Event()
+
+    async def fetch(user_id: str) -> str | None:
+        fetched.append(user_id)
+        if user_id == "user_slow":
+            await release.wait()
+        if user_id == "user_bad":
+            raise RuntimeError("clerk down")
+        return f"{user_id}@example.com"
+
+    emails = PersonEmails(fetch)
+    assert await emails.get("user_1") is None  # analytics off: no lookup at all
+    assert fetched == []
+    analytics.configure("phc_test", "https://ph.example")
+    assert await emails.get("user_1") == "user_1@example.com"
+    assert await emails.get("user_1") == "user_1@example.com"
+    assert fetched == ["user_1"]
+    assert await emails.get("user_bad") is None
+    # A slow lookup answers None now and fills the cache for the next event.
+    emails.WAIT = 0.01
+    assert await emails.get("user_slow") is None
+    release.set()
+    assert await emails.get("user_slow") == "user_slow@example.com"
+    assert fetched.count("user_slow") == 1
+    analytics.configure(None, "")
 
 
 @pytest.mark.asyncio
@@ -110,6 +162,13 @@ async def test_middleware_records_tool_calls_and_session_start(monkeypatch) -> N
     event, kw = calls[-1]
     assert event == "mcp_session_started" and kw["distinct_id"] == "user_1"
     assert kw["properties"]["client_name"] == "codex"
+    assert kw["person"] == {"email": None}
+
+    async def fetch(user_id: str) -> str:
+        return f"{user_id}@example.com"
+
+    await analytics_middleware(init, call_next, emails=PersonEmails(fetch))
+    assert calls[-1][1]["person"] == {"email": "user_1@example.com"}
 
     other = SimpleNamespace(method="tools/list", params=None, session=session)
     before = len(calls)
