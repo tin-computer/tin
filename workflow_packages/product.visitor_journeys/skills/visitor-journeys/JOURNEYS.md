@@ -57,7 +57,10 @@ MAX_FRICTIONS = 30
 MAX_TIMELINE_PEOPLE = 15
 ANONYMOUS_JOURNEYS = 3
 ROUTE_PAGES = 4
-TIMELINE_EVENTS_PER_PERSON = 60
+# A timeline reads each person's first and last events; the middle of a long day is skipped,
+# never the end. 15 people at 60 rows stay under the 1000-row query limit.
+TIMELINE_FIRST_EVENTS = 30
+TIMELINE_LAST_EVENTS = 30
 SUMMARY_LIMIT = 300
 ACTION_LIMIT = 300
 REASON_LIMIT = 180
@@ -475,19 +478,23 @@ def request(c, m, step, person_ids=None):
             )
         return _query(
             step,
-            f"""SELECT toString(person_id) AS person, timestamp, event,
+            f"""SELECT person, timestamp, event, session, host, path, element, message, scroll,
+            n, total FROM (
+            SELECT toString(person_id) AS person, timestamp, event,
             properties.$session_id AS session, properties.$host AS host,
             properties.$pathname AS path,
             left(coalesce(properties.$el_text, elements_chain_href, ''), 60) AS element,
             left(coalesce(toString(properties.$exception_values), properties.$exception_message,
                  properties.error, properties.reason, properties.message,
                  if(isNull(properties.status), NULL, concat('status ', toString(properties.status))), ''), 120) AS message,
-            properties.$prev_pageview_max_content_percentage AS scroll
+            properties.$prev_pageview_max_content_percentage AS scroll,
+            row_number() OVER (PARTITION BY person_id ORDER BY timestamp) AS n,
+            count() OVER (PARTITION BY person_id) AS total
             FROM events WHERE {w} AND toString(person_id) IN {_list(ids)}
             AND event NOT IN {_list(QUIET_EVENTS)}
-            AND NOT (event = '$autocapture' AND coalesce(properties.$event_type, '') NOT IN ('click', 'submit'))
-            ORDER BY person, timestamp
-            LIMIT {TIMELINE_EVENTS_PER_PERSON} BY person LIMIT 1000""",
+            AND NOT (event = '$autocapture' AND coalesce(properties.$event_type, '') NOT IN ('click', 'submit')))
+            WHERE n <= {TIMELINE_FIRST_EVENTS} OR n > total - {TIMELINE_LAST_EVENTS}
+            ORDER BY person, n LIMIT 1000""",
         )
     raise ContractError(f"unknown step {step}")
 
@@ -594,6 +601,8 @@ TIMELINE = [
     "element",
     "message",
     "scroll",
+    "n",
+    "total",
 ]
 
 
@@ -887,10 +896,24 @@ def journey(rows, m, limit=24):
     """A person's timeline, squeezed for reading: pages, labelled clicks and submits, rage and
     dead clicks, errors and the map's key events, in order, with repeats folded. Other custom
     events only count toward `other`; the raw rows stay in the result if a step needs them.
+    A long timeline arrives as its first and last events; the events in between show as one
+    step, so the journey still ends where the person stopped.
     Write the journey in words from this."""
     keys = set(key_event_names(m))
-    steps, other = [], 0
+    steps, other, seen = [], 0, None
     for row in rows:
+        n = row.get("n")
+        if isinstance(n, int) and isinstance(seen, int) and n > seen + 1:
+            steps.append(
+                {
+                    "label": f"... {n - seen - 1} events in between not read",
+                    "at": None,
+                    "last": None,
+                    "times": 1,
+                    "session": None,
+                }
+            )
+        seen = n if isinstance(n, int) else seen
         event, path = row["event"], row.get("path") or ""
         element = (row.get("element") or "").strip()
         if event == "$pageview":

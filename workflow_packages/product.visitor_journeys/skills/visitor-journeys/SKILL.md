@@ -96,6 +96,9 @@ Call `choose(p, c["max_people_detailed"])`, split the result with `batches()`, a
 each journey as 3 to 6 plain steps that end with where they stopped and the most likely reason.
 For example: "picked the Growth plan, opened Connect GitHub three times, left after 40 seconds
 without connecting". Note the time between steps when it matters.
+A timeline holds a person's first 30 and last 30 events, so it always reaches where they
+stopped. When they did more, `journey()` shows the events in between as one step. That is not
+missing evidence and does not make the report incomplete; say "a long session" if it matters.
 
 `choose()` also reads the three most engaged anonymous browsers. Write each of them in one line
 under "How visitors use the site", without a name, a city or a company.
