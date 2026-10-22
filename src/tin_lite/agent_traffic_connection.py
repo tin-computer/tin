@@ -213,6 +213,18 @@ def domain(url: Any) -> str:
     return host_of(url).removeprefix("www.")
 
 
+def site_url(configuration: dict[str, Any]) -> str | None:
+    """The site's address. A linked site (one Agent Traffic runs itself, such as tin.computer's)
+    may come back with no `url`; its counted hosts still say what it counts."""
+
+    if isinstance(configuration.get("url"), str):
+        return configuration["url"]
+    for host in configuration.get("counted_hosts") or []:
+        if isinstance(host, str) and host.removeprefix("*."):
+            return f"https://{host.removeprefix('*.')}"
+    return None
+
+
 def on_shared_hosting(host: str) -> bool:
     return any(host == item or host.endswith("." + item) for item in SHARED_HOSTING)
 
@@ -514,8 +526,9 @@ def comparison(report: dict[str, Any]) -> dict[str, Any] | None:
     """Each number's change from the period before, from the report's `previous`.
 
     None when there is no period before to compare with (`previous` is null past retention).
-    A number withheld in either period (null) has no change. `percent` is given only when the
-    period before had at least PERCENT_FROM; `before` is 0 for days before the first visit.
+    A null in either period, which the service doesn't send, has no change. `percent` is given
+    only when the period before had at least PERCENT_FROM; `before` is 0 for days before the
+    first visit.
     While the period is unfinished, `previous` stops at the same point and `until` says where
     ("against Tuesday up to 10:50"); `until` is None when it covers the whole period before.
     """
@@ -552,7 +565,7 @@ def reporter_connected(status: dict[str, Any] | None, *, now: datetime | None = 
 
 
 def _label(configuration: dict[str, Any]) -> str:
-    host = host_of(configuration.get("url")) or configuration["site_id"]
+    host = host_of(site_url(configuration)) or configuration["site_id"]
     return host[:200]
 
 
@@ -817,7 +830,7 @@ class AgentTrafficConnections:
         if latest is None or latest[1] == site.get("address_run_id"):
             return connection
         url, run_id = latest
-        if domain(url) == domain(connection.configuration.get("url")):
+        if domain(url) == domain(site_url(connection.configuration)):
             await self.db.pool.execute(
                 "UPDATE agent_traffic_sites SET address_run_id = $2, updated_at = now() "
                 "WHERE project_id = $1",
@@ -882,7 +895,7 @@ class AgentTrafficConnections:
         configuration = connection.configuration
         return {
             "state": state or "waiting",
-            "address": configuration.get("url"),
+            "address": site_url(configuration),
             "site_id": configuration.get("site_id"),
             "linked": configuration.get("linked") is True,
             "counted_hosts": configuration.get("counted_hosts") or [],

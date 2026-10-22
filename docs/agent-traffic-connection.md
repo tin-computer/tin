@@ -108,7 +108,8 @@ days read a week ending today.
   "other bots", and browser-like loads with how many never ran the script), the companies that
   asked for pages, and the pages AI companies loaded, split by company as `ai_pages` gives them.
 - The needs-you bar shows the report's `needs_you` text as it is, with Count instead for a moved
-  host. A withheld number is a dash, and the report's notes close the page in small print.
+  host. Every number is exact (the service withholds nothing); a `null` would show as a dash,
+  as a guard. The report's notes close the page in small print.
 
 ## MCP
 
@@ -127,7 +128,7 @@ Each stored report comes with `comparison`, built from the report's `previous` (
 for a day, the 7 days before for a week): visits, page views, visits from AI assistants
 (`totals.assistant_visits`) and each kind of visit, each as `now` and `before`, with `percent`
 only when the period before had at least ten ("up from 4" reads truer than "+50%"). A number
-withheld in either period has no change, and `comparison` is null when `previous` is (the
+that is `null` in either period (the service sends none) has no change, and `comparison` is null when `previous` is (the
 period before is past retention). Before the site's first visit, `before` is 0. While the
 period is unfinished (Today, or the last 7 days ending today), `previous` counts the period
 before only up to the same point, which follows the report's `built_at`, and `until` says where

@@ -195,14 +195,14 @@ test("page: today so far, each number against the day before, every page request
     assert.equal(await page.locator(".analytics-bars .analytics-bar").count(), 24);
     assert.equal(await page.locator(".analytics-bars .analytics-bar.is-future").count() > 0, true);
     assert.match(await page.locator(".analytics-detector").innerText(), /Of the 43 with no automation seen, the detector says\s*human 38 · not human 2 · unknown 2 · not scored yet 1\s*provisional · still being measured/);
-    // A withheld number is a dash.
+    // A null count, which the service doesn't send, is a dash.
     const careers = page.locator(".analytics-row", {hasText: "/careers"});
     assert.deepEqual(await careers.locator(".analytics-num").allInnerTexts(), ["–", "–", ""]);
     assert.match(await page.locator(".analytics-row", {hasText: "chatgpt.com"}).innerText(), /chatgpt\.com\s*AI assistant\s*4/);
     assert.deepEqual(await page.locator(".analytics-class").allInnerTexts(), ["412\npage loads", "61\nverified bots", "88\nnamed bots, unconfirmed", "39\nother bots", "224\nbrowser-like · script didn't run on 173"]);
     assert.match(await page.locator(".analytics-row:not(.is-head)", {hasText: "OpenAI"}).innerText(), /OpenAI\s*fetching for someone\s*AI\s*22\s*30/);
     assert.deepEqual(await page.locator(".analytics-table").nth(3).locator(".analytics-row.is-head span").allInnerTexts(), ["Page", "OpenAI", "Anthropic"]);
-    assert.match(await page.locator(".analytics-notes").innerText(), /A visit ends after 30 minutes without activity\. · – means too few visits to show$/);
+    assert.match(await page.locator(".analytics-notes").innerText(), /A visit ends after 30 minutes without activity\.$/);
     // Counting the moved host from the needs-you bar.
     await page.getByRole("button", {name: "Count newname.com instead"}).click();
     await page.getByText("Now counting newname.com and its subdomains. The script line on your site stays the same.").waitFor();

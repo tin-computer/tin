@@ -8,6 +8,9 @@ status and report calls from tests/fixtures/agent_traffic. `state` sets what sta
 
     service = FakeAgentTraffic()
     service.refuse["DELETE"] = [503, 429]   # the next two DELETEs fail, the third succeeds
+
+`linked` links a reference to a site Agent Traffic runs itself, as tin.computer's project is
+linked to `organic-tin`: PUT answers with that site and no `url` or dates, and DELETE unlinks it.
 """
 
 from __future__ import annotations
@@ -34,6 +37,8 @@ class FakeAgentTraffic:
         self.calls: list[httpx.Request] = []
         self.sites: dict[str, dict] = {}
         self.removed: dict[str, str] = {}
+        # project reference -> (site ID, counted hosts) of a site Agent Traffic runs itself.
+        self.linked: dict[str, tuple[str, list[str]]] = {}
         self.tokens: dict[str, str] = {}
         self.state = "waiting"
         self.status_extra: dict = {}
@@ -100,11 +105,14 @@ class FakeAgentTraffic:
         domain = host.removeprefix("www.")
         counted = [host] if host.endswith(SHARED) else [domain, f"*.{domain}"]
         existing = self.sites.get(ref)
-        site_id = (
-            existing["site_id"]
-            if existing
-            else f"st-fake{len(self.removed) + len(self.sites) + 1:04d}"
-        )
+        if ref in self.linked:
+            site_id, counted = self.linked[ref]
+        else:
+            site_id = (
+                existing["site_id"]
+                if existing
+                else f"st-fake{len(self.removed) + len(self.sites) + 1:04d}"
+            )
         self.issued += 1
         token = f"read-token-{site_id}-{self.issued:04d}-synthetic"
         site = copy.deepcopy(example("put_site.json"))
@@ -116,6 +124,8 @@ class FakeAgentTraffic:
             read_token=token,
             script=site["script"].replace("st-8k3m9q2x7v4c", site_id),
         )
+        if ref in self.linked:
+            site.update(linked=True, url=None, created_at=None, updated_at=None)
         self.sites[ref] = site
         self.tokens[token] = site_id
         self.removed.pop(ref, None)
@@ -123,6 +133,10 @@ class FakeAgentTraffic:
 
     def _delete(self, ref: str) -> httpx.Response:
         site = self.sites.pop(ref, None)
+        if site is not None and self.linked.pop(ref, None):
+            # Unlinking stops Tin's tokens; the site itself keeps recording.
+            self.tokens = {k: v for k, v in self.tokens.items() if v != site["site_id"]}
+            return self.reply(200, {"site_id": site["site_id"], "state": "unlinked"})
         if site is not None:
             self.removed[ref] = site["site_id"]
             # Every read token for the site stops working.

@@ -522,6 +522,32 @@ async def test_stop_measuring_deletes_the_site_and_tins_copies(publication_db) -
     assert connection.external_account_id == "st-fake0002"
 
 
+async def test_a_linked_site_shows_what_it_counts_and_stop_only_unlinks(publication_db) -> None:
+    service, api, project = await analytics(publication_db, url="https://www.tin.computer")
+    api.linked[f"tin:{project.id}"] = ("organic-tin", ["tin.computer", "*.tin.computer"])
+    api.state = "live"
+    connection = await service.agent_traffic.set_up(project_id=project.id, clerk_user_id=USER_ID)
+    assert connection.external_account_id == "organic-tin"
+    assert connection.configuration["linked"] is True
+    assert connection.configuration["url"] is None
+    shown = await card(service, project.id)
+    assert shown["state"] == "live" and shown["linked"] is True
+    # The service sends no url for a site it runs itself; the card names what it counts.
+    assert shown["address"] == "https://tin.computer"
+    puts = len(api.paths("PUT"))
+    # A newer Start here with the same domain sends no PUT.
+    await onboarding(publication_db, project.id, "https://tin.computer/")
+    await age(publication_db, project.id, 700)
+    await card(service, project.id)
+    assert len(api.paths("PUT")) == puts
+    assert await service.disconnect(
+        project_id=project.id, provider_key=AGENT_TRAFFIC_PROVIDER, member=USER_ID
+    )
+    removal = await service.agent_traffic.removal(project.id)
+    assert removal["state"] == "unlinked" and removal["finished_at"] is not None
+    assert api.sites == {}
+
+
 @pytest.mark.parametrize("failure", [503, 401, 429, 403, "timeout"])
 async def test_a_failed_delete_is_retried_with_backoff_until_accepted(
     publication_db, failure

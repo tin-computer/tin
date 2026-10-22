@@ -3,7 +3,7 @@
 // Analytics (Paper REP-V2, V2b, V2c, V2d and V2e): who visits the project's site, from Tin's
 // stored copy of the report Agent Traffic builds. Today, Yesterday and the last 7 days, each
 // number beside its change from the period before; while no visit has arrived, the waiting page
-// with the script line. Every number comes from the report; a withheld one (null) is a dash.
+// with the script line. Every number comes from the report and is exact; a null is a dash.
 window.TinAnalytics = (() => {
   const MONTHS = ["jan", "feb", "mar", "apr", "may", "jun", "jul", "aug", "sep", "oct", "nov", "dec"];
   const WEEKDAYS = ["sunday", "monday", "tuesday", "wednesday", "thursday", "friday", "saturday"];
@@ -20,6 +20,7 @@ window.TinAnalytics = (() => {
     perplexity: "Perplexity", mistral: "Mistral", commoncrawl: "Common Crawl", duckduckgo: "DuckDuckGo",
     amazon: "Amazon", keenable: "Keenable", "you.com": "You.com", exa: "Exa", meta: "Meta", ahrefs: "Ahrefs",
   };
+  // Every count is exact; a dash stands in if one ever comes back null.
   const DASH = "–";
 
   let view = null;
@@ -200,7 +201,7 @@ window.TinAnalytics = (() => {
       ${chart(report)}
       <div class="analytics-pair">${pages(report)}${cameFrom(report)}</div>
       ${requests(report, card)}
-      <p class="analytics-notes">${escape([...(report.notes || []), `${DASH} means too few visits to show`].join(" · "))}</p>`;
+      ${(report.notes || []).length ? `<p class="analytics-notes">${escape(report.notes.join(" · "))}</p>` : ""}`;
   }
 
   function summary(report, comparison) {
