@@ -25,7 +25,10 @@ paths            -> site_paths(path_rows(result), has_more)  # how visitors move
 timelines (1-3)  -> timelines(result)     # for choose(p, c["max_people_detailed"])
 f = frictions(friction_rows, loop_rows, stalls(p, m), p)
 ledger = carry(prev["ledger"], p, f, c)
-evidence = assemble(...); text = report + render_evidence(evidence); check(text)
+b = brief(...)                            # the founder's brief, in your words
+evidence = assemble(..., brief=b, previous_counts=prev["counts"])
+text = report (render_brief(evidence["brief"]) under Status) + render_evidence(evidence)
+check(text)
 ```
 
 ```python
@@ -62,6 +65,14 @@ ROUTE_PAGES = 4
 TIMELINE_FIRST_EVENTS = 30
 TIMELINE_LAST_EVENTS = 30
 SUMMARY_LIMIT = 300
+# The brief at the top of the report is read on its own, in the founder's daily report.
+BRIEF_LIMIT = 1000
+BRIEF_LINE = 240
+DO_TODAY = 3
+# Words from inside this resource that mean nothing to a founder.
+INTERNAL_WORDS = re.compile(
+    r"\b(census|ledger|timelines?|tiers?|quer(?:y|ies)|server-only|hogql)\b", re.IGNORECASE
+)
 ACTION_LIMIT = 300
 REASON_LIMIT = 180
 # Events that say nothing about a journey: PostHog's own bookkeeping.
@@ -1071,6 +1082,7 @@ def previous(text):
         "ledger": {"frictions": [], "people": []},
         "window": None,
         "site": None,
+        "counts": None,
     }
     if not text:
         return empty
@@ -1091,6 +1103,7 @@ def previous(text):
         },
         "window": evidence.get("window"),
         "site": evidence.get("site") if isinstance(evidence.get("site"), dict) else None,
+        "counts": evidence.get("counts") if isinstance(evidence.get("counts"), dict) else None,
     }
 
 
@@ -1175,7 +1188,140 @@ def named(person, summary, action="", stopped_at="", replay_url=None):
     }
 
 
-def assemble(c, status, reason, requests, p, named_people, f, ledger, m, limitations=(), site=None):
+def _line(value, limit=BRIEF_LINE):
+    return " ".join(str(value or "").split())[:limit]
+
+
+def brief(
+    headline,
+    do_today,
+    money="",
+    broken=None,
+    worth_a_look="",
+    worked=None,
+    traffic="",
+    cant_see="",
+):
+    """The founder's brief: the block under the Status line, read on its own every morning.
+
+    `do_today` is [(text, email or None), ...], at most three. `broken` is (text, friction_id)
+    for a friction the product recorded as failing. `worked` is (text, email or None). The
+    People line is not yours to write: assemble() adds it from the counts.
+    """
+
+    def ref(pair, key):
+        if not pair:
+            return None
+        text, value = pair
+        return {"text": _line(text), key: value or None}
+
+    return {
+        "headline": _line(headline, 200),
+        "money": _line(money),
+        "do_today": [ref(x, "email") for x in do_today][:DO_TODAY],
+        "broken": ref(broken, "friction"),
+        "worth_a_look": _line(worth_a_look),
+        "worked": ref(worked, "email"),
+        "traffic": _line(traffic),
+        "cant_see": _line(cant_see),
+    }
+
+
+def _plural(n, one, many):
+    return f"{n} {one if n == 1 else many}"
+
+
+def _basis(counts_):
+    """Visitors and named people in one report's counts, or None."""
+    if not isinstance(counts_, dict) or not all(
+        type(counts_.get(k)) is int for k in ("people", "account", "team", "bot")
+    ):
+        return None
+    return {
+        "visited": counts_["people"] - counts_["account"] - counts_["team"] - counts_["bot"],
+        "named": sum(counts_.get(t) or 0 for t in NAMED_TIERS),
+    }
+
+
+def people_line(counts_, m, requests, previous=None):
+    """The brief's People line, from the counts alone, so its numbers always match."""
+    if not any(r.get("step") == "census" and r.get("outcome") == "ok" for r in requests):
+        return "Not measured today."
+    now = _basis(counts_)
+    visited = _plural(now["visited"], "person", "people")
+    text = f"{visited} visited and {now['named']} told us who they are"
+    kinds = [
+        _plural(counts_[tier], one, many)
+        for tier, one, many in (
+            ("lead", "lead", "leads"),
+            ("new_user", "new user", "new users"),
+            ("user", "returning user", "returning users"),
+        )
+        if counts_.get(tier)
+    ]
+    text += (": " + ", ".join(kinds) if kinds else "") + "."
+    if counts_["account"]:
+        text += f" {counts_['account']} more showed up only in the product's own events."
+    if not (m.get("key_events") or {}).get("signup"):
+        text += " New signups aren't tracked."
+    if counts_["team"]:
+        text += f" {_plural(counts_['team'], 'team member', 'team members')} left out."
+    if previous:
+        text += f" Last report: {previous['visited']} visited, {previous['named']} named."
+    return text
+
+
+def render_brief(b):
+    """The brief as Markdown, exactly as it goes under the Status line."""
+    lines = [f"**{b['headline']}**", "", f"- **People:** {b['people']}"]
+    if b["money"]:
+        lines.append(f"- **Money:** {b['money']}")
+    if len(b["do_today"]) == 1:
+        lines.append(f"- **Do today:** {b['do_today'][0]['text']}")
+    else:
+        lines.append("- **Do today:**")
+        lines += [f"  {i}. {x['text']}" for i, x in enumerate(b["do_today"], 1)]
+    for label, value in (
+        ("Broken", (b["broken"] or {}).get("text")),
+        ("Worth a look", b["worth_a_look"]),
+        ("Worked", (b["worked"] or {}).get("text")),
+        ("Traffic", b["traffic"]),
+        ("Can't see", b["cant_see"]),
+    ):
+        if value:
+            lines.append(f"- **{label}:** {value}")
+    return "\n".join(lines)
+
+
+def assemble(
+    c,
+    status,
+    reason,
+    requests,
+    p,
+    named_people,
+    f,
+    ledger,
+    m,
+    limitations=(),
+    site=None,
+    brief=None,
+    previous_counts=None,
+):
+    evidence = _assemble(
+        c, status, reason, requests, p, named_people, f, ledger, m, limitations, site
+    )
+    if brief is not None:
+        previous = _basis(previous_counts)
+        evidence["brief"] = {
+            **brief,
+            "people": people_line(evidence["counts"], m, requests, previous),
+            "previous": previous,
+        }
+    return evidence
+
+
+def _assemble(c, status, reason, requests, p, named_people, f, ledger, m, limitations, site):
     return {
         "version": VERSION,
         "status": status,
@@ -1306,5 +1452,56 @@ def check(text):
         if item.get("kind") not in FRICTION_KINDS or item.get("status") not in FRICTION_STATUSES:
             raise ContractError("each friction needs a known kind and status")
     check_map(e["map"])
+    if e["status"] != "invalid configuration":
+        _check_brief(e, head)
     return e
+
+
+def _check_brief(e, head):
+    b = e.get("brief")
+    if not isinstance(b, dict):
+        raise ContractError("the report needs a brief: build it with brief() and assemble()")
+    if not b.get("headline"):
+        raise ContractError("the brief needs a headline")
+    if b.get("people") != people_line(e["counts"], e["map"], e["requests"], b.get("previous")):
+        raise ContractError("the brief's People line comes from assemble(), never by hand")
+    named_emails = {row["email"] for row in e["people"]}
+    if not 1 <= len(b.get("do_today") or []) <= DO_TODAY:
+        raise ContractError(f"the brief needs 1-{DO_TODAY} things to do today")
+    for item in b["do_today"] + [b.get("worked")]:
+        if item and item.get("email") and item["email"] not in named_emails:
+            raise ContractError(f"{item['email']} is in the brief but is not a named person")
+    if b.get("broken"):
+        hit = next((x for x in e["frictions"] if x["id"] == b["broken"].get("friction")), None)
+        if hit is None:
+            raise ContractError("Broken names a friction that is not in the report")
+        clicked = (
+            hit["kind"] in ("dead_click", "rage_click") and hit["detail"] and hit["people"] >= 2
+        )
+        if hit["kind"] not in ("failure", "error") and not clicked:
+            raise ContractError(
+                "Broken needs a recorded failure or error, or a labeled click problem two "
+                "people hit; put weaker signals under worth_a_look"
+            )
+    words = [
+        b["headline"],
+        b.get("money"),
+        b.get("worth_a_look"),
+        b.get("traffic"),
+        b.get("cant_see"),
+        *(x["text"] for x in b["do_today"]),
+        *((b.get(k) or {}).get("text") for k in ("broken", "worked")),
+    ]
+    text = " ".join(w for w in words if w)
+    if len(text) > BRIEF_LIMIT:
+        raise ContractError(f"the brief is over {BRIEF_LIMIT} characters; keep it to the point")
+    found = INTERNAL_WORDS.search(text)
+    if found:
+        raise ContractError(f"the brief uses '{found.group(0)}'; write it in the founder's words")
+    rendered = render_brief(b)
+    at = head.find(rendered)
+    status_at = re.search(r"^Status: ", head, re.M).start()
+    first_section = head.find("\n## ")
+    if at < status_at or (first_section != -1 and at > first_section):
+        raise ContractError("put render_brief() under the Status line, before the first section")
 ```

@@ -521,7 +521,24 @@ def test_the_ledger_carries_frictions_from_new_to_ongoing_to_fixed(j, c, people)
 # ---------------------------------------------------------------- the report and Tin's check
 
 
-def report(j, c, m, people, *, status="complete", reason="", requests=None, named=None, body=None):
+DEFAULT = object()
+
+
+def report(
+    j,
+    c,
+    m,
+    people,
+    *,
+    status="complete",
+    reason="",
+    requests=None,
+    named=None,
+    body=None,
+    brief=DEFAULT,
+    frictions=(),
+    previous_counts=None,
+):
     named = (
         named
         if named is not None
@@ -559,13 +576,36 @@ def report(j, c, m, people, *, status="complete", reason="", requests=None, name
     )
     ledger = j.carry({"frictions": [], "people": []}, people, [], c)
     site = j.site_paths([path_row("/", "/", "/", 4, bounced=4)])
-    evidence = j.assemble(c, status, reason, requests, people, named, [], ledger, m, site=site)
+    if brief is DEFAULT:
+        brief = j.brief(
+            "Ana signed up from the hackathon page and stopped at Connect GitHub.",
+            [("Watch Ana's replay, then offer help connecting GitHub.", named[0]["email"])]
+            if named
+            else [("Nothing to do today.", None)],
+        )
+    evidence = j.assemble(
+        c,
+        status,
+        reason,
+        requests,
+        people,
+        named,
+        list(frictions),
+        ledger,
+        m,
+        site=site,
+        brief=brief,
+        previous_counts=previous_counts,
+    )
+    top = "\n\n" + j.render_brief(evidence["brief"]) if brief is not None else ""
     text = (
         body
         if body is not None
-        else (
-            "# Visitors\n\nStatus: " + status + "\n\n" + "\n".join(f"- {n['email']}" for n in named)
-        )
+        else "# Visitors\n\nStatus: "
+        + status
+        + top
+        + "\n\n## People to act on today\n\n"
+        + "\n".join(f"- {n['email']}" for n in named)
     )
     return text + j.render_evidence(evidence)
 
@@ -595,9 +635,100 @@ def test_a_complete_report_passes_both_checks_and_names_its_people(j, c, m, peop
         ("cara@studio.design", "user"),
     ]
     assert outcome.people[0].replay_url == REPLAY + "01a1-session-0001"
-    assert visitor_journal.summary(outcome) == "1 new user, 1 lead, 1 user among 8 visitors."
+    assert visitor_journal.summary(outcome) == (
+        "Ana signed up from the hackathon page and stopped at Connect GitHub."
+    )
+    plain = visitor_journal.read(report(j, c, m, people, brief=None))
+    assert plain.brief is None
+    assert visitor_journal.summary(plain) == "1 new user, 1 lead, 1 user among 8 visitors."
     assert j.previous(text)["map"] == m
     assert j.previous(text)["site"]["landing"] == [{"path": "/", "sessions": 4, "bounced": 4}]
+
+
+FAILURE = {
+    "id": "aaaaaaaaaaaa",
+    "kind": "failure",
+    "page": "",
+    "detail": "checkout_failed: card declined",
+    "people": 2,
+    "reportable": True,
+}
+UNLABELED = {**FAILURE, "id": "bbbbbbbbbbbb", "kind": "dead_click", "page": "/c", "detail": ""}
+
+
+def test_the_brief_opens_the_report_and_its_numbers_come_from_the_counts(j, c, m, people):
+    b = j.brief(
+        "Ben clicked pricing twice and left; checkout failed for two people.",
+        [
+            ("Check your inbox for Ben's question before writing to him.", "ben@quanta.io"),
+            ("Look at the checkout error log.", None),
+        ],
+        money="No payments.",
+        broken=("Checkout failed twice for 2 people since today.", FAILURE["id"]),
+        worth_a_look="Clicks on /c changed nothing for 2 people; watch a replay.",
+        worked=("Cara came back for a third day.", "cara@studio.design"),
+        traffic="4 visits, all on the homepage.",
+        cant_see="Signups are not tracked.",
+    )
+    text = report(
+        j,
+        c,
+        m,
+        people,
+        brief=b,
+        frictions=[FAILURE, UNLABELED],
+        previous_counts={"people": 5, "account": 0, "team": 1, "bot": 0, "lead": 1},
+    )
+    e = j.check(text)
+    assert e["brief"]["people"] == (
+        "5 people visited and 3 told us who they are: 1 lead, 1 new user, 1 returning user. "
+        "1 more showed up only in the product's own events. 1 team member left out. "
+        "Last report: 4 visited, 1 named."
+    )
+    head = text.split(j.EVIDENCE_MARKER)[0]
+    assert head.index("Status: complete") < head.index("**Ben clicked") < head.index("## People")
+    assert "  2. Look at the checkout error log." in head
+    brief = visitor_journal.read(text).brief
+    assert brief.headline.startswith("Ben clicked") and len(brief.do_today) == 2
+    assert brief.broken.startswith("Checkout failed") and brief.cant_see
+    # Nothing measured: the People line says so instead of counting zeros.
+    refused = [{"step": "census", "operation": "query.hogql", "outcome": "refused"}]
+    assert j.people_line(e["counts"], m, refused) == "Not measured today."
+
+
+def test_the_check_refuses_a_brief_tin_could_not_stand_behind(j, c, m, people):
+    def brief(**changes):
+        values = {
+            "headline": "Ben looked at pricing.",
+            "do_today": [("Watch Ben's replay.", "ben@quanta.io")],
+            **changes,
+        }
+        return j.brief(**values)
+
+    cases = [
+        (None, "needs a brief"),
+        (brief(do_today=[]), "things to do today"),
+        (brief(do_today=[("Email Zed.", "zed@nowhere.dev")]), "not a named person"),
+        (brief(broken=("Clicks did nothing.", UNLABELED["id"])), "worth_a_look"),
+        (brief(broken=("Gone.", "cccccccccccc")), "not in the report"),
+        (brief(headline="The census found Ben."), "founder's words"),
+        (
+            brief(traffic="x" * 240, cant_see="y" * 240, money="z" * 240, worth_a_look="w" * 240),
+            "1000",
+        ),
+    ]
+    for b, message in cases:
+        with pytest.raises(j.ContractError, match=message):
+            j.check(report(j, c, m, people, brief=b, frictions=[FAILURE, UNLABELED]))
+    # A People line written by hand, or a brief below the first section, is refused too.
+    text = report(j, c, m, people)
+    with pytest.raises(j.ContractError, match="People line"):
+        j.check(text.replace('"people": "5 people visited', '"people": "50 people visited'))
+    moved = text.replace("\n\n## People to act on today", "", 1).replace(
+        "Status: complete\n\n", "Status: complete\n\n## People to act on today\n\n", 1
+    )
+    with pytest.raises(j.ContractError, match="under the Status line"):
+        j.check(moved)
 
 
 def test_the_check_refuses_what_tin_would_not_publish_or_trust(j, c, m, people):
@@ -658,6 +789,16 @@ def test_a_plausible_but_unusable_report_publishes_without_writing_strangers(j, 
     )
     outcome = visitor_journal.read(text)
     assert [(p.email, p.replay_url) for p in outcome.people] == [("ana@fieldnotes.dev", None)]
+    # A brief with nothing to do, or a headline that is not text, is dropped, never fatal.
+    for shape in ('"do_today": []', '"headline": 7'):
+        broken = (
+            report(j, c, m, people).replace('"do_today": [', shape[:-2] + ' [], "was": [', 1)
+            if "do_today" in shape
+            else report(j, c, m, people).replace(
+                '"headline": "Ana signed', '"headline": 7, "was": "Ana signed', 1
+            )
+        )
+        assert visitor_journal.read(broken).brief is None
 
 
 def test_every_query_refused_measured_nothing_and_bad_envelopes_raise(j, c, m, people):
