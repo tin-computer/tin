@@ -503,16 +503,10 @@ def test_product_ui_assets_are_packaged_beside_the_application() -> None:
     assert '"> :last-child": { padding: "16px 0 0" }' in script
     assert '"& > div > div": { justifyContent: "flex-start" }' in script
     assert 'api("/api/projects")' in script
-    assert "api(`/api/projects/${projectId}/chat/messages?limit=100`)" in script
-    assert "window.crypto.randomUUID()" in script
-    assert "request_id: requestId" in script
-    assert script.count('chatDraft: ""') == 1
-    assert "chatDrafts: new Map()" in script
-    assert "if (!thread || !form || !field || !sendButton)" in script
-    assert "state.chatDraft = field.value;" in script
-    assert "if (field.value !== state.chatDraft)" in script
-    assert 'state.chatDraft = "";' in script
-    assert "state.chatDrafts.set(state.project.id, field.value)" in script
+    # Chat is gone from the dashboard; the project transcript API stays for other clients.
+    assert "/chat/messages" not in script
+    assert 'api("/api/chat"' not in script
+    assert "chatDraft" not in script
     assert 'aria-haspopup="dialog"' in index
     assert 'id="project-menu"' in index
     assert 'width="0" height="0" style="position:absolute;overflow:hidden"' in script
@@ -637,11 +631,11 @@ def test_product_ui_assets_are_packaged_beside_the_application() -> None:
     assert ".lock-step.is-done .lock-step-mark" in stylesheet
     # State construction calls viewFromLocation(), which reads this constant synchronously.
     assert script.index("const ALLOWED_VIEWS") < script.index("const state")
-    assert index.index('data-view="workflows"') < index.index('data-view="chat"')
+    assert 'data-view="chat"' not in index
+    assert '"chat"' not in script.split("const ALLOWED_VIEWS", 1)[1].split(";", 1)[0]
     assert 'class="nav-item is-active" type="button" data-view="workflows"' in index
-    assert 'aria-label="Tin is typing"' in script
-    assert "state.sending ? renderTypingTurn()" in script
-    assert ".turn-typing > span:nth-child(3)" in stylesheet
+    assert "renderChat" not in script
+    assert ".chat-" not in stylesheet
     assert ".button:not(:disabled):hover" in stylesheet
     assert ".send-button:not(:disabled):hover" in stylesheet
     assert ".workspace-view,\n.activity-view,\n.product-view" in stylesheet
@@ -677,7 +671,6 @@ def test_product_ui_assets_are_packaged_beside_the_application() -> None:
     assert "activity-item" not in stylesheet
     assert '<header class="chat-header">' not in script
     assert '<div class="chat-suggestions"' not in script
-    assert "<h1>What should we move forward?</h1>" in script
     assert "Your workflows" in script
     assert "Registry" in script
     assert "function activeUnsavedWorkflowRuns()" in script
@@ -701,7 +694,7 @@ def test_product_ui_assets_are_packaged_beside_the_application() -> None:
     assert 'function registryWorkflowCard(workflow, query = "")' in script
     assert 'name: unassigned ? "Not in a system" : workflow.system_name' in script
     assert "Search looks at workflow names and ids across all" in script
-    assert "data-ask-luna-workflow" in script
+    assert "data-ask-luna-workflow" not in script
     assert ".registry-system-header" in stylesheet
     assert ".registry-system-workflows" in stylesheet
     assert ".registry-search-empty" in stylesheet
@@ -729,15 +722,6 @@ def test_product_ui_assets_are_packaged_beside_the_application() -> None:
     assert "from Registry" not in script
     assert "const waiting = state.runs.filter" in script
     assert "const byWorkflow = new Map()" not in script
-    assert ".chat-view {\n  display: flex;\n  height: 100svh;" in stylesheet
-    assert ".chat-sheet {\n  display: flex;" in stylesheet
-    assert "height: calc(100svh - 22px);\n  min-height: 0;" in stylesheet
-    assert ".chat-thread > :first-child {\n  margin-top: auto;" in stylesheet
-    chat_thread_styles = stylesheet.split(".chat-thread {", 1)[1].split("}", 1)[0]
-    assert "scrollbar-width: none;" in chat_thread_styles
-    assert ".chat-thread::-webkit-scrollbar {\n  display: none;" in stylesheet
-    assert "justify-content: flex-end" not in chat_thread_styles
-    assert ".chat-composer {\n  display: flex;\n  flex: 0 0 auto;" in stylesheet
     assert "width: fit-content" in stylesheet
     assert "window.TinMarkdownViewer = { mount }" in viewer_script
     assert 'if (options.mode !== "in-app")' in viewer_script
