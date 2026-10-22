@@ -7096,6 +7096,7 @@ function analyticsHealth(view) {
     ];
   }
   const removal = view.removal;
+  if (removal?.state === "unlinked") return [`stopped ${analyticsDay(removal.requested_at)} · history kept`];
   if (removal?.state === "pending") return ["stopping · Tin keeps asking until the deletion is confirmed"];
   if (removal?.state === "removing" && removal.deleted_by && Date.parse(removal.deleted_by) > Date.now()) {
     return [`stopped ${analyticsDay(removal.requested_at)} · numbers deleted by ${analyticsDay(removal.deleted_by, { time: true })}`];
@@ -7179,17 +7180,31 @@ function renderAnalyticsExpanded(integration, view) {
       : "",
   ];
   const domain = analyticsHost(view.address).replace(/^www\./, "");
+  // A linked site was measured before Tin: stopping only unlinks it, and its history stays.
+  const confirm = view.linked
+    ? {
+      title: "Stop showing Tin Analytics for this project?",
+      text: "Tin stops reading this site's numbers and deletes its own copies. The site's history stays, because the site was measured before Tin. If you set it up again, the numbers come back.",
+      button: `<button class="analytics-stop is-outlined" type="button" data-analytics-stop-confirm${state.analyticsBusy ? " disabled" : ""}>Stop</button>`,
+      footnote: "Visits are recorded on Tin's analytics service. This site was measured before Tin, so stopping keeps its history.",
+    }
+    : {
+      title: `Stop measuring ${domain}?`,
+      text: "The script turns itself off on the next page load, and the site's numbers are deleted within a day.",
+      button: `<button class="analytics-stop" type="button" data-analytics-stop-confirm${state.analyticsBusy ? " disabled" : ""}>Stop and delete</button>`,
+      footnote: "Visits are recorded on Tin's analytics service. Stopping deletes this site's numbers within a day.",
+    };
   const footer = state.analyticsConfirm
     ? `<div class="analytics-confirm">
       <div>
-        <strong>Stop measuring ${escapeHtml(domain)}?</strong>
-        <p>The script turns itself off on the next page load, and the site's numbers are deleted within a day.</p>
+        <strong>${escapeHtml(confirm.title)}</strong>
+        <p>${escapeHtml(confirm.text)}</p>
       </div>
       <button class="analytics-keep" type="button" data-analytics-keep>Keep measuring</button>
-      <button class="analytics-stop" type="button" data-analytics-stop-confirm${state.analyticsBusy ? " disabled" : ""}>Stop and delete</button>
+      ${confirm.button}
     </div>`
     : `<div class="integration-control-footer">
-      <span class="linkedin-footnote">Visits are recorded on Tin's analytics service. Stopping deletes this site's numbers within a day.</span>
+      <span class="linkedin-footnote">${escapeHtml(confirm.footnote)}</span>
       <button class="integration-reconnect" type="button" data-analytics-open>Open Analytics</button>
       <button class="integration-disconnect" type="button" data-analytics-stop>Stop measuring</button>
       <button class="integration-done" type="button" data-integration-expand="${ANALYTICS_KEY}">Done</button>

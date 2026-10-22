@@ -170,6 +170,13 @@ test("page: today so far, each number against the day before, every page request
   today.top_pages.push({path: "/careers", visits: null, page_views: null});
   // An operator ID added after Tin's list stays as it is.
   today.kinds.automated_browser.named.push({operator: "newcorp", visits: 1, evidence: "network"});
+  today.requests.ai_pages = [
+    {path: "/about", loads: 1, by_operator: {anthropic: 1}},
+    {path: "/docs/start", loads: 19, by_operator: {openai: 12, anthropic: 7}},
+    {path: "/", loads: 9, by_operator: {openai: 6, anthropic: 3}},
+    {path: "/pricing", loads: 5, by_operator: {openai: 5}},
+    {path: "/blog/a", loads: 3, by_operator: {openai: 2, anthropic: 1}},
+  ];
   const week = fixture("report_week.json");
   Object.assign(week, {complete: false});
   const pages = {today: pageOf("today", today, live), week: pageOf("week", week, live)};
@@ -201,7 +208,13 @@ test("page: today so far, each number against the day before, every page request
     assert.match(await page.locator(".analytics-row", {hasText: "chatgpt.com"}).innerText(), /chatgpt\.com\s*AI assistant\s*4/);
     assert.deepEqual(await page.locator(".analytics-class").allInnerTexts(), ["412\npage loads", "61\nverified bots", "88\nnamed bots, unconfirmed", "39\nother bots", "224\nbrowser-like · script didn't run on 173"]);
     assert.match(await page.locator(".analytics-row:not(.is-head)", {hasText: "OpenAI"}).innerText(), /OpenAI\s*fetching for someone\s*AI\s*22\s*30/);
-    assert.deepEqual(await page.locator(".analytics-table").nth(3).locator(".analytics-row.is-head span").allInnerTexts(), ["Page", "OpenAI", "Anthropic"]);
+    const aiPages = page.locator(".analytics-table").nth(3);
+    assert.deepEqual(await aiPages.locator(".analytics-row.is-head span").allInnerTexts(), ["Page", "OpenAI", "Anthropic"]);
+    // The three pages loaded most, then the rest of each company's loads (52 and 39 in all).
+    assert.deepEqual(await aiPages.locator(".analytics-row:not(.is-head)").evaluateAll(rows => rows.map(row => row.innerText.split("\n").filter(Boolean))), [
+      ["/docs/start", "12", "7"], ["/", "6", "3"], ["/pricing", "5", "0"], ["Other pages", "29", "29"],
+    ]);
+    assert.equal(await aiPages.locator(".analytics-card-head code").innerText(), "91 loads");
     assert.match(await page.locator(".analytics-notes").innerText(), /A visit ends after 30 minutes without activity\.$/);
     // Counting the moved host from the needs-you bar.
     await page.getByRole("button", {name: "Count newname.com instead"}).click();
@@ -234,6 +247,8 @@ test("page: without the reporter there is no request section", {timeout: 120000}
   const live = card("live");
   const yesterday = fixture("report_day.json");
   yesterday.requests = null;
+  yesterday.came_from = [];
+  yesterday.regions = [{name: "Asia", visits: 5}, {name: "Europe", visits: 4}, {name: "Africa", visits: 2}, {name: "America", visits: 1}];
   yesterday.notes = ["The script can't see crawlers and assistants that don't run scripts.", ...yesterday.notes.slice(1)];
   await open({integrations: [live], analytics: {pages: {today: pageOf("today", yesterday, live)}, answer: () => ({})}}, "/analytics", async page => {
     await page.locator(".analytics-tiles").waitFor();
@@ -242,5 +257,37 @@ test("page: without the reporter there is no request section", {timeout: 120000}
     assert.equal(await page.locator(".analytics-meta").innerText().then(text => text.includes("reporter")), false);
     assert.match(await page.locator(".analytics-notes").innerText(), /^The script can't see crawlers/);
     assert.equal(await page.locator(".analytics-needs").innerText(), "Nothing needs you today");
+    const cameFrom = page.locator(".analytics-table", {hasText: "Came from"});
+    assert.deepEqual(await cameFrom.locator(".analytics-row:not(.is-head)").allInnerTexts(), [
+      "No visits followed a link from another site",
+      "Regions, from browser time zones\nAsia 5 · Europe 4 · Africa 2 · America 1",
+    ]);
+    const label = cameFrom.locator(".is-regions .is-label");
+    assert.equal(await label.evaluate(node => node.scrollWidth <= node.clientWidth), true);
+  });
+});
+
+test("card: a linked site's Stop keeps its history", {timeout: 120000}, async () => {
+  const linked = card("live", {
+    address: "https://tin.computer", site_id: "organic-tin", linked: true,
+    counted_hosts: ["tin.computer", "*.tin.computer"], address_source: "entered",
+  });
+  const integrations = [linked];
+  await open({integrations, analytics: {pages: {}, answer: () => ({})}}, "/integrations", async (page, served) => {
+    await page.locator(".integration-list").waitFor();
+    await analyticsCard(page).getByRole("button", {name: "Configure"}).click();
+    assert.match(await analyticsCard(page).locator(".integration-control-footer").innerText(), /This site was measured before Tin, so stopping keeps its history\./);
+    await analyticsCard(page).getByRole("button", {name: "Stop measuring"}).click();
+    const confirm = analyticsCard(page).locator(".analytics-confirm");
+    assert.equal(await confirm.locator("strong").innerText(), "Stop showing Tin Analytics for this project?");
+    assert.equal(await confirm.locator("p").innerText(), "Tin stops reading this site's numbers and deletes its own copies. The site's history stays, because the site was measured before Tin. If you set it up again, the numbers come back.");
+    assert.equal(await confirm.getByRole("button", {name: "Stop and delete"}).count(), 0);
+    // Stop deletes nothing here, so it is outlined, not filled.
+    const stop = confirm.getByRole("button", {name: "Stop", exact: true});
+    assert.equal(await stop.evaluate(button => getComputedStyle(button).backgroundColor), "rgba(0, 0, 0, 0)");
+    integrations[0] = card("not_set_up", {removal: {state: "unlinked", requested_at: new Date().toISOString(), deleted_by: null}});
+    await stop.click();
+    await analyticsCard(page).getByText(/^stopped \w+ \d+ · history kept$/).waitFor();
+    assert.deepEqual(served.removed, [KEY]);
   });
 });

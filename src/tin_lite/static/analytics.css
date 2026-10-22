@@ -450,6 +450,24 @@
 
 .analytics-row.is-head .analytics-num { font: 700 13px/16px var(--sans); }
 
+/* The regions line keeps its label whole and wraps its numbers under it when they don't fit. */
+.analytics-row.is-regions {
+  height: auto;
+  min-height: 44px;
+  flex-wrap: wrap;
+  row-gap: 2px;
+  padding-top: 12px;
+  padding-bottom: 12px;
+}
+
+.analytics-row.is-regions .analytics-name { flex: 1 0 auto; }
+
+.analytics-regions {
+  margin-left: auto;
+  color: var(--ink);
+  font: 12px/16px var(--mono);
+}
+
 .analytics-num.is-withheld { color: var(--ink-muted); }
 
 .analytics-regions {
@@ -698,6 +716,15 @@
   background: var(--danger);
   color: var(--paper-bg);
   font-weight: 700;
+}
+
+/* A linked site's Stop deletes nothing, so it isn't filled. */
+.analytics-stop.is-outlined {
+  padding: 5px 10px;
+  background: transparent;
+  border: 1px solid rgb(var(--danger-rgb) / 40%);
+  color: var(--danger);
+  font-weight: 400;
 }
 
 @media (max-width: 760px) {

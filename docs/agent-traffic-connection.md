@@ -106,7 +106,8 @@ days read a week ending today.
   and regions.
 - With the request reporter: page loads by class ("verified bots", "named bots, unconfirmed",
   "other bots", and browser-like loads with how many never ran the script), the companies that
-  asked for pages, and the pages AI companies loaded, split by company as `ai_pages` gives them.
+  asked for pages (the top three, then the rest in one row), and the three pages AI companies
+  loaded most, split by company as `ai_pages` gives them, with the rest under "Other pages".
 - The needs-you bar shows the report's `needs_you` text as it is, with Count instead for a moved
   host. Every number is exact (the service withholds nothing); a `null` would show as a dash,
   as a guard. The report's notes close the page in small print.
@@ -148,6 +149,13 @@ the removal is durable:
    refusals as errors. Each pass sends at most 20, under the service's 60 admin calls a minute.
 3. The project purge leaves `agent_traffic_removals` in place (it is in `KEPT` in
    `tests/test_project_purge.py`), so removals continue after the project's own data is gone.
+
+**A linked site** (`"linked": true`, such as tin.computer's and unbaked's, or a staging project
+linked to `organic-tin`) was measured before Tin. Its DELETE answers `200` with
+`"state": "unlinked"`: Tin's tokens stop working, Tin deletes its own copies, and the site's
+history stays. So the card asks "Stop showing Tin Analytics for this project?", its Stop is
+outlined rather than filled, and afterwards the card says "stopped oct 22 · history kept". A
+linked site comes back from PUT without `url`; the card names it by its counted hosts.
 
 DELETE removes the project's site by its reference, so Set up waits while an earlier removal
 hasn't been accepted: it sends that DELETE first, and says to try again in a few minutes if the

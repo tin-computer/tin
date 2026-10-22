@@ -356,9 +356,10 @@ window.TinAnalytics = (() => {
     const rows = (report.came_from || []).map((item) => row(item.host, [item.visits], [56], {
       tags: item.assistant ? "<code class=\"analytics-tag\">AI assistant</code>" : "",
     }));
+    if (!rows.length) rows.push(row("No visits followed a link from another site", [""], [56], { muted: true }));
     const regions = report.regions || [];
     if (regions.length) {
-      rows.push(`<div class="analytics-row"><span class="analytics-name"><span class="is-label">Regions, from browser time zones</span></span><code class="analytics-regions">${escape(regions.map((item) => `${item.name} ${count(item.visits)}`).join(" · "))}</code></div>`);
+      rows.push(`<div class="analytics-row is-regions"><span class="analytics-name"><span class="is-label">Regions, from browser time zones</span></span><code class="analytics-regions">${escape(regions.map((item) => `${item.name} ${count(item.visits)}`).join(" · "))}</code></div>`);
     }
     return table("Came from", "the site that linked here", [{ label: "Site" }, { label: "Visits", width: 56 }], rows);
   }
@@ -378,18 +379,23 @@ window.TinAnalytics = (() => {
       tags: `${ROLES[item.role] ? `<code>${escape(ROLES[item.role])}</code>` : ""}${item.ai ? "<code class=\"analytics-tag\">AI</code>" : ""}`,
     }));
     if (rest.length) companyRows.push(row(`${rest.length} more`, [sum(rest, "verified"), sum(rest, "declared")], [64, 64]));
-    const aiPages = requests.ai_pages || [];
+    const aiPages = [...(requests.ai_pages || [])].sort((a, b) => (b.loads || 0) - (a.loads || 0));
     const loadsBy = {};
     for (const page of aiPages) for (const [operator, loads] of Object.entries(page.by_operator || {})) loadsBy[operator] = (loadsBy[operator] || 0) + (loads || 0);
     const columns = Object.keys(loadsBy).sort((a, b) => loadsBy[b] - loadsBy[a]).slice(0, 3);
-    const pageRows = aiPages.map((page) => row(page.path, columns.map((operator) => page.by_operator?.[operator] ?? 0), columns.map(() => 72)));
-    // What each company loaded beyond the pages listed, from its own total, when that adds up.
-    const others = columns.map((operator) => {
-      const entry = operators.find((item) => item.operator === operator && item.ai);
-      return entry ? (entry.verified || 0) + (entry.declared || 0) - loadsBy[operator] : -1;
+    const listed = aiPages.slice(0, 3);
+    const cells = (page) => columns.map((operator) => page.by_operator?.[operator] ?? 0);
+    const pageRows = listed.map((page) => row(page.path, cells(page), columns.map(() => 72)));
+    // Everything else each company loaded: its own total when that covers the pages the report
+    // lists, else the listed pages that aren't shown.
+    const others = columns.map((operator, index) => {
+      const shown = listed.reduce((total, page) => total + cells(page)[index], 0);
+      const total = sum(operators.filter((item) => item.operator === operator), "verified")
+        + sum(operators.filter((item) => item.operator === operator), "declared");
+      return (total >= loadsBy[operator] ? total : loadsBy[operator]) - shown;
     });
-    if (others.every((value) => value >= 0) && others.some((value) => value > 0)) pageRows.push(row("Other pages", others, columns.map(() => 72), { muted: true }));
-    const loads = sum(aiPages, "loads") + (others.every((value) => value >= 0) ? others.reduce((a, b) => a + b, 0) : 0);
+    if (others.some((value) => value > 0)) pageRows.push(row("Other pages", others, columns.map(() => 72), { muted: true }));
+    const loads = [...listed.flatMap(cells), ...others].reduce((a, b) => a + b, 0);
     return `<div class="analytics-heading is-section"><h2>Every page request</h2><span>from the reporter on your server${card.requests_last_at ? ` · last record ${escape(clock(card.requests_last_at))}` : ""}</span></div>
       <div class="analytics-classes">
         ${tile(requests.page_loads, "page loads")}
