@@ -22,7 +22,7 @@ for (const theme of ["light", "dark"]) test(`content delivery: ${theme}, scoped 
     page.on("pageerror", e => errors.push(e.message));
     await page.route("http://localhost/delivery-test", route => route.fulfill({body: "<!doctype html><html><body></body></html>", contentType: "text/html"}));
     await page.goto("http://localhost/delivery-test");
-    await page.setContent(`<html data-theme="${theme}"><body><main class="workspace"><article class="system-workflow-card content-program-card"><div class="system-config-body"><section class="content-program-work"><code class="system-config-kicker">what it works on</code><form id="plan"><button type="submit">Save upcoming work</button></form><div id="panel" data-content-delivery-program="program"></div></section><section class="system-config-when"><code class="system-config-kicker">when</code><p>Manual</p></section></div></article></main></body></html>`);
+    await page.setContent(`<html data-theme="${theme}"><body><main class="workspace"><article class="system-workflow-card content-program-card"><div class="system-config-body"><section class="content-program-work"><h3 class="system-config-kicker">What it works on</h3><form id="plan"><button type="submit">Save upcoming work</button></form><div id="panel" data-content-delivery-program="program"></div></section><section class="system-config-when"><h3 class="system-config-kicker">When</h3><p>Manual</p></section></div></article></main></body></html>`);
     await page.addStyleTag({path: "src/tin_lite/static/app.css"});
     const app = await fs.readFile("src/tin_lite/static/app.js", "utf8");
     const controls = app.slice(app.indexOf("function tinCounterControl("), app.indexOf("function bindWorkflowFieldValidation("));

@@ -59,7 +59,7 @@
 
 :root {
   --ink-rgb: 38 35 26;
-  --ink-muted-rgb: 138 131 117;
+  --ink-muted-rgb: 107 101 86;
   --accent-deep-rgb: 91 115 40;
   --accent-strong-rgb: 87 119 37;
   --hot-rgb: 246 72 0;
@@ -78,7 +78,7 @@
   --paper-border-strong: rgb(var(--ink-rgb) / 24%);
   --ink: #26231c;
   --ink-secondary: #5f594c;
-  --ink-muted: #8a8375;
+  --ink-muted: #6b6556;
   --accent: #99af62;
   --accent-deep: #5b7328;
   --accent-hover: #4d6420;
@@ -100,11 +100,11 @@
   --well-dark-soft: #27241e;
   --on-dark: #f6f1e7;
   --on-dark-secondary: #b3aa9b;
-  --on-dark-muted: #857c6f;
+  --on-dark-muted: #9a9285;
   --on-dark-code: #d9d2c4;
   --on-dark-soft: #f2efe7;
   --on-dark-bright: #fdfcf8;
-  --running-dot: #5b7328;
+  --running-dot: var(--ink); /* status marks are ink; only needs you is bermellón */
   --status-idle: #b5ac9c;
   --status-paused: #b7b09f;
   --avatar: #ddd6c8;
@@ -174,7 +174,7 @@
 html[data-theme="dark"] {
   color-scheme: dark;
   --ink-rgb: 246 241 231;
-  --ink-muted-rgb: 133 124 111;
+  --ink-muted-rgb: 154 146 133;
   --accent-deep-rgb: 153 175 98;
   --accent-strong-rgb: 153 175 98;
   --hot-rgb: 219 68 21;
@@ -191,7 +191,7 @@ html[data-theme="dark"] {
   --paper-border-strong: rgb(var(--ink-rgb) / 14%);
   --ink: #f6f1e7;
   --ink-secondary: #b3aa9b;
-  --ink-muted: #857c6f;
+  --ink-muted: #9a9285;
   --accent-deep: #99af62;
   --accent-hover: #a9bd76;
   --accent-pressed: #8ea058;
@@ -209,7 +209,7 @@ html[data-theme="dark"] {
   --on-accent-card: #14170a;
   --well-ink: #0f0d0b;
   --well-dark: #0f0d0b;
-  --running-dot: #9db564;
+  --running-dot: var(--ink);
   --status-idle: #857c6f;
   --status-paused: #857c6f;
   --avatar: #2a2620;
@@ -1251,24 +1251,6 @@ html[data-theme="dark"] .markdown-logo::before {
   padding: 0 4px;
 }
 
-.rail-label {
-  display: block;
-  margin: 0 8px 4px;
-  padding: 0;
-  background: transparent;
-  color: var(--ink-muted);
-  font-family: var(--mono);
-  font-size: 10px;
-  letter-spacing: 0.08em;
-  line-height: 14px;
-  text-transform: uppercase;
-  cursor: pointer;
-}
-
-.rail-label:hover {
-  color: var(--ink);
-}
-
 .rail-run {
   display: grid;
   grid-template-columns: 6px minmax(0, 1fr) 42px;
@@ -1501,8 +1483,8 @@ html[data-theme="dark"] .markdown-logo::before {
 }
 
 .agent-rail-status.is-connected .agent-connection-dot {
-  background: var(--running-dot);
-  border-color: var(--running-dot);
+  background: var(--on-dark);
+  border-color: var(--on-dark);
 }
 
 .agent-rail-status span:last-child {
@@ -1545,7 +1527,7 @@ html[data-theme="dark"] .markdown-logo::before {
 }
 
 .status-dot.is-failed {
-  background: var(--hot);
+  background: var(--ink);
 }
 
 .status-dot.is-needs_input {
@@ -2006,7 +1988,7 @@ html[data-theme="dark"] .markdown-logo::before {
 
 .search-field svg {
   position: absolute;
-  top: 10px;
+  top: 13px;
   left: 12px;
   width: 13px;
   height: 13px;
@@ -2018,13 +2000,13 @@ html[data-theme="dark"] .markdown-logo::before {
 
 .search-field input {
   width: 100%;
-  height: 34px;
-  padding: 8px 12px 8px 33px;
+  height: 40px;
+  padding: 9px 12px 9px 34px;
   background: var(--search-bg);
   border: 1px solid var(--paper-border-strong);
   border-radius: var(--radius-chip);
-  font-size: 13px;
-  line-height: 16px;
+  font-size: 15px;
+  line-height: 20px;
 }
 
 .search-field input::placeholder {
@@ -2406,15 +2388,19 @@ html[data-theme="dark"] .markdown-logo::before {
   border-radius: var(--radius-pill);
 }
 
-.needs-you-kicker code {
+/* The status follows the summary as a plain line, never a label above it. */
+.needs-you-state {
   overflow: hidden;
-  color: var(--bermellon-text);
-  font-family: var(--mono);
-  font-size: 11.5px;
-  font-weight: 700;
-  line-height: 15px;
+  color: var(--ink-secondary);
+  font-size: 13px;
+  line-height: 18px;
   text-overflow: ellipsis;
   white-space: nowrap;
+}
+
+.needs-you-state strong {
+  color: var(--ink);
+  font-weight: 700;
 }
 
 .needs-you-spacer {
@@ -2432,8 +2418,9 @@ html[data-theme="dark"] .markdown-logo::before {
 }
 
 .needs-you-kicker time {
-  font-size: 11px;
-  line-height: 15px;
+  font-family: var(--sans);
+  font-size: 13px;
+  line-height: 18px;
 }
 
 .needs-you-head p {
@@ -2741,15 +2728,15 @@ html[data-theme="dark"] .markdown-logo::before {
 
 .workflow-inline-input {
   width: min(100%, 520px);
-  height: 30px;
-  padding: 6px 9px;
+  height: 40px;
+  padding: 9px 12px;
   background: var(--input-bg);
   border: 1px solid rgb(var(--ink-rgb) / 20%);
   border-radius: var(--radius-chip);
   color: var(--ink);
   font-family: var(--sans);
-  font-size: 13px;
-  line-height: 16px;
+  font-size: 15px;
+  line-height: 20px;
   transition:
     background-color 120ms ease,
     border-color 120ms ease;
@@ -2764,7 +2751,7 @@ html[data-theme="dark"] .markdown-logo::before {
    stays mono, a step smaller so it sits level with the sans beside it. */
 .workflow-inline-input.is-literal {
   font-family: var(--mono);
-  font-size: 12px;
+  font-size: 14px;
 }
 
 .workflow-inline-input:hover {
@@ -2785,10 +2772,10 @@ html[data-theme="dark"] .markdown-logo::before {
    platform's own arrow. A background image cannot use currentColor, so each theme names its
    --ink-secondary. */
 select.workflow-inline-input {
-  padding-right: 28px;
+  padding-right: 34px;
   appearance: none;
   background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 10 6'%3E%3Cpath d='M1 1l4 4 4-4' fill='none' stroke='%235F594C' stroke-width='1.4' stroke-linecap='round' stroke-linejoin='round'/%3E%3C/svg%3E");
-  background-position: right 9px center;
+  background-position: right 12px center;
   background-repeat: no-repeat;
   background-size: 10px 6px;
   cursor: pointer;
@@ -2804,7 +2791,7 @@ select.workflow-inline-input:disabled {
 }
 
 .workflow-inline-textarea {
-  height: 76px;
+  height: 96px;
   resize: vertical;
 }
 
@@ -3368,18 +3355,18 @@ body.has-diagram-panel .main {
 .tin-select-trigger {
   display: flex;
   width: 100%;
-  height: 30px;
+  height: 40px;
   align-items: center;
   justify-content: space-between;
   gap: 16px;
-  padding: 6px 9px;
+  padding: 9px 12px;
   background: var(--input-bg);
   border: 1px solid rgb(var(--ink-rgb) / 20%);
   border-radius: var(--radius-chip);
   color: var(--ink);
   font-family: var(--sans);
-  font-size: 13px;
-  line-height: 16px;
+  font-size: 15px;
+  line-height: 20px;
   text-align: left;
   cursor: pointer;
   transition:
@@ -3432,7 +3419,7 @@ body.has-diagram-panel .main {
 .tin-select-option {
   display: flex;
   width: 100%;
-  min-height: 30px;
+  min-height: 36px;
   align-items: center;
   justify-content: space-between;
   gap: 12px;
@@ -3441,8 +3428,8 @@ body.has-diagram-panel .main {
   border-radius: 3px;
   color: var(--ink-secondary);
   font-family: var(--sans);
-  font-size: 13px;
-  line-height: 16px;
+  font-size: 15px;
+  line-height: 20px;
   text-align: left;
   cursor: pointer;
 }
@@ -3685,10 +3672,13 @@ body.has-diagram-panel .main {
   flex-basis: 240px;
 }
 
+/* The system header's search stays compact: it sits in a toolbar row of 30px controls. */
 .system-header .search-field input {
   height: 30px;
   padding-top: 6px;
   padding-bottom: 6px;
+  font-size: 13px;
+  line-height: 16px;
   background: var(--search-bg);
   border-color: rgb(var(--ink-rgb) / 22%);
   font-family: var(--sans);
@@ -3955,13 +3945,10 @@ html[data-theme="dark"] .system-week-nav button {
   color: var(--bermellon-text);
 }
 
-.system-week-card.is-failed .system-week-state {
-  color: var(--danger);
-}
-
+.system-week-card.is-failed .system-week-state,
 .system-week-card.is-running .system-week-state,
 .system-week-card.is-done .system-week-state {
-  color: var(--accent-text);
+  color: var(--ink);
 }
 
 .system-week-card:is(.is-for-you, .is-failed, .is-running) .system-week-state::before {
@@ -4654,11 +4641,14 @@ html[data-theme="dark"] .system-week-nav button {
   flex: 0 0 360px;
 }
 
+/* Each settings group is named by a small heading in sans, never a mono label above it. */
 .system-config-kicker {
-  color: var(--ink-muted);
-  font-family: var(--mono);
-  font-size: 11px;
-  line-height: 14px;
+  margin: 0;
+  color: var(--ink);
+  font-family: var(--sans);
+  font-size: 13px;
+  font-weight: 700;
+  line-height: 18px;
 }
 
 .system-setting {
@@ -6073,7 +6063,7 @@ button.activity-ref {
 }
 
 .activity-marker.is-completed {
-  background: var(--accent-deep);
+  background: var(--ink);
 }
 
 .activity-marker.is-needs-you {
@@ -8859,8 +8849,9 @@ html[data-theme="dark"] .integration-badge.is-monochrome::before {
   color: var(--ink);
 }
 
+/* The section you are reading is marked by weight and ink; bermellón is for what needs you. */
 .markdown-section-link.is-current {
-  color: var(--hot);
+  color: var(--ink);
   font-weight: 700;
 }
 
@@ -8936,18 +8927,17 @@ html[data-theme="dark"] .integration-badge.is-monochrome::before {
   text-decoration-thickness: 1px;
 }
 
+/* Links in documents are ink words with a hairline underline; bermellón means the reader must act. */
 .markdown-document a {
-  color: var(--hot);
-  text-decoration-color: rgb(var(--hot-rgb) / 35%);
+  color: var(--ink);
+  text-decoration-color: rgb(var(--ink-rgb) / 22%);
   text-decoration-thickness: 1px;
-  text-underline-offset: 2px;
+  text-underline-offset: 3px;
   overflow-wrap: anywhere;
 }
 
+/* Inline literals are plain mono in the line, no box. */
 .markdown-document code {
-  padding: 1px 7px;
-  background: rgb(var(--ink-rgb) / 6%);
-  border-radius: 3px;
   font-family: var(--mono);
   font-size: 14px;
   line-height: 18px;
@@ -9377,20 +9367,16 @@ html[data-theme="dark"] .md-embed-frame {
   margin-bottom: 0;
 }
 
+/* The callout names itself in its first line, bold and in sentence case, never a small-caps label. */
 .md-callout .md-callout-label {
-  margin-bottom: 6px;
-  color: var(--ink-secondary);
-  font-family: var(--mono);
-  font-size: 11px;
-  line-height: 14px;
-  letter-spacing: 0.04em;
-  text-transform: uppercase;
+  margin-bottom: 4px;
+  color: var(--ink);
+  font-family: var(--sans);
+  font-size: 15px;
+  font-weight: 700;
+  line-height: 22px;
 }
 
-.md-callout[data-kind="warning"] .md-callout-label,
-.md-callout[data-kind="caution"] .md-callout-label {
-  color: var(--danger);
-}
 
 .md-image-fallback {
   display: flex;
@@ -9631,14 +9617,14 @@ html[data-theme="dark"] .md-embed-frame {
 .custom-api-dialog input:not([type="checkbox"]),
 .custom-api-dialog select {
   width: 100%;
-  height: 30px;
-  padding: 6px 9px;
+  height: 40px;
+  padding: 9px 12px;
   background: var(--input-bg);
   border: 1px solid rgb(var(--ink-rgb) / 20%);
   border-radius: var(--radius-chip);
   color: var(--ink);
   font-family: var(--mono);
-  font-size: 12.5px;
+  font-size: 14px;
   line-height: 16px;
   transition:
     background-color 120ms ease,
@@ -10106,7 +10092,7 @@ html[data-theme="dark"] .md-embed-frame {
 
 .lock-page-line > span:first-child {
   flex: 0 0 auto;
-  color: #857c6f;
+  color: var(--on-dark-muted);
 }
 
 /* One line, like the website's install box; Copy takes the whole command. */
@@ -10137,7 +10123,7 @@ html[data-theme="dark"] .lock-page-line {
   padding: 0;
   background: transparent;
   border-radius: var(--radius-pill);
-  color: #857c6f;
+  color: var(--on-dark-muted);
   cursor: pointer;
 }
 

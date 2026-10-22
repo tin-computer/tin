@@ -23,7 +23,7 @@ test("file modified dates appear in the tree, search and narrow folder list", as
       assert.equal(await page.locator("html").getAttribute("data-theme"), theme);
       const row = page.locator('[data-item-path="drafts/product-update.md"]');
       await row.waitFor();
-      assert.match(await row.innerText(), /Sep 20, 2026/);
+      assert.match(await row.innerText(), /20 Sep 2026/);
       assert.match(await row.locator('[title^="Last modified"]').getAttribute("title"), /2026/);
       assert.match(await page.locator('[data-item-path="drafts/no-date.md"]').innerText(), /—/);
       if (process.env.TIN_FILES_SCREENSHOTS) {
@@ -31,11 +31,11 @@ test("file modified dates appear in the tree, search and narrow folder list", as
         await page.screenshot({path:`${process.env.TIN_FILES_SCREENSHOTS}/files-dates-${theme}.png`});
       }
       await page.locator("#files-search").fill("product-update");
-      assert.match(await page.locator("#files-search-results").innerText(), /Sep 20, 2026/);
+      assert.match(await page.locator("#files-search-results").innerText(), /20 Sep 2026/);
       await page.locator("#files-search").fill("");
       await page.setViewportSize({width:390,height:844});
       await page.locator('#files-mobile-drill [data-files-directory="drafts"]').click();
-      assert.match(await page.locator('#files-mobile-drill [data-project-file="drafts/product-update.md"]').innerText(), /Sep 20, 2026/);
+      assert.match(await page.locator('#files-mobile-drill [data-project-file="drafts/product-update.md"]').innerText(), /20 Sep 2026/);
       assert.equal(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth), true);
       if (process.env.TIN_FILES_SCREENSHOTS) await page.screenshot({path:`${process.env.TIN_FILES_SCREENSHOTS}/files-dates-${theme}-390.png`});
       assert.deepEqual(errors, []);
