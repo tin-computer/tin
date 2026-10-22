@@ -684,7 +684,7 @@ def test_contract_examples_are_complete_responses() -> None:
         assert sum(kind["visits"] for kind in kinds.values()) == totals["visits"]
         assistants = sum(row["visits"] for row in report["came_from"] if row["assistant"])
         assert totals["assistant_visits"] == assistants
-        assert set(report["previous"]) == {"start", "end"} | {name for name, _ in COMPARED}
+        assert set(report["previous"]) == {"start", "end", "until"} | {n for n, _ in COMPARED}
     day, week = example("report_day.json"), example("report_week.json")
     assert set(week) - set(day) == {"days"} and week["hours"] is None
     assert sum(row["visits"] for row in week["days"]) == week["totals"]["visits"]
@@ -695,6 +695,7 @@ def test_each_number_compares_with_the_period_before() -> None:
     assert comparison(day) == {
         "start": "2026-10-19",
         "end": "2026-10-19",
+        "until": None,
         "changes": {
             "visits": {"now": 48, "before": 41, "percent": 17},
             "page_views": {"now": 91, "before": 80, "percent": 14},
@@ -721,6 +722,14 @@ def test_each_number_compares_with_the_period_before() -> None:
         "automated_browser",
         "declared_crawler",
     }
+    # Today so far against the day before up to the same point, which follows built_at.
+    today = example("report_day.json")
+    today.update(complete=False, built_at="2026-10-21T07:50:00Z", start="2026-10-21")
+    today["previous"].update(start="2026-10-20", end="2026-10-20", until="2026-10-20T07:50:00Z")
+    assert comparison(today)["until"] == "2026-10-20T07:50:00Z"
+    assert (
+        comparison({**today, "previous": {**today["previous"], "until": "10:50"}})["until"] is None
+    )
     # Past retention there is no period before; before the first visit it counts zero.
     assert comparison({**day, "previous": None}) is None
     assert comparison({**day, "previous": {**day["previous"], "visits": 0}})["changes"][

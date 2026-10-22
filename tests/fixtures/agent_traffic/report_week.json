@@ -229,6 +229,7 @@
   "previous": {
     "start": "2026-10-07",
     "end": "2026-10-13",
+    "until": null,
     "visits": 248,
     "page_views": 455,
     "assistant_visits": 29,

@@ -90,7 +90,10 @@ for a day, the 7 days before for a week): visits, page views, visits from AI ass
 (`totals.assistant_visits`) and each kind of visit, each as `now` and `before`, with `percent`
 only when the period before had at least ten ("up from 4" reads truer than "+50%"). A number
 withheld in either period has no change, and `comparison` is null when `previous` is (the
-period before is past retention). Before the site's first visit, `before` is 0.
+period before is past retention). Before the site's first visit, `before` is 0. While the
+period is unfinished (Today, or the last 7 days ending today), `previous` counts the period
+before only up to the same point, which follows the report's `built_at`, and `until` says where
+it stops, so the page says "against Tuesday up to 10:50". `until` is null for a whole period.
 
 ## Stop measuring
 

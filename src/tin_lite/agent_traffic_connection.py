@@ -514,6 +514,8 @@ def comparison(report: dict[str, Any]) -> dict[str, Any] | None:
     None when there is no period before to compare with (`previous` is null past retention).
     A number withheld in either period (null) has no change. `percent` is given only when the
     period before had at least PERCENT_FROM; `before` is 0 for days before the first visit.
+    While the period is unfinished, `previous` stops at the same point and `until` says where
+    ("against Tuesday up to 10:50"); `until` is None when it covers the whole period before.
     """
 
     previous = report.get("previous")
@@ -534,6 +536,7 @@ def comparison(report: dict[str, Any]) -> dict[str, Any] | None:
     return {
         "start": text(previous.get("start"), 10),
         "end": text(previous.get("end"), 10),
+        "until": _moment(previous.get("until")),
         "changes": changes,
     }
 
