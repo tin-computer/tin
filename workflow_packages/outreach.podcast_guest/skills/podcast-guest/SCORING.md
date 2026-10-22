@@ -484,6 +484,38 @@ def pitch_block(picks, drafts):
     if missing:
         raise ValueError(f"no draft for {', '.join(missing)}")
     return {"version": 1, "pitches": block}
+
+
+LIST_ITEM = re.compile(r"\s*(?:[-*+]|\d+[.)])\s")
+
+
+def quote(text):
+    """A draft as a Markdown blockquote that reads exactly as written.
+
+    Markdown joins consecutive lines into one paragraph, so each line that another line
+    follows ends in a hard break, a list is set off by empty quote lines, and every line,
+    the sign-off and its link included, stays inside the quote.
+    """
+    lines = _text(text, "draft", 6000).replace("\r\n", "\n").split("\n")
+    out = []
+    for index, line in enumerate(lines):
+        line = line.rstrip()
+        if not line:
+            if out and out[-1] != ">":
+                out.append(">")
+            continue
+        item = bool(LIST_ITEM.match(line))
+        if out and out[-1] != ">":
+            previous_item = bool(LIST_ITEM.match(out[-1][2:]))
+            if item != previous_item:
+                out[-1] = out[-1].removesuffix("\\")
+                out.append(">")
+        following = lines[index + 1].rstrip() if index + 1 < len(lines) else ""
+        joins = following and not item and not LIST_ITEM.match(following)
+        out.append("> " + line + ("\\" if joins else ""))
+    while out and out[-1] == ">":
+        out.pop()
+    return "\n".join(out)
 ```
 
 Pass `already_pitched` and `include_shows` as lists of the names in those inputs (split on

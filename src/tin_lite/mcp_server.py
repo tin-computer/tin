@@ -6,6 +6,7 @@ import re
 import time
 from collections.abc import Callable
 from datetime import UTC, date, datetime
+from functools import partial
 from typing import Annotated, Any, Literal
 from urllib.parse import urlencode, urlsplit
 from uuid import UUID, uuid4
@@ -22,7 +23,7 @@ from starlette.applications import Starlette
 from starlette.middleware.cors import CORSMiddleware
 
 from tin_lite import analytics, project_task_control, welcome_email
-from tin_lite.analytics import clip
+from tin_lite.analytics import PersonEmails, clip
 from tin_lite.auth import ClerkAuth
 from tin_lite.billing_contracts import BillingError
 from tin_lite.brand_capture import preparation as brand_capture_preparation
@@ -779,7 +780,9 @@ def _result_view(result: Any) -> tuple[Any, bool]:
     return "\n".join(parts), bool(getattr(result, "is_error", False))
 
 
-async def analytics_middleware(ctx: Any, call_next: Callable[[Any], Any]) -> Any:
+async def analytics_middleware(
+    ctx: Any, call_next: Callable[[Any], Any], *, emails: PersonEmails | None = None
+) -> Any:
     """Record call metadata and session starts; never export tool or error bodies."""
     if not analytics.current().enabled or ctx.method not in {"tools/call", "initialize"}:
         return await call_next(ctx)
@@ -788,9 +791,11 @@ async def analytics_middleware(ctx: Any, call_next: Callable[[Any], Any]) -> Any
     params = dict(ctx.params or {})
     if ctx.method == "initialize":
         info = params.get("clientInfo") or {}
+        email = await emails.get(user_id) if emails is not None and user_id else None
         analytics.capture(
             "mcp_session_started",
             distinct_id=user_id,
+            person={"email": email},
             properties={
                 "clerk_user_id": user_id,
                 "oauth_client_id": token.client_id if token is not None else None,
@@ -982,7 +987,9 @@ def _schedule_words(schedule: Any) -> str:
     return f"{days or 'weekly'} at {data.get('local_time', '09:00')}"
 
 
-def install_posthog_mcp_analytics(server: Any, settings: Any) -> Any | None:
+def install_posthog_mcp_analytics(
+    server: Any, settings: Any, emails: PersonEmails | None = None
+) -> Any | None:
     """PostHog's own MCP analytics ($mcp_tool_call and friends) beside Tin's events.
 
     Their SDK feeds PostHog's built-in MCP views (tool usage, latency, errors, sessions);
@@ -999,11 +1006,14 @@ def install_posthog_mcp_analytics(server: Any, settings: Any) -> Any | None:
     except ImportError:  # pragma: no cover - the dependency is pinned
         return None
 
-    def identify(*_args: Any, **_kwargs: Any) -> Any:
+    async def identify(*_args: Any, **_kwargs: Any) -> Any:
         token = get_access_token()
         if token is None or token.subject is None:
             return None
-        return UserIdentity(distinct_id=token.subject, properties={"clerk_user_id": token.subject})
+        properties = {"clerk_user_id": token.subject}
+        if emails is not None and (email := await emails.get(token.subject)):
+            properties["email"] = email
+        return UserIdentity(distinct_id=token.subject, properties=properties)
 
     def event_properties(*_args: Any, **_kwargs: Any) -> dict[str, Any]:
         token = get_access_token()
@@ -1048,12 +1058,13 @@ def create_mcp_app(
 
     path = PUBLIC_MCP_PATH if public_plugin else "/mcp"
     resource = f"{settings.switchboard_public_url.rstrip('/')}{path}"
+    emails = PersonEmails(lambda clerk_user_id: auth.primary_email(clerk_user_id))
     server = (PublicMCPServer if public_plugin else GuardedMCPServer)(
         "Tin",
         title="Tin workflow registry",
         description="Discover and run the workflows available to your Tin projects.",
         instructions=PUBLIC_INSTRUCTIONS if public_plugin else SERVER_INSTRUCTIONS,
-        middleware=[] if public_plugin else [analytics_middleware],
+        middleware=[] if public_plugin else [partial(analytics_middleware, emails=emails)],
         token_verifier=ClerkOAuthTokenVerifier(auth, resource=resource),
         auth=AuthSettings(
             # Clerk is the authorization server clients discover. Codex requires the
@@ -1067,7 +1078,7 @@ def create_mcp_app(
     )
     # Before streamable_http_app(): PostHog wraps that factory to mint session ids.
     server.posthog_client = (
-        None if public_plugin else install_posthog_mcp_analytics(server, settings)
+        None if public_plugin else install_posthog_mcp_analytics(server, settings, emails)
     )
 
     async def caller() -> AccessToken:
@@ -1080,6 +1091,7 @@ def create_mcp_app(
             analytics.capture(
                 "tin_user_created",
                 distinct_id=token.subject,
+                person={"email": await emails.get(token.subject)},
                 properties={"clerk_user_id": token.subject, "via": "mcp"},
             )
             welcome_email.send_in_background(

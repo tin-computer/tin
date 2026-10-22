@@ -5,7 +5,7 @@
     "title": "Find the podcasts to go on as a guest",
     "description": "Finds the podcasts worth going on across every audience where you carry weight: your buyers, your own craft, your home country and your product's topic. Checks that each show is active, listened to and has hosted guests like you, and drafts one pitch per show in its language. Shows that need a first step, like a talk or a guest post, get that step drafted. Skips shows pitched in earlier runs; never sends anything.",
     "executor": "codex.procedure",
-    "version": "1.3.0",
+    "version": "1.3.1",
     "schedule_modes": ["on_demand"],
     "system": "cold-outreach",
     "input_schema": {
