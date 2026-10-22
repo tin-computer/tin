@@ -248,48 +248,55 @@ Seven shows are worth pitching now, one of them a long shot. Start with Bootstra
 
 ```json tin-podcast-state
 {
-  "version": 1,
+  "version": 2,
   "shows": {
     "bootstrapped builders": {
       "name": "Bootstrapped Builders",
       "route": "published_email",
-      "first_pitched": "2026-10-05",
+      "first_drafted": "2026-10-05",
+      "sent": null,
       "report": "reports/outreach/podcasts/7c1e2d3f-4a5b-4c6d-8e9f-0a1b2c3d4e5f.md"
     },
     "agent ops weekly": {
       "name": "Agent Ops Weekly",
       "route": "published_email",
-      "first_pitched": "2026-10-05",
+      "first_drafted": "2026-10-05",
+      "sent": null,
       "report": "reports/outreach/podcasts/7c1e2d3f-4a5b-4c6d-8e9f-0a1b2c3d4e5f.md"
     },
     "girisim sohbetleri": {
       "name": "Girişim Sohbetleri",
       "route": "published_email",
-      "first_pitched": "2026-10-05",
+      "first_drafted": "2026-10-05",
+      "sent": null,
       "report": "reports/outreach/podcasts/7c1e2d3f-4a5b-4c6d-8e9f-0a1b2c3d4e5f.md"
     },
     "cited weekly": {
       "name": "Cited Weekly",
       "route": "published_email",
-      "first_pitched": "2026-10-05",
+      "first_drafted": "2026-10-05",
+      "sent": null,
       "report": "reports/outreach/podcasts/7c1e2d3f-4a5b-4c6d-8e9f-0a1b2c3d4e5f.md"
     },
     "solo saas hour": {
       "name": "Solo SaaS Hour",
       "route": "guest_form",
-      "first_pitched": "2026-10-05",
+      "first_drafted": "2026-10-05",
+      "sent": null,
       "report": "reports/outreach/podcasts/7c1e2d3f-4a5b-4c6d-8e9f-0a1b2c3d4e5f.md"
     },
     "inference hour": {
       "name": "The Inference Hour",
       "route": "direct_message",
-      "first_pitched": "2026-10-05",
+      "first_drafted": "2026-10-05",
+      "sent": null,
       "report": "reports/outreach/podcasts/7c1e2d3f-4a5b-4c6d-8e9f-0a1b2c3d4e5f.md"
     },
     "teknoloji notlar": {
       "name": "Teknoloji Notları",
       "route": "warm_intro",
-      "first_pitched": "2026-10-05",
+      "first_drafted": "2026-10-05",
+      "sent": null,
       "report": "reports/outreach/podcasts/7c1e2d3f-4a5b-4c6d-8e9f-0a1b2c3d4e5f.md"
     }
   }

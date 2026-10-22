@@ -61,12 +61,15 @@ exclusions, balance, memory and the pitch block.
      country's charts and the web for `home` arenas.
    - Keep about ten calls for reading finalists' episodes. Every arena ends with at least
      one `reach` candidate verified, or a line in `## What could not be checked` saying why
-     none exists. Skip shows already pitched (state, `already_pitched`) before spending calls
-     on them.
+     none exists. Skip shows already pitched (`already_pitched`, or marked `sent` in the
+     state) before spending calls on them. A show an earlier report only drafted is still a
+     candidate; check it again.
 
-5. **Verify the finalists** from their last three episodes and their own pages, as SEARCH.md
-   says, and write a show record for each one, verified or rejected, with what the show is
-   (`premise`) and who hosts it (`host`). A show that is big but has never hosted anyone like
+5. **Verify the finalists** from their feed, their last three episodes and their own pages,
+   as SEARCH.md says, and write a show record for each one, verified or rejected, with what
+   the show is (`premise`), who hosts it (`host`), its `episode_dates`, the best route in
+   (SEARCH.md's order: the show's own guest page, then the feed's address, then a contact
+   page, a social profile last), and whether a company's founder gets on without paying. A show that is big but has never hosted anyone like
    the founder is a `ladder` show if a step would get them in (a conference talk with the
    hosts, a guest post, a launch they cover), otherwise rank it low and say why. Judge
    reachability from the guests the show actually had, never from its size alone.
@@ -81,9 +84,10 @@ exclusions, balance, memory and the pitch block.
    a place on a small home-country chart alone does not make one. Rank within each arena and
    tier by your judgment of fit first (how closely the show's premise matches the founder's
    argument), then audience and reachability, and write the reason. A show run by a
-   competitor keeps its place when it books outside practitioners; say in `notes` how to
-   pitch it (the founder's argument, never the product). Do not compare shows across
-   arenas; `plan()` balances them and keeps about a third of the picks for long shots.
+   competitor, or one that mostly books its publisher's own people, gets a `conflict`;
+   `plan()` lowers its odds, as it does for a show that paused. Say in `notes` how to pitch a
+   competitor's show (the founder's argument, never the product). Do not compare shows
+   across arenas; `plan()` balances them and keeps about a third of the picks for long shots.
 
 7. **Call `plan()`** with the arenas, the records, today's UTC date, `max_pitches`,
    `already_pitched`, `include_shows`, the merged state, the growth plan's hard no's and the
@@ -124,8 +128,9 @@ exclusions, balance, memory and the pitch block.
      (`similar_guest`, or `hook_episode.detail`).
    - Read every pitch as that host. If it could go to another show by changing the name, or
      takes more than ten seconds to see the episode idea, rewrite it.
-   - `published_email`: the subject is the episode title, under 80 characters. The follow-up
-     a week later is two sentences that offer a second, smaller idea, never "bumping this".
+   - `published_email` and `contact_email`: the subject is the episode title, under 80
+     characters. The follow-up a week later is two sentences that offer a second, smaller
+     idea, never "bumping this".
    - `guest_form`: the answers to the form's own questions, ready to paste, with the same
      formula in its topic and "why" answers. Fill in every answer the profile, the project
      files or the product's site already hold (name, company, site, links, bio); leave only
@@ -153,7 +158,8 @@ exclusions, balance, memory and the pitch block.
      plan, fewer picks than asked for).
    - `## Next steps`: one numbered line per pick and ladder step, in the order to do them:
      the action, the show, the person and where (`Email podcast@… with the draft below`,
-     `Message Kris Rides on LinkedIn with the Root To CISO draft`). Likely picks
+     `Fill in Root To CISO's Become a Guest form`, `Email Chris Russell at chris@…, the
+     address in his show's feed`). Likely picks
      come first; long shots come last, to send once one or two of the smaller episodes are
      out to point to, unless the founder already has recorded appearances.
    - `## Picks`: one `### <n>. <Show name>` per pick, in `plan()` order. First a short
@@ -164,7 +170,8 @@ exclusions, balance, memory and the pitch block.
      arena's `why`. Then a bullet list:
      - `**Odds:**` `likely` with the reason, or `long shot` with what makes it one (for
        example "on the US Apple Technology chart; founder interviews are sponsored, so this
-       pitches its panel")
+       pitches its panel"). Name every one of the pick's `cautions` in plain words ("long
+       shot: no episode since August 18, though it usually publishes every two weeks")
      - `**What the show is:**` one or two sentences on the argument or job it is about, from
        `premise`, with the show's name linked to its page
      - `**Who hosts it:**` the host's name, role and background, then one sentence on why
@@ -178,9 +185,12 @@ exclusions, balance, memory and the pitch block.
        pick)
      - `**Opens on:**` the episode the pitch refers to, linked and dated, or the gap in the
        catalogue it fills, when it is not the guest-like-you episode
-     - `**How to reach them:**` the route in words and the published address and the page
-       that publishes it, the form link, the host's channel, or the contact
-     - `**Worth knowing:**` fees, sponsored signs, caveats, or `nothing`
+     - `**How to reach them:**` the route in words with the address and where it comes from
+       (the show's guest page, the feed, a contact page), the form link, the host's channel,
+       or the contact
+     - `**Worth knowing:**` fees, sponsored signs, caveats, and for a pick with
+       `drafted_before` the date of the earlier draft and that it was never marked sent; or
+       `nothing`
      Then the drafts, each under a bold label on its own line: `**Subject:**`, `**Email:**`
      and `**Follow-up a week later:**` for email; `**Form answers:**` (a bullet per question)
      and `**What you add:**` for forms; `**Message:**` or `**Intro:**` for the other routes.
@@ -201,9 +211,10 @@ exclusions, balance, memory and the pitch block.
      should check before sending. Never data-source detail ("provider", "feed", "index",
      "records", "window"); a caveat about one show belongs in its `Worth knowing`. Or
      `- nothing`.
-   - `## Left out`: shows excluded because an earlier report pitched them (with date and
-     report), then every other exclusion with its reason. If fewer than `max_pitches`
-     survived, say so plainly; do not pad the list.
+   - `## Left out`: shows excluded because you pitched them (with date and report), then
+     shows a company's founder gets on only by paying (with the terms and the page), then
+     every other exclusion with its reason. If fewer than `max_pitches` survived, say so
+     plainly; do not pad the list.
    - `## About this run`: bullets `Status:` the status from `plan()` (`complete` or `no shows
      verified`) or `needs context`; `Verdict:` followed by nothing but the verdict from
      `plan()` (`fit`, `thin` or `not a fit`); `As of:` today's UTC date; `Read:` the context
@@ -224,4 +235,6 @@ exclusions, balance, memory and the pitch block.
    appears once in the pitch block with the address the show publishes, that both blocks
    parse, that no two labels share a line, that every draft came from `quote()`, that `## What
    could not be checked` has at most five bullets, and that every pitch opens on an episode recorded
-   for its show or a `gap` recorded for it. Fix any mismatch.
+   for its show or a `gap` recorded for it. Then run `check_links()` on the report: replace
+   each `broken` link with the page that works (the show's current page, the episode on its
+   own site) or remove the link; never leave one in. Keep `unchecked` links. Fix any mismatch.
