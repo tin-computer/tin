@@ -58,7 +58,7 @@ What the data gets wrong, every run:
 - **Some shows have no people in them**: a `style` such as "two AI hosts discuss" or
   "narrative episodes with fictional AI hosts" is a generated feed, not a show to pitch.
 - **`listed_email` is often a placeholder** (`noreply`, a hosting provider). It never becomes a
-  pitch address on its own.
+  pitch address on its own: confirm an address on the feed or the show's own pages.
 - **Little Turkish (or other non-English) coverage in text search.** Use charts and the web
   for home-country arenas.
 
@@ -123,32 +123,51 @@ least two methods tried; if one found nothing, say so in the report.
 
 ## Verifying a finalist on the web
 
-Before a show becomes a record, read its last three episodes (`podcasts.episodes`, or the
-feed or site) and open its own pages:
+Before a show becomes a record, read its feed with `read_feed()` and its last three episodes
+(`podcasts.episodes`, or the feed or site), and open its own pages:
 
-- the newest episode and its date (the feed or the site, not a directory listing), and the
-  gaps between the last three: a show that went quiet after years of weekly episodes may have
-  stopped, and a gap followed by a new season is a show booking again;
+- the newest episode dates, from `read_feed()` or the show's own episode list, not a
+  directory listing or Podscan alone, as `episode_dates`. `plan()` reads a pause from them:
+  a show that went quiet after years of weekly episodes may have stopped, and a gap followed
+  by a new season is a show booking again;
 - what the show is: the argument or job it is about, in a sentence, from its own description
   and recent episodes, not its category;
 - who hosts it: their name, role and background, from the show's page or the host's own
   profile, and one line on why that matters to this pitch (a host who audits for a living, a
   lawyer co-host, a vendor that sells into the same buyers);
 - who the recent guests were, to find the `similar_guest` and confirm it takes guests;
-- how it takes guests: a guest form, an address it publishes for pitches ("pitch us at"), a
-  booking page, or nothing stated (then the route is `direct_message`, `warm_intro` or
-  `ladder`). A host's general or personal contact address is not a pitch address: that
-  route is `direct_message`;
+- how it takes guests. Look in this order, and stop at the first that exists:
+  1. a guest page on the show's **own domain**, not its hosting page (Buzzsprout, Libsyn,
+     Spreaker, Apple): open its menus and footer, and try the pages a show names `guests`,
+     `be-a-guest`, `contact`, `participate` or `work-with-us`. A guest form there is
+     `guest_form`; an address it gives for pitches ("pitch us at") is `published_email`.
+     Read an embedded form at its source (a Google Form's `viewform` page, the form
+     plugin's fields in the page source) for its exact questions;
+  2. the address `read_feed()` returns as `owner_email`, the host's or producer's own:
+     `contact_email`, with the feed as `address_source`;
+  3. an address on the show's or its publisher's contact page: `contact_email`;
+  4. only when none of these exists, the host's social profile: `direct_message`.
+  A link that does not work (a `mailto:` with the address and subject swapped, a dead
+  page) still tells you the address the show means; record it and say so in `notes`;
 - whether it hosts guests at all. A show that only has its hosts talking gets a record with
   `takes_guests: false`, so the report shows why it was left out;
-- who publishes it. A show run by a company that competes with the founder's product is
-  still a candidate when it books outside practitioners: record the conflict in `notes`, and
-  pitch the founder's argument, never the product. A show that only puts its publisher's own
-  people or customers on air is `takes_guests: false`;
-- any sign the guest pays: a price, a "production fee", "featured guest" packages, episodes
-  marked sponsored by the guest's own company, or Podscan's `is_branded` on interviews.
-  Record what you found and its source in `notes`. A fee is the founder's call, not a reason
-  to drop the show.
+- who publishes it. A show run by a company that sells to the same buyers or competes with
+  the founder's product is still a candidate when it books outside practitioners: record
+  `conflict` with kind `competitor`, and pitch the founder's argument, never the product. A
+  show whose guests are mostly its publisher's own staff or clients (a consultancy's show)
+  gets `conflict` with kind `own_circle`; one that only puts them on air is `takes_guests:
+  false`;
+- whether a company's people get on without paying. The founder runs a company, so to most
+  shows they are a vendor. Open the show's sponsor, advertise, partner and participate pages
+  and read what they say about vendor guests: "if you work for a vendor, see our sponsorship
+  section", a sponsored interview as the only guest offer, a form question that sends a
+  product topic to a paid format. When the only way on for a company's founder is paid,
+  record `vendor_paid_only` with the terms and the page; `plan()` leaves the show out with
+  them. When an unpaid way exists, such as a topic that is not about the product, record it
+  in `notes` and pitch that;
+- any other sign the guest pays: a price, a "production fee", "featured guest" packages,
+  episodes marked sponsored by the guest's own company, or Podscan's `is_branded` on
+  interviews. Record what you found and its source in `notes`.
 
 ## Finding the shows that carry weight
 
@@ -165,7 +184,7 @@ book guests a step above the founder.
 - **How to get in:** a topic proposal, a panel or debate slot, comment on a news story in the
   founder's field, or a guest form. Their founder interviews are often sponsored segments
   (see `is_branded` above); find the unpaid way in and say in `notes` which slots are sold.
-- **When the only way in is paid,** it is still a candidate: say so in `notes` with the price
-  and its source, and let the founder decide. A show that never takes outside guests is
-  `takes_guests: false`.
+- **When the only way in is paid,** record `vendor_paid_only` with the price or terms and its
+  source; the report lists the show under `Left out` with them, so the founder can still
+  decide to buy. A show that never takes outside guests is `takes_guests: false`.
 

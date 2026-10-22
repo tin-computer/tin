@@ -201,6 +201,134 @@ def test_a_guest_fee_is_a_note_not_an_exclusion(scoring):
     assert result["picks"][0]["notes"].startswith("Charges $300")
 
 
+def test_an_address_from_the_feed_is_an_email_route_not_a_linkedin_message(scoring):
+    feed = show(
+        route="contact_email",
+        pitch_address="host@builders.example.org",
+        address_source="https://feeds.example.org/builders.rss",
+    )
+    result = plan(scoring, ARENAS, [feed], AS_OF)
+    assert result["picks"][0]["pitch_address"] == "host@builders.example.org"
+    # Cold email to a host is still cold email.
+    ruled_out = plan(scoring, ARENAS, [feed], AS_OF, hard_nos=["no_cold_email"])
+    assert ruled_out["excluded"][0]["reason"].startswith("your growth plan rules out cold email")
+
+
+def test_a_show_where_vendors_only_get_on_as_sponsors_is_left_out_with_the_terms(scoring):
+    paid = show(
+        vendor_paid_only={
+            "terms": "a vendor sponsors three episodes for one guest slot",
+            "source": "https://builders.example.com/sponsor",
+        }
+    )
+    result = plan(scoring, ARENAS, [paid], AS_OF)
+    assert result["picks"] == []
+    reason = result["excluded"][0]["reason"]
+    assert reason.startswith("a company's founder gets on only as a paid sponsor")
+    assert "three episodes" in reason and "https://builders.example.com/sponsor" in reason
+
+
+def test_a_show_that_paused_drops_to_a_long_shot_with_the_reason(scoring):
+    # Fortnightly until mid-August, nothing since: still inside the activity window.
+    paused = show(
+        "Paused Show",
+        last_episode="2026-08-18",
+        episode_dates=["2026-08-18", "2026-08-04", "2026-07-21"],
+    )
+    # Monthly and five weeks since its last episode: that is its rhythm, not a pause.
+    monthly = show(
+        "Monthly Show",
+        "craft",
+        last_episode="2026-08-31",
+        episode_dates=["2026-08-31", "2026-07-31", "2026-06-30"],
+    )
+    result = plan(scoring, ARENAS, [paused, monthly], AS_OF)
+    rows = {row["name"]: row for row in result["picks"]}
+    assert rows["Paused Show"]["tier"] == "reach"
+    assert rows["Paused Show"]["cautions"] == [
+        "quiet: no episode since 2026-08-18, though it usually publishes every 14 days"
+    ]
+    assert rows["Monthly Show"]["tier"] == "likely" and rows["Monthly Show"]["cautions"] == []
+
+
+def test_a_competitor_or_a_consultancy_show_drops_a_level_and_comes_after_clean_shows(scoring):
+    rival = show(
+        "Rival Show",
+        rank=1,
+        tier="reach",
+        conflict={"kind": "competitor", "detail": "Its publisher sells access reviews."},
+    )
+    clients = show(
+        "Clients Show",
+        "craft",
+        conflict={"kind": "own_circle", "detail": "Guests are the consultancy's clients."},
+    )
+    clean = show("Clean Show", rank=2, tier="reach")
+    result = plan(scoring, ARENAS, [rival, clients, clean], AS_OF, max_pitches=10)
+    rows = {row["name"]: row for row in result["picks"]}
+    assert rows["Clients Show"]["tier"] == "reach"
+    assert rows["Clients Show"]["cautions"] == [
+        "mostly books its own: Guests are the consultancy's clients."
+    ]
+    assert rows["Rival Show"]["cautions"] == [
+        "competes with you: Its publisher sells access reviews."
+    ]
+    buyers = [row["name"] for row in result["picks"] if row["arena"] == "buyers"]
+    assert buyers == ["Clean Show", "Rival Show"]
+
+
+FEED = b"""<?xml version="1.0"?>
+<rss xmlns:itunes="http://www.itunes.com/dtds/podcast-1.0.dtd" version="2.0"><channel>
+<title>Builders</title>
+<itunes:owner><itunes:name>Host</itunes:name><itunes:email>host@builders.example.org</itunes:email></itunes:owner>
+<item><title>Ep 3</title><pubDate>Tue, 20 Oct 2026 09:00:00 GMT</pubDate></item>
+<item><title>Ep 2</title><pubDate>Tue, 06 Oct 2026 09:00:00 GMT</pubDate></item>
+<item><title>Ep 1</title><pubDate>not a date</pubDate></item>
+</channel></rss>"""
+
+
+def test_the_feed_gives_newest_dates_and_the_owners_address(scoring):
+    result = scoring["read_feed"]("https://feeds.example.org/b.rss", fetch=lambda url: (200, FEED))
+    assert result["episode_dates"] == ["2026-10-20", "2026-10-06"]
+    assert result["owner_email"] == "host@builders.example.org"
+    hosted = FEED.replace(b"host@builders.example.org", b"feeds@spreaker.com")
+    assert (
+        scoring["read_feed"]("https://f.example.org", fetch=lambda url: (200, hosted))[
+            "owner_email"
+        ]
+        is None
+    )
+    entity = b'<?xml version="1.0"?><!DOCTYPE r [<!ENTITY a "aaaa">]><rss><channel/></rss>'
+    refused = scoring["read_feed"]("https://f.example.org", fetch=lambda url: (200, entity))
+    assert refused == {"status": 200, "episode_dates": [], "owner_email": None}
+    missing = scoring["read_feed"]("https://f.example.org", fetch=lambda url: (404, b""))
+    assert missing["status"] == 404 and missing["episode_dates"] == []
+
+
+def test_every_link_in_the_report_is_opened_and_dead_ones_are_named(scoring):
+    text = (
+        "[Show](https://a.example.org/podcast/) and <https://b.example.org/ep> and "
+        "https://c.example.org/guests. Again [Show](https://a.example.org/podcast/)."
+    )
+    answers = {
+        "https://a.example.org/podcast/": 404,
+        "https://b.example.org/ep": 403,
+        "https://c.example.org/guests": 200,
+    }
+    seen = []
+
+    def fetch(url):
+        seen.append(url)
+        return answers[url], b""
+
+    result = scoring["check_links"](text, fetch=fetch)
+    assert result == {
+        "broken": ["https://a.example.org/podcast/"],
+        "unchecked": ["https://b.example.org/ep"],
+    }
+    assert len(seen) == 3
+
+
 @pytest.mark.parametrize(
     ("overrides", "kwargs", "reason"),
     [
@@ -246,25 +374,64 @@ def test_gaps_name_missing_kinds_thin_arenas_and_unevaluated_asks(scoring):
     assert not any("buyer_guests" in gap or gap.startswith("home:") for gap in gaps)
 
 
-def test_a_show_pitched_in_an_earlier_run_is_never_pitched_again(scoring):
+def _carry(scoring, result):
+    return scoring["merge_states"]([scoring["read_state"](json.loads(json.dumps(result["state"])))])
+
+
+def test_a_show_an_earlier_run_only_drafted_comes_back_after_the_new_ones(scoring):
+    # A run sends nothing, so an earlier draft is not a pitch: a rerun must not drop it.
     first_report = "reports/outreach/podcasts/a.md"
     first = plan(scoring, ARENAS, [show()], "2026-09-10", report_path=first_report)
-    earlier = scoring["merge_states"](
-        [scoring["read_state"](json.loads(json.dumps(first["state"])))]
-    )
+    assert first["state"]["shows"]["example builders show"]["sent"] is None
     second = plan(
         scoring,
         ARENAS,
-        [show(), show("New Show", "craft", 1)],
+        [show(), show("New Show", "buyers", 2)],
         AS_OF,
-        previous=earlier,
+        max_pitches=3,
+        previous=_carry(scoring, first),
         report_path="reports/outreach/podcasts/b.md",
     )
-    assert [row["name"] for row in second["picks"]] == ["New Show"]
-    assert second["excluded"][0]["reason"] == (
-        f"pitched in an earlier run on 2026-09-10 ({first_report})"
+    assert [row["name"] for row in second["picks"]] == ["New Show", "Example Builders Show"]
+    assert second["picks"][1]["drafted_before"] == {"date": "2026-09-10", "report": first_report}
+    # The first draft is kept, not overwritten by the redraft.
+    assert second["state"]["shows"]["example builders show"]["first_drafted"] == "2026-09-10"
+
+
+def test_a_show_marked_sent_is_never_pitched_again(scoring):
+    first_report = "reports/outreach/podcasts/a.md"
+    first = plan(scoring, ARENAS, [show()], "2026-09-10", report_path=first_report)
+    # The founder lists it as pitched: the state now records it as sent.
+    marked = plan(
+        scoring,
+        ARENAS,
+        [show("Other Show", "craft", 1)],
+        "2026-09-20",
+        already_pitched=["Example Builders Show"],
+        previous=_carry(scoring, first),
+        report_path="reports/outreach/podcasts/b.md",
     )
-    assert set(second["state"]["shows"]) == {"example builders show", "new show"}
+    assert marked["state"]["shows"]["example builders show"]["sent"] == "2026-09-20"
+    third = plan(
+        scoring,
+        ARENAS,
+        [show(), show("New Show", "craft", 2)],
+        AS_OF,
+        previous=_carry(scoring, marked),
+        report_path="reports/outreach/podcasts/c.md",
+    )
+    assert [row["name"] for row in third["picks"]] == ["New Show"]
+    assert third["excluded"][0]["reason"] == f"pitched on 2026-09-20 ({first_report})"
+
+
+def test_a_version_one_state_is_read_as_drafts_not_sends(scoring):
+    item = {"name": "X", "route": "guest_form", "first_pitched": "2026-10-21", "report": REPORT}
+    state = scoring["read_state"]({"version": 1, "shows": {"x": item}})
+    assert state["version"] == 2
+    assert state["shows"]["x"]["first_drafted"] == "2026-10-21"
+    assert state["shows"]["x"]["sent"] is None
+    result = plan(scoring, ARENAS, [show("X")], AS_OF, previous=state)
+    assert [row["name"] for row in result["picks"]] == ["X"]
 
 
 def test_the_pitch_block_holds_one_email_per_published_address_pick(scoring):
@@ -307,6 +474,22 @@ def test_the_pitch_block_holds_one_email_per_published_address_pick(scoring):
         {"route": "published_email", "pitch_address": "the host"},
         {"route": "published_email", "pitch_address": "a@b.co", "address_source": None},
         {"pitch_address": "guests@builders.example.com"},
+        # A hosting service's or template's address is nobody's inbox.
+        {
+            "route": "contact_email",
+            "pitch_address": "feeds@spreaker.com",
+            "address_source": "https://feeds.example.org/show.rss",
+        },
+        {
+            "route": "contact_email",
+            "pitch_address": "info@yourcompany.example.org",
+            "address_source": "https://builders.example.org",
+        },
+        {"route": "contact_email"},
+        {"vendor_paid_only": {"terms": "sponsor three episodes", "source": "the sponsor page"}},
+        {"conflict": {"kind": "rival", "detail": "Sells the same thing."}},
+        {"episode_dates": ["2026-09-01", "2026-09-28"]},
+        {"episode_dates": ["2026-09-14", "2026-08-31"]},
         {"route": "ladder", "ladder_step": ""},
         {"similar_guest": {"name": "Riley", "episode": "x", "url": "x", "date": "2026-01-01"}},
         {"hook_episode": {"title": "Ep 9", "url": "https://x.example/9", "date": "2026-09-01"}},
@@ -353,8 +536,31 @@ def test_untrustworthy_arenas_are_rejected(scoring, arenas):
     [
         None,
         [],
-        {"version": 2, "shows": {}},
+        {"version": 3, "shows": {}},
         {"version": 1, "shows": []},
+        {
+            "version": 2,
+            "shows": {
+                "x": {
+                    "name": "X",
+                    "route": "guest_form",
+                    "first_pitched": "2026-01-01",
+                    "report": "r",
+                }
+            },
+        },
+        {
+            "version": 2,
+            "shows": {
+                "x": {
+                    "name": "X",
+                    "route": "guest_form",
+                    "first_drafted": "2026-01-01",
+                    "sent": "yesterday",
+                    "report": "r",
+                }
+            },
+        },
         {"version": 1, "shows": {"x": "pitched"}},
         {
             "version": 1,

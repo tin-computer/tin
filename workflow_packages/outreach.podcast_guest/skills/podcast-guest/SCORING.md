@@ -29,6 +29,10 @@ One per candidate you verified or rejected:
 - `arena`: the `id` of the arena it serves.
 - `language`: the language of the show.
 - `last_episode`: `YYYY-MM-DD` of the newest episode you saw, or `null` if you could not tell.
+- `episode_dates`: the newest episode dates, newest first, from `read_feed()` or the show's
+  own episode list (at least two when the show has them). The first must equal
+  `last_episode`. `plan()` uses them to tell a show that paused from one that publishes
+  monthly. Optional, but without them a pause goes unnoticed.
 - `found_by`: the methods that surfaced it, from `METHODS`.
 - `similar_guest`: `{"name", "episode", "url", "date"}` for a past guest who resembles the
   founder in this arena, or `null`. `url` is the episode's page, or the show's page when its
@@ -44,28 +48,55 @@ One per candidate you verified or rejected:
 - `host`: who hosts it (name, role, background) and why that matters for this pitch.
 - `takes_guests`: `false` for a show that only has its hosts talking. Optional; a show with
   `false` is listed as excluded.
-- `route`: `published_email` (the show's own page or feed asks for guest pitches at an
-  address; a host's general or personal contact address is `direct_message`),
-  `guest_form`, `direct_message` (writing to a host with no stated intake), `warm_intro`
-  (someone the founder knows is connected) or `ladder` (a step comes first: a talk, a guest
-  post, a launch).
+- `route`, the best way in, in this order of preference: `guest_form` or `published_email`
+  (the show's own pages ask for guests through a form, or at an address); `contact_email`
+  (an address of the host or producer that the show's feed, its own site or its publisher's
+  contact page gives, with no stated guest intake); `direct_message` (a host's social
+  profile, only when no address exists); `warm_intro` (someone the founder knows is
+  connected) or `ladder` (a step comes first: a talk, a guest post, a launch).
 - `tier`: `likely` (it books people like the founder, so a good pitch should land) or
   `reach` (a show with a bigger name or audience than the founder's usual rooms: a chart
   show, a known network, guests a step above the founder; worth a try, likely a no).
   Optional; `likely` when left out.
 - `rank`: your rank for it within its arena and tier, 1 first.
 - `reason`: why it fits, in one line.
-- `pitch_address` and `address_source`: for `published_email`, the address and the page that
-  publishes it. Never guessed, never Podscan's `listed_email` alone.
+- `pitch_address` and `address_source`: for `published_email` and `contact_email`, the
+  address and the page or feed that gives it. Never guessed, never Podscan's `listed_email`
+  alone, never a hosting service's or a template's address (the code rejects those).
 - `ladder_step` and `deadline`: for `ladder`, the step and its date if it has one.
-- `notes`: anything the founder should weigh: a guest fee or sponsored-episode signs, a
-  conflict, a data caveat. Optional. Notes never exclude a show.
+- `vendor_paid_only`: `{"terms", "source"}` when the show's own pages say a company's people
+  come on only as paid sponsors ("vendors, see our sponsorship section", a sponsored
+  interview as the only guest offer), with the price or terms and the page that says so.
+  `plan()` leaves the show out with that reason. Leave it out when an unpaid way in exists
+  (a topic that is not about the product, a practitioner panel); record that way in `notes`
+  and pitch it.
+- `conflict`: `{"kind", "detail"}` when the publisher sells to the same buyers or competes
+  with the product (`competitor`), or when most guests are the publisher's own staff or
+  clients (`own_circle`). `plan()` lowers the show's odds by one level.
+- `notes`: anything else the founder should weigh: a guest fee or sponsored-episode signs, a
+  data caveat. Optional. Notes never exclude a show.
+
+`plan()` returns each pick with `cautions`: why its odds are lower than its tier says (a pause
+in publishing, a conflict). A cautioned `likely` show becomes a long shot, and the report's
+`Odds` line names each caution. A pick an earlier report drafted carries `drafted_before`.
 
 ## Memory between runs
 
 Every report ends with a `tin-podcast-state` block. Read the block of every earlier report in
 the output folder, pass each parsed value to `read_state()`, and merge the trusted ones with
 `merge_states()`. A block that fails `read_state()` is ignored, and the report says so.
+
+The state records what was drafted, not what was sent: this run sends nothing. A show an
+earlier report drafted stays a candidate, after the shows no report has drafted. Only a show
+marked `sent` (by the send step, or because the founder lists it in `already_pitched`) is
+left out as pitched.
+
+## Feeds and links
+
+`read_feed()` and `check_links()` make public GETs through the run's proxy. Read the feed of
+every finalist (its address is on the show's directory page or in Podscan's record) for its
+newest episode dates and its owner's address. Before finishing, run `check_links()` on the
+whole report.
 
 ```python
 import re
@@ -85,8 +116,28 @@ METHODS = (
     "named_show",
     "web_search",
 )
-ROUTES = ("published_email", "guest_form", "direct_message", "warm_intro", "ladder")
+ROUTES = (
+    "published_email",
+    "contact_email",
+    "guest_form",
+    "direct_message",
+    "warm_intro",
+    "ladder",
+)
+EMAIL_ROUTES = ("published_email", "contact_email")
 TIERS = ("likely", "reach")
+CONFLICTS = ("competitor", "own_circle")
+# Addresses a hosting service or a template puts in a feed or page: nobody reads them.
+PLACEHOLDER_EMAIL = re.compile(
+    r"(^(no-?reply|do-?not-?reply|feeds?|podcasts?-?feed)@)"
+    r"|@(.+\.)?(anchor\.fm|spreaker\.com|buzzsprout\.com|libsyn\.com|megaphone\.fm|podbean\.com"
+    r"|transistor\.fm|simplecast\.com|captivate\.fm|substack\.com|soundcloud\.com)$"
+    r"|yourcompany|yourdomain",
+    re.I,
+)
+# A show this many usual gaps past its newest episode has paused; at least this many days.
+QUIET_GAPS = 2
+QUIET_MIN_DAYS = 14
 # About a third of the picks are long shots: enough to try for the bigger shows, not so many
 # that the founder spends the week on pitches that mostly go unanswered.
 REACH_SHARE = 0.3
@@ -199,6 +250,15 @@ def check_show(show, arena_ids):
     for field, limit in (("gap", 300), ("premise", 400), ("host", 500)):
         if show.get(field) is not None:
             _text(show[field], field, limit)
+    dates = show.get("episode_dates")
+    if dates is not None:
+        if not isinstance(dates, list) or not 1 <= len(dates) <= 5:
+            raise ValueError("episode_dates must list 1-5 dates, newest first")
+        days = [_day(item, "episode_dates") for item in dates]
+        if days != sorted(days, reverse=True):
+            raise ValueError("episode_dates must be newest first")
+        if show.get("last_episode") != dates[0]:
+            raise ValueError("last_episode must be the newest of episode_dates")
     route = show.get("route")
     if route not in ROUTES:
         raise ValueError(f"route must be one of {', '.join(ROUTES)}")
@@ -208,14 +268,26 @@ def check_show(show, arena_ids):
     if isinstance(rank, bool) or not isinstance(rank, int) or rank < 1:
         raise ValueError("rank must be a whole number from 1")
     _text(show.get("reason"), "reason", 400)
-    if route == "published_email":
-        if not isinstance(show.get("pitch_address"), str) or not EMAIL.fullmatch(
-            show["pitch_address"]
-        ):
-            raise ValueError("published_email needs the pitch_address the show publishes")
+    if route in EMAIL_ROUTES:
+        address = show.get("pitch_address")
+        if not isinstance(address, str) or not EMAIL.fullmatch(address):
+            raise ValueError(f"{route} needs the pitch_address the show or its feed publishes")
+        if PLACEHOLDER_EMAIL.search(address):
+            raise ValueError(f"{address} is a hosting or template address, not a person's")
         _url(show.get("address_source"), "address_source")
     elif show.get("pitch_address") is not None:
-        raise ValueError("only published_email shows carry a pitch_address")
+        raise ValueError("only email routes carry a pitch_address")
+    paid = show.get("vendor_paid_only")
+    if paid is not None:
+        if not isinstance(paid, dict):
+            raise ValueError("vendor_paid_only must be an object or null")
+        _text(paid.get("terms"), "vendor_paid_only terms", 200)
+        _url(paid.get("source"), "vendor_paid_only source")
+    conflict = show.get("conflict")
+    if conflict is not None:
+        if not isinstance(conflict, dict) or conflict.get("kind") not in CONFLICTS:
+            raise ValueError(f"conflict kind must be one of {', '.join(CONFLICTS)}")
+        _text(conflict.get("detail"), "conflict detail", 300)
     if route == "ladder":
         _text(show.get("ladder_step"), "ladder_step", 400)
     if show.get("deadline") is not None:
@@ -227,10 +299,16 @@ def check_show(show, arena_ids):
 
 
 def read_state(value):
-    """Validate one earlier report's state block. Returns None when it cannot be trusted."""
+    """Validate one earlier report's state block. Returns None when it cannot be trusted.
+
+    Version 1 blocks (before 1.4.0) called the day a pitch was drafted `first_pitched`,
+    although nothing had been sent; they are read as drafts. `sent` is set only when a pitch
+    was actually sent.
+    """
     try:
-        if not isinstance(value, dict) or value.get("version") != 1:
+        if not isinstance(value, dict) or value.get("version") not in (1, 2):
             return None
+        drafted_field = "first_pitched" if value["version"] == 1 else "first_drafted"
         shows = value.get("shows")
         if not isinstance(shows, dict) or len(shows) > MAX_STATE_SHOWS:
             return None
@@ -240,7 +318,9 @@ def read_state(value):
                 return None
             if item.get("route") not in ROUTES[:-1]:
                 return None
-            _day(item.get("first_pitched"), "first_pitched")
+            _day(item.get(drafted_field), drafted_field)
+            if item.get("sent") is not None:
+                _day(item["sent"], "sent")
             report = item.get("report")
             if not isinstance(report, str) or not report.strip():
                 return None
@@ -252,25 +332,52 @@ def read_state(value):
             clean[key] = {
                 "name": item["name"],
                 "route": item["route"],
-                "first_pitched": item["first_pitched"],
+                "first_drafted": item[drafted_field],
+                "sent": item.get("sent"),
                 "report": report,
             }
-        return {"version": 1, "shows": clean}
-    except (AttributeError, TypeError, ValueError):
+        return {"version": 2, "shows": clean}
+    except (AttributeError, TypeError, KeyError, ValueError):
         return None
 
 
 def merge_states(states):
-    """Union trusted earlier states; a show keeps the report that first pitched it."""
+    """Union trusted earlier states; a show keeps its first draft and its first send."""
     merged = {}
     for state in states:
         if state is None:
             continue
         for key, item in state["shows"].items():
             known = merged.get(key)
-            if known is None or item["first_pitched"] < known["first_pitched"]:
+            if known is None:
                 merged[key] = dict(item)
-    return {"version": 1, "shows": merged}
+                continue
+            if item["first_drafted"] < known["first_drafted"]:
+                merged[key] = dict(item, sent=known["sent"])
+            sent = [day for day in (item["sent"], known["sent"]) if day]
+            merged[key]["sent"] = min(sent) if sent else None
+    return {"version": 2, "shows": merged}
+
+
+def cautions_of(row, today):
+    """What lowers a show's odds: a pause in publishing, or a publisher that competes."""
+    found = []
+    dates = row.get("episode_dates") or []
+    if len(dates) >= 2:
+        days = [_day(item, "episode_dates") for item in dates]
+        gaps = sorted((a - b).days for a, b in zip(days, days[1:]))
+        usual = max(1, gaps[len(gaps) // 2])
+        since = (today - days[0]).days
+        if since > max(QUIET_GAPS * usual, QUIET_MIN_DAYS):
+            found.append(
+                f"quiet: no episode since {dates[0]}, though it usually publishes every "
+                f"{usual} days"
+            )
+    conflict = row.get("conflict")
+    if conflict:
+        lead = "competes with you" if conflict["kind"] == "competitor" else "mostly books its own"
+        found.append(f"{lead}: {conflict['detail']}")
+    return found
 
 
 def plan(
@@ -309,10 +416,14 @@ def plan(
     merged, duplicates = {}, 0
     for show in shows:
         key = slug(show["name"])
+        # A pause or a conflict lowers the odds by one level: a likely show becomes a long shot.
+        cautions = cautions_of(show, today)
+        tier = show.get("tier", "likely")
         row = dict(
             show,
             key=key,
-            tier=show.get("tier", "likely"),
+            tier="reach" if cautions else tier,
+            cautions=cautions,
             found_by=sorted(set(show["found_by"])),
         )
         known = merged.get(key)
@@ -338,19 +449,27 @@ def plan(
     ladder, excluded = [], []
     for key, row in merged.items():
         reason = ""
+        prior = earlier.get(key)
+        paid = row.get("vendor_paid_only")
         if row.get("takes_guests") is False:
             reason = "does not host guests"
+        elif paid:
+            reason = f"a company's founder gets on only as a paid sponsor: {paid['terms']} ({paid['source']})"
         elif row["last_episode"] is None:
             reason = "latest episode date not verified"
         elif (today - _day(row["last_episode"], "last_episode")).days > ACTIVE_DAYS:
             reason = f"no episode since {row['last_episode']}"
         elif key in skipped:
             reason = "you already pitched it"
-        elif key in earlier:
-            prior = earlier[key]
-            reason = f"pitched in an earlier run on {prior['first_pitched']} ({prior['report']})"
-        elif row["route"] == "direct_message" and "no_cold_email" in hard_nos:
-            reason = "your growth plan rules out cold email, and the show states no way to pitch it"
+        elif prior and prior.get("sent"):
+            reason = f"pitched on {prior['sent']} ({prior['report']})"
+        elif row["route"] in ("direct_message", "contact_email") and "no_cold_email" in hard_nos:
+            reason = (
+                "your growth plan rules out cold email, and the show publishes no way to pitch it"
+            )
+        if prior and not prior.get("sent"):
+            # Drafted before but never marked sent: still a candidate, after the new shows.
+            row["drafted_before"] = {"date": prior["first_drafted"], "report": prior["report"]}
         if reason:
             excluded.append(dict(row, reason=reason))
         elif row["route"] == "ladder":
@@ -358,8 +477,9 @@ def plan(
         else:
             eligible[row["arena"]].append(row)
 
+    # New shows before ones an earlier report drafted, and clean shows before cautioned ones.
     for rows in eligible.values():
-        rows.sort(key=lambda r: (r["rank"], r["key"]))
+        rows.sort(key=lambda r: ("drafted_before" in r, bool(r["cautions"]), r["rank"], r["key"]))
 
     def round_robin(pools, limit):
         taken, depth = [], 0
@@ -429,16 +549,23 @@ def plan(
 
     count = len(picks)
     verdict = "fit" if count >= FIT_MIN_PICKS else "thin" if count else "not a fit"
+    # The state records drafts. A show counts as pitched only once `sent` is set, by the send
+    # step or by the founder listing it in already_pitched.
     state = {key: dict(item) for key, item in earlier.items()}
+    for key in skipped & set(state):
+        state[key]["sent"] = state[key]["sent"] or as_of
     for row in picks:
+        if row["key"] in state:
+            continue
         state[row["key"]] = {
             "name": row["name"],
             "route": row["route"],
-            "first_pitched": as_of,
+            "first_drafted": as_of,
+            "sent": None,
             "report": report_path,
         }
     if len(state) > MAX_STATE_SHOWS:
-        newest = sorted(state.items(), key=lambda kv: kv[1]["first_pitched"], reverse=True)
+        newest = sorted(state.items(), key=lambda kv: kv[1]["first_drafted"], reverse=True)
         state = dict(newest[:MAX_STATE_SHOWS])
     return {
         "status": "complete" if count else "no shows verified",
@@ -449,7 +576,7 @@ def plan(
         "include_outcomes": outcomes,
         "gaps": gaps,
         "duplicates_merged": duplicates,
-        "state": {"version": 1, "shows": state},
+        "state": {"version": 2, "shows": state},
     }
 
 
@@ -484,6 +611,86 @@ def pitch_block(picks, drafts):
     if missing:
         raise ValueError(f"no draft for {', '.join(missing)}")
     return {"version": 1, "pitches": block}
+
+
+MAX_FETCH_BYTES = 5_000_000
+ITUNES = "{http://www.itunes.com/dtds/podcast-1.0.dtd}"
+LINK = re.compile(r"\]\((https?://[^)\s]+)\)|<(https?://[^>\s]+)>|(?<![(<\w])(https?://[^\s)>\]]+)")
+
+
+def _get(url):
+    """One public GET through the run's proxy (urllib reads HTTPS_PROXY). (status, bytes)."""
+    import urllib.error
+    import urllib.request
+
+    request = urllib.request.Request(_url(url, "url"), headers={"User-Agent": "Mozilla/5.0"})
+    try:
+        with urllib.request.urlopen(request, timeout=20) as response:  # noqa: S310
+            return response.status, response.read(MAX_FETCH_BYTES)
+    except urllib.error.HTTPError as error:
+        return error.code, b""
+    except (urllib.error.URLError, TimeoutError, OSError):
+        return 0, b""
+
+
+def read_feed(url, fetch=None):
+    """A show's RSS feed: its newest episode dates and the address its owner gives.
+
+    Returns {"status", "episode_dates" (newest first, up to five), "owner_email"}. The
+    address is None when the feed names none or only a hosting or template address.
+    """
+    from email.utils import parsedate_to_datetime
+    from xml.etree import ElementTree
+
+    status, body = (fetch or _get)(url)
+    result = {"status": status, "episode_dates": [], "owner_email": None}
+    # A feed is untrusted: refuse entity declarations (entity expansion) rather than parse them.
+    if not 200 <= status < 300 or not body or b"<!ENTITY" in body.upper():
+        return result
+    try:
+        channel = ElementTree.fromstring(body).find("channel")
+    except ElementTree.ParseError:
+        return result
+    if channel is None:
+        return result
+    days = set()
+    for item in channel.findall("item"):
+        try:
+            days.add(parsedate_to_datetime(item.findtext("pubDate", "").strip()).date())
+        except (TypeError, ValueError, IndexError):
+            continue
+    result["episode_dates"] = [day.isoformat() for day in sorted(days, reverse=True)[:5]]
+    for raw in (
+        channel.findtext(f"{ITUNES}owner/{ITUNES}email"),
+        channel.findtext(f"{ITUNES}email"),
+        channel.findtext("managingEditor"),
+    ):
+        address = (raw or "").strip().split(" ")[0]
+        if EMAIL.fullmatch(address) and not PLACEHOLDER_EMAIL.search(address):
+            result["owner_email"] = address
+            break
+    return result
+
+
+def check_links(text, fetch=None):
+    """Open every link in the report. Returns {"broken": [...], "unchecked": [...]}.
+
+    broken: the page answered 404 or 410, or nothing answered. unchecked: the site refused
+    a script (401, 403, 429 or a 5xx); keep those links. Every other answer is a live page.
+    """
+    urls = []
+    for match in LINK.finditer(text):
+        url = next(group for group in match.groups() if group).rstrip(".,;:")
+        if url not in urls:
+            urls.append(url)
+    broken, unchecked = [], []
+    for url in urls:
+        status, _ = (fetch or _get)(url)
+        if status in (0, 404, 410):
+            broken.append(url)
+        elif status in (401, 403, 429) or status >= 500:
+            unchecked.append(url)
+    return {"broken": broken, "unchecked": unchecked}
 
 
 LIST_ITEM = re.compile(r"\s*(?:[-*+]|\d+[.)])\s")

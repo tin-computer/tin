@@ -3,9 +3,9 @@
   "definition": {
     "key": "outreach.podcast_guest",
     "title": "Find the podcasts to go on as a guest",
-    "description": "Finds the podcasts worth going on across every audience where you carry weight: your buyers, your own craft, your home country and your product's topic. Checks that each show is active, listened to and has hosted guests like you, and drafts one pitch per show in its language. Shows that need a first step, like a talk or a guest post, get that step drafted. Skips shows pitched in earlier runs; never sends anything.",
+    "description": "Finds the podcasts worth going on across every audience where you carry weight: your buyers, your own craft, your home country and your product's topic. Checks that each show is active, listened to and has hosted guests like you, and drafts one pitch per show in its language. Finds each show's real way in (its guest page, the address in its feed, its contact page) and leaves out shows where a company's founder only gets on by paying. Shows that need a first step, like a talk or a guest post, get that step drafted. Skips the shows you've pitched; never sends anything.",
     "executor": "codex.procedure",
-    "version": "1.3.1",
+    "version": "1.4.0",
     "schedule_modes": ["on_demand"],
     "system": "cold-outreach",
     "input_schema": {
@@ -32,7 +32,7 @@
         "already_pitched": {
           "type": "string",
           "title": "Shows pitched outside Tin (optional)",
-          "description": "Podcasts to skip because you already pitched them or were on them. Shows pitched in earlier runs are skipped automatically.",
+          "description": "Podcasts to skip because you already pitched them or were on them, including ones from earlier Tin reports. Tin can't see what you sent, so shows it only drafted before come back after the new ones.",
           "maxLength": 2000,
           "default": "",
           "x-tin-ui": { "control": "textarea", "order": 30 }
@@ -115,12 +115,12 @@
       "flow": {
         "direction": "TD",
         "nodes": [
-          {"id": "context", "kind": "store", "label": "Your profile, Feature map, plan", "fact": "hard no's bind, earlier picks not repeated"},
+          {"id": "context", "kind": "store", "label": "Your profile, Feature map, plan", "fact": "hard no's bind, shows you pitched skipped"},
           {"id": "arenas", "kind": "step", "label": "Choose the audiences", "fact": "3 to 6: buyers, craft, home country, topic"},
           {"id": "search", "kind": "surface", "label": "Sweep, then Podscan and the web", "fact": "hundreds of active shows, then lookalikes"},
-          {"id": "verify", "kind": "step", "label": "Verify each finalist", "fact": "last three episodes, host, guests like you"},
-          {"id": "plan", "kind": "step", "label": "Balance the picks in code", "fact": "10 by default, a third long shots"},
-          {"id": "draft", "kind": "step", "label": "Draft one pitch per show", "fact": "in its language, or a first step to get in"},
+          {"id": "verify", "kind": "step", "label": "Verify each finalist", "fact": "feed dates, the real way in, paid-only shows"},
+          {"id": "plan", "kind": "step", "label": "Balance the picks in code", "fact": "a pause or a competitor lowers the odds"},
+          {"id": "draft", "kind": "step", "label": "Draft one pitch per show", "fact": "in its language, every link opened"},
           {"id": "report", "kind": "receipt", "label": "Pitches to send yourself", "fact": "summary first, Tin sends nothing"},
           {"id": "thin", "kind": "ghost", "label": "Needs more about you", "fact": "a profile with no role or background"}
         ],
