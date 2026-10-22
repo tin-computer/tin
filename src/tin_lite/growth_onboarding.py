@@ -762,7 +762,7 @@ def systems_details(block: dict[str, Any], systems: list[str]) -> dict[str, Any]
 def ui_links(public_url: str, project_id: UUID) -> dict[str, str]:
     base = public_url.rstrip("/")
     return {
-        "overview": f"{base}/chat?project={project_id}",
+        "overview": f"{base}/system?project={project_id}",
         "my_system": f"{base}/system?project={project_id}",
         "activity": f"{base}/activity?project={project_id}",
         "decisions": f"{base}/decisions?project={project_id}",

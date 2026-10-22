@@ -203,18 +203,18 @@ test("packaged app: Decisions, readers, exact apply/reload, and responsive compa
     for (const hash of ["", "#/", "#unknown-view"]) {
       await page.goto(`${base}/${hash}`);
       await page.getByRole("heading", { name: "System", exact: true }).waitFor({ timeout: 5000 });
-      assert.deepEqual(await page.locator(".nav-list .nav-item").evaluateAll(items => items.slice(0, 2).map(item => item.dataset.view)), ["workflows", "chat"]);
+      assert.deepEqual(await page.locator(".nav-list .nav-item").evaluateAll(items => items.slice(0, 2).map(item => item.dataset.view)), ["workflows", "decisions"]);
       assert.equal(await page.locator(".nav-list .nav-item.is-active").getAttribute("data-view"), "workflows");
       assert.equal(await page.locator(".workflow-section.is-active").getAttribute("data-workflow-section"), "yours");
       await page.reload();
       await page.getByRole("heading", { name: "System", exact: true }).waitFor({ timeout: 5000 });
     }
-    await page.locator('.nav-item[data-view="chat"]').click();
-    await page.locator("#chat-form").waitFor();
-    assert.equal(new URL(page.url()).pathname, "/chat");
-    await page.reload();
-    await page.locator("#chat-form").waitFor();
-    assert.equal(await page.locator(".nav-list .nav-item.is-active").getAttribute("data-view"), "chat");
+    // Chat left the dashboard; an old /chat link lands on System.
+    assert.equal(await page.locator('.nav-item[data-view="chat"]').count(), 0);
+    await page.goto(`${base}/chat`);
+    await page.getByRole("heading", { name: "System", exact: true }).waitFor({ timeout: 5000 });
+    assert.equal(new URL(page.url()).pathname, "/system");
+    assert.equal(await page.locator(".nav-list .nav-item.is-active").getAttribute("data-view"), "workflows");
     // External links and reloads initialize the first project; neither is a
     // project switch. Keep the exact reader route, source and revision intact.
     for (const hash of [
