@@ -19,38 +19,57 @@ from temporalio.service import RPCError, RPCStatusCode
 from test_catalog_executor_transition import WIKI
 from test_connection_collection import USER
 from test_connection_collection import collection_db as collection_db
+from test_linkedin_engagers import Cloud as EngagersCloud
 from test_linkedin_engagers import fixture
+from test_linkedin_engagers import work as engagers_work
 from test_linkedin_per_member import TEAMMATE, add_teammate
 from test_linkedin_profile_viewers import Cloud, viewers_run, work
 from test_people_view import mcp, structured
 
+from tin_lite import linkedin_engagers as engagers
 from tin_lite import linkedin_profile_viewers as viewers
 from tin_lite.activities import AUTHOR_LEFT, TinActivities
 from tin_lite.api import router as api_router
 from tin_lite.auth import AuthContext, require_user
 from tin_lite.catalog import BUILTIN_WORKFLOWS
 from tin_lite.connection_collection import ALREADY_SAVED, NOT_YOURS
+from tin_lite.schedules import WorkflowSchedule
+from tin_lite.workflow_definitions import ensure_schedule_allowed
+from tin_lite.workflow_inputs import WorkflowInputError
 
 DAILY = {"cadence": "daily", "local_time": "08:00", "timezone": "UTC"}
 
 
-async def saved_viewers(f, *, by=USER):
-    """The profile viewers workflow from the catalog, saved daily on the project by `by`."""
-
-    builtin = next(item for item in BUILTIN_WORKFLOWS if item.key == viewers.KEY)
+def catalog_definition(key):
+    builtin = next(item for item in BUILTIN_WORKFLOWS if item.key == key)
     definition, _files = builtin.definition_and_files_with_wiki(WIKI)
+    return builtin, definition
+
+
+async def catalog_workflow(f, key):
+    """The catalog's workflow for `key`, registered on the fixture's database."""
+
+    builtin, definition = catalog_definition(key)
     await f.db.pool.execute(
         """INSERT INTO workflows (id,key,title,executor,definition_repo_id,
                 definition_path,current_commit_sha,version_label,definition)
            VALUES ($1,$2,$2,$2,'registry/workflows',$3,$4,'1',$5::jsonb)
            ON CONFLICT DO NOTHING""",
-        viewers.WORKFLOW_ID,
-        viewers.KEY,
+        builtin.id,
+        key,
         builtin.definition_path,
         "e" * 40,
         json.dumps(definition),
     )
-    workflow_id = await f.db.pool.fetchval("SELECT id FROM workflows WHERE key=$1", viewers.KEY)
+    return builtin, definition
+
+
+async def saved_viewers(f, *, by=USER, key=viewers.KEY):
+    """A personal workflow from the catalog (profile viewers unless `key` says otherwise),
+    saved daily on the project by `by`."""
+
+    builtin, definition = await catalog_workflow(f, key)
+    workflow_id = await f.db.pool.fetchval("SELECT id FROM workflows WHERE key=$1", key)
     configured = uuid4()
     await f.db.pool.execute(
         """INSERT INTO project_workflows
@@ -319,3 +338,62 @@ async def test_my_system_shows_your_own_personal_workflows_and_activity_names_a_
         await server.call_tool("list_project_workflows", {"project_id": str(f.project.id)})
     )
     assert [item["id"] for item in workflows["result"]] == [str(mine_saved)]
+
+
+def test_engagers_can_run_daily_like_profile_viewers():
+    daily = WorkflowSchedule.model_validate(DAILY)
+    for key in (engagers.KEY, viewers.KEY):
+        _builtin, definition = catalog_definition(key)
+        ensure_schedule_allowed(definition, daily)
+        ensure_schedule_allowed(definition, None)
+        assert definition["default_schedule"]["cadence"] == "daily"
+    # Engagers starts half an hour after profile viewers, so one member's two daily reads
+    # don't use their LinkedIn session at the same time.
+    assert catalog_definition(engagers.KEY)[1]["default_schedule"]["local_time"] == "08:30"
+    assert catalog_definition(viewers.KEY)[1]["default_schedule"]["local_time"] == "08:00"
+    # Workflows that stay on demand still refuse a schedule.
+    on_demand = [item.key for item in BUILTIN_WORKFLOWS if item.schedule_modes == ("on_demand",)]
+    assert "social.linkedin_requests" in on_demand
+    for key in on_demand:
+        with pytest.raises(WorkflowInputError, match="does not support daily scheduling"):
+            ensure_schedule_allowed(catalog_definition(key)[1], daily)
+
+
+async def test_a_member_saves_engagers_daily_and_it_runs_as_them(collection_db):
+    f = await fixture(collection_db)
+    await add_teammate(f)
+    await catalog_workflow(f, engagers.KEY)
+    body = {
+        "workflow_id": str(engagers.WORKFLOW_ID),
+        "name": "People who engaged",
+        "inputs": {},
+        "schedule": DAILY,
+    }
+    temporal = Schedules()
+    f.store.settings.task_queue = "tin-test"
+    async with http(f, TEAMMATE, temporal) as teammate:
+        saved = await teammate.post(
+            f"/api/projects/{f.project.id}/workflows", json={**body, "request_id": str(uuid4())}
+        )
+    assert saved.status_code == 201, saved.text
+    configured = UUID(saved.json()["id"])
+    assert saved.json()["schedule"]["cadence"] == "daily" and temporal.created
+    # The teammate's schedule stays theirs: it runs with their LinkedIn, not the project's
+    # first member's, and only they change it.
+    dispatched = await dispatcher(f).dispatch_scheduled_workflow(occurrence(configured))
+    run = await f.db.get_run(UUID(dispatched["run_id"]))
+    assert run.trigger_source == "schedule" and run.started_by_clerk_user_id == TEAMMATE
+    await engagers_work(f, EngagersCloud([], {})).prepare(str(run.id))
+    assert (await f.db.get_run(run.id)).status.value == "running"
+    async with http(f) as owner:
+        attempt = await owner.post(f"/api/projects/{f.project.id}/workflows/{configured}/pause")
+    assert attempt.status_code == 403 and attempt.json()["detail"] == NOT_YOURS
+
+
+async def test_a_saved_daily_engagers_read_runs_as_the_member_who_saved_it(collection_db):
+    f = await fixture(collection_db)
+    configured = await saved_viewers(f, key=engagers.KEY)
+    dispatched = await dispatcher(f).dispatch_scheduled_workflow(occurrence(configured))
+    run = await f.db.get_run(UUID(dispatched["run_id"]))
+    assert run.trigger_source == "schedule" and run.started_by_clerk_user_id == USER
+    assert run.executor == engagers.KEY

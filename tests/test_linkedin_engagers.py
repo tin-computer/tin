@@ -110,8 +110,9 @@ class Storage(HistoryStorage):
 class Cloud:
     """The LinkedIn sandbox: the posts it finds, and each post's reactions page by page."""
 
-    def __init__(self, posts, reactions, *, errors=None):
+    def __init__(self, posts, reactions, *, errors=None, capped=()):
         self.posts, self.reactions, self.errors = posts, reactions, errors or {}
+        self.capped = set(capped)
         self.calls, self.cleaned = [], []
 
     async def engagement(self, conn, *, execution_key, run_id, session, packet, seconds=270):
@@ -129,7 +130,7 @@ class Cloud:
             "people": page,
             "total": len(people),
             "next_start": start + 100 if more else None,
-            "capped": False,
+            "capped": thread in self.capped and not more,
         }
 
     async def cleanup(self, sandbox_id):
@@ -234,6 +235,9 @@ async def run_through(w, run_id):
     posts = await w.posts(run_id)
     notes = {"posts": len(posts), "reactions": 0, "unread": 0, "capped": False}
     for item in posts:
+        if item.get("unchanged"):
+            notes["unchanged"] = notes.get("unchanged", 0) + 1
+            continue
         start = 0
         while start is not None:
             page = await w.reactions({"run_id": run_id, **item, "start": start})
@@ -551,7 +555,112 @@ async def test_forgetting_a_person_keeps_them_out_of_later_runs(collection_db):
     assert [r["Name"] for r in rows] == ["Person 1"]
 
 
-def stubs(calls, pages):
+def read_posts(cloud):
+    """The posts whose reactions a run read, in order."""
+
+    return [c["thread_urn"] for c in cloud.calls if c["kind"] == "linkedin_reactions"]
+
+
+async def test_a_later_run_reads_only_new_posts_and_posts_with_new_reactions(collection_db):
+    f = await fixture(collection_db)
+    grew, same, uncounted = post(1, 2), post(2, 10), post(3, 20)
+    grew["reactions"], same["reactions"], uncounted["reactions"] = 2, 1, None
+    cloud = Cloud(
+        [grew, same, uncounted],
+        {
+            grew["thread_urn"]: [person(1), person(2)],
+            same["thread_urn"]: [person(3)],
+            uncounted["thread_urn"]: [person(4)],
+        },
+    )
+    first = await engagers_run(f)
+    await run_through(work(f, cloud), first)
+    assert read_posts(cloud) == [p["thread_urn"] for p in (grew, same, uncounted)]
+
+    # The next day: one more reaction on the first post, and a new post.
+    newest = {**post(4, 1), "reactions": 1}
+    grew["reactions"] = 3
+    cloud.posts = [newest, grew, same, uncounted]
+    cloud.reactions[grew["thread_urn"]].append(person(5))
+    cloud.reactions[newest["thread_urn"]] = [person(6)]
+    cloud.calls.clear()
+    second = await engagers_run(f)
+    notes = await run_through(work(f, cloud), second)
+    # The post with the same count isn't read; one LinkedIn showed no count for is.
+    assert read_posts(cloud) == [p["thread_urn"] for p in (newest, grew, uncounted)]
+    assert notes["unchanged"] == 1 and notes["posts"] == 4
+    names = {p["fields"]["name"]["text"] for p in await records.people(f.db.pool, f.project.id)}
+    assert names == {f"Person {i}" for i in range(1, 7)}
+    rows, summary = listed(f.storage)
+    assert len(rows) == 6
+    assert "1 post had no new reactions, so Tin didn't read it again." in summary
+    # A retried posts step hands back the same choice, from its receipt.
+    kept = (await f.db.get_effect(f"{second}:engagers:posts")).result["posts"]
+    assert [p.get("unchanged", False) for p in kept] == [False, False, True, False]
+
+    # A run that reads nothing new reads no reactions at all.
+    cloud.calls.clear()
+    third = await engagers_run(f)
+    notes = await run_through(work(f, cloud), third)
+    assert read_posts(cloud) == [uncounted["thread_urn"]] and notes["unchanged"] == 3
+
+
+async def test_a_post_not_read_in_full_is_read_again(collection_db):
+    f = await fixture(collection_db)
+    unread, stopped = post(1, 2), post(2, 5)
+    unread["reactions"] = stopped["reactions"] = 1
+    cloud = Cloud(
+        [unread, stopped],
+        {unread["thread_urn"]: [person(1)], stopped["thread_urn"]: [person(2)]},
+        errors={
+            (unread["thread_urn"], 0): "cloud_failed",
+            (stopped["thread_urn"], 0): "rate_limited",
+        },
+    )
+    notes = await run_through(work(f, cloud), await engagers_run(f))
+    assert notes["unread"] == 1 and notes["stopped"] == "rate_limited"
+    # Neither post was read to its end, so the next run reads both, though their counts held.
+    cloud.errors, cloud.calls = {}, []
+    notes = await run_through(work(f, cloud), await engagers_run(f))
+    assert read_posts(cloud) == [unread["thread_urn"], stopped["thread_urn"]]
+    assert "unchanged" not in notes
+
+
+async def test_a_post_read_to_the_cap_is_not_read_again(collection_db):
+    f = await fixture(collection_db)
+    big = {**post(1, 2), "reactions": 1500}
+    cloud = Cloud([big], {big["thread_urn"]: [person(1)]}, capped=[big["thread_urn"]])
+    await run_through(work(f, cloud), await engagers_run(f))
+    big["reactions"], cloud.calls = 1600, []
+    notes = await run_through(work(f, cloud), await engagers_run(f))
+    assert read_posts(cloud) == [] and notes["unchanged"] == 1
+
+
+async def test_only_the_member_s_own_earlier_reads_count(collection_db):
+    f = await fixture(collection_db)
+    item = {**post(1, 2), "reactions": 1}
+    other = "user_someoneelse"
+    await f.db.grant_project_membership(project_id=f.project.id, clerk_user_id=other)
+    theirs = UUID(await engagers_run(f, by=other))
+    key = engagers.read_key(theirs, item["thread_urn"])
+    async with f.db.pool.acquire() as conn:
+        await f.db.start_effect(conn, execution_key=key, operation=engagers.KEY)
+        await f.db.complete_effect(
+            conn, execution_key=key, result={"reactions": 1, "capped": False}
+        )
+        mine = UUID(await engagers_run(f))
+        threads = [item["thread_urn"]]
+        assert await engagers.earlier_reads(conn, f.project.id, USER, mine, threads) == {}
+        assert await engagers.earlier_reads(conn, f.project.id, other, mine, threads) == {
+            item["thread_urn"]: {"reactions": 1, "capped": False}
+        }
+    assert engagers.unchanged(item, {"reactions": 1, "capped": False})
+    assert not engagers.unchanged(item, {"reactions": 2, "capped": False})
+    assert not engagers.unchanged({**item, "reactions": None}, {"reactions": None})
+    assert not engagers.unchanged(item, None)
+
+
+def stubs(calls, pages, found=None):
     @activity.defn(name="linkedin_engagers_prepare")
     async def prepare(run_id):
         calls.append("prepare")
@@ -559,7 +668,7 @@ def stubs(calls, pages):
     @activity.defn(name="linkedin_engagers_posts")
     async def posts(run_id):
         calls.append("posts")
-        return [post(1, 1), post(2, 2)]
+        return found if found is not None else [post(1, 1), post(2, 2)]
 
     @activity.defn(name="linkedin_engagers_reactions")
     async def reactions(control):
@@ -651,3 +760,42 @@ async def test_the_workflow_reads_each_post_page_by_page_and_keeps_only_counts(s
         if event.HasField("activity_task_scheduled_event_attributes"):
             for payload in event.activity_task_scheduled_event_attributes.input.payloads:
                 assert "Person" not in payload.data.decode()
+
+
+async def test_the_workflow_skips_posts_without_new_reactions():
+    calls = []
+    fresh, unchanged = post(1, 1), {**post(2, 2), "unchanged": True}
+
+    def pages(control):
+        return {"outcome": "read", "reason": None, "people": 2, "next_start": None, "capped": False}
+
+    async with await WorkflowEnvironment.start_time_skipping() as env:
+        queue, run_id = f"engagers-{uuid4()}", str(uuid4())
+        async with Worker(
+            env.client,
+            task_queue=queue,
+            workflows=[LinkedInEngagersWorkflow],
+            activities=stubs(calls, pages, [fresh, unchanged]),
+        ):
+            handle = await env.client.start_workflow(
+                LinkedInEngagersWorkflow.run,
+                run_id,
+                id=f"{engagers.KEY}:{run_id}",
+                task_queue=queue,
+            )
+            await handle.result()
+            history = await handle.fetch_history()
+    await Replayer(workflows=[LinkedInEngagersWorkflow]).replay_workflow(history)
+    reads = [c for c in calls if isinstance(c, tuple) and c[0] == "reactions"]
+    assert [r[1] for r in reads] == [fresh["thread_urn"]]
+    assert calls[-1] == (
+        "publish",
+        {
+            "posts": 2,
+            "reactions": 2,
+            "unread": 0,
+            "capped": False,
+            "unchanged": 1,
+            "accepted": 2,
+        },
+    )

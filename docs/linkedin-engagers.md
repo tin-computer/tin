@@ -3,7 +3,9 @@
 `social.linkedin_engagers` (#435) reads the founder's own LinkedIn posts from the last 90 days
 and everyone who reacted to them. It keeps each person as a [People record](people-records.md),
 scores them against the project's ICP file, and lists them in project Files. It reads only and
-sends nothing.
+sends nothing. It runs daily by default (08:30 in the founder's time zone, half an hour after
+[profile viewers](linkedin-profile-viewers.md)), or on demand. After a member's first run, a run
+reads only new posts and posts with new reactions.
 
 ## Who can run it
 
@@ -14,8 +16,11 @@ sends nothing.
   engagement reads, and the native model service (`TIN_LITE_LUNA_API_KEY`).
 - **Member:** each member runs it with their own LinkedIn connection. Their saved session reads
   their own posts. That member needs cloud reading turned on and a live session from Tin for
-  Chrome, as collection does. Each member saves their own copy, once, and only they can change
-  it ([personal workflows](connection-collection.md#connect-once-then-run-from-tin)).
+  Chrome, as collection does. Each member saves their own copy, once; its daily schedule runs as
+  them, and only they can change it
+  ([personal workflows](connection-collection.md#connect-once-then-run-from-tin)).
+- **Copies saved before version 1.4.0** keep the version they pinned, which runs only on demand.
+  To run one daily, remove it and save the workflow again.
 
 ## What a run does
 
@@ -28,10 +33,18 @@ sends nothing.
      changing how Tin scores marks old scores stale and a run rescores them. Other commits
      don't.
 2. **Posts.** One sandbox read (`linkedin_posts`) finds the member's own posts from the last
-   90 days, up to 60. A failure here ends the run with its reason, such as an expired
-   session or LinkedIn asking to verify the account.
-3. **Reactions.** For each post, sandbox reads (`linkedin_reactions`) of up to 100 people
-   at a time.
+   90 days, up to 60, each with LinkedIn's count of its reactions. A failure here ends the run
+   with its reason, such as an expired session or LinkedIn asking to verify the account.
+   - **Only what changed is read again.** A post is skipped when one of the member's earlier
+     runs read all of its reactions and LinkedIn counts the same number now. A new post, a
+     post whose count changed, and a post LinkedIn shows no count for are read. So is a post
+     an earlier run didn't finish: a page LinkedIn wouldn't show, or a read LinkedIn stopped.
+   - A post read to its first 1,000 reactions isn't read again: another read would page
+     through the same first 1,000.
+   - Only the member's own earlier runs count, from the last 90 days. The summary says how
+     many posts had no new reactions.
+3. **Reactions.** For each post that isn't skipped, sandbox reads (`linkedin_reactions`) of up
+   to 100 people at a time.
    - Each person is upserted by their LinkedIn profile ID, with:
      - name and headline;
      - the starter's own relationship with them, from their degree (1st is connected, 2nd or
@@ -78,17 +91,23 @@ sends nothing.
   - It holds LinkedIn's answer only until those people are written; then it keeps counts.
   - A read that started but never answered is cleaned up and never bought again; that post
     counts as unread.
+- **Posts read in full.** When a post's last page is written, the same transaction completes
+  a receipt keyed on the run and the post's thread (`<run>:engagers:read:<thread>`). It keeps
+  LinkedIn's reaction count from the posts read and whether the read reached 1,000 reactions;
+  later runs compare against it. The receipt of the posts read keeps which posts it skipped,
+  so a retry skips the same ones.
 - **Model calls.** Each batch's answer is kept in its own receipt before any value is
   written, so a retry reuses it.
-- **Temporal history** holds post and thread URNs, publish times, page offsets and counts.
-  Names, headlines and scores stay in Postgres.
+- **Temporal history** holds post and thread URNs, publish times, reaction counts, whether a
+  post is skipped, page offsets and counts. Names, headlines and scores stay in Postgres.
 - **Project deletion** removes the records and these receipts.
 
 ## Billing
 
 The workflow is included, with no charge to the founder, under
 `tin-funded-linkedin-engagers-v1`. Tin pays the sandbox reads and the scoring calls, and the
-usage is still recorded per call.
+usage is still recorded per call. A daily run buys one posts read, reactions reads only for
+new or changed posts, and scoring calls only for people without a current score.
 
 ## Not yet
 
@@ -96,5 +115,8 @@ usage is still recorded per call.
   [connection collection](connection-collection.md#engagement-reads).
 - **Teammates aren't left out automatically.** Tin doesn't know their LinkedIn profile IDs.
   Forgetting a person once keeps them out of every later run.
-- **Weekly schedules, `/people`, sending connection requests and the Decisions card** each
-  come in a later issue.
+- **A skipped post isn't checked for changes inside it.** A name, a headline or a degree
+  (connected or not) is updated only when Tin reads a post that person reacted to again. One
+  reaction removed and another added on the same day leave the count the same, so that post
+  isn't read. Connection requests still check that the member isn't connected before sending.
+- **Weekly schedules** come in a later issue.

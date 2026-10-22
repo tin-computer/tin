@@ -1542,11 +1542,11 @@ BUILTIN_WORKFLOWS = (
             "Read your own LinkedIn posts from the last 90 days and everyone who reacted to "
             "them, keep each person in People with whether you're already connected, score "
             "them against strategy/ICP.md, and list them best fit first in "
-            "people/linkedin-engagers.csv. Reads with your saved LinkedIn session; sends "
-            "nothing."
+            "people/linkedin-engagers.csv. Later runs read only new posts and posts with new "
+            "reactions. Reads with your saved LinkedIn session; sends nothing."
         ),
         executor=linkedin_engagers.KEY,
-        version_label="1.3.0",
+        version_label="1.4.0",
         presentation=WorkflowDiagram(
             direction="TD",
             nodes=(
@@ -1566,7 +1566,7 @@ BUILTIN_WORKFLOWS = (
                     "reactions",
                     "surface",
                     "Read who reacted",
-                    "ten at a time, pausing between pages",
+                    "on posts with new reactions, with pauses",
                 ),
                 DiagramNode(
                     "people",
@@ -1603,7 +1603,8 @@ BUILTIN_WORKFLOWS = (
                 DiagramEdge("accepted", "files"),
             ),
         ),
-        schedule_modes=("on_demand",),
+        schedule_modes=("on_demand", "daily"),
+        default_schedule={"cadence": "daily", "local_time": "08:30"},
         system=LINKEDIN_SYSTEM,
         input_schema=linkedin_engagers.INPUT_SCHEMA,
         model_route=linkedin_engagers.ROUTE,

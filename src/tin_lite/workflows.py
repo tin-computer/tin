@@ -1774,9 +1774,10 @@ class LinkedInResultsWorkflow:
 
 @workflow.defn(name=LINKEDIN_ENGAGERS_WORKFLOW_NAME)
 class LinkedInEngagersWorkflow:
-    """Read the founder's own posts, then each post's reactions a few pages at a time; score
-    the people against the ICP file and write the list. History holds post URNs, page
-    offsets and counts; names, headlines and scores stay in Postgres."""
+    """Read the founder's own posts, then the reactions of each post that is new or has new
+    reactions, a few pages at a time; score the people against the ICP file and write the
+    list. History holds post URNs, page offsets and counts; names, headlines and scores stay
+    in Postgres."""
 
     @workflow.run
     async def run(self, run_id: str) -> None:
@@ -1802,6 +1803,10 @@ class LinkedInEngagersWorkflow:
             posts = await call("linkedin_engagers_posts", minutes=8)
             notes = {"posts": len(posts), "reactions": 0, "unread": 0, "capped": False}
             for post in posts:
+                # A post read in full before, with the same reaction count now, isn't read.
+                if post.get("unchanged") and workflow.patched("linkedin-engagers-unchanged-v1"):
+                    notes["unchanged"] = notes.get("unchanged", 0) + 1
+                    continue
                 start = 0
                 while start is not None:
                     page = await call(

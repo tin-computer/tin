@@ -70,7 +70,8 @@ your own accounts before use; ordinary contributor tests need no production cred
 - [Connection requests](linkedin-requests.md): approved LinkedIn requests sent one at a time
   from the member's session; the member's LinkedIn reads then read who accepted.
 - [People who engaged with your LinkedIn posts](linkedin-engagers.md): the founder's posts,
-  who reacted, ICP scores and the list in Files.
+  who reacted, ICP scores and the list in Files; read daily, rereading only posts with new
+  reactions.
 - [People who viewed your LinkedIn profile](linkedin-profile-viewers.md): the profile-views
   list read daily, each viewer in People, scored, and proposed for connection requests.
 - [Project API connections](project-api-connections.md): secure credentials and external requests.

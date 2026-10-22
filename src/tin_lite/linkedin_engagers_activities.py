@@ -328,23 +328,36 @@ class LinkedInEngagersActivities:
                 "activity_urn": post.activity_urn,
                 "thread_urn": post.thread_urn,
                 "published_at": post.published_at,
+                # LinkedIn's count, so the run that reads all of the post can keep it.
+                "reactions": post.reactions,
             }
             for post in parsed.posts
         ]
+        # A post the member's earlier run read in full, with the same count now, is skipped.
+        async with self.db.pool.acquire() as conn:
+            earlier = await engagers.earlier_reads(
+                conn,
+                run.project_id,
+                run.started_by_clerk_user_id,
+                run.id,
+                [item["thread_urn"] for item in posts],
+            )
+        for item in posts:
+            if engagers.unchanged(item, earlier.get(item["thread_urn"])):
+                item["unchanged"] = True
         async with self.db.effect_lock(key, ENGAGEMENT_OPERATION) as (conn, _receipt):
             await self.db.complete_effect(
                 conn, execution_key=key, result={"posts": posts, "complete": parsed.complete}
             )
         count = len(posts)
-        await self._progress(
-            run.id,
-            "reactions",
-            1,
-            4,
-            f"Reading who reacted to {count} post{'s' if count != 1 else ''}"
-            if count
-            else "No posts from the last 90 days",
-        )
+        fresh = sum(not item.get("unchanged") for item in posts)
+        if not count:
+            line = "No posts from the last 90 days"
+        elif not fresh:
+            line = "No new reactions since the last read"
+        else:
+            line = f"Reading who reacted to {fresh} post{'s' if fresh != 1 else ''}"
+        await self._progress(run.id, "reactions", 1, 4, line)
         return posts
 
     @activity.defn(name="linkedin_engagers_reactions")
@@ -394,6 +407,16 @@ class LinkedInEngagersActivities:
                 }
                 # The answer leaves the receipt with this; only counts stay.
                 await self.db.complete_effect(conn, execution_key=key, result=result)
+                count = control.get("reactions")
+                if parsed.next_start is None and type(count) is int:
+                    # The post's last page: a later run skips it while its count stays.
+                    seen = engagers.read_key(run.id, post["thread_urn"])
+                    await self.db.start_effect(conn, execution_key=seen, operation=KEY)
+                    await self.db.complete_effect(
+                        conn,
+                        execution_key=seen,
+                        result={"reactions": count, "capped": parsed.capped},
+                    )
         _heartbeat({"thread": post["thread_urn"], "start": start})
         return result
 
