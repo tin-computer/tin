@@ -51,7 +51,8 @@ exclusions, balance, memory and the pitch block.
    inside the 32-call Podscan budget (a sweep counts as five), plus web searches. Record on each arena every method
    you tried, including ones that found nothing (`tried`).
    - Start every arena except `home` with `podcasts.sweep` (SEARCH.md, "The sweep comes
-     first"): one call per group of arenas, with topics in the field's own words. Read every
+     first"): one sweep per field, never two fields in one, with topics in the field's own
+     words and `limit` left out. Read every
      show it returns and keep a long list of the ones whose premise is the founder's argument
      or the arena's work, before searching any other way.
    - Then the methods a sweep cannot replace: lookalike guests from the profile (companies
@@ -151,7 +152,8 @@ exclusions, balance, memory and the pitch block.
      (small audiences, pitches that lean on the profile because the project has no growth
      plan, fewer picks than asked for).
    - `## Next steps`: one numbered line per pick and ladder step, in the order to do them:
-     the action, the show, and where (`Email podcast@… with the draft below`). Likely picks
+     the action, the show, the person and where (`Email podcast@… with the draft below`,
+     `Message Kris Rides on LinkedIn with the Root To CISO draft`). Likely picks
      come first; long shots come last, to send once one or two of the smaller episodes are
      out to point to, unless the founder already has recorded appearances.
    - `## Picks`: one `### <n>. <Show name>` per pick, in `plan()` order. First a short
@@ -167,10 +169,11 @@ exclusions, balance, memory and the pitch block.
        `premise`, with the show's name linked to its page
      - `**Who hosts it:**` the host's name, role and background, then one sentence on why
        that matters for this pitch, from `host`
-     - `**Show facts:**` episodes so far, typical length, how often it publishes, the newest
-       episode's date, the listener numbers you relied on and their source, and the language
-       when it is not English (`165 episodes · about 44 min · weekly · newest 2026-10-14 ·
-       about 1,600 listeners (Podscan estimate)`)
+     - `**Show facts:**` one line, nothing else: episodes so far, typical length, how often it
+       publishes, the newest episode's date, the listener number you relied on with its
+       source, and the language when it is not English (`165 episodes · about 44 min ·
+       weekly · newest 2026-10-14 · about 1,600 listeners (Podscan estimate)`). Caveats about
+       the numbers go in `Worth knowing`
      - `**Guest like you:**` name, linked episode, date (or `none found` and why it is still a
        pick)
      - `**Opens on:**` the episode the pitch refers to, linked and dated, or the gap in the
@@ -181,8 +184,9 @@ exclusions, balance, memory and the pitch block.
      Then the drafts, each under a bold label on its own line: `**Subject:**`, `**Email:**`
      and `**Follow-up a week later:**` for email; `**Form answers:**` (a bullet per question)
      and `**What you add:**` for forms; `**Message:**` or `**Intro:**` for the other routes.
-     Put message, email and intro text in a blockquote, one `>` paragraph per paragraph, so it
-     reads as the message and copies cleanly.
+     Write message, email, intro and long form-answer text through `quote()` from SCORING.md,
+     never by hand, so every line, the list and the sign-off stay inside the quote and read as
+     written. Nothing else goes in a pick: no list of the episodes you checked.
    - `## Ladder`: one `### <Show name>` per ladder show with `**Why this show:**`, then
      bullets `**Show:**`, `**Why not now:**`, `**First step:**`, `**Deadline:**` (or `none
      stated`) and the step's draft; or `- none`.
@@ -192,8 +196,11 @@ exclusions, balance, memory and the pitch block.
      (`English`, `Turkish`).
    - `## Shows you asked about`: each `include_shows` name with its outcome from `plan()`, or
      `- none asked`.
-   - `## What could not be checked`: every gap from `plan()`, and any arena kind you skipped
-     and why, in plain words, or `- nothing`.
+   - `## What could not be checked`: at most five bullets, in plain words the founder would
+     use: the gaps from `plan()`, any arena kind you skipped and why, and what the founder
+     should check before sending. Never data-source detail ("provider", "feed", "index",
+     "records", "window"); a caveat about one show belongs in its `Worth knowing`. Or
+     `- nothing`.
    - `## Left out`: shows excluded because an earlier report pitched them (with date and
      report), then every other exclusion with its reason. If fewer than `max_pitches`
      survived, say so plainly; do not pad the list.
@@ -215,5 +222,6 @@ exclusions, balance, memory and the pitch block.
 10. **Check before finishing.** Count the `### ` headings under `## Picks` and confirm they
    match `plan()`'s picks, that the `Verdict:` line matches, that every `published_email` pick
    appears once in the pitch block with the address the show publishes, that both blocks
-   parse, that no two labels share a line, and that every pitch opens on an episode recorded
+   parse, that no two labels share a line, that every draft came from `quote()`, that `## What
+   could not be checked` has at most five bullets, and that every pitch opens on an episode recorded
    for its show or a `gap` recorded for it. Fix any mismatch.
