@@ -13,11 +13,12 @@ window.TinAnalytics = (() => {
     { key: "week", label: "Last 7 days" },
   ];
   const ROLES = { user_retrieval: "fetching for someone", indexing: "search index", training: "training", other: "other" };
-  // The report names a company by its ID; a name Tin doesn't know stays the ID.
+  // The report names a company by one of Agent Traffic's operator IDs. An ID added after these
+  // stays as it is.
   const COMPANIES = {
-    openai: "OpenAI", anthropic: "Anthropic", google: "Google", microsoft: "Microsoft", perplexity: "Perplexity",
-    meta: "Meta", apple: "Apple", amazon: "Amazon", bytedance: "ByteDance", mistral: "Mistral", xai: "xAI",
-    cohere: "Cohere", duckduckgo: "DuckDuckGo", common_crawl: "Common Crawl", you: "You.com",
+    openai: "OpenAI", anthropic: "Anthropic", google: "Google", microsoft: "Microsoft", apple: "Apple",
+    perplexity: "Perplexity", mistral: "Mistral", commoncrawl: "Common Crawl", duckduckgo: "DuckDuckGo",
+    amazon: "Amazon", keenable: "Keenable", "you.com": "You.com", exa: "Exa", meta: "Meta", ahrefs: "Ahrefs",
   };
   const DASH = "–";
 
@@ -258,7 +259,7 @@ window.TinAnalytics = (() => {
     const totals = report.totals || {};
     const browsers = report.kinds?.automated_browser || {};
     const named = (browsers.named || []).slice(0, 2)
-      .map((item) => `${item.operator} ${count(item.visits)} · ${item.evidence === "signature" ? "signed" : "from its network"}`).join(" · ");
+      .map((item) => `${company(item.operator)} ${count(item.visits)} · ${item.evidence === "signature" ? "signed" : "from its network"}`).join(" · ");
     const tile = (label, value, detail) => `<div class="analytics-tile"><span>${escape(label)}</span><strong>${count(value)}</strong><code>${escape(detail || "")}</code></div>`;
     return `<div class="analytics-tiles">
       ${tile("Visits", totals.visits, change(changes.visits, against))}

@@ -168,6 +168,8 @@ test("page: today so far, each number against the day before, every page request
   today.previous = {...today.previous, start: "2026-10-20", end: "2026-10-20", until: "2026-10-20T08:02:00Z"};
   today.needs_you = [{code: "uncounted_hosts", text: "The script ran on newname.com, which isn't counted: 31 pages in the last 7 days."}];
   today.top_pages.push({path: "/careers", visits: null, page_views: null});
+  // An operator ID added after Tin's list stays as it is.
+  today.kinds.automated_browser.named.push({operator: "newcorp", visits: 1, evidence: "network"});
   const week = fixture("report_week.json");
   Object.assign(week, {complete: false});
   const pages = {today: pageOf("today", today, live), week: pageOf("week", week, live)};
@@ -187,7 +189,7 @@ test("page: today so far, each number against the day before, every page request
       ["Visits", "48", "+17% on tuesday"],
       ["Page views", "91", "1.9 a visit"],
       ["Arrived from AI assistants", "6", "up from 4"],
-      ["Automated browsers", "3", "openai 2 · signed"],
+      ["Automated browsers", "3", "OpenAI 2 · signed · newcorp 1 · from its network"],
     ]);
     assert.equal(await page.locator(".analytics-legend").innerText(), "no automation seen 43\nautomated browsers 3\ndeclared crawlers 2");
     assert.equal(await page.locator(".analytics-bars .analytics-bar").count(), 24);

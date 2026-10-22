@@ -95,9 +95,12 @@ days read a week ending today.
 
 - While no visit has arrived, the page has no tabs: it shows the script line, where it goes, the
   CSP entries and what's counted.
-- Four numbers: visits, page views, visits from AI assistants (each with its change from the
-  period before) and automated browsers, named only where the report's `named` list says so.
-  Declared crawlers stay in the chart's legend.
+- Four numbers. Visits and visits from AI assistants show their change from the period before.
+  Page views shows pages per visit, since its change would mostly repeat the visits'. Automated
+  browsers shows the companies that signed or came from their network, named only where the
+  report's `named` list says so. Declared crawlers stay in the chart's legend.
+- Companies are named from Agent Traffic's fixed list of operator IDs (`COMPANIES` in
+  `analytics.js`); an ID added later shows as the ID until Tin names it.
 - Hour by hour for a day and day by day for a week, by kind of visit; the detector's split sits
   under it, marked provisional. Pages, where visits came from (an AI assistant's site is tagged)
   and regions.
