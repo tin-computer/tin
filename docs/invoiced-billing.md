@@ -12,10 +12,12 @@ such a workspace's wallet as **invoiced**.
   reserved and settled as usual, every charge is posted to the ledger, and the project's per-run,
   monthly and schedule limits still stop runaway spending. Raise those limits on the Billing page
   for a client that needs more.
-- The balance falls below zero as charges settle. That negative balance is what Tin is owed.
-- Checkout is refused, and the Billing page shows what is owed and this month's workspace usage
-  instead of the top-up form. `get_project_spending` returns `funding`, and for the billing
-  admin `owed_usd` and `workspace_spent_this_month_usd`.
+- The balance falls below zero as charges settle. Usage past the credits is still to be
+  invoiced and paid.
+- Checkout is refused. Instead of the top-up form, the Billing page shows **Credits left** while
+  the balance is positive, then **Used** (usage past the credits, not yet paid), with this
+  month's workspace usage. `get_project_spending` returns `funding`, and for the billing admin
+  `credits_left_usd`, `used_usd` and `workspace_spent_this_month_usd`.
 - Welcome credits and any earlier top-ups are spent first, exactly as before.
 
 Funding is a property of the wallet, read when a run starts and at each paid step. It is not
@@ -33,7 +35,7 @@ mark their own workspace. Every change is kept in the append-only `billing_fundi
 tin-lite set-billing-funding --workspace-id <uuid> --funding invoiced \
   --reason "Managed client: Cruvo, invoiced monthly"
 
-# Record an invoice the client paid (idempotent per reference, never more than is owed)
+# Record an invoice the client paid (idempotent per reference, never more than the unpaid usage)
 tin-lite record-invoice-payment --workspace-id <uuid> --amount-usd 412.50 --reference INV-2026-031
 
 # Back to credits

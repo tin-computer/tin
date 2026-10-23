@@ -167,7 +167,7 @@ async def _record_invoice_payment(workspace_id: UUID, amount_usd: str, *, refere
     finally:
         await database.close()
     action = "recorded" if result["recorded"] else "already recorded"
-    print(f"{action} ${amount_usd} for {reference}; still owed: ${result['owed_usd']}")
+    print(f"{action} ${amount_usd} for {reference}; still unpaid: ${result['used_usd']}")
 
 
 async def _rollouts(run_id: UUID, *, out: Path | None, trace: bool, max_output_chars: int) -> None:
