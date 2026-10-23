@@ -69,6 +69,7 @@ from tin_lite.integrations import (
     GSC_PROVIDER,
     LINKEDIN_POSTING_PROVIDER,
     POSTHOG_PROVIDER,
+    SLACK_PROVIDER,
     STRIPE_PROVIDER,
     X_PROVIDER,
     GitHubInstallationChoiceError,
@@ -774,6 +775,8 @@ class RunView(BaseModel):
     progress_updated_at: datetime | None = None
     heartbeat_at: datetime | None = None
     result_summary: str | None = None
+    # The run's summary (run_summaries.py), when its workflow writes one.
+    run_summary: dict | None = None
     prerequisite_evidence: dict | None = None
     content_delivery: dict | None = None
     page_url: dict | None = None
@@ -955,6 +958,9 @@ class ProjectWorkflowView(BaseModel):
     failed_count: int = 0
     typical_duration_seconds: float | None = None
     content_revision: dict | None = None
+    # Where each run's summary is posted, and whether this workflow writes one.
+    summary_destinations: list[dict] = Field(default_factory=list)
+    summary_supported: bool = False
     # A personal workflow's saved copy, and whether it's the viewer's: My system shows a member
     # only their own, and only its saver can change it.
     personal: bool = False
@@ -1575,6 +1581,7 @@ async def authentication_ui(request: Request) -> HTMLResponse:
 @router.get("/integrations/callback/github", response_class=HTMLResponse, include_in_schema=False)
 @router.get("/integrations/callback/posthog", response_class=HTMLResponse, include_in_schema=False)
 @router.get("/integrations/callback/x", response_class=HTMLResponse, include_in_schema=False)
+@router.get("/integrations/callback/slack", response_class=HTMLResponse, include_in_schema=False)
 @router.get("/integrations/callback/linkedin", response_class=HTMLResponse, include_in_schema=False)
 @router.get(
     "/integrations/callback/github-account", response_class=HTMLResponse, include_in_schema=False
@@ -2022,6 +2029,27 @@ async def complete_x_integration(
     return _integration_view(service._definition(X_PROVIDER), connection, configured=True)
 
 
+@router.post("/api/integrations/slack/complete", response_model=IntegrationView)
+async def complete_slack_integration(
+    payload: GoogleIntegrationComplete,
+    request: Request,
+    user: AuthContext = AUTHENTICATED_USER,
+) -> IntegrationView:
+    """Finish adding Tin's Slack app after verifying the member and state."""
+    service = request.app.state.runtime.integrations
+    try:
+        project_id = await service.slack.pending_project(
+            state=payload.state, clerk_user_id=user.clerk_user_id
+        )
+        await _require_project_access(project_id, request, user)
+        connection = await service.slack.complete(
+            state=payload.state, code=payload.code, clerk_user_id=user.clerk_user_id
+        )
+    except IntegrationError as exc:
+        raise _integration_http_error(exc) from None
+    return _integration_view(service._definition(SLACK_PROVIDER), connection, configured=True)
+
+
 @router.post("/api/integrations/linkedin/complete", response_model=IntegrationView)
 async def complete_linkedin_posting_integration(
     payload: LinkedInPostingComplete,
@@ -2185,6 +2213,9 @@ async def list_integration_options(
             options = await service.github_repositories(project_id=project_id)
         elif provider_key == POSTHOG_PROVIDER:
             options = await service.posthog.projects(project_id=project_id)
+        elif provider_key == SLACK_PROVIDER:
+            # The channels a saved workflow may post its summary to.
+            options = await service.slack.channels(project_id)
         elif provider_key == GOOGLE_WORKSPACE_PROVIDER:
             raise IntegrationAuthorizationError(
                 "Google Workspace connects an account and has no selectable property"
@@ -3818,6 +3849,50 @@ async def _require_own(
         and not owns(configured, user.clerk_user_id)
     ):
         raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail=NOT_YOURS)
+
+
+class SummaryDestinationsUpdate(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    slack_channel_ids: list[str] = Field(default_factory=list, max_length=3)
+
+
+@router.put(
+    "/api/projects/{project_id}/workflows/{project_workflow_id}/summary-destinations",
+    response_model=ProjectWorkflowView,
+)
+async def update_summary_destinations(
+    project_id: UUID,
+    project_workflow_id: UUID,
+    payload: SummaryDestinationsUpdate,
+    request: Request,
+    user: AuthContext = AUTHENTICATED_USER,
+) -> ProjectWorkflowView:
+    """Where this saved workflow posts each run's summary: Slack channels, or none."""
+    from tin_lite.summary_posts import DestinationError, set_destinations
+
+    await _require_project_access(project_id, request, user)
+    await _require_own(request, project_id, project_workflow_id, user)
+    runtime = request.app.state.runtime
+    existing = await runtime.database.get_project_workflow(project_workflow_id)
+    if existing is None or existing.project_id != project_id or existing.status == "archived":
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND, detail="project workflow not found"
+        )
+    try:
+        configured = await set_destinations(
+            runtime,
+            configured=existing,
+            slack_channel_ids=payload.slack_channel_ids,
+            clerk_user_id=user.clerk_user_id,
+        )
+    except DestinationError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail=str(exc)
+        ) from None
+    except IntegrationError as exc:
+        raise _integration_http_error(exc) from None
+    return ProjectWorkflowView.model_validate(configured)
 
 
 @router.put(

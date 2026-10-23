@@ -194,8 +194,9 @@ connected, and drafts stay in Tin otherwise.
 Before the systems list, describe the first useful deliverable: its concrete contents, the
 question it answers, an estimated arrival time, and the founder's next decision. Tie the work
 to this business's core action. Promise useful evidence and artifacts, never guaranteed growth.
-Reports arrive in Tin's Files; drafts wait in Decisions. No email or Slack result notifications
-are currently available. A file path alone is not a delivery explanation.
+Reports arrive in Tin's Files; drafts wait in Decisions. No email result notifications are
+available, and nothing goes to Slack unless the founder turns on a summary post for a saved
+workflow. A file path alone is not a delivery explanation.
 
 Then a `## Connections` checklist, one line per provider key in the exact shape of the structure
 below. List every integration Tin supports that this business has, not only what the listed

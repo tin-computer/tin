@@ -27,6 +27,7 @@ from tin_lite.publication import OutputCheckpoint, OutputConflictError, Publicat
 from tin_lite.workflow_code import (
     EXECUTOR,
     code_result_path,
+    code_result_summary,
     load_code_package,
     output_path_allowed,
     validate_code_result,
@@ -228,6 +229,7 @@ class CodeActivities:
                     )
                     content = validate_code_result(raw, spec, created_at=run.created_at)
                     path = code_result_path(raw)
+                    summarized = code_result_summary(raw, spec)
                     if path != spec.output_path:
                         # A named output is chosen by the code; record it before the write so
                         # recovery reads the same file instead of guessing.
@@ -247,6 +249,9 @@ class CodeActivities:
                     )
                 else:
                     stage = "recovering the saved result"
+                    # The summary lived in the sandbox's reply, which is gone; the run keeps
+                    # its result without one.
+                    summarized = None
                     path = ((saved.result or {}) if saved else {}).get(
                         "artifact_path", spec.output_path
                     )
@@ -277,6 +282,7 @@ class CodeActivities:
                         "ephemeral_commit_sha": revision,
                         "sandbox_killed": True,
                         "summary": f"{workflow.title} is ready.",
+                        **({"run_summary": summarized} if summarized else {}),
                     },
                     sandbox_killed=True,
                     sandbox_stage="code_workflow",
@@ -403,6 +409,11 @@ class CodeActivities:
                             "checkpoint": checkpoint.to_dict(),
                             "changed": changed,
                             "summary": persisted.result["summary"],
+                            **(
+                                {"run_summary": persisted.result["run_summary"]}
+                                if persisted.result.get("run_summary")
+                                else {}
+                            ),
                         },
                         artifact_ref=f"code.storage://{project.state_repo_id}@{sha}/{path}",
                     )

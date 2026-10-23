@@ -68,6 +68,8 @@ LINKEDIN_POSTING_PROVIDER = "social.linkedin"
 GITHUB_USER_PROVIDER = "infra.github_user"
 # Visits to the founder's site through Agent Traffic's edge service (agent_traffic_connection.py).
 AGENT_TRAFFIC_PROVIDER = "analytics.agent_traffic"
+# Posting run summaries to the Slack channels a saved workflow names (slack_connection.py).
+SLACK_PROVIDER = "messaging.slack"
 PROVIDER_KEYS = frozenset(
     {
         LINKEDIN_PROVIDER,
@@ -81,6 +83,7 @@ PROVIDER_KEYS = frozenset(
         LINKEDIN_POSTING_PROVIDER,
         GITHUB_USER_PROVIDER,
         AGENT_TRAFFIC_PROVIDER,
+        SLACK_PROVIDER,
     }
 )
 # Read-only Stripe capabilities; each names the Stripe resources its operation reads.
@@ -94,6 +97,8 @@ STRIPE_CAPABILITIES = (
 # Read-only PostHog capabilities for the one project the founder selects.
 POSTHOG_CAPABILITIES = ("query.read", "definitions.read", "insights.read")
 X_CAPABILITIES = ("x.posts.read", "x.posts.publish", "x.media.upload")
+# List the workspace's public channels and post Tin's messages; nothing is read from channels.
+SLACK_CAPABILITIES = ("slack.channels.read", "slack.messages.post")
 LINKEDIN_POSTING_CAPABILITIES = ("linkedin.posts.publish", "linkedin.media.upload")
 # Reads of the project's own site; the site is always the connection's.
 AGENT_TRAFFIC_CAPABILITIES = ("status.read", "reports.read")
@@ -524,6 +529,18 @@ def registered_integrations() -> tuple[IntegrationDefinition, ...]:
             unlocks=("X writing voice", "Approved X posts"),
         ),
         IntegrationDefinition(
+            key=SLACK_PROVIDER,
+            name="Slack",
+            badge="S",
+            description=(
+                "Post a workflow's summary to the public channels you pick when each run "
+                "finishes. Tin never reads messages."
+            ),
+            access_label="Posts only · channels you pick",
+            capabilities=SLACK_CAPABILITIES,
+            unlocks=("Run summaries in Slack",),
+        ),
+        IntegrationDefinition(
             key=LINKEDIN_POSTING_PROVIDER,
             name="LinkedIn posting",
             badge="in",
@@ -752,6 +769,10 @@ class IntegrationService:
             from tin_lite.x_connection import oauth_ready
 
             return self._cipher is not None and oauth_ready(self._settings)
+        if provider_key == SLACK_PROVIDER:
+            from tin_lite.slack_connection import oauth_ready as slack_ready
+
+            return self._cipher is not None and slack_ready(self._settings)
         if provider_key == LINKEDIN_POSTING_PROVIDER:
             from tin_lite.zernio import ready
 
@@ -813,6 +834,12 @@ class IntegrationService:
         from tin_lite.x_connection import XConnection
 
         return XConnection(self)
+
+    @property
+    def slack(self):
+        from tin_lite.slack_connection import SlackConnection
+
+        return SlackConnection(self)
 
     @property
     def linkedin_posting(self):
@@ -1136,6 +1163,15 @@ class IntegrationService:
             return ConnectStart(
                 authorization_url=authorization_url(
                     self._settings, state=state, challenge=challenge
+                )
+            )
+        if provider_key == SLACK_PROVIDER:
+            from tin_lite.slack_connection import CALLBACK as SLACK_CALLBACK
+            from tin_lite.slack_connection import authorization_url as slack_authorization_url
+
+            return ConnectStart(
+                authorization_url=slack_authorization_url(
+                    self._settings, state=state, redirect=self._callback_url(SLACK_CALLBACK)
                 )
             )
         if provider_key == X_PROVIDER:
@@ -4596,6 +4632,12 @@ class IntegrationService:
             )
             if connection is not None:
                 await self.x.revoke(connection)
+        if provider_key == SLACK_PROVIDER:
+            connection = await self._database.get_integration_connection(
+                project_id=project_id, provider_key=provider_key
+            )
+            if connection is not None:
+                await self.slack.revoke(connection)
         if provider_key == LINKEDIN_POSTING_PROVIDER:
             connection = await self._database.get_integration_connection(
                 project_id=project_id, provider_key=provider_key

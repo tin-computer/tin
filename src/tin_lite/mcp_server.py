@@ -537,6 +537,8 @@ def _mcp_project_workflow_view(configured: Any) -> dict[str, Any]:
         "last_run_status": (
             configured.last_run_status.value if configured.last_run_status is not None else None
         ),
+        "summary_supported": bool(getattr(configured, "summary_supported", False)),
+        "summary_destinations": list(getattr(configured, "summary_destinations", ()) or ()),
     }
 
 
@@ -3256,6 +3258,77 @@ def create_mcp_app(
         }
 
     @server.tool()
+    async def list_slack_channels(project_id: str) -> dict[str, Any]:
+        """List the public channels of the project's connected Slack workspace, where a saved
+        workflow can post each run's summary (set_summary_destinations)."""
+        token = await caller()
+        parsed_project_id = _mcp_uuid(project_id, field="project_id")
+        await require_project(parsed_project_id, token, tool_name="list_slack_channels")
+        try:
+            channels = await runtime().integrations.slack.channels(parsed_project_id)
+        except IntegrationError as exc:
+            raise ToolError(str(exc)) from exc
+        return {
+            "channels": [
+                {"id": channel.id, "name": channel.label, "tin_is_member": bool(channel.detail)}
+                for channel in channels
+            ]
+        }
+
+    @server.tool()
+    async def set_summary_destinations(
+        project_id: str, project_workflow_id: str, slack_channel_ids: list[str]
+    ) -> dict[str, Any]:
+        """Choose where a saved workflow posts each run's summary when the run succeeds: up to
+        three public Slack channel IDs from list_slack_channels, or [] to stop posting.
+
+        Only workflows whose saved view says summary_supported write a summary. Later runs only:
+        a run keeps the channels it started with. Slack must be connected in the project.
+        """
+        from tin_lite.summary_posts import DestinationError, set_destinations
+
+        token = await caller()
+        clerk_user_id = token.subject
+        assert clerk_user_id is not None
+        parsed_project_id = _mcp_uuid(project_id, field="project_id")
+        parsed_workflow_id = _mcp_uuid(project_workflow_id, field="project_workflow_id")
+        await require_project(parsed_project_id, token, tool_name="set_summary_destinations")
+        services = runtime()
+        existing = await services.database.get_project_workflow(parsed_workflow_id)
+        if (
+            existing is None
+            or existing.project_id != parsed_project_id
+            or existing.status == "archived"
+        ):
+            raise ToolError(PROJECT_WORKFLOW_NOT_FOUND)
+        if not owns(existing, clerk_user_id):
+            raise ToolError(NOT_YOURS)
+        try:
+            configured = await set_destinations(
+                services,
+                configured=existing,
+                slack_channel_ids=slack_channel_ids,
+                clerk_user_id=clerk_user_id,
+            )
+        except (DestinationError, IntegrationError, LookupError) as exc:
+            raise ToolError(str(exc)) from exc
+        where = ", ".join(
+            f"#{item['channel_name'] or item['channel_id']}"
+            for item in configured.summary_destinations
+        )
+        return {
+            **_mcp_project_workflow_view(configured),
+            **_founder_words(
+                relay=[
+                    f"{configured.name} will post each run's summary to {where} in Slack, "
+                    "starting with its next run."
+                    if where
+                    else f"{configured.name} will no longer post its summary to Slack."
+                ]
+            ),
+        }
+
+    @server.tool()
     async def start_project_workflow(
         project_id: str,
         project_workflow_id: str,
@@ -3587,6 +3660,22 @@ def create_mcp_app(
             "links": _project_links(settings, run.project_id),
             "result_links": result_links(settings, run) + review_links,
             "delivery_destination": delivery_destination(settings, run.project_id),
+            **(
+                {
+                    "run_summary": run.run_summary,
+                    "summary_posts": [
+                        {
+                            "channel_id": post["channel_id"],
+                            "channel_name": post["channel_name"],
+                            "status": post["status"],
+                            "error": post["error_message"],
+                        }
+                        for post in await runtime().database.list_summary_posts(run.id)
+                    ],
+                }
+                if getattr(run, "run_summary", None)
+                else {}
+            ),
             **await _founder_words_for_run(run, review_summary),
             **(
                 await onboarding_experience(

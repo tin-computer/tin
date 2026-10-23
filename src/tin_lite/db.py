@@ -18,7 +18,7 @@ from zoneinfo import ZoneInfo
 
 import asyncpg
 
-from tin_lite import ads_currency, analytics
+from tin_lite import ads_currency, analytics, run_summaries
 from tin_lite.domain import (
     PROJECT_TASK_WORKFLOW_NAME,
     ActivityEvent,
@@ -184,6 +184,14 @@ def revision_wait_seconds(pending_for: timedelta) -> int:
 # rows that reference the project; admission holds the project and then locks that account.
 # With FOR UPDATE here the two waited on each other and Postgres aborted one, usually the
 # founder's run start.
+# Whether runs of a saved workflow's definition produce a summary (run_summaries.supported).
+SUMMARY_SUPPORTED_SQL = (
+    "(COALESCE(workflows.definition -> 'procedure' -> 'output' ->> 'validator', '') IN ("
+    + ", ".join(f"'{key}'" for key in sorted(run_summaries.SOURCES))
+    + ") OR COALESCE(workflows.definition -> 'code' -> 'output' -> 'summary' = 'true'::jsonb,"
+    " false))"
+)
+
 PROJECT_ADMISSION_LOCK = (
     "SELECT true FROM projects WHERE id = $1 AND deleted_at IS NULL FOR NO KEY UPDATE"
 )
@@ -1812,11 +1820,12 @@ class Database:
 
     async def list_project_workflows(self, *, project_id: UUID) -> list[ProjectWorkflow]:
         rows = await self.pool.fetch(
-            """
+            f"""
             SELECT configured.*, workflows.key AS workflow_key,
                    workflows.title AS workflow_title,
                    workflows.description AS workflow_description,
                    (workflows.definition -> 'presentation') IS NOT NULL AS workflow_drawn,
+                   {SUMMARY_SUPPORTED_SQL} AS summary_supported,
                    workflows.version_label,
                    latest.id AS last_run_id,
                    latest.status AS last_run_status,
@@ -1858,7 +1867,7 @@ class Database:
             ) AS stats ON true
             WHERE configured.project_id = $1 AND configured.status <> 'archived'
             ORDER BY configured.created_at DESC, configured.id DESC
-            """,
+            """,  # noqa: S608 — static SQL predicate, no caller text
             project_id,
         )
         return [_project_workflow(row) for row in rows]
@@ -1867,11 +1876,12 @@ class Database:
         self, project_workflow_id: UUID, *, include_archived: bool = False
     ) -> ProjectWorkflow | None:
         row = await self.pool.fetchrow(
-            """
+            f"""
             SELECT configured.*, workflows.key AS workflow_key,
                    workflows.title AS workflow_title,
                    workflows.description AS workflow_description,
                    (workflows.definition -> 'presentation') IS NOT NULL AS workflow_drawn,
+                   {SUMMARY_SUPPORTED_SQL} AS summary_supported,
                    workflows.version_label,
                    latest.id AS last_run_id,
                    latest.status AS last_run_status,
@@ -1912,7 +1922,7 @@ class Database:
                 WHERE project_workflow_id = configured.id
             ) AS stats ON true
             WHERE configured.id = $1 AND (configured.status <> 'archived' OR $2)
-            """,
+            """,  # noqa: S608 — static SQL predicate, no caller text
             project_workflow_id,
             include_archived,
         )
@@ -2164,11 +2174,12 @@ class Database:
                 created_by_clerk_user_id,
             )
             row = await conn.fetchrow(
-                """
+                f"""
                 SELECT configured.*, workflows.key AS workflow_key,
                        workflows.title AS workflow_title,
                        workflows.description AS workflow_description,
                        (workflows.definition -> 'presentation') IS NOT NULL AS workflow_drawn,
+                       {SUMMARY_SUPPORTED_SQL} AS summary_supported,
                        workflows.version_label,
                        NULL::uuid AS last_run_id,
                        NULL::text AS last_run_status,
@@ -2176,7 +2187,7 @@ class Database:
                 FROM project_workflows AS configured
                 JOIN workflows ON workflows.id = configured.workflow_id
                 WHERE configured.project_id = $1 AND configured.request_id = $2
-                """,
+                """,  # noqa: S608 — static SQL predicate, no caller text
                 project_id,
                 request_id,
             )
@@ -2968,12 +2979,19 @@ class Database:
                     review_required, started_by_clerk_user_id, start_idempotency_key,
                     input, task_title, task_phase, project_workflow_id, trigger_source,
                     scheduled_for, trigger_client, started_by_oauth_client_id, retry_of_run_id,
-                    prerequisite_evidence
+                    prerequisite_evidence, summary_destinations
                 )
                 VALUES (
                     $1, $2, $3, $4, $5, $6, $7, $8, $9, 'pending', $10, $11, $12,
                     $13::jsonb, $14, CASE WHEN $4 = 'project.task' THEN 'preparing' END,
-                    $15, $16, $17, $18, $19, $20, $21::jsonb
+                    $15, $16, $17, $18, $19, $20, $21::jsonb,
+                    -- Where the summary goes is pinned like the inputs: a later change to the
+                    -- saved workflow affects later runs only.
+                    COALESCE(
+                        (SELECT summary_destinations FROM project_workflows
+                         WHERE id = $15 AND project_id = $2),
+                        '[]'::jsonb
+                    )
                 )
                 RETURNING *
                 """,
@@ -7701,7 +7719,7 @@ class Database:
                 """
                 UPDATE workflow_runs
                 SET canonical_commit_sha = $2, artifact_path = $3, artifact_ref = $4,
-                    retained_output = NULL
+                    retained_output = NULL, run_summary = COALESCE($5::jsonb, run_summary)
                 WHERE id = $1 AND executor IN ('codex.procedure', 'workflow.code')
                   AND (canonical_commit_sha IS NULL OR canonical_commit_sha = $2)
                 RETURNING id
@@ -7710,6 +7728,7 @@ class Database:
                 result["canonical_commit_sha"],
                 result["artifact_path"],
                 artifact_ref,
+                json.dumps(result["run_summary"]) if result.get("run_summary") else None,
             )
             if projected is None:
                 raise SideEffectConflictError("publication conflicts with the run's saved output")
@@ -7794,6 +7813,7 @@ class Database:
             )
             if projected is None:
                 raise RuntimeError("run cannot complete before review or after terminal failure")
+            await self.enqueue_summary_posts(conn, run_id)
             await conn.execute(
                 """
                 UPDATE project_test_identities
@@ -7820,6 +7840,207 @@ class Database:
                 dedupe_key=f"{execution_key}:procedure_ready",
             )
             await self.complete_effect(conn, execution_key=execution_key, result=details)
+
+    async def set_summary_destinations(
+        self,
+        *,
+        project_workflow_id: UUID,
+        project_id: UUID,
+        destinations: list[dict[str, Any]],
+        clerk_user_id: str,
+    ) -> ProjectWorkflow:
+        """Where this saved workflow's run summaries are posted; later runs only."""
+        async with self.pool.acquire() as conn, conn.transaction():
+            row = await conn.fetchrow(
+                """
+                UPDATE project_workflows SET summary_destinations = $3::jsonb, updated_at = now()
+                WHERE id = $1 AND project_id = $2 AND status <> 'archived'
+                RETURNING name, summary_destinations
+                """,
+                project_workflow_id,
+                project_id,
+                json.dumps(destinations),
+            )
+            if row is None:
+                raise LookupError("project workflow not found")
+            where = ", ".join(f"#{d['channel_name'] or d['channel_id']}" for d in destinations)
+            await conn.execute(
+                """
+                INSERT INTO activity_events (
+                    project_id, run_id, event_type, details, summary, audience, dedupe_key
+                )
+                VALUES ($1, NULL, 'workflow_settings_updated', $2::jsonb, $3, 'product', $4)
+                """,
+                project_id,
+                json.dumps(
+                    {
+                        "kind": "your_edits",
+                        "actor_clerk_user_id": clerk_user_id,
+                        "project_workflow_id": str(project_workflow_id),
+                        "changed_fields": ["summary destinations"],
+                    }
+                ),
+                (
+                    f"{row['name']} posts its summary to {where} in Slack."
+                    if destinations
+                    else f"{row['name']} no longer posts its summary to Slack."
+                )[:1000],
+                f"project-workflow:{project_workflow_id}:summary:{uuid4()}",
+            )
+        configured = await self.get_project_workflow(project_workflow_id)
+        assert configured is not None
+        return configured
+
+    async def enqueue_summary_posts(self, conn: asyncpg.Connection, run_id: UUID) -> None:
+        """One pending post per pinned destination, in the transaction that succeeds the run."""
+        await conn.execute(
+            """
+            INSERT INTO run_summary_posts (run_id, project_id, provider_key, channel_id,
+                                           channel_name)
+            SELECT run.id, run.project_id, destination->>'provider_key',
+                   destination->>'channel_id', left(COALESCE(destination->>'channel_name', ''), 100)
+            FROM workflow_runs AS run,
+                 jsonb_array_elements(run.summary_destinations) AS destination
+            WHERE run.id = $1 AND run.status = 'succeeded' AND run.run_summary IS NOT NULL
+              AND destination->>'provider_key' = 'messaging.slack'
+              AND destination->>'channel_id' ~ '^[A-Z0-9]{1,32}$'
+            ON CONFLICT (run_id, provider_key, channel_id) DO NOTHING
+            """,
+            run_id,
+        )
+
+    async def claim_summary_posts(self, *, limit: int = 10) -> list[dict[str, Any]]:
+        """Due posts, marked `sending` and committed before anything is sent: a post claimed
+        here is never claimed again, so a crash mid-send leaves it for recover, not a resend."""
+        rows = await self.pool.fetch(
+            """
+            WITH due AS (
+                SELECT id FROM run_summary_posts
+                WHERE status = 'pending' AND next_attempt_at <= now()
+                ORDER BY next_attempt_at
+                LIMIT $1
+                FOR UPDATE SKIP LOCKED
+            ), claimed AS (
+                UPDATE run_summary_posts AS post
+                SET status = 'sending', attempts = attempts + 1, claimed_at = now(),
+                    updated_at = now()
+                FROM due WHERE post.id = due.id
+                RETURNING post.*
+            )
+            SELECT claimed.*, run.run_summary, run.artifact_path, run.artifact_title,
+                   run.status AS run_status, projects.name AS project_name,
+                   workflows.title AS workflow_title, configured.name AS configured_name
+            FROM claimed
+            JOIN workflow_runs AS run ON run.id = claimed.run_id
+            JOIN projects ON projects.id = claimed.project_id
+            JOIN workflows ON workflows.id = run.workflow_id
+            LEFT JOIN project_workflows AS configured ON configured.id = run.project_workflow_id
+            """,
+            limit,
+        )
+        return [
+            {
+                **dict(row),
+                "run_summary": (
+                    _json_object(row["run_summary"], field="run summary")
+                    if row["run_summary"] is not None
+                    else None
+                ),
+            }
+            for row in rows
+        ]
+
+    async def finish_summary_post(
+        self,
+        *,
+        post_id: UUID,
+        status: str,
+        message_ts: str | None = None,
+        error_code: str | None = None,
+        error_message: str | None = None,
+        retry_after_seconds: int | None = None,
+    ) -> None:
+        """Settle a claimed post: sent, failed, unknown, or pending again after a rate limit
+        (Slack posts nothing on a 429). Sent and failed posts say so in Activity."""
+        if status not in {"sent", "failed", "unknown", "pending"}:
+            raise ValueError("unsupported summary post status")
+        async with self.pool.acquire() as conn, conn.transaction():
+            row = await conn.fetchrow(
+                """
+                UPDATE run_summary_posts
+                SET status = $2, message_ts = $3, error_code = $4, error_message = $5,
+                    next_attempt_at = now() + make_interval(secs => COALESCE($6, 0)),
+                    sent_at = CASE WHEN $2 = 'sent' THEN now() END, updated_at = now()
+                WHERE id = $1 AND status = 'sending'
+                RETURNING run_id, channel_id, channel_name
+                """,
+                post_id,
+                status,
+                message_ts,
+                error_code[:64] if error_code else None,
+                error_message[:300] if error_message else None,
+                retry_after_seconds,
+            )
+            if row is None or status == "pending":
+                return
+            channel = f"#{row['channel_name'] or row['channel_id']}"
+            await self.add_activity(
+                conn=conn,
+                run_id=row["run_id"],
+                event_type="run_summary_posted" if status == "sent" else "run_summary_not_posted",
+                details={
+                    "kind": "runs",
+                    "provider_key": "messaging.slack",
+                    "channel_id": row["channel_id"],
+                    "channel_name": row["channel_name"],
+                    # Activity shows anything but a confirmed post as not done.
+                    "status": "sent" if status == "sent" else "failed",
+                    "outcome": status,
+                    "error_code": error_code,
+                },
+                summary=(
+                    f"Summary posted to {channel} in Slack."
+                    if status == "sent"
+                    else f"Summary not posted to {channel} in Slack: {error_message}"
+                    if error_message
+                    else f"Summary not posted to {channel} in Slack."
+                )[:1000],
+                audience="product",
+                dedupe_key=f"{post_id}:summary_post",
+            )
+
+    async def recover_summary_posts(self, *, older_than_seconds: int = 600) -> list[UUID]:
+        """Posts left `sending` by a crash: Slack may have shown them, so they are never sent
+        again; they become `unknown`."""
+        rows = await self.pool.fetch(
+            """
+            SELECT id FROM run_summary_posts
+            WHERE status = 'sending' AND claimed_at < now() - make_interval(secs => $1)
+            LIMIT 50
+            """,
+            older_than_seconds,
+        )
+        for row in rows:
+            await self.finish_summary_post(
+                post_id=row["id"],
+                status="unknown",
+                error_code="outcome_unknown",
+                error_message=(
+                    "Tin stopped while posting, so the summary may or may not be in the channel."
+                ),
+            )
+        return [row["id"] for row in rows]
+
+    async def list_summary_posts(self, run_id: UUID) -> list[dict[str, Any]]:
+        rows = await self.pool.fetch(
+            """
+            SELECT provider_key, channel_id, channel_name, status, message_ts, error_code,
+                   error_message, sent_at
+            FROM run_summary_posts WHERE run_id = $1 ORDER BY created_at, channel_id
+            """,
+            run_id,
+        )
+        return [dict(row) for row in rows]
 
     async def complete_visibility_projection(
         self,
@@ -8693,6 +8914,16 @@ def _project_workflow(row: asyncpg.Record) -> ProjectWorkflow:
             if row.get("content_revision") is not None
             else None
         ),
+        summary_destinations=_destinations(row.get("summary_destinations")),
+        summary_supported=bool(row.get("summary_supported")),
+    )
+
+
+def _destinations(value: Any) -> tuple[dict[str, Any], ...]:
+    if value is None:
+        return ()
+    return tuple(
+        item for item in _json_list(value, field="summary destinations") if isinstance(item, dict)
     )
 
 
@@ -8763,6 +8994,12 @@ def _run(row: asyncpg.Record) -> WorkflowRun:
             if row.get("output_resolution") is not None
             else None
         ),
+        run_summary=(
+            _json_object(row["run_summary"], field="run summary")
+            if row.get("run_summary") is not None
+            else None
+        ),
+        summary_destinations=_destinations(row.get("summary_destinations")),
         error_message=row["error_message"],
         error_kind=row.get("error_kind"),
         error_action=row.get("error_action"),

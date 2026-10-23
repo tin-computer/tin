@@ -2150,6 +2150,7 @@ function bindWorkflowResultControls(root) {
     bindTinControls(form);
     bindWorkflowFieldValidation(form);
     form.querySelector("[name=schedule_mode]")?.addEventListener("change", () => syncScheduleMode(form));
+    form.querySelectorAll("[data-slack-channels]").forEach((holder) => loadSlackChannels(holder));
   });
   bindXWorkflowFields(root);
   root.querySelectorAll(".workflow-ledger-form").forEach((form) => {
@@ -3051,6 +3052,7 @@ function systemProjectWorkflowEditor(workflow, configured, run = null) {
       <section class="system-config-when">
         ${isXAuthoring(workflow) ? xWorkflowRunControls(workflow) : `${workflowScheduleControls(configured.id, configured.schedule, false, workflow.definition?.executor === "workflow.code" ? ["on_demand", "daily", "weekly", "monthly"] : workflow.definition?.schedule_modes)}<p>${escapeHtml(systemConfigurationFact(configured))}</p>`}
       </section>
+      ${summaryDestinationSection(configured)}
     </div>
     <footer class="system-config-footer">
       <button class="button" type="submit">Save changes</button>
@@ -3061,6 +3063,55 @@ function systemProjectWorkflowEditor(workflow, configured, run = null) {
     </footer>
     ${isRunning ? systemProgressBar(run) : ""}
   </form>`;
+}
+
+// Where a saved workflow posts each run's summary (run_summaries.py). One Slack channel here;
+// the API and MCP take up to three.
+function summaryDestinationSection(configured) {
+  if (!configured.summary_supported) return "";
+  const slack = state.integrations.find((item) => item.key === "messaging.slack");
+  if (!slack?.configured) return "";
+  const saved = (configured.summary_destinations || [])[0];
+  if (slack.status !== "connected") {
+    return `<section class="system-config-summary"><p class="system-config-note">${saved ? `Posts each run's summary to #${escapeHtml(saved.channel_name || saved.channel_id)}, but Slack needs reconnecting.` : "Post each run's summary to a Slack channel."} <button class="button-quiet" type="button" data-open-integrations>Connect Slack →</button></p></section>`;
+  }
+  const options = [["", "Don't post"], ...(saved ? [[saved.channel_id, `#${saved.channel_name || saved.channel_id}`]] : [])];
+  return `<section class="system-config-summary">
+    <div class="system-setting"><strong>Post the summary to Slack</strong>
+      <div data-slack-channels data-saved="${escapeHtml(saved?.channel_id || "")}">${tinSelectControl("summary_slack_channel", saved?.channel_id || "", options, "Slack channel for the summary")}</div>
+    </div>
+    <p class="system-config-note">When a run finishes, its summary goes to this channel in ${escapeHtml(slack.external_account_label || "your Slack workspace")}. Later runs only.</p>
+  </section>`;
+}
+
+async function loadSlackChannels(holder) {
+  const context = currentProjectContext();
+  if (!state.slackChannels || state.slackChannels.projectId !== context.projectId) {
+    try {
+      const channels = await api(`/api/projects/${encodeURIComponent(context.projectId)}/integrations/messaging.slack/options`);
+      state.slackChannels = { projectId: context.projectId, channels };
+    } catch (error) {
+      holder.insertAdjacentHTML("afterend", `<span class="system-config-note">Could not list Slack channels: ${escapeHtml(error.message)}</span>`);
+      return;
+    }
+  }
+  if (!isCurrentProjectContext(context) || !holder.isConnected) return;
+  const saved = holder.dataset.saved;
+  const chosen = holder.querySelector("[name=summary_slack_channel]")?.value || "";
+  const options = [["", "Don't post"], ...state.slackChannels.channels.map((channel) => [channel.id, channel.label])];
+  if (saved && !options.some(([id]) => id === saved)) options.push([saved, `#${saved} (no longer listed)`]);
+  holder.innerHTML = tinSelectControl("summary_slack_channel", chosen, options, "Slack channel for the summary");
+  bindTinControls(holder);
+}
+
+async function saveSummaryDestination(form, configured, projectId) {
+  const holder = form.querySelector("[data-slack-channels]");
+  const chosen = holder?.querySelector("[name=summary_slack_channel]")?.value || "";
+  if (!holder || chosen === (holder.dataset.saved || "")) return null;
+  return api(
+    `/api/projects/${encodeURIComponent(projectId)}/workflows/${encodeURIComponent(configured.id)}/summary-destinations`,
+    { method: "PUT", body: JSON.stringify({ slack_channel_ids: chosen ? [chosen] : [] }) },
+  );
 }
 
 function systemContentProgramEditor(workflow, configured, run) {
@@ -4717,7 +4768,7 @@ async function saveSystemWorkflowSettings(event) {
   const context = currentProjectContext();
   try {
     if (configured.workflow_key === "content.generate") window.TinContentDraft.prepare(form, {forRun: false});
-    const saved = await api(
+    let saved = await api(
       `/api/projects/${encodeURIComponent(context.projectId)}/workflows/${encodeURIComponent(configured.id)}`,
       {
         method: "PUT",
@@ -4729,6 +4780,7 @@ async function saveSystemWorkflowSettings(event) {
         }),
       },
     );
+    saved = (await saveSummaryDestination(form, configured, context.projectId)) || saved;
     if (!isCurrentProjectContext(context)) return;
     upsertProjectWorkflow(saved);
     state.workflowEditor = null;
@@ -6865,6 +6917,7 @@ function renderIntegrationCard(integration) {
     "ads.google": "/assets/integrations/google-ads.svg",
     "payments.stripe": "/assets/integrations/stripe.svg",
     "analytics.posthog": "/assets/integrations/posthog.svg",
+    "messaging.slack": "/assets/integrations/slack.svg",
   };
   const logo = logoPaths[integration.key]
     ? `<img src="${logoPaths[integration.key]}" alt="" />`
@@ -8398,7 +8451,7 @@ async function bootstrap(invitedProjectId = null, integrationReturn = null) {
 
 async function completeIntegrationCallback() {
   const path = window.location.pathname.replace(/\/$/, "");
-  if (!["/integrations/callback/google", "/integrations/callback/github", "/integrations/callback/posthog", "/integrations/callback/github-account", "/integrations/callback/x", "/integrations/callback/linkedin"].includes(path)) return null;
+  if (!["/integrations/callback/google", "/integrations/callback/github", "/integrations/callback/posthog", "/integrations/callback/github-account", "/integrations/callback/x", "/integrations/callback/linkedin", "/integrations/callback/slack"].includes(path)) return null;
   const values = new URL(window.location.href).searchParams;
   const provider = path.split("/").pop();
   const stateToken = values.get("state");
@@ -8412,10 +8465,10 @@ async function completeIntegrationCallback() {
       body: JSON.stringify({ state: stateToken }),
     });
     showToast(`${connected.name} connected.`);
-  } else if (provider === "google" || provider === "posthog" || provider === "github-account" || provider === "x") {
+  } else if (provider === "google" || provider === "posthog" || provider === "github-account" || provider === "x" || provider === "slack") {
     if (!stateToken) throw new Error("The integration connection did not return a valid state.");
     const code = values.get("code");
-    const label = { google: "Google", posthog: "PostHog", "github-account": "GitHub account", x: "X" }[provider];
+    const label = { google: "Google", posthog: "PostHog", "github-account": "GitHub account", x: "X", slack: "Slack" }[provider];
     if (!code) throw new Error(values.get("error_description") || `${label} connection was cancelled.`);
     connected = await api(`/api/integrations/${provider}/complete`, {
       method: "POST",

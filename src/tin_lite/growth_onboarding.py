@@ -900,7 +900,8 @@ def founder_words(setup: dict[str, Any], *, titles: dict[str, str]) -> dict[str,
     )
     relay.append(
         f"Reports arrive in Files ({links['files']}). Open Tin to check results; "
-        "email and Slack result notifications are not available."
+        "Tin sends no email notifications, and nothing goes to Slack unless you turn on a "
+        "summary post for a saved workflow."
     )
     relay += [str(line) for line in setup.get("spending_warnings") or []]
     for a in not_running:

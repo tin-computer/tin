@@ -33,6 +33,7 @@ from tin_lite.integrations import (
     AGENT_TRAFFIC_PROVIDER,
     LINKEDIN_POSTING_PROVIDER,
     LINKEDIN_PROVIDER,
+    SLACK_PROVIDER,
     connection_readiness,
     parse_integration_requirements,
     registered_integrations,
@@ -66,8 +67,15 @@ def tin_state(
     integrations = [
         {"provider_key": item.key, "name": item.name, "connected": item.key in connected}
         for item in registered_integrations()
-        # These connections belong to separately enabled projects, not the starter plan.
-        if item.key not in {LINKEDIN_PROVIDER, LINKEDIN_POSTING_PROVIDER, AGENT_TRAFFIC_PROVIDER}
+        # These connections belong to separately enabled projects, not the starter plan;
+        # Slack only delivers summaries, so no plan waits on it.
+        if item.key
+        not in {
+            LINKEDIN_PROVIDER,
+            LINKEDIN_POSTING_PROVIDER,
+            AGENT_TRAFFIC_PROVIDER,
+            SLACK_PROVIDER,
+        }
     ]
     rows: list[dict[str, Any]] = []
     ordered = sorted(

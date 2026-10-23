@@ -56,14 +56,22 @@ _PLAN_SYSTEM_SHAPE = Draft202012Validator(
 
 
 def delivery_destination(settings: Any, project_id: UUID) -> dict[str, Any]:
+    from tin_lite.slack_connection import oauth_ready
+
     links = ui_links(dashboard_url(settings), project_id)
+    slack = bool(getattr(settings, "integration_credential_key", None) and oauth_ready(settings))
     return {
         "channel": "tin",
-        "supported_channels": ["tin"],
+        "supported_channels": ["tin", "slack"] if slack else ["tin"],
         "notifications_enabled": False,
         "description": (
             "Open Tin to receive reports in Files and review drafts in Decisions. "
-            "Email and Slack notifications are not available for these results."
+            + (
+                "A saved workflow that writes a summary can also post it to Slack channels "
+                "you choose once Slack is connected; email notifications are not available."
+                if slack
+                else "Email and Slack notifications are not available for these results."
+            )
         ),
         "reports_url": links["files"],
         "review_url": links["decisions"],

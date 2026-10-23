@@ -53,8 +53,10 @@ The definition selects `executor: workflow.code` and a `code` object with:
   model call's wait);
 - `output`: one `project.artifact` with a safe path, media type, and `max_bytes` ≤ 1,000,000. The file
   name may carry `{date}` and `{slug}` once each, so repeated runs keep separate, readable files.
+  `"summary": true` lets the result also carry a [run summary](run-summaries.md).
 
-`run` may be synchronous or asynchronous and returns exactly `{ "path": "…", "content": "…" }`.
+`run` may be synchronous or asynchronous and returns exactly `{ "path": "…", "content": "…" }`,
+plus `"summary"` when `output.summary` is declared.
 The path must match the contract: `{date}` is the run's creation date (`ctx["created_at"][:10]`,
 UTC) and `{slug}` is lowercase letters, digits and single hyphens, at most 80 characters, chosen by
 the code. Tin records a named path before writing the checkpoint, so recovery after worker loss

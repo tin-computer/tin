@@ -230,7 +230,8 @@ memory, and product Activity into a dated Markdown report under `reports/weekly/
 to be configured from the Registry and scheduled—for example, every Tuesday at 09:00 in the
 project member's timezone. Its first delivery surface is the normal in-product Activity feed and
 Markdown reader. Email, Slack, and other delivery providers remain separate integrations so a
-notification failure cannot invalidate a successfully created report.
+notification failure cannot invalidate a successfully created report; see
+[run summaries](run-summaries.md) for how Slack posts follow a succeeded run.
 Run artifacts that are not UTF-8 text or contain NUL bytes contribute their run status,
 summary and artifact reference instead of their bytes. Text artifacts still contribute their
 contents; a storage read failure remains an error. A usable model summary without a
