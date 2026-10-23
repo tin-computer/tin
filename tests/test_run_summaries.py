@@ -31,6 +31,7 @@ from tin_lite.integrations import (
     IntegrationDeliveryUnknownError,
     IntegrationRateLimitedError,
     IntegrationService,
+    IntegrationUpstreamError,
 )
 from tin_lite.workflow_code import (
     code_result_summary,
@@ -154,6 +155,22 @@ def test_the_slack_message_escapes_text_and_aligns_the_table():
     assert "<https://us.posthog.com/project/1/replay/01a1|Replay>" in section["text"]["text"]
     assert "Open the full result in Tin" in context["elements"][0]["text"]
     assert message["text"].startswith("Daily visitor journeys · Claw: Yesterday")
+    wide = run_summaries.parse(
+        {
+            "headline": "h",
+            "table": {"columns": ["`x`", *"abcde"], "rows": [["&" * 60] * 6] * 10},
+            "sections": [{"heading": "S", "items": [{"text": "&" * 300}] * 8}],
+        }
+    )
+    for block in slack_connection.message(wide, title="T", link=None)["blocks"][1:]:
+        text = block["text"]["text"]
+        assert len(text) <= 3000 and "&am" not in text.replace("&amp;", "")
+    table = slack_connection.message(wide, title="T", link=None)["blocks"][2]["text"]["text"]
+    assert table.startswith("```'x'") and table.endswith("```")
+    ping = slack_connection.message(
+        {**run_summaries.parse(SUMMARY), "headline": "<!channel> hi"}, title="T", link=None
+    )
+    assert "<!channel>" not in json.dumps(ping) and "&lt;!channel&gt; hi" in ping["text"]
 
 
 class Slack:
@@ -165,6 +182,7 @@ class Slack:
         self.post_status = 200
         self.revoked = False
         self.scope = "channels:read,chat:write,chat:write.public"
+        self.unreachable = False
 
     @staticmethod
     def reply(status, body, headers=None):
@@ -215,6 +233,8 @@ class Slack:
                 },
             )
         if method == "chat.postMessage":
+            if self.unreachable:
+                raise httpx.ConnectError("refused", request=request)
             body = json.loads(request.content)
             assert body["unfurl_links"] is False and body["blocks"]
             if self.post_status == 429:
@@ -279,6 +299,20 @@ async def test_slack_connects_lists_channels_posts_and_disconnects(publication_d
         wire.post_status = 502
         with pytest.raises(IntegrationDeliveryUnknownError):
             await post(project.id, channel_id="C1", **body)
+        wire.post_status, wire.post = 200, {"ok": False, "error": "internal_error"}
+        with pytest.raises(IntegrationDeliveryUnknownError):  # it may have posted
+            await post(project.id, channel_id="C1", **body)
+        wire.post = {"ok": False, "error": "no_permission"}
+        with pytest.raises(IntegrationDeliveryRefusedError):  # one channel, not the connection
+            await post(project.id, channel_id="C1", **body)
+        assert (
+            await db.get_integration_connection(project_id=project.id, provider_key=SLACK_PROVIDER)
+        ).status == "connected"
+        wire.unreachable = True
+        with pytest.raises(IntegrationUpstreamError) as unreachable:
+            await post(project.id, channel_id="C1", **body)
+        assert not isinstance(unreachable.value, IntegrationDeliveryUnknownError)
+        wire.unreachable = False
         wire.post_status, wire.post = 200, {"ok": False, "error": "token_revoked"}
         with pytest.raises(IntegrationAuthorizationError):
             await post(project.id, channel_id="C1", **body)
@@ -466,6 +500,7 @@ async def test_a_post_with_an_unknown_outcome_is_never_sent_again(publication_db
     ("error", "status", "code"),
     [
         (IntegrationRateLimitedError("wait", retry_after=30), "pending", "rate_limited"),
+        (IntegrationUpstreamError("Slack could not be reached"), "pending", "unreachable"),
         (
             IntegrationDeliveryRefusedError("Slack refused the post", status=200),
             "failed",

@@ -41,7 +41,8 @@ CAPABILITY_SCOPES = {
     "slack.messages.post": {"chat:write", "chat:write.public"},
 }
 MAX_BYTES = 512_000
-MAX_CHANNEL_PAGES = 5
+MAX_CHANNEL_PAGES = 10
+BLOCK_TEXT = 3000
 CHANNEL = re.compile(r"^[A-Z0-9]{1,32}$")
 TEAM = re.compile(r"^[A-Z0-9]{1,32}$")
 TS = re.compile(r"^[0-9]{1,12}\.[0-9]{1,8}$")
@@ -53,9 +54,7 @@ REAUTHORIZE = frozenset(
         "account_inactive",
         "token_revoked",
         "token_expired",
-        "no_permission",
         "missing_scope",
-        "team_access_not_granted",
         "app_uninstalled",
     }
 )
@@ -76,6 +75,8 @@ REFUSED = {
     "too_many_attachments": "Slack could not read the message",
     "no_text": "the message was empty",
     "duplicate_message_not_found": "Slack could not read the message",
+    "no_permission": "Tin's app may not post in that channel",
+    "team_access_not_granted": "Tin's app may not post in that channel",
 }
 
 
@@ -106,6 +107,17 @@ def _cut(text: str, limit: int) -> str:
     return text if len(text) <= limit else text[: limit - 1] + "…"
 
 
+def _fit(lines: list[str], *, head: str, tail: str) -> str:
+    """Whole lines that fit in one block's text; never a line cut in the middle of its markup.
+    Empty when not even the first line fits."""
+    kept: list[str] = []
+    for line in lines:
+        if len(head) + len("\n".join([*kept, line])) + len(tail) > BLOCK_TEXT:
+            break
+        kept.append(line)
+    return head + "\n".join(kept) + tail if kept else ""
+
+
 def message(summary: dict[str, Any], *, title: str, link: str | None) -> dict[str, Any]:
     """A run summary (run_summaries.parse) as Slack's `text` and Block Kit `blocks`."""
     blocks: list[dict[str, Any]] = [
@@ -114,24 +126,23 @@ def message(summary: dict[str, Any], *, title: str, link: str | None) -> dict[st
     ]
     table = summary.get("table")
     if table:
-        rows = [table["columns"], *table["rows"]]
+        # Backticks in a cell would close the code block early.
+        rows = [
+            [cell.replace("`", "'") for cell in row] for row in [table["columns"], *table["rows"]]
+        ]
         widths = [max(len(row[i]) for row in rows) for i in range(len(table["columns"]))]
         lines = [
-            "  ".join(
-                cell.ljust(widths[i]) if i == 0 else cell.rjust(widths[i])
-                for i, cell in enumerate(row)
-            ).rstrip()
+            _escape(
+                "  ".join(
+                    cell.ljust(widths[i]) if i == 0 else cell.rjust(widths[i])
+                    for i, cell in enumerate(row)
+                ).rstrip()
+            )
             for row in rows
         ]
-        blocks.append(
-            {
-                "type": "section",
-                "text": {
-                    "type": "mrkdwn",
-                    "text": _cut("```" + _escape("\n".join(lines)) + "```", 3000),
-                },
-            }
-        )
+        text = _fit(lines, head="```", tail="```")
+        if text:
+            blocks.append({"type": "section", "text": {"type": "mrkdwn", "text": text}})
     for section in summary.get("sections") or []:
         items = [
             "• "
@@ -139,15 +150,9 @@ def message(summary: dict[str, Any], *, title: str, link: str | None) -> dict[st
             + (f" <{item['url']}|{_escape(item['label'])}>" if item.get("url") else "")
             for item in section["items"]
         ]
-        blocks.append(
-            {
-                "type": "section",
-                "text": {
-                    "type": "mrkdwn",
-                    "text": _cut(f"*{_escape(section['heading'])}*\n" + "\n".join(items), 3000),
-                },
-            }
-        )
+        text = _fit(items, head=f"*{_escape(section['heading'])}*\n", tail="")
+        if text:
+            blocks.append({"type": "section", "text": {"type": "mrkdwn", "text": text}})
     if link:
         blocks.append(
             {
@@ -155,7 +160,9 @@ def message(summary: dict[str, Any], *, title: str, link: str | None) -> dict[st
                 "elements": [{"type": "mrkdwn", "text": f"<{link}|Open the full result in Tin>"}],
             }
         )
-    return {"text": _cut(f"{title}: {summary['headline']}", 3000), "blocks": blocks}
+    # The notification text is parsed like mrkdwn too: escaped, so a summary can never
+    # mention @channel or link anywhere.
+    return {"text": _cut(_escape(f"{title}: {summary['headline']}"), 3000), "blocks": blocks}
 
 
 def _token(integrations: Any, connection: Any) -> str:
@@ -229,6 +236,9 @@ class SlackConnection:
                         raise IntegrationDeliveryUnknownError("Slack did not confirm the post")
                     raise IntegrationUpstreamError("Slack is temporarily unavailable")
                 payload = await read_bounded_json(response, maximum=MAX_BYTES, provider="Slack")
+        except (httpx.ConnectError, httpx.ConnectTimeout):
+            # The request never reached Slack, so nothing was posted.
+            raise IntegrationUpstreamError("Slack could not be reached") from None
         except httpx.HTTPError:
             if write:
                 raise IntegrationDeliveryUnknownError("Slack did not confirm the post") from None
@@ -429,8 +439,9 @@ class SlackConnection:
             raise IntegrationDeliveryRefusedError(
                 f"Slack refused the post: {REFUSED[error]}", status=200
             )
-        # An error Tin does not know: Slack answered, and an answer with ok=false posts nothing.
-        raise IntegrationDeliveryRefusedError("Slack refused the post", status=200)
+        # Any other answer, internal_error and fatal_error among them, may follow a post that
+        # went through: unknown, never sent again.
+        raise IntegrationDeliveryUnknownError(f"Slack answered {error or 'an error'}")
 
     async def revoke(self, connection: Any) -> None:
         try:

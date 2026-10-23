@@ -6954,6 +6954,10 @@ class Database:
             str(project_id),
         )
         statements = (
+            "DELETE FROM run_summary_posts WHERE project_id = $1",
+            # Kept runs keep billing facts, not the summary, which can name visitors.
+            "UPDATE workflow_runs SET run_summary = NULL, summary_destinations = '[]'::jsonb "
+            "WHERE project_id = $1",
             "DELETE FROM content_plan_revisions WHERE project_id = $1",
             "DELETE FROM content_plan_batches WHERE project_workflow_id IN "
             "(SELECT project_workflow_id FROM content_programs WHERE project_id = $1)",

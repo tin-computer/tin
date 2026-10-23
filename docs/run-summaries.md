@@ -72,23 +72,31 @@ Posting never changes a run that already succeeded:
 
 1. The transaction that marks a run `succeeded` (`complete_procedure_projection`) also inserts
    one `pending` row in `run_summary_posts` per pinned destination when the run has a summary.
-2. A switchboard loop (`summary_posts_loop`, every 10 seconds) claims due rows. It marks each
-   `sending` and commits before calling Slack.
+2. A switchboard loop (`summary_posts_loop`, every 10 seconds) claims due rows one at a time.
+   It marks each `sending` and commits before calling Slack, so a deploy can interrupt only the
+   post in flight.
 3. It settles each row:
    - `sent`, with Slack's message `ts`;
-   - `failed` when Slack refused (channel gone or archived, app removed, token revoked).
-     Nothing was posted;
-   - `pending` again after a rate limit, at most 5 attempts. Slack posts nothing on a 429;
-   - `unknown` when Slack's answer was lost. The message may be in the channel, so it is never
-     sent again.
+   - `failed` when Slack refused with an answer that means nothing was posted: the channel is
+     gone, archived or closed to apps, the app was removed, or the token was revoked;
+   - `pending` again when nothing was posted and a later try can work, at most 5 attempts:
+     a rate limit (Slack posts nothing on a 429), or Slack could not be reached at all;
+   - `unknown` when the outcome is not certain: Slack's answer was lost, or Slack answered with
+     an error Tin does not know, `internal_error` and `fatal_error` among them. The message may
+     be in the channel, so it is never sent again.
 4. A row left `sending` for 10 minutes, because Tin stopped mid-send, becomes `unknown`.
 
 Activity records `run_summary_posted` or `run_summary_not_posted` with the channel and the
-reason. A revoked token marks the Slack connection *needs attention*; Reconnect restores it.
+reason. A revoked or invalid token marks the Slack connection *needs attention*; Reconnect
+restores it. A refusal for one channel leaves the connection alone.
+
+Deleting a project deletes its posts and clears the summaries and destinations on the runs it
+keeps for billing.
 
 The message is a header (saved workflow name and project), the headline, the table as aligned
 monospace text, each section as a bulleted list with its links, and a link to the full result in
-Tin. Text is escaped for Slack, and link previews are off.
+Tin. Text is escaped for Slack, so a summary can never mention `@channel`, and link previews are
+off. Each block keeps whole rows and items within Slack's 3,000 characters.
 
 Summaries can name people, such as a visitor journal's named visitors with their email. The
 founder chooses the channel; pick one whose members may see that.
@@ -96,7 +104,7 @@ founder chooses the channel; pick one whose members may see that.
 ## Slack connection
 
 `messaging.slack` uses Slack OAuth v2 with a bot token and the scopes `channels:read`,
-`chat:write` and `chat:write.public`. Tin lists public channels and posts; it never reads
+`chat:write` and `chat:write.public`. Tin lists up to 2,000 public channels and posts; it never reads
 messages and cannot post to private channels. The token is stored encrypted and is revoked
 (`auth.revoke`) on disconnect.
 

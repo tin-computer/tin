@@ -24,6 +24,7 @@ from tin_lite.integrations import (
     IntegrationDeliveryUnknownError,
     IntegrationError,
     IntegrationRateLimitedError,
+    IntegrationUpstreamError,
 )
 
 logger = logging.getLogger(__name__)
@@ -99,6 +100,21 @@ def _link(settings: Any, post: dict[str, Any]) -> str | None:
     return f"{dashboard_url(settings)}/document/{post['run_id']}?project={post['project_id']}"
 
 
+async def _again(database, post, code: str, message: str, retry_after: int | None) -> None:
+    """Nothing was posted: back to pending, until the attempts run out."""
+    if post["attempts"] >= MAX_ATTEMPTS:
+        await database.finish_summary_post(
+            post_id=post["id"], status="failed", error_code=code, error_message=message
+        )
+    else:
+        await database.finish_summary_post(
+            post_id=post["id"],
+            status="pending",
+            error_code=code,
+            retry_after_seconds=retry_after or 60,
+        )
+
+
 async def send(runtime: Any, settings: Any, post: dict[str, Any]) -> None:
     """Send one claimed post and settle it. Never raises for a provider outcome."""
     from tin_lite import slack_connection
@@ -123,20 +139,9 @@ async def send(runtime: Any, settings: Any, post: dict[str, Any]) -> None:
             blocks=body["blocks"],
         )
     except IntegrationRateLimitedError as exc:
-        if post["attempts"] >= MAX_ATTEMPTS:
-            await database.finish_summary_post(
-                post_id=post["id"],
-                status="failed",
-                error_code="rate_limited",
-                error_message="Slack kept asking Tin to wait",
-            )
-        else:
-            await database.finish_summary_post(
-                post_id=post["id"],
-                status="pending",
-                error_code="rate_limited",
-                retry_after_seconds=exc.retry_after or 60,
-            )
+        await _again(
+            database, post, "rate_limited", "Slack kept asking Tin to wait", exc.retry_after
+        )
         return
     except IntegrationDeliveryUnknownError:
         await database.finish_summary_post(
@@ -153,6 +158,10 @@ async def send(runtime: Any, settings: Any, post: dict[str, Any]) -> None:
             error_code="reauthorization_required",
             error_message=f"{exc}. Reconnect Slack in Integrations",
         )
+        return
+    except IntegrationUpstreamError:
+        # Slack was never reached (no connection), so nothing was posted: try again later.
+        await _again(database, post, "unreachable", "Tin could not reach Slack", 120)
         return
     except IntegrationDeliveryRefusedError as exc:
         await database.finish_summary_post(
@@ -177,12 +186,18 @@ async def send(runtime: Any, settings: Any, post: dict[str, Any]) -> None:
     await database.finish_summary_post(post_id=post["id"], status="sent", message_ts=ts)
 
 
-async def post_due(runtime: Any, settings: Any) -> int:
+async def post_due(runtime: Any, settings: Any, *, limit: int = 10) -> int:
+    """Claim and send one post at a time, so a deploy or an error can interrupt only the post
+    in flight, never a batch of claimed posts that were not attempted."""
     await runtime.database.recover_summary_posts()
-    posts = await runtime.database.claim_summary_posts(limit=10)
-    for post in posts:
-        await send(runtime, settings, post)
-    return len(posts)
+    done = 0
+    for _ in range(limit):
+        claimed = await runtime.database.claim_summary_posts(limit=1)
+        if not claimed:
+            break
+        await send(runtime, settings, claimed[0])
+        done += 1
+    return done
 
 
 async def summary_posts_loop(runtime: Any, settings: Any) -> None:
