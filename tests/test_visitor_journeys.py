@@ -204,6 +204,7 @@ def test_every_request_passes_tins_hogql_guard_and_scopes_hosts_and_the_team(j, 
     steps = ["project", "inventory", "hosts", "census", "prior", "frictions", "loops", "paths"]
     payloads = [j.request(c, m, step) for step in steps]
     payloads.append(j.request(c, m, "timelines1", [ANA, BEN]))
+    payloads.append(j.request(c, m, "recordings", session_ids=["01a1-session-1"] * 2))
     assert payloads[0] == {
         "service": "analytics",
         "step": "project",
@@ -229,6 +230,12 @@ def test_every_request_passes_tins_hogql_guard_and_scopes_hosts_and_the_team(j, 
     # Each person's first and last events, so a long day never loses where they stopped.
     assert "row_number() OVER (PARTITION BY person_id ORDER BY timestamp) AS n" in timeline
     assert "WHERE n <= 30 OR n > total - 30" in timeline
+    recordings = payloads[9]["arguments"]["query"]
+    assert "FROM raw_session_replay_events" in recordings
+    assert "session_id IN ('01a1-session-1') GROUP BY session_id" in recordings
+    for bad in ([], ["bad id!"], [f"01a1-session-{n:04d}" for n in range(121)]):
+        with pytest.raises(j.ContractError):
+            j.request(c, m, "recordings", session_ids=bad)
     with pytest.raises(j.ContractError):
         j.request(c, m, "timelines1", ["not-a-uuid"])
     with pytest.raises(j.ContractError):
@@ -377,7 +384,9 @@ def test_a_journey_keeps_what_the_person_did_and_folds_noise(j, m):
         row("$rageclick"),
         row("estimate_failed", message="timeout"),
     ]
-    found = j.journey(rows, m)
+    found = j.journey(
+        rows, m, j.recordings({"columns": ["session_id"], "rows": [["01a1-session-1"]]})
+    )
     assert [(s["label"], s["times"]) for s in found["steps"]] == [
         ("opened /pricing", 1),
         ("clicked Pro plan on /pricing", 1),
@@ -387,9 +396,13 @@ def test_a_journey_keeps_what_the_person_did_and_folds_noise(j, m):
         ("estimate_failed (failure): timeout", 1),
     ]
     assert found["other"] == 2 and found["replays"] == [REPLAY + "01a1-session-1"]
-    assert (
-        j.replay({"replay_url": None}, "01a1-session-1") is None and j.replay(m, "bad id!") is None
-    )
+    recorded = {"01a1-session-1", "bad id!"}
+    assert j.replay(m, "01a1-session-1", recorded) == REPLAY + "01a1-session-1"
+    assert j.replay({"replay_url": None}, "01a1-session-1", recorded) is None
+    assert j.replay(m, "bad id!", recorded) is None
+    # A session PostHog did not record opens to "Recording not found": no link.
+    assert j.replay(m, "01a1-session-1", frozenset()) is None
+    assert j.journey(rows, m)["replays"] == []
 
 
 def test_a_long_journey_keeps_its_end_and_marks_the_events_in_between(j, m):
@@ -548,6 +561,7 @@ def report(
     brief=DEFAULT,
     frictions=(),
     funnel=DEFAULT,
+    previous=None,
 ):
     named = (
         named
@@ -558,7 +572,7 @@ def report(
                 f"{p['name'] or p['email']} came from {p['referrer']}.",
                 "Email them.",
                 "/connect",
-                j.replay(m, p["session_ids"][0]),
+                j.replay(m, p["session_ids"][0], set(p["session_ids"])),
             )
             for p in people
             if p["tier"] in j.NAMED_TIERS
@@ -614,6 +628,7 @@ def report(
         site=site,
         brief=brief,
         funnel=funnel,
+        previous=previous,
     )
     top = "\n\n" + j.render_brief(evidence["brief"]) if brief is not None else ""
     text = (
@@ -743,6 +758,47 @@ def test_the_check_refuses_a_brief_tin_could_not_stand_behind(j, c, m, people):
         j.check(moved)
     with pytest.raises(j.ContractError, match="funnel starts with visitors"):
         j.check_map({**m, "funnel": m["funnel"][1:]})
+
+
+def test_the_brief_says_only_what_is_new_since_the_last_one(j, c, m, people):
+    ben, cara = "ben@quanta.io", "cara@studio.design"
+    gap = "Signups are not tracked, so the table cannot count them."
+    last = j.previous(
+        report(j, c, m, people, brief=j.brief([(ben, "Clicked pricing.")], [(gap, None)]))
+    )
+    assert last["brief"]["visitors"][0]["email"] == ben and last["window"]["end"] == c["end"]
+    # The next morning's run: its window overlaps the last one, as after a run started by hand.
+    later = {**last, "window": {"start": "2026-10-15 09:00:00", "end": "2026-10-16 10:00:00"}}
+    with pytest.raises(j.ContractError, match="ben@quanta.io was in the last brief"):
+        report(j, c, m, people, brief=j.brief([(ben, "Clicked pricing.")], []), previous=later)
+    with pytest.raises(j.ContractError, match="already said"):
+        report(j, c, m, people, brief=j.brief([], [(gap.upper(), None)]), previous=later)
+    # Someone new, and an observation that says what changed, are fine.
+    j.check(
+        report(
+            j,
+            c,
+            m,
+            people,
+            brief=j.brief([(cara, "Back again.")], [("Signups are tracked now.", None)]),
+            previous=later,
+        )
+    )
+    # Ben came back after the last brief's window ended (his last activity is 09:30).
+    earlier = {**later, "window": {"start": "2026-10-15 08:00:00", "end": "2026-10-16 09:00:00"}}
+    j.check(
+        report(
+            j,
+            c,
+            m,
+            people,
+            brief=j.brief([(ben, "Came back and booked a call.")], []),
+            previous=earlier,
+        )
+    )
+    # The first run, or a report from before 1.3.0, has no brief to compare with.
+    assert j.previous(None)["brief"] is None
+    j.check(report(j, c, m, people, previous=j.previous(None)))
 
 
 def test_the_check_refuses_what_tin_would_not_publish_or_trust(j, c, m, people):
