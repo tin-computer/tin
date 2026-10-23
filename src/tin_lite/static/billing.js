@@ -125,14 +125,18 @@ window.TinBilling = (() => {
 
     function render(data, payments) {
       const invoices = payments.filter((p) => safeLink(p.invoice_url, "invoice.stripe.com"));
+      // An invoiced workspace is billed by Tin outside Stripe: no top-ups, and its admin sees what
+      // is owed rather than credits.
+      const invoiced = data.funding === "invoiced";
       root.innerHTML = `<header class="workspace-header billing-heading"><h1>${data.is_admin ? "Billing" : "Spending"}</h1>
         <span>${escape(workspaceName)}${data.mode === "test" ? " · Test mode" : ""}</span></header>
-        <div class="billing-balance"><div class="billing-balance-facts"><span class="billing-label">${data.is_admin ? "Available" : "Spent this month"}</span>
-          <div class="billing-amount">${dollars(data.is_admin ? data.available_usd : data.spent_this_month_usd)}</div>
+        <div class="billing-balance"><div class="billing-balance-facts"><span class="billing-label">${!data.is_admin ? "Spent this month" : invoiced ? "Owed" : "Available"}</span>
+          <div class="billing-amount">${dollars(!data.is_admin ? data.spent_this_month_usd : invoiced ? data.owed_usd : data.available_usd)}</div>
           ${data.is_admin ? "" : `<p>${escape(projectName)}</p>`}
+          ${data.is_admin && invoiced ? `<p>Billed by invoice · ${dollars(data.workspace_spent_this_month_usd)} used this month</p>` : ""}
           ${data.status === "suspended" ? '<p role="status">New paid runs paused</p>' : ""}
           ${data.run_billing_enabled === false ? '<p>Welcome credits are saved. Workflow charging is not enabled for this workspace yet.</p>' : ""}
-        </div>${data.is_admin ? `<form class="billing-topup"><label class="billing-label" for="billing-amount">Add funds</label>
+        </div>${data.is_admin && !invoiced ? `<form class="billing-topup"><label class="billing-label" for="billing-amount">Add funds</label>
           <div class="billing-presets">${[10,25,100].map((n) => `<button type="button" data-amount="${n}">$${n}</button>`).join("")}</div>
           <input id="billing-amount" name="amount" type="number" min="${data.topup_min_cents / 100}" max="${data.topup_max_cents / 100}" step="0.01" value="10" required aria-describedby="billing-topup-help">
           <button class="billing-primary" type="submit">Add $10.00</button>
