@@ -10,7 +10,13 @@ from test_incremental_billing import direct, observe, operation
 from test_procedure_publication import publication_db as publication_db
 
 from tin_lite.billing import run_room
-from tin_lite.billing_contracts import NANOS_PER_DOLLAR, BillingError, ProjectSpendingPolicy, usd
+from tin_lite.billing_contracts import (
+    NANOS_PER_CENT,
+    NANOS_PER_DOLLAR,
+    BillingError,
+    ProjectSpendingPolicy,
+    usd,
+)
 
 
 async def invoiced(f):
@@ -59,8 +65,9 @@ async def test_invoiced_wallet_keeps_project_limits(billed):
     await f.billing.update_policy(
         f.project.id,
         ACTOR,
+        # One cent: below any audit's estimate, so only the limit can refuse it.
         ProjectSpendingPolicy(
-            per_run_nanos=NANOS_PER_DOLLAR, monthly_nanos=NANOS_PER_DOLLAR, expected_revision=1
+            per_run_nanos=NANOS_PER_CENT, monthly_nanos=NANOS_PER_CENT, expected_revision=1
         ),
     )
     with pytest.raises(BillingError) as error:
