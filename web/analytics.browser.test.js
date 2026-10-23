@@ -170,6 +170,10 @@ test("page: today so far, each number against the day before, every page request
   today.top_pages.push({path: "/careers", visits: null, page_views: null});
   // An operator ID added after Tin's list stays as it is.
   today.kinds.automated_browser.named.push({operator: "newcorp", visits: 1, evidence: "network"});
+  today.requests.operators.push(
+    {operator: "perplexity", role: "user_retrieval", ai: true, verified: 3, declared: 1},
+    {operator: "exa", role: "indexing", ai: true, verified: 2, declared: 0},
+  );
   today.requests.ai_pages = [
     {path: "/about", loads: 1, by_operator: {anthropic: 1}},
     {path: "/docs/start", loads: 19, by_operator: {openai: 12, anthropic: 7}},
@@ -208,6 +212,13 @@ test("page: today so far, each number against the day before, every page request
     assert.match(await page.locator(".analytics-row", {hasText: "chatgpt.com"}).innerText(), /chatgpt\.com\s*AI assistant\s*4/);
     assert.deepEqual(await page.locator(".analytics-class").allInnerTexts(), ["412\npage loads", "61\nverified bots", "88\nnamed bots, unconfirmed", "39\nother bots", "224\nbrowser-like · script didn't run on 173"]);
     assert.match(await page.locator(".analytics-row:not(.is-head)", {hasText: "OpenAI"}).innerText(), /OpenAI\s*fetching for someone\s*AI\s*22\s*30/);
+    // Past the first three, the companies fold into one row that opens them in place.
+    const companies = page.locator(".analytics-table").nth(2);
+    const more = companies.locator(".analytics-row.is-more");
+    assert.deepEqual((await more.innerText()).split("\n").filter(Boolean), ["2 more", "5", "1"]);
+    await more.click();
+    assert.equal(await companies.locator(".analytics-row.is-more").count(), 0);
+    assert.deepEqual(await companies.locator(".analytics-row:not(.is-head) .analytics-name > span:first-child").allInnerTexts(), ["OpenAI", "Anthropic", "Google", "Perplexity", "Exa"]);
     const aiPages = page.locator(".analytics-table").nth(3);
     assert.deepEqual(await aiPages.locator(".analytics-row.is-head span").allInnerTexts(), ["Page", "OpenAI", "Anthropic"]);
     // The three pages loaded most, then the rest of each company's loads (52 and 39 in all).

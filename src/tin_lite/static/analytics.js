@@ -363,8 +363,9 @@ window.TinAnalytics = (() => {
     </div>`;
   }
 
-  function row(name, values, widths, { tags = "", muted = false } = {}) {
-    return `<div class="analytics-row"><span class="analytics-name"><span${muted ? " class=\"is-label\"" : ""}>${escape(name)}</span>${tags}</span>${values.map((value, index) => `<span class="analytics-num${value === null || value === undefined ? " is-withheld" : ""}" style="width:${widths[index]}px">${value === "" ? "" : count(value)}</span>`).join("")}</div>`;
+  function row(name, values, widths, { tags = "", muted = false, open = "" } = {}) {
+    const tag = open ? "button" : "div";
+    return `<${tag} class="analytics-row${open ? " is-more" : ""}"${open ? ` type="button" data-analytics-open="${escape(open)}"` : ""}><span class="analytics-name"><span${muted ? " class=\"is-label\"" : ""}>${escape(name)}</span>${tags}</span>${values.map((value, index) => `<span class="analytics-num${value === null || value === undefined ? " is-withheld" : ""}" style="width:${widths[index]}px">${value === "" ? "" : count(value)}</span>`).join("")}</${tag}>`;
   }
 
   function pages(report) {
@@ -395,12 +396,13 @@ window.TinAnalytics = (() => {
     const operators = [...(requests.operators || [])]
       .sort((a, b) => ((b.verified || 0) + (b.declared || 0)) - ((a.verified || 0) + (a.declared || 0)));
     const sum = (items, key) => items.reduce((total, item) => total + (item[key] || 0), 0);
-    const shown = operators.slice(0, 3);
-    const rest = operators.slice(3);
+    // The first three, then one row for the rest that opens them in place.
+    const shown = view.companiesOpen ? operators : operators.slice(0, 3);
+    const rest = operators.slice(shown.length);
     const companyRows = shown.map((item) => row(company(item.operator), [item.verified, item.declared], [64, 64], {
       tags: `${ROLES[item.role] ? `<code>${escape(ROLES[item.role])}</code>` : ""}${item.ai ? "<code class=\"analytics-tag\">AI</code>" : ""}`,
     }));
-    if (rest.length) companyRows.push(row(`${rest.length} more`, [sum(rest, "verified"), sum(rest, "declared")], [64, 64]));
+    if (rest.length) companyRows.push(row(`${rest.length} more`, [sum(rest, "verified"), sum(rest, "declared")], [64, 64], { open: "companies" }));
     const aiPages = [...(requests.ai_pages || [])].sort((a, b) => (b.loads || 0) - (a.loads || 0));
     const loadsBy = {};
     for (const page of aiPages) for (const [operator, loads] of Object.entries(page.by_operator || {})) loadsBy[operator] = (loadsBy[operator] || 0) + (loads || 0);
@@ -444,6 +446,12 @@ window.TinAnalytics = (() => {
         window.history.replaceState(null, "", `${url.pathname}${url.search}`);
         render();
         load();
+      });
+    });
+    body.querySelectorAll("[data-analytics-open]").forEach((button) => {
+      button.addEventListener("click", () => {
+        view.companiesOpen = true;
+        render();
       });
     });
     body.querySelectorAll("[data-analytics-integrations]").forEach((button) => {

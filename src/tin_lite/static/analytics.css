@@ -393,6 +393,18 @@
   border-top: 1px solid var(--card-border);
 }
 
+/* "N more" under a table: the whole row opens the rest in place. */
+.analytics-row.is-more {
+  width: 100%;
+  background: transparent;
+  color: inherit;
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+
+.analytics-row.is-more:hover { background: rgb(var(--ink-rgb) / 4%); }
+
 .analytics-row.is-head {
   height: 34px;
   background: var(--table-sticky);
