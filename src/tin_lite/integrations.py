@@ -97,7 +97,8 @@ STRIPE_CAPABILITIES = (
 # Read-only PostHog capabilities for the one project the founder selects.
 POSTHOG_CAPABILITIES = ("query.read", "definitions.read", "insights.read")
 X_CAPABILITIES = ("x.posts.read", "x.posts.publish", "x.media.upload")
-# List the workspace's public channels and post Tin's messages; nothing is read from channels.
+# List the channels Tin can post to (public, and private ones it was added to) and post Tin's
+# messages; nothing is read from channels.
 SLACK_CAPABILITIES = ("slack.channels.read", "slack.messages.post")
 LINKEDIN_POSTING_CAPABILITIES = ("linkedin.posts.publish", "linkedin.media.upload")
 # Reads of the project's own site; the site is always the connection's.
@@ -533,8 +534,8 @@ def registered_integrations() -> tuple[IntegrationDefinition, ...]:
             name="Slack",
             badge="S",
             description=(
-                "Post a workflow's summary to the public channels you pick when each run "
-                "finishes. Tin never reads messages."
+                "Post a workflow's summary to the channels you pick when each run finishes. "
+                "For a private channel, add Tin's app to it first. Tin never reads messages."
             ),
             access_label="Posts only · channels you pick",
             capabilities=SLACK_CAPABILITIES,

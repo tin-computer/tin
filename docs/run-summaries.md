@@ -52,7 +52,7 @@ when the result is published. `get_run` over MCP returns it as `run_summary`, wi
 
 ## Where it is posted
 
-A saved workflow has `summary_destinations`: up to three public Slack channels, each with the
+A saved workflow has `summary_destinations`: up to three Slack channels, each with the
 channel's ID and name. Each run copies the list when it is created (`create_run`), like its
 inputs, so a change affects later runs only.
 
@@ -64,7 +64,7 @@ inputs, so a change affects later runs only.
   `summary_supported` and lists `summary_destinations`.
 
 Saving checks the saved workflow's pinned definition writes a summary and that each channel is a
-public channel in the connected workspace. Clearing never needs Slack.
+channel Tin's app can post to in the connected workspace. Clearing never needs Slack.
 
 ## Posting
 
@@ -104,15 +104,20 @@ founder chooses the channel; pick one whose members may see that.
 ## Slack connection
 
 `messaging.slack` uses Slack OAuth v2 with a bot token and the scopes `channels:read`,
-`chat:write` and `chat:write.public`. Tin lists up to 2,000 public channels and posts; it never reads
-messages and cannot post to private channels. The token is stored encrypted and is revoked
-(`auth.revoke`) on disconnect.
+`groups:read`, `chat:write` and `chat:write.public`. Tin lists up to 2,000 channels and posts; it
+never reads messages. The token is stored encrypted and is revoked (`auth.revoke`) on disconnect.
+
+- **Public channels**: Tin can post to any of them; the app does not need to join.
+- **Private channels**: Slack shows a bot only the private channels it is in, so someone in the
+  channel adds Tin's app first (`/invite @<app name>`, or the channel's *Integrations* tab). The
+  channel then appears in the list, marked private. If the app is later removed, posts to that
+  channel are refused (`not_in_channel` or `channel_not_found`) and Activity says so.
 
 Operator setup:
 
 1. Create a Slack app at api.slack.com/apps. Under *OAuth & Permissions*:
    - add the redirect URL `{TIN_LITE_PUBLIC_URL}/integrations/callback/slack`;
-   - add the three bot scopes above;
+   - add the four bot scopes above;
    - leave token rotation off.
 
    To install in workspaces other than the app's own, turn on *Manage Distribution*.

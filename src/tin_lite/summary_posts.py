@@ -40,8 +40,8 @@ class DestinationError(ValueError):
 async def set_destinations(
     runtime: Any, *, configured: Any, slack_channel_ids: list[str], clerk_user_id: str
 ):
-    """Save where a saved workflow's run summaries are posted: up to three public Slack
-    channels, or none. Later runs only; a run keeps the list it started with."""
+    """Save where a saved workflow's run summaries are posted: up to three Slack channels
+    Tin's app can post to, or none. Later runs only; a run keeps the list it started with."""
     from tin_lite import run_summaries
     from tin_lite.integrations import SLACK_PROVIDER
     from tin_lite.workflow_definitions import resolve_execution_contract
@@ -72,7 +72,8 @@ async def set_destinations(
         unknown = [channel for channel in ids if channel not in channels]
         if unknown:
             raise DestinationError(
-                "Pick public channels from the connected Slack workspace; "
+                "Pick channels Tin can post to in the connected Slack workspace "
+                "(for a private channel, add Tin's app to it first); "
                 + ", ".join(unknown[:3])
                 + " is not one"
             )
@@ -80,7 +81,9 @@ async def set_destinations(
             {
                 "provider_key": SLACK_PROVIDER,
                 "channel_id": channel,
-                "channel_name": channels[channel].label.removeprefix("#")[:100],
+                "channel_name": channels[channel]
+                .label.removeprefix("#")
+                .removesuffix(" (private)")[:100],
             }
             for channel in ids
         ]

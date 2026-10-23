@@ -1,7 +1,9 @@
-"""Project-owned Slack connection: post run summaries to the public channels a founder picks.
+"""Project-owned Slack connection: post run summaries to the channels a founder picks.
 
 The founder adds Tin's Slack app to their workspace (OAuth v2, bot token). Tin asks only to list
-public channels and to post; it never reads messages. The bot token is stored encrypted and
+channels and to post; it never reads messages. It can post to any public channel, and to a
+private channel once someone adds the app to it: Slack shows a bot only the private channels it
+is in. The bot token is stored encrypted and
 never leaves the switchboard. Slack documents no idempotency key for chat.postMessage, so a
 caller must record that it is sending before calling `post` (run_summary_posts) and must never
 resend a post whose outcome is unknown.
@@ -35,9 +37,9 @@ from tin_lite.integrations import (
 API = "https://slack.com/api"
 AUTHORIZE = "https://slack.com/oauth/v2/authorize"
 CALLBACK = "slack"
-SCOPES = ("channels:read", "chat:write", "chat:write.public")
+SCOPES = ("channels:read", "groups:read", "chat:write", "chat:write.public")
 CAPABILITY_SCOPES = {
-    "slack.channels.read": {"channels:read"},
+    "slack.channels.read": {"channels:read", "groups:read"},
     "slack.messages.post": {"chat:write", "chat:write.public"},
 }
 MAX_BYTES = 512_000
@@ -60,9 +62,9 @@ REAUTHORIZE = frozenset(
 )
 # Slack's answers that mean this message was not posted to this channel.
 REFUSED = {
-    "channel_not_found": "the channel no longer exists or is private",
+    "channel_not_found": "the channel no longer exists, or Tin's app was removed from it",
     "is_archived": "the channel is archived",
-    "not_in_channel": "Tin's app is not in the channel",
+    "not_in_channel": "Tin's app is not in the channel; add it in Slack",
     "restricted_action": "the workspace does not let apps post there",
     "restricted_action_read_only_channel": "the channel is read-only",
     "restricted_action_thread_only_channel": "the channel allows replies only",
@@ -362,13 +364,18 @@ class SlackConnection:
         raise IntegrationAuthorizationError(f"Slack no longer accepts Tin's access ({error})")
 
     async def channels(self, project_id: UUID) -> list[ProviderOption]:
-        """The workspace's public channels, by name. Tin's app can post to any of them."""
+        """The channels Tin's app can post to, by name: every public channel, and the private
+        channels someone added the app to (Slack lists no others to a bot)."""
         connection = await self.connection(project_id)
         token = _token(self.integrations, connection)
         options: list[ProviderOption] = []
         cursor = ""
         for _page in range(MAX_CHANNEL_PAGES):
-            params = {"types": "public_channel", "exclude_archived": "true", "limit": "200"}
+            params = {
+                "types": "public_channel,private_channel",
+                "exclude_archived": "true",
+                "limit": "200",
+            }
             if cursor:
                 params["cursor"] = cursor
             payload = await self._call("GET", "conversations.list", token=token, params=params)
@@ -384,12 +391,13 @@ class SlackConnection:
                     and CHANNEL.fullmatch(channel["id"])
                     and isinstance(channel.get("name"), str)
                     and not channel.get("is_archived")
-                    and not channel.get("is_private")
+                    and (channel.get("is_member") or not channel.get("is_private"))
                 ):
+                    private = bool(channel.get("is_private"))
                     options.append(
                         ProviderOption(
                             id=channel["id"],
-                            label=f"#{channel['name'][:80]}",
+                            label=f"#{channel['name'][:80]}" + (" (private)" if private else ""),
                             detail="Tin is in this channel" if channel.get("is_member") else None,
                         )
                     )

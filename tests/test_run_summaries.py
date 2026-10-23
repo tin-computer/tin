@@ -181,7 +181,7 @@ class Slack:
         self.post = {"ok": True, "channel": "C1", "ts": "1729700000.000100"}
         self.post_status = 200
         self.revoked = False
-        self.scope = "channels:read,chat:write,chat:write.public"
+        self.scope = "channels:read,groups:read,chat:write,chat:write.public"
         self.unreachable = False
 
     @staticmethod
@@ -220,6 +220,8 @@ class Slack:
                         "channels": [
                             {"id": "C2", "name": "growth", "is_member": False},
                             {"id": "C9", "name": "old", "is_archived": True},
+                            {"id": "G1", "name": "founders", "is_private": True, "is_member": True},
+                            {"id": "G2", "name": "hidden", "is_private": True, "is_member": False},
                         ],
                         "response_metadata": {"next_cursor": "page2"},
                     },
@@ -261,7 +263,7 @@ async def connect(integrations, project_id):
         project_id=project_id, provider_key=SLACK_PROVIDER, clerk_user_id=USER_ID
     )
     query = parse_qs(urlsplit(start.authorization_url).query)
-    assert query["scope"] == ["channels:read,chat:write,chat:write.public"]
+    assert query["scope"] == ["channels:read,groups:read,chat:write,chat:write.public"]
     assert "code_challenge" not in query
     return await integrations.slack.complete(
         state=query["state"][0], code="synthetic-code", clerk_user_id=USER_ID
@@ -284,7 +286,13 @@ async def test_slack_connects_lists_channels_posts_and_disconnects(publication_d
         ]
         assert b"xoxb-synthetic" not in connection.credential_ciphertext
         channels = await integrations.slack.channels(project.id)
-        assert [(c.id, c.label) for c in channels] == [("C1", "#general"), ("C2", "#growth")]
+        assert [(c.id, c.label) for c in channels] == [
+            ("G1", "#founders (private)"),
+            ("C1", "#general"),
+            ("C2", "#growth"),
+        ]
+        listed = wire.calls[-1].url.params
+        assert listed["types"] == "public_channel,private_channel"
 
         body = slack_connection.message(run_summaries.parse(SUMMARY), title="T", link=None)
         post = integrations.slack.post

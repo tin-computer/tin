@@ -3080,7 +3080,7 @@ function summaryDestinationSection(configured) {
     <div class="system-setting"><strong>Post the summary to Slack</strong>
       <div data-slack-channels data-saved="${escapeHtml(saved?.channel_id || "")}">${tinSelectControl("summary_slack_channel", saved?.channel_id || "", options, "Slack channel for the summary")}</div>
     </div>
-    <p class="system-config-note">When a run finishes, its summary goes to this channel in ${escapeHtml(slack.external_account_label || "your Slack workspace")}. Later runs only.</p>
+    <p class="system-config-note">When a run finishes, its summary goes to this channel in ${escapeHtml(slack.external_account_label || "your Slack workspace")}. Later runs only. For a private channel, add Tin's app to it in Slack first.</p>
   </section>`;
 }
 

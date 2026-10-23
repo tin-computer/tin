@@ -3259,8 +3259,10 @@ def create_mcp_app(
 
     @server.tool()
     async def list_slack_channels(project_id: str) -> dict[str, Any]:
-        """List the public channels of the project's connected Slack workspace, where a saved
-        workflow can post each run's summary (set_summary_destinations)."""
+        """List the channels of the project's connected Slack workspace where a saved workflow can
+        post each run's summary (set_summary_destinations): every public channel, and each
+        private channel someone added Tin's app to. A private channel that is missing needs the
+        app added in Slack (/invite, or the channel's Integrations tab)."""
         token = await caller()
         parsed_project_id = _mcp_uuid(project_id, field="project_id")
         await require_project(parsed_project_id, token, tool_name="list_slack_channels")
@@ -3270,7 +3272,12 @@ def create_mcp_app(
             raise ToolError(str(exc)) from exc
         return {
             "channels": [
-                {"id": channel.id, "name": channel.label, "tin_is_member": bool(channel.detail)}
+                {
+                    "id": channel.id,
+                    "name": channel.label,
+                    "private": channel.label.endswith(" (private)"),
+                    "tin_is_member": bool(channel.detail),
+                }
                 for channel in channels
             ]
         }
@@ -3280,7 +3287,7 @@ def create_mcp_app(
         project_id: str, project_workflow_id: str, slack_channel_ids: list[str]
     ) -> dict[str, Any]:
         """Choose where a saved workflow posts each run's summary when the run succeeds: up to
-        three public Slack channel IDs from list_slack_channels, or [] to stop posting.
+        three Slack channel IDs from list_slack_channels, or [] to stop posting.
 
         Only workflows whose saved view says summary_supported write a summary. Later runs only:
         a run keeps the channels it started with. Slack must be connected in the project.
