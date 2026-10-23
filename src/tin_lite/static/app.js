@@ -6963,7 +6963,7 @@ function analyticsWaiting(view) {
     case "left_open": return [`the line waits in pull request #${number}`, "review and merge it on GitHub"];
     case "approved": return ["approved · Tin couldn't start the change", "start it again in Configure"];
     case "failed": return ["Tin couldn't add the line", "start it again in Configure, or paste it yourself"];
-    case "not_added": return ["Tin couldn't add the line", `paste it ${builder} · Analytics shows where`];
+    case "not_added": return ["Tin couldn't add the line", `start it again in Configure, or paste it ${builder}`];
     case "declined": return paste;
     default: return view.linked ? [checked] : paste;
   }
@@ -7081,7 +7081,7 @@ function renderAnalyticsExpanded(integration, view) {
       : "Not on the site yet", {
       meta: `site ${view.site_id}${hosts ? ` · last 7 days: ${hosts}` : ""}`,
       extra: state.analyticsLine ? `<div class="analytics-line"><code>${escapeHtml(view.script || "")}</code><button type="button" data-analytics-copy>Copy</button></div>` : "",
-      action: ["approved", "failed"].includes(view.install?.state)
+      action: ["approved", "failed", "not_added"].includes(view.install?.state)
         ? `<button class="linkedin-part-action" type="button" data-analytics-install${state.analyticsBusy ? " disabled" : ""}>Start again</button>`
         : `<button class="linkedin-part-action" type="button" data-analytics-line aria-expanded="${Boolean(state.analyticsLine)}">${state.analyticsLine ? "Hide the line" : "See the line"}</button>`,
     }),

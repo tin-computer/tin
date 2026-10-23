@@ -307,6 +307,7 @@ test("card: getting the line on the site, from Decisions to added (Paper INST-1)
     [{state: "decide", change: pending}, "the line isn't on the site yet", "approve “Add Tin Analytics” in Decisions"],
     [{state: "adding", change: {...pending, status: "approved"}, pull_request: {number: 41, url: "https://github.com/owner/site/pull/41"}}, "adding the line · pull request #41", "merges once example.com's own build passes"],
     [{state: "added", change: {...pending, status: "approved"}, pull_request: {number: 41}, added: {at: "2026-10-22T10:00:00Z", number: 41}}, /^waiting for the first visit · checked \d\d:\d\d$/, "line added oct 22 · pull request #41"],
+    [{state: "not_added", change: {...pending, status: "approved"}}, "Tin couldn't add the line", "start it again in Configure, or paste it in Webflow"],
     [{state: null}, "the line isn't on the site yet", "paste it in Webflow · Analytics shows where"],
   ];
   await open({integrations, analytics: {pages: {}, answer: () => ({})}}, "/integrations", async page => {
@@ -325,6 +326,11 @@ test("card: getting the line on the site, from Decisions to added (Paper INST-1)
       else assert.equal(await health.locator("span").innerText(), first);
       assert.equal(await health.locator("small").innerText(), second);
     }
+    // A run that made no change can start again from Configure, as a refused start can.
+    integrations[0] = card("waiting", {install: {state: "not_added", change: {...pending, status: "approved"}}, builder});
+    await page.reload();
+    await analyticsCard(page).getByRole("button", {name: "Configure"}).click();
+    await analyticsCard(page).getByRole("button", {name: "Start again"}).waitFor();
   });
 });
 
