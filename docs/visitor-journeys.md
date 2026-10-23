@@ -75,7 +75,7 @@ ledger. When a mapped key event stops firing, or a new event looks like its rena
 
 ## Queries
 
-All go through `call_service` (service `analytics`, at most 16 calls). A normal run uses 9 to 11:
+All go through `call_service` (service `analytics`, at most 16 calls). A normal run uses 10 to 12:
 
 | Step | Operation | Reads |
 |---|---|---|
@@ -86,6 +86,12 @@ All go through `call_service` (service `analytics`, at most 16 calls). A normal 
 | `frictions`, `loops` | `query.hogql` | rage and dead clicks, exceptions, failure events; pages opened 3+ times in a session |
 | `paths` | `query.hogql` | website sessions grouped by landing page, first four pages and exit page |
 | `timelines<n>` | `query.hogql` | up to 15 people per batch, 60 events each, in order |
+| `recordings` | `query.hogql` | which of up to 120 of those sessions PostHog recorded |
+
+A replay link goes only to a session in PostHog's replay table. A project can have replay on
+while a site's SDK turns recording off or samples it; such a session opens to "Recording not
+found", so its person gets no link, and the report says once under Tracking that recording is
+off or sampled on that host. A refused `recordings` call means no links, not a failed run.
 
 A refused or truncated census or friction query makes the report `incomplete`, never zero. If
 every query is refused, the report measured nothing: the run fails with that reason and the

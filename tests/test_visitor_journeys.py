@@ -204,6 +204,7 @@ def test_every_request_passes_tins_hogql_guard_and_scopes_hosts_and_the_team(j, 
     steps = ["project", "inventory", "hosts", "census", "prior", "frictions", "loops", "paths"]
     payloads = [j.request(c, m, step) for step in steps]
     payloads.append(j.request(c, m, "timelines1", [ANA, BEN]))
+    payloads.append(j.request(c, m, "recordings", session_ids=["01a1-session-1"] * 2))
     assert payloads[0] == {
         "service": "analytics",
         "step": "project",
@@ -229,6 +230,12 @@ def test_every_request_passes_tins_hogql_guard_and_scopes_hosts_and_the_team(j, 
     # Each person's first and last events, so a long day never loses where they stopped.
     assert "row_number() OVER (PARTITION BY person_id ORDER BY timestamp) AS n" in timeline
     assert "WHERE n <= 30 OR n > total - 30" in timeline
+    recordings = payloads[9]["arguments"]["query"]
+    assert "FROM raw_session_replay_events" in recordings
+    assert "session_id IN ('01a1-session-1') GROUP BY session_id" in recordings
+    for bad in ([], ["bad id!"], [f"01a1-session-{n:04d}" for n in range(121)]):
+        with pytest.raises(j.ContractError):
+            j.request(c, m, "recordings", session_ids=bad)
     with pytest.raises(j.ContractError):
         j.request(c, m, "timelines1", ["not-a-uuid"])
     with pytest.raises(j.ContractError):
@@ -377,7 +384,9 @@ def test_a_journey_keeps_what_the_person_did_and_folds_noise(j, m):
         row("$rageclick"),
         row("estimate_failed", message="timeout"),
     ]
-    found = j.journey(rows, m)
+    found = j.journey(
+        rows, m, j.recordings({"columns": ["session_id"], "rows": [["01a1-session-1"]]})
+    )
     assert [(s["label"], s["times"]) for s in found["steps"]] == [
         ("opened /pricing", 1),
         ("clicked Pro plan on /pricing", 1),
@@ -387,9 +396,13 @@ def test_a_journey_keeps_what_the_person_did_and_folds_noise(j, m):
         ("estimate_failed (failure): timeout", 1),
     ]
     assert found["other"] == 2 and found["replays"] == [REPLAY + "01a1-session-1"]
-    assert (
-        j.replay({"replay_url": None}, "01a1-session-1") is None and j.replay(m, "bad id!") is None
-    )
+    recorded = {"01a1-session-1", "bad id!"}
+    assert j.replay(m, "01a1-session-1", recorded) == REPLAY + "01a1-session-1"
+    assert j.replay({"replay_url": None}, "01a1-session-1", recorded) is None
+    assert j.replay(m, "bad id!", recorded) is None
+    # A session PostHog did not record opens to "Recording not found": no link.
+    assert j.replay(m, "01a1-session-1", frozenset()) is None
+    assert j.journey(rows, m)["replays"] == []
 
 
 def test_a_long_journey_keeps_its_end_and_marks_the_events_in_between(j, m):
@@ -559,7 +572,7 @@ def report(
                 f"{p['name'] or p['email']} came from {p['referrer']}.",
                 "Email them.",
                 "/connect",
-                j.replay(m, p["session_ids"][0]),
+                j.replay(m, p["session_ids"][0], set(p["session_ids"])),
             )
             for p in people
             if p["tier"] in j.NAMED_TIERS

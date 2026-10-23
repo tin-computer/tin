@@ -111,8 +111,17 @@ missing evidence and does not make the report incomplete; say "a long session" i
 `choose()` also reads the three most engaged anonymous browsers. Write each of them in one line
 under "How visitors use the site", without a name, a city or a company.
 
-Use `replay(m, session_id)` for replay links. Never write a link by hand. Never quote what a
-person typed. Element text is button and link labels only.
+Replay links only for recorded sessions: a project can have replay on while a site's SDK turns
+recording off or samples it, and a link to an unrecorded session opens to "Recording not
+found". Collect the session IDs of the people you will name and of the chosen timelines (the
+census's `session_ids` and `journey()`'s `sessions`, at most 120), run
+`request(c, m, "recordings", session_ids=...)` and keep `rec = recordings(result)`. Pass `rec`
+to `journey(rows, m, rec)` and use `replay(m, session_id, rec)` for every link; it returns None
+for a session that was not recorded, and then the person has no link. If the call is refused,
+use `rec = frozenset()`: no links. When recording is on for the project but none of these
+sessions was recorded, say so once under Tracking ("session recording is off or sampled on
+<host>"), never as a reason to fail. Never write a link by hand. Never quote what a person
+typed. Element text is button and link labels only.
 
 ## 5. How visitors use the site
 

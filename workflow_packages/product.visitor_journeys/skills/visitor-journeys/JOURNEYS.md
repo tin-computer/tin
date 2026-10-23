@@ -23,6 +23,8 @@ frictions        -> friction_rows(result)
 loops            -> loop_rows(result)
 paths            -> site_paths(path_rows(result), has_more)  # how visitors move through the site
 timelines (1-3)  -> timelines(result)     # for choose(p, c["max_people_detailed"])
+recordings       -> rec = recordings(result)  # which of their sessions PostHog recorded
+                    journey(rows, m, rec); replay(m, session_id, rec)
 funnel           -> fn = funnel(result, m, inventory_rows)  # the brief's table
 f = frictions(friction_rows, loop_rows, stalls(p, m), p)
 ledger = carry(prev["ledger"], p, f, c)
@@ -65,6 +67,7 @@ ROUTE_PAGES = 4
 # never the end. 15 people at 60 rows stay under the 1000-row query limit.
 TIMELINE_FIRST_EVENTS = 30
 TIMELINE_LAST_EVENTS = 30
+MAX_RECORDING_SESSIONS = 120  # one query, well under Tin's 8000-byte bound
 SUMMARY_LIMIT = 300
 # The brief at the top of the report is read on its own, in the founder's daily report.
 FUNNEL_DAYS = 7
@@ -96,6 +99,7 @@ HOST = re.compile(
 EMAIL = re.compile(r"^[^@\s]{1,64}@[a-z0-9.-]{1,253}\.[a-z]{2,63}$")
 EVENT_NAME = re.compile(r"^[^\x00-\x1f'\\]{1,200}$")
 PROPERTY = re.compile(r"^\$?[A-Za-z_][A-Za-z0-9_$]{0,99}$")
+SESSION = re.compile(r"^[0-9A-Za-z-]{8,80}$")
 UUID = re.compile(r"^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$")
 
 
@@ -377,7 +381,7 @@ def _query(step, sql):
     return _payload(step, "query.hogql", {"query": sql, "name": f"visitors {step}"})
 
 
-def request(c, m, step, person_ids=None):
+def request(c, m, step, person_ids=None, session_ids=None):
     """The call_service payload for one step. Pass it to call_service unchanged."""
     w = _window(c["start"], c["end"])
     scope, keep = _scope(c, m), _exclusions(c, m)
@@ -556,6 +560,19 @@ def request(c, m, step, person_ids=None):
             WHERE n <= {TIMELINE_FIRST_EVENTS} OR n > total - {TIMELINE_LAST_EVENTS}
             ORDER BY person, n LIMIT 1000""",
         )
+    if step == "recordings":
+        # Only a session in the replay table has a replay; a site's SDK may not record.
+        ids = list(dict.fromkeys(str(s) for s in (session_ids or [])))
+        if not 1 <= len(ids) <= MAX_RECORDING_SESSIONS or any(not SESSION.fullmatch(s) for s in ids):
+            raise ContractError(
+                f"recordings take 1-{MAX_RECORDING_SESSIONS} session IDs from the census or timelines"
+            )
+        return _query(
+            "recordings",
+            f"""SELECT session_id FROM raw_session_replay_events
+            WHERE min_first_timestamp >= toDateTime({_literal(c["start"])}) - INTERVAL 1 DAY
+            AND session_id IN {_list(ids)} GROUP BY session_id LIMIT 1000""",
+        )
     raise ContractError(f"unknown step {step}")
 
 
@@ -651,6 +668,7 @@ PATHS = [
     "signup",
     "rage",
 ]
+RECORDINGS = ["session_id"]
 TIMELINE = [
     "person",
     "timestamp",
@@ -732,6 +750,13 @@ def loop_rows(result):
 
 def path_rows(result):
     return table(result, PATHS)
+
+
+def recordings(result):
+    """The sessions PostHog kept a recording of. Pass it to journey() and replay()."""
+    return frozenset(
+        str(row["session_id"]) for row in table(result, RECORDINGS) if row.get("session_id")
+    )
 
 
 def timelines(result):
@@ -966,22 +991,24 @@ def site_paths(rows, has_more=False, limit=8):
     }
 
 
-def replay(m, session_id):
+def replay(m, session_id, recorded):
+    """The replay link of a session in `recordings()`, else None."""
     if (
         not m.get("replay_url")
         or not isinstance(session_id, str)
-        or not re.fullmatch(r"[0-9A-Za-z-]{8,80}", session_id)
+        or not SESSION.fullmatch(session_id)
+        or session_id not in (recorded or ())
     ):
         return None
     return m["replay_url"] + session_id
 
 
-def journey(rows, m, limit=24):
+def journey(rows, m, recorded=frozenset(), limit=24):
     """A person's timeline, squeezed for reading: pages, labelled clicks and submits, rage and
     dead clicks, errors and the map's key events, in order, with repeats folded. Other custom
     events only count toward `other`; the raw rows stay in the result if a step needs them.
     A long timeline arrives as its first and last events; the events in between show as one
-    step, so the journey still ends where the person stopped.
+    step, so the journey still ends where the person stopped. `replays`: recorded sessions.
     Write the journey in words from this."""
     keys = set(key_event_names(m))
     steps, other, seen = [], 0, None
@@ -1053,7 +1080,7 @@ def journey(rows, m, limit=24):
         "steps": steps,
         "other": other,
         "sessions": sessions,
-        "replays": [u for u in (replay(m, s) for s in sessions[:3]) if u],
+        "replays": [u for u in (replay(m, s, recorded) for s in sessions) if u][:3],
     }
 
 
