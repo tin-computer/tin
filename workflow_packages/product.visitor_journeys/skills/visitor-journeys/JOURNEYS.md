@@ -23,9 +23,13 @@ frictions        -> friction_rows(result)
 loops            -> loop_rows(result)
 paths            -> site_paths(path_rows(result), has_more)  # how visitors move through the site
 timelines (1-3)  -> timelines(result)     # for choose(p, c["max_people_detailed"])
+funnel           -> fn = funnel(result, m, inventory_rows)  # the brief's table
 f = frictions(friction_rows, loop_rows, stalls(p, m), p)
 ledger = carry(prev["ledger"], p, f, c)
-evidence = assemble(...); text = report + render_evidence(evidence); check(text)
+b = brief(visitors, observations)         # the founder's brief, in your words
+evidence = assemble(..., brief=b, funnel=fn)
+text = report (render_brief(evidence["brief"]) under Status) + render_evidence(evidence)
+check(text)
 ```
 
 ```python
@@ -62,6 +66,16 @@ ROUTE_PAGES = 4
 TIMELINE_FIRST_EVENTS = 30
 TIMELINE_LAST_EVENTS = 30
 SUMMARY_LIMIT = 300
+# The brief at the top of the report is read on its own, in the founder's daily report.
+FUNNEL_DAYS = 7
+FUNNEL_STEPS = 3
+BRIEF_VISITORS = 5
+BRIEF_OBSERVATIONS = 5
+BRIEF_LINE = 240
+# Words from inside this resource that mean nothing to a founder.
+INTERNAL_WORDS = re.compile(
+    r"\b(census|ledger|timelines?|tiers?|quer(?:y|ies)|server-only|hogql)\b", re.IGNORECASE
+)
 ACTION_LIMIT = 300
 REASON_LIMIT = 180
 # Events that say nothing about a journey: PostHog's own bookkeeping.
@@ -171,6 +185,7 @@ def default_map():
         "identity": {"email": "email", "name": "name"},
         "key_events": {kind: [] for kind in KEY_KINDS},
         "steps": [],
+        "funnel": [],
         "internal": {"email_domains": [], "people": []},
         "bots": {"countries": [], "browsers": []},
         "replay_url": None,
@@ -219,6 +234,7 @@ def check_map(m):
     out["steps"] = _strings(m.get("steps") or [], "steps", EVENT_NAME, 8, lower=False)
     if any(step not in every and step != "$pageview" for step in out["steps"]):
         raise ContractError("every step must be a key event")
+    out["funnel"] = _funnel_steps(m.get("funnel") or [], every)
     internal = m.get("internal") or {}
     out["internal"] = {
         "email_domains": _strings(
@@ -254,6 +270,29 @@ def check_map(m):
     ]
     if len(json.dumps(out)) > 24000:
         raise ContractError("the map is too large; keep only what the queries use")
+    return out
+
+
+def _funnel_steps(steps, every):
+    """The brief's table: visitors, then an optional middle step, then the main conversion.
+    Chosen once and kept, so each day reads against the same steps."""
+    if not isinstance(steps, list):
+        raise ContractError("funnel must be a list")
+    if not steps:
+        return []
+    out = []
+    for step in steps:
+        label = step.get("label") if isinstance(step, dict) else None
+        if not isinstance(label, str) or not 1 <= len(label.strip()) <= 40 or "\n" in label:
+            raise ContractError("each funnel step needs a label of at most 40 characters")
+        events = _strings(step.get("events") or [], "funnel.events", EVENT_NAME, 6, lower=False)
+        if not events or any(e not in every and e != "$pageview" for e in events):
+            raise ContractError("each funnel step needs events from key_events")
+        out.append({"label": label.strip(), "events": events})
+    if not 2 <= len(out) <= FUNNEL_STEPS or out[0]["events"] != ["$pageview"]:
+        raise ContractError(
+            "the funnel starts with visitors ($pageview) and has two or three steps"
+        )
     return out
 
 
@@ -470,6 +509,27 @@ def request(c, m, step, person_ids=None):
             GROUP BY pid, sid HAVING views > 0)
             GROUP BY entry, route, exit ORDER BY sessions DESC, route LIMIT 1000""",
         )
+    if step == "funnel":
+        if not m["funnel"]:
+            raise ContractError("choose the map's funnel before asking for it")
+        end = datetime.strptime(c["end"], "%Y-%m-%d %H:%M:%S")
+        start = (end - timedelta(days=FUNNEL_DAYS)).strftime("%Y-%m-%d %H:%M:%S")
+        team = m["internal"]["people"]
+        others = f" AND toString(person_id) NOT IN {_list(team)}" if team else ""
+        counted = [
+            "uniqIf(person_id, event = '$pageview')"
+            if f["events"] == ["$pageview"]
+            else f"uniqIf(person_id, event IN {_list(f['events'])})"
+            for f in m["funnel"]
+        ]
+        counted += ["0"] * (FUNNEL_STEPS - len(counted))
+        return _query(
+            "funnel",
+            f"""SELECT intDiv(dateDiff('second', timestamp, toDateTime({_literal(c["end"])})),
+            86400) AS ago, {counted[0]} AS step1, {counted[1]} AS step2, {counted[2]} AS step3
+            FROM events WHERE {_window(start, c["end"])} AND {scope} AND {keep}{others}
+            GROUP BY ago ORDER BY ago LIMIT {FUNNEL_DAYS}""",
+        )
     if step.startswith("timelines"):
         ids = [str(p) for p in (person_ids or [])]
         if not 1 <= len(ids) <= MAX_TIMELINE_PEOPLE or any(not UUID.fullmatch(p) for p in ids):
@@ -604,6 +664,30 @@ TIMELINE = [
     "n",
     "total",
 ]
+
+
+FUNNEL = ["ago", "step1", "step2", "step3"]
+
+
+def funnel(result, m, inventory_rows=None):
+    """The brief's table from the `funnel` result: unique people per step for the last 24
+    hours, and the daily average over the last 7 days. A step whose events never fired in
+    the 30-day inventory is not tracked, which is not the same as zero."""
+    days = {int(row["ago"]): row for row in table(result, FUNNEL) if 0 <= int(row["ago"]) < 7}
+    seen = {row["event"] for row in inventory_rows} if inventory_rows is not None else None
+    steps = []
+    for i, step in enumerate(m["funnel"]):
+        key = f"step{i + 1}"
+        tracked = seen is None or any(e in seen for e in step["events"])
+        daily = [int((days.get(ago) or {}).get(key) or 0) for ago in range(FUNNEL_DAYS)]
+        steps.append(
+            {
+                "label": step["label"],
+                "yesterday": daily[0] if tracked else None,
+                "average": round(sum(daily) / FUNNEL_DAYS, 1) if tracked else None,
+            }
+        )
+    return {"days": FUNNEL_DAYS, "steps": steps}
 
 
 def project_info(result):
@@ -1175,7 +1259,92 @@ def named(person, summary, action="", stopped_at="", replay_url=None):
     }
 
 
-def assemble(c, status, reason, requests, p, named_people, f, ledger, m, limitations=(), site=None):
+def _line(value, limit=BRIEF_LINE):
+    return " ".join(str(value or "").split())[:limit]
+
+
+def brief(visitors, observations):
+    """The founder's brief under the Status line, read on its own every morning.
+
+    `visitors` is [(email, line), ...] for at most five named people, most valuable first;
+    each line says who they are and what they did. `observations` is [(text, friction_id or
+    None), ...], at most five. The table comes from funnel(); assemble() adds names and
+    replay links from the named people.
+    """
+    return {
+        "visitors": [
+            {"email": str(email).strip().lower(), "line": _line(line)} for email, line in visitors
+        ][:BRIEF_VISITORS],
+        "observations": [
+            {"text": _line(text), "friction": friction or None} for text, friction in observations
+        ][:BRIEF_OBSERVATIONS],
+    }
+
+
+def _number(value):
+    if value is None:
+        return "not tracked"
+    return f"{value:.1f}".rstrip("0").rstrip(".") if isinstance(value, float) else str(value)
+
+
+def render_brief(b):
+    """The brief as Markdown, exactly as it goes under the Status line."""
+    fn = b["funnel"]
+    if fn is None:
+        lines = ["Visitors were not measured today."]
+    else:
+        labels = [x["label"] for x in fn["steps"]]
+        lines = [
+            "| | " + " | ".join(labels) + " |",
+            "|---|" + "---:|" * len(labels),
+            "| Yesterday | " + " | ".join(_number(x["yesterday"]) for x in fn["steps"]) + " |",
+            f"| Last {fn['days']} days, daily average | "
+            + " | ".join(_number(x["average"]) for x in fn["steps"])
+            + " |",
+        ]
+    lines += ["", "**Some visitors**", ""]
+    for v in b["visitors"]:
+        who = f"**{v['name']}** ({v['email']})" if v["name"] else f"**{v['email']}**"
+        replay = f" [Replay]({v['replay_url']})" if v["replay_url"] else ""
+        lines.append(f"- {who}: {v['line']}{replay}")
+    if not b["visitors"]:
+        lines.append("- Nobody we can name.")
+    lines += ["", "**Some observations**", ""]
+    lines += [f"- {o['text']}" for o in b["observations"]] or ["- Nothing stood out."]
+    return "\n".join(lines)
+
+
+def assemble(
+    c,
+    status,
+    reason,
+    requests,
+    p,
+    named_people,
+    f,
+    ledger,
+    m,
+    limitations=(),
+    site=None,
+    brief=None,
+    funnel=None,
+):
+    evidence = _assemble(
+        c, status, reason, requests, p, named_people, f, ledger, m, limitations, site
+    )
+    if brief is not None:
+        named_rows = {row["email"]: row for row in named_people}
+        visitors = []
+        for v in brief["visitors"]:
+            row = named_rows.get(v["email"])
+            if row is None:
+                raise ContractError(f"{v['email']} is in the brief but is not a named person")
+            visitors.append({**v, "name": row["name"], "replay_url": row["replay_url"]})
+        evidence["brief"] = {**brief, "visitors": visitors, "funnel": funnel}
+    return evidence
+
+
+def _assemble(c, status, reason, requests, p, named_people, f, ledger, m, limitations, site):
     return {
         "version": VERSION,
         "status": status,
@@ -1306,5 +1475,59 @@ def check(text):
         if item.get("kind") not in FRICTION_KINDS or item.get("status") not in FRICTION_STATUSES:
             raise ContractError("each friction needs a known kind and status")
     check_map(e["map"])
+    if e["status"] != "invalid configuration":
+        _check_brief(e, head)
     return e
+
+
+# A claim that something is broken needs a recorded failure behind it, or a "may".
+BROKEN_WORDS = re.compile(r"\b(bug|broken|breaks|fails|failing)\b", re.IGNORECASE)
+
+
+def _check_brief(e, head):
+    b = e.get("brief")
+    if not isinstance(b, dict):
+        raise ContractError("the report needs a brief: build it with brief() and assemble()")
+    fn = b.get("funnel")
+    answered = any(r.get("step") == "funnel" and r.get("outcome") == "ok" for r in e["requests"])
+    if fn is None and answered:
+        raise ContractError("pass funnel() to assemble(); the funnel query answered")
+    if fn is not None:
+        if not answered:
+            raise ContractError("the table needs an answered funnel query")
+        if [x.get("label") for x in fn.get("steps") or []] != [
+            x["label"] for x in e["map"].get("funnel") or []
+        ]:
+            raise ContractError("the table's steps must be the map's funnel")
+    if len(b.get("visitors") or []) > BRIEF_VISITORS:
+        raise ContractError(f"show at most {BRIEF_VISITORS} visitors")
+    named_emails = {row["email"] for row in e["people"]}
+    for v in b.get("visitors") or []:
+        if v.get("email") not in named_emails:
+            raise ContractError(f"{v.get('email')} is in the brief but is not a named person")
+    observations = b.get("observations") or []
+    if len(observations) > BRIEF_OBSERVATIONS:
+        raise ContractError(f"keep to {BRIEF_OBSERVATIONS} observations")
+    recorded = {x["id"] for x in e["frictions"] if x["kind"] in ("failure", "error")}
+    for o in observations:
+        if (
+            BROKEN_WORDS.search(o["text"])
+            and o.get("friction") not in recorded
+            and not re.search(r"\bmay\b", o["text"], re.IGNORECASE)
+        ):
+            raise ContractError(
+                "an observation that something is broken needs a recorded failure or error "
+                "as its friction, or say 'there may be a bug'"
+            )
+    lines = [v["line"] for v in b.get("visitors") or []] + [o["text"] for o in observations]
+    text = " ".join(lines)
+    found = INTERNAL_WORDS.search(text)
+    if found:
+        raise ContractError(f"the brief uses '{found.group(0)}'; write it in the founder's words")
+    rendered = render_brief(b)
+    at = head.find(rendered)
+    status_at = re.search(r"^Status: ", head, re.M).start()
+    first_section = head.find("\n## ")
+    if at < status_at or (first_section != -1 and at > first_section):
+        raise ContractError("put render_brief() under the Status line, before the first section")
 ```
