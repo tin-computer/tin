@@ -308,6 +308,52 @@ async def test_schedule_model_funding_is_fresh_and_admission_remains_authoritati
     assert await f.db.pool.fetchval(SCHEDULED_BUDGETS) == 1
 
 
+async def test_a_schedule_paused_for_credits_resumes_once_credits_arrive(billed, monkeypatch):
+    from tin_lite.billing_recovery import resume_funded_schedules
+
+    f = billed
+    server, common, _, configured, handle = await prepared(f, monkeypatch, model=True)
+    selected = {"project_id": str(f.project.id), "project_workflow_id": configured["id"]}
+    await fund(f)
+    await f.billing.update_policy(
+        f.project.id,
+        ACTOR,
+        ProjectSpendingPolicy(
+            per_run_nanos=50 * NANOS_PER_DOLLAR,
+            monthly_nanos=500 * NANOS_PER_DOLLAR,
+            schedule_max_nanos=NANOS_PER_DOLLAR,
+            expected_revision=1,
+        ),
+    )
+    await server.call_tool("set_project_workflow_paused", {**selected, "paused": False})
+    # The wallet runs dry; the next occurrence pauses the schedule with the credits reason.
+    await f.db.pool.execute("UPDATE billing_accounts SET balance_nanos=1")
+    assert await common.dispatch_scheduled_workflow(occurrence(configured)) == {}
+    paused = await f.db.get_project_workflow(UUID(configured["id"]))
+    assert paused.status == "paused" and "credits" in paused.last_error.lower()
+    # Nothing changes while the wallet still cannot pay for a run.
+    await resume_funded_schedules(f.runtime, common._settings)
+    assert (await f.db.get_project_workflow(paused.id)).status == "paused"
+    handle.update.reset_mock()
+    await fund(f)
+    await resume_funded_schedules(f.runtime, common._settings)
+    resumed = await f.db.get_project_workflow(paused.id)
+    assert resumed.status == "active" and resumed.last_error is None
+    assert resumed.next_run_at is not None and resent_unpaused(handle)
+    summaries = await f.db.pool.fetch(
+        "SELECT summary FROM activity_events WHERE event_type='workflow_schedule_resumed'"
+    )
+    assert [r["summary"] for r in summaries] == [
+        "Daily fixture report schedule resumed: credits were added."
+    ]
+    run = await common.dispatch_scheduled_workflow(occurrence(configured))
+    assert run["run_id"]
+    # A schedule the founder paused has no credits reason and stays paused.
+    await server.call_tool("set_project_workflow_paused", {**selected, "paused": True})
+    await resume_funded_schedules(f.runtime, common._settings)
+    assert (await f.db.get_project_workflow(paused.id)).status == "paused"
+
+
 async def test_dispatch_response_loss_recovers_one_run_and_next_projection(billed, monkeypatch):
     f = billed
     _, common, _, configured, _ = await prepared(f, monkeypatch)

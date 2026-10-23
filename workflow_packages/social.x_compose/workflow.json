@@ -4,7 +4,7 @@
     "key": "social.x_compose",
     "title": "Compose X posts directly",
     "description": "Composition step; use Draft for X for automatic voice setup. Turn current project facts and your direction into one X draft or a small set of distinct drafts, ready for individual review and editing.",
-    "version": "1.0.1",
+    "version": "1.0.2",
     "executor": "workflow.code",
     "system": "x",
     "schedule_modes": ["on_demand"],
@@ -46,7 +46,7 @@
           {"id": "style", "kind": "store", "label": "X writing style guide", "fact": "voice only, when its account matches"},
           {"id": "pick", "kind": "step", "label": "Pick the relevant statements", "fact": "up to 90, ranked by your direction"},
           {"id": "compose", "kind": "step", "label": "Compose the posts", "fact": "one model call, 1 to 6 posts"},
-          {"id": "check", "kind": "step", "label": "Check each post", "fact": "280 weighted chars, every number cited"},
+          {"id": "check", "kind": "step", "label": "Check each post", "fact": "unsupported claims wait for evidence"},
           {"id": "drafts", "kind": "store", "label": "Drafts in project Files", "fact": "social/x-drafts, one JSON per run"},
           {"id": "receipt", "kind": "receipt", "label": "Drafts to review and edit", "fact": "posts only after you preview and confirm"}
         ],

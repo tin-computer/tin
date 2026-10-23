@@ -96,6 +96,10 @@ refund, it runs in test mode, where API usage still incurs real supplier costs. 
 customer billing defaults off; the operator still pays providers and infrastructure directly.
 Four provider adapters exist, but a billed route needs explicit registration and pricing.
 
+Managed clients Tin bills outside the product use [invoiced workspaces](invoiced-billing.md): an
+operator-only flag that skips the credit check and the Stripe top-up while metering and project
+limits stay in place.
+
 See [billing coverage](workflow-billing-coverage.md),
 [Studio API and hosted defaults](studio-api-and-hosted-credits.md), and
 [self-hosted billing](self-hosted-billing.md).

@@ -30,6 +30,11 @@ def register_billing_tools(server, *, runtime, settings, caller):
         A billing admin's available_usd is what a new start can use, the figure the start
         check uses: the balance less reserved_usd and set_aside_usd (estimates of runs
         that are pending or running).
+
+        funding "invoiced" means Tin bills this workspace by invoice: starts are not checked
+        against credits (limits still apply), never suggest adding credits, and a billing admin
+        sees credits_left_usd (spent first), used_usd (usage past those credits, not yet
+        paid) and workspace_spent_this_month_usd instead of top-up bounds.
         """
         token = await caller()
         return await result(service().overview(UUID(project_id), token.subject))
@@ -139,7 +144,10 @@ def register_billing_tools(server, *, runtime, settings, caller):
     async def create_billing_checkout(
         workspace_id: str, amount_cents: int, request_id: str
     ) -> dict[str, Any]:
-        """Billing admin: open a hosted Stripe checkout. Returning does not start a run."""
+        """Billing admin: open a hosted Stripe checkout. Returning does not start a run.
+
+        Refused for an invoiced workspace, which needs no credits.
+        """
         token = await caller()
         payments = StripePayments(billing=service(), settings=settings)
         return await result(

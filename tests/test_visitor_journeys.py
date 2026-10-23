@@ -220,6 +220,10 @@ def test_every_request_passes_tins_hogql_guard_and_scopes_hosts_and_the_team(j, 
     assert "properties.$host IN ('example.com')" in paths and "'app.example.com'" not in paths
     assert "NOT IN ('cn')" in paths and "@example.com" in paths
     assert "countIf(event IN ('account_created')) > 0 AS signup" in paths
+    timeline = payloads[8]["arguments"]["query"]
+    # Each person's first and last events, so a long day never loses where they stopped.
+    assert "row_number() OVER (PARTITION BY person_id ORDER BY timestamp) AS n" in timeline
+    assert "WHERE n <= 30 OR n > total - 30" in timeline
     with pytest.raises(j.ContractError):
         j.request(c, m, "timelines1", ["not-a-uuid"])
     with pytest.raises(j.ContractError):
@@ -381,6 +385,38 @@ def test_a_journey_keeps_what_the_person_did_and_folds_noise(j, m):
     assert (
         j.replay({"replay_url": None}, "01a1-session-1") is None and j.replay(m, "bad id!") is None
     )
+
+
+def test_a_long_journey_keeps_its_end_and_marks_the_events_in_between(j, m):
+    def row(n, event, **values):
+        return {
+            "person": ANA,
+            "timestamp": f"2026-10-16T09:{n % 60:02d}:00Z",
+            "event": event,
+            "session": "01a1-session-1",
+            "host": "example.com",
+            "path": "/pricing",
+            "element": "",
+            "message": "",
+            "scroll": None,
+            "n": n,
+            "total": 140,
+            **values,
+        }
+
+    rows = [row(1, "$pageview"), row(2, "$autocapture", element="Pro plan")]
+    rows += [
+        row(139, "$autocapture", element="Pay"),
+        row(140, "estimate_failed", message="timeout"),
+    ]
+    found = j.journey(rows, m)
+    assert [s["label"] for s in found["steps"]] == [
+        "opened /pricing",
+        "clicked Pro plan on /pricing",
+        "... 136 events in between not read",
+        "clicked Pay on /pricing",
+        "estimate_failed (failure): timeout",
+    ]
 
 
 def test_frictions_need_two_people_unless_the_product_failed_or_a_signup_was_at_stake(j, m, people):
