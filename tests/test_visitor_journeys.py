@@ -64,6 +64,11 @@ def m(j):
         failure=["estimate_failed"],
     )
     value["steps"] = ["$pageview", "pricing_plan_clicked", "account_created", "first_report_viewed"]
+    value["funnel"] = [
+        {"label": "Unique visitors", "events": ["$pageview"]},
+        {"label": "Clicked pricing", "events": ["pricing_plan_clicked"]},
+        {"label": "Signed up", "events": ["account_created"]},
+    ]
     value["hosts"]["ignore"] = ["example-git-main.vercel.app"]
     value["bots"]["countries"] = ["cn"]
     value["replay_url"] = REPLAY
@@ -521,7 +526,29 @@ def test_the_ledger_carries_frictions_from_new_to_ongoing_to_fixed(j, c, people)
 # ---------------------------------------------------------------- the report and Tin's check
 
 
-def report(j, c, m, people, *, status="complete", reason="", requests=None, named=None, body=None):
+DEFAULT = object()
+# Unique people per step, by days before the window's end: 0 is the last 24 hours.
+FUNNEL_RESULT = {
+    "columns": ["ago", "step1", "step2", "step3"],
+    "rows": [[0, 4, 1, 1], [1, 3, 1, 0], [3, 7, 2, 1]],
+}
+
+
+def report(
+    j,
+    c,
+    m,
+    people,
+    *,
+    status="complete",
+    reason="",
+    requests=None,
+    named=None,
+    body=None,
+    brief=DEFAULT,
+    frictions=(),
+    funnel=DEFAULT,
+):
     named = (
         named
         if named is not None
@@ -555,17 +582,48 @@ def report(j, c, m, people, *, status="complete", reason="", requests=None, name
                 "rows": 2,
                 "truncated": False,
             },
+            {
+                "step": "funnel",
+                "operation": "query.hogql",
+                "outcome": "ok",
+                "rows": 3,
+                "truncated": False,
+            },
         ]
     )
+    if funnel is DEFAULT:
+        answered = any(r["step"] == "funnel" and r["outcome"] == "ok" for r in requests)
+        funnel = j.funnel(FUNNEL_RESULT, m) if answered else None
     ledger = j.carry({"frictions": [], "people": []}, people, [], c)
     site = j.site_paths([path_row("/", "/", "/", 4, bounced=4)])
-    evidence = j.assemble(c, status, reason, requests, people, named, [], ledger, m, site=site)
+    if brief is DEFAULT:
+        brief = j.brief(
+            [(named[0]["email"], "Signed up from the hackathon page.")] if named else [],
+            [("Most visitors left after the homepage.", None)],
+        )
+    evidence = j.assemble(
+        c,
+        status,
+        reason,
+        requests,
+        people,
+        named,
+        list(frictions),
+        ledger,
+        m,
+        site=site,
+        brief=brief,
+        funnel=funnel,
+    )
+    top = "\n\n" + j.render_brief(evidence["brief"]) if brief is not None else ""
     text = (
         body
         if body is not None
-        else (
-            "# Visitors\n\nStatus: " + status + "\n\n" + "\n".join(f"- {n['email']}" for n in named)
-        )
+        else "# Visitors\n\nStatus: "
+        + status
+        + top
+        + "\n\n## People to act on today\n\n"
+        + "\n".join(f"- {n['email']}" for n in named)
     )
     return text + j.render_evidence(evidence)
 
@@ -595,9 +653,96 @@ def test_a_complete_report_passes_both_checks_and_names_its_people(j, c, m, peop
         ("cara@studio.design", "user"),
     ]
     assert outcome.people[0].replay_url == REPLAY + "01a1-session-0001"
-    assert visitor_journal.summary(outcome) == "1 new user, 1 lead, 1 user among 8 visitors."
+    assert visitor_journal.summary(outcome) == (
+        "Yesterday: 4 unique visitors, 1 clicked pricing, 1 signed up."
+    )
+    plain = visitor_journal.read(report(j, c, m, people, brief=None))
+    assert plain.brief is None
+    assert visitor_journal.summary(plain) == "1 new user, 1 lead, 1 user among 8 visitors."
     assert j.previous(text)["map"] == m
     assert j.previous(text)["site"]["landing"] == [{"path": "/", "sessions": 4, "bounced": 4}]
+
+
+FAILURE = {
+    "id": "aaaaaaaaaaaa",
+    "kind": "failure",
+    "page": "",
+    "detail": "checkout_failed: card declined",
+    "people": 2,
+    "reportable": True,
+}
+UNLABELED = {**FAILURE, "id": "bbbbbbbbbbbb", "kind": "dead_click", "page": "/c", "detail": ""}
+
+
+def test_the_brief_opens_with_the_funnel_then_visitors_then_observations(j, c, m, people):
+    b = j.brief(
+        [
+            ("ben@quanta.io", "Clicked pricing twice and left."),
+            ("cara@studio.design", "Back again."),
+        ],
+        [
+            ("There may be a bug in the pricing calculator: Ben clicked it twice.", None),
+            ("Checkout failed for 2 people.", FAILURE["id"]),
+        ],
+    )
+    text = report(j, c, m, people, brief=b, frictions=[FAILURE, UNLABELED])
+    j.check(text)
+    head = text.split(j.EVIDENCE_MARKER)[0]
+    assert "| | Unique visitors | Clicked pricing | Signed up |" in head
+    assert "| Yesterday | 4 | 1 | 1 |" in head
+    assert "| Last 7 days, daily average | 2 | 0.6 | 0.3 |" in head
+    assert (
+        head.index("Status: complete") < head.index("**Some visitors**") < head.index("## People")
+    )
+    assert "(ben@quanta.io): Clicked pricing twice and left. [Replay](" + REPLAY in head
+    brief = visitor_journal.read(text).brief
+    assert brief.steps[0] == visitor_journal.Step("Unique visitors", 4, 2.0)
+    assert [v.email for v in brief.visitors] == ["ben@quanta.io", "cara@studio.design"]
+    assert brief.visitors[0].replay_url.startswith(REPLAY) and len(brief.observations) == 2
+    # A step the product never fires is not tracked, which is not zero.
+    fn = j.funnel(FUNNEL_RESULT, m, [{"event": "$pageview"}])
+    assert [(x["yesterday"], x["average"]) for x in fn["steps"]] == [
+        (4, 2.0),
+        (None, None),
+        (None, None),
+    ]
+    assert "| Yesterday | 4 | not tracked | not tracked |" in j.render_brief(
+        {"funnel": fn, "visitors": [], "observations": []}
+    )
+    query = j.request(c, m, "funnel")["arguments"]["query"]
+    assert check_hogql(query) == query and "uniqIf(person_id, event = '$pageview')" in query
+    assert "toDateTime('2026-10-09 14:00:00')" in query  # seven days before the window's end
+
+
+def test_the_check_refuses_a_brief_tin_could_not_stand_behind(j, c, m, people):
+    frictions = [FAILURE, UNLABELED]
+    cases = [
+        (None, "needs a brief"),
+        (j.brief([], [("Checkout is broken.", None)]), "may be a bug"),
+        (j.brief([], [("The candidate list fails.", UNLABELED["id"])]), "may be a bug"),
+        (j.brief([], [("The census shows Ben.", None)]), "founder's words"),
+    ]
+    for b, message in cases:
+        with pytest.raises(j.ContractError, match=message):
+            j.check(report(j, c, m, people, brief=b, frictions=frictions))
+    with pytest.raises(j.ContractError, match="not a named person"):
+        report(j, c, m, people, brief=j.brief([("zed@nowhere.dev", "Hi.")], []))
+    other = j.check_map({**m, "funnel": m["funnel"][:2]})
+    with pytest.raises(j.ContractError, match="map's funnel"):
+        j.check(report(j, c, m, people, funnel=j.funnel(FUNNEL_RESULT, other)))
+    no_query = [{"step": "census", "operation": "query.hogql", "outcome": "ok"}]
+    with pytest.raises(j.ContractError, match="answered funnel query"):
+        j.check(report(j, c, m, people, requests=no_query, funnel=j.funnel(FUNNEL_RESULT, m)))
+    # Refused: the table says so instead of counting zeros.
+    assert "Visitors were not measured today." in report(j, c, m, people, requests=no_query)
+    text = report(j, c, m, people)
+    moved = text.replace("\n\n## People to act on today", "", 1).replace(
+        "Status: complete\n\n", "Status: complete\n\n## People to act on today\n\n", 1
+    )
+    with pytest.raises(j.ContractError, match="under the Status line"):
+        j.check(moved)
+    with pytest.raises(j.ContractError, match="funnel starts with visitors"):
+        j.check_map({**m, "funnel": m["funnel"][1:]})
 
 
 def test_the_check_refuses_what_tin_would_not_publish_or_trust(j, c, m, people):
@@ -658,6 +803,13 @@ def test_a_plausible_but_unusable_report_publishes_without_writing_strangers(j, 
     )
     outcome = visitor_journal.read(text)
     assert [(p.email, p.replay_url) for p in outcome.people] == [("ana@fieldnotes.dev", None)]
+    # A brief of the wrong shape is dropped, never fatal; it never names a stranger.
+    broken = report(j, c, m, people).replace('"brief": {', '"brief": [], "was": {', 1)
+    assert visitor_journal.read(broken).brief is None
+    stranger = visitor_journal._brief(
+        {"visitors": [{"email": "ghost@nowhere.dev", "line": "Hi."}]}, outcome.people
+    )
+    assert stranger is None
 
 
 def test_every_query_refused_measured_nothing_and_bad_envelopes_raise(j, c, m, people):
