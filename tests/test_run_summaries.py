@@ -129,6 +129,11 @@ def test_new_users_lead_the_summary_with_where_they_work(j, c, m, people):
         "url": "https://www.linkedin.com/in/anasouza",
         "label": "LinkedIn",
     }
+    # A run with lookups off posts no work, whatever the report says.
+    [off] = run_summaries.from_output("visitor-journal.v1", text, {"look_up_new_people": False})[
+        "sections"
+    ]
+    assert off["items"][0]["text"] == "Ana Souza (ana@fieldnotes.dev): Created an account."
     # Without a profile, the replay.
     assert new["items"][1]["text"] == "Ben Ode (ben@quanta.io): Booked a call."
     assert new["items"][1]["label"] == "Replay"

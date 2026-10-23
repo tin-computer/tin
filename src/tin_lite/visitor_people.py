@@ -95,7 +95,7 @@ async def write(conn, project_id: UUID, run_id: UUID, outcome: visitor_journal.O
 async def record(*, database, run, content: bytes) -> None:
     """After publication: put the report's named people in People. Never fails the run."""
     try:
-        outcome = visitor_journal.read(content)
+        outcome = visitor_journal.read(content, work=visitor_journal.work_allowed(run.input))
         async with database.pool.acquire() as conn:
             touched = await write(conn, run.project_id, run.id, outcome)
         if touched:

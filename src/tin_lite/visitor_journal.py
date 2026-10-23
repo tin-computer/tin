@@ -19,7 +19,9 @@ shape is dropped, never fatal.
 From 1.4.0 the brief also lists the people new in the window (`brief.new`), and a new person may
 carry `work`: what the run found on the public web about where they work (company, role, what
 the company does, a LinkedIn profile and the company's site). Links that are not a LinkedIn
-profile or an https site are dropped.
+profile or an https site are dropped, and so is a role or profile without the `basis` that ties
+it to them. A run whose `look_up_new_people` input is off keeps no work at all, whatever the
+report says (`read(content, work=False)`).
 """
 
 from __future__ import annotations
@@ -131,7 +133,12 @@ class Outcome:
     measured_nothing: str | None = None
 
 
-def read(content: bytes | str) -> Outcome:
+def work_allowed(inputs) -> bool:
+    """Whether the run's inputs let it keep what it found about new people's work."""
+    return not isinstance(inputs, dict) or inputs.get("look_up_new_people") is not False
+
+
+def read(content: bytes | str, *, work: bool = True) -> Outcome:
     """Parse one report. Raises ValueError when its envelope breaks the contract."""
     text = content.decode("utf-8") if isinstance(content, bytes) else content
     text = text.replace("\r\n", "\n")
@@ -186,7 +193,7 @@ def read(content: bytes | str) -> Outcome:
         if isinstance(evidence["frictions"], list)
         else []
     )
-    people = _people(evidence["people"], head, replay_base)
+    people = _people(evidence["people"], head, replay_base, work)
     return Outcome(
         status=status,
         reason=reason.strip(),
@@ -218,17 +225,19 @@ def _work(value) -> Work | None:
         url = value.get(key)
         return url if isinstance(url, str) and pattern.fullmatch(url) else None
 
+    # A role or profile nothing ties to the person may be a namesake's.
+    tied = bool(_text(value.get("basis"), 160))
     work = Work(
         company=_text(value.get("company"), 100),
-        role=_text(value.get("role"), 100),
+        role=_text(value.get("role"), 100) if tied else "",
         about=_text(value.get("about"), 200),
-        linkedin_url=link("linkedin_url", LINKEDIN),
+        linkedin_url=link("linkedin_url", LINKEDIN) if tied else None,
         company_url=link("company_url", SITE),
     )
     return work if any(vars(work).values()) else None
 
 
-def _people(rows, head: str, replay_base) -> tuple[Person, ...]:
+def _people(rows, head: str, replay_base, work: bool = True) -> tuple[Person, ...]:
     """The named people Tin may write to People. A row that breaks the contract is skipped:
     no email, an anonymous tier, no summary, or a person the report itself never names."""
     if not isinstance(rows, list):
@@ -264,7 +273,7 @@ def _people(rows, head: str, replay_base) -> tuple[Person, ...]:
             action=_text(row.get("action"), ACTION_LIMIT),
             last_seen=_text(row.get("last_seen"), 40),
             replay_url=replay,
-            work=_work(row.get("work")) if row.get("new") is True else None,
+            work=_work(row.get("work")) if work and row.get("new") is True else None,
         )
     return tuple(found.values())
 

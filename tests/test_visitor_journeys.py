@@ -877,6 +877,14 @@ def test_new_users_open_the_brief_with_where_they_work(j, c, m, people):
     assert (
         visitor_journal.read(report(j, c, m, people, named=rows, brief=None)).people[0].work is None
     )
+    # Tin enforces the switch and the basis itself, whatever the report says.
+    assert visitor_journal.work_allowed({}) and visitor_journal.work_allowed(None)
+    assert not visitor_journal.work_allowed({"look_up_new_people": False})
+    off_read = visitor_journal.read(text, work=False)
+    assert off_read.people[0].work is None and off_read.brief.new[0].work is None
+    untied = text.replace('"basis": "name and fieldnotes.dev email"', '"basis": ""')
+    loose = visitor_journal.read(untied).people[0].work
+    assert (loose.company, loose.role, loose.linkedin_url) == ("Fieldnotes", "", None)
     # A new person the last brief listed, with nothing since, is left out like any visitor.
     last = j.previous(text)
     with pytest.raises(j.ContractError, match="ana@fieldnotes.dev was in the last brief"):

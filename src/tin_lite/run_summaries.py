@@ -106,10 +106,10 @@ def _new_user(v) -> dict[str, Any]:
     return {"text": f"{who}: {v.line}", "url": v.replay_url, "label": "Replay"}
 
 
-def _visitor_journal(content: bytes | str) -> dict[str, Any] | None:
+def _visitor_journal(content: bytes | str, inputs: Any = None) -> dict[str, Any] | None:
     from tin_lite import visitor_journal
 
-    outcome = visitor_journal.read(content)
+    outcome = visitor_journal.read(content, work=visitor_journal.work_allowed(inputs))
     if outcome.measured_nothing or outcome.status == "invalid configuration":
         return None
     brief = outcome.brief
@@ -161,18 +161,21 @@ def _visitor_journal(content: bytes | str) -> dict[str, Any] | None:
 
 
 # Output validator -> reader of the published content. Add a workflow by adding its reader.
-SOURCES: dict[str, Callable[[bytes | str], dict[str, Any] | None]] = {
+SOURCES: dict[str, Callable[[bytes | str, Any], dict[str, Any] | None]] = {
     "visitor-journal.v1": _visitor_journal,
 }
 
 
-def from_output(validator: str | None, content: bytes | str) -> dict[str, Any] | None:
-    """The summary of a published procedure result, or None. Never raises."""
+def from_output(
+    validator: str | None, content: bytes | str, inputs: Any = None
+) -> dict[str, Any] | None:
+    """The summary of a published procedure result, or None. Never raises. `inputs` are the
+    run's pinned inputs."""
     reader = SOURCES.get(validator or "")
     if reader is None:
         return None
     try:
-        return reader(content)
+        return reader(content, inputs)
     except Exception:  # noqa: BLE001 - a summary is never grounds to fail a published run
         return None
 
