@@ -142,7 +142,8 @@ def message(summary: dict[str, Any], *, title: str, link: str | None) -> dict[st
             )
             for row in rows
         ]
-        text = _fit(lines, head="```", tail="```")
+        # The rows start on their own line: Slack trims spaces right after the opening fence.
+        text = _fit(lines, head="```\n", tail="\n```")
         if text:
             blocks.append({"type": "section", "text": {"type": "mrkdwn", "text": text}})
     for section in summary.get("sections") or []:

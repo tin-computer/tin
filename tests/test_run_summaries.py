@@ -149,7 +149,7 @@ def test_the_slack_message_escapes_text_and_aligns_the_table():
     assert header["text"]["text"] == "Daily visitor journeys · Claw"
     assert headline["text"]["text"] == SUMMARY["headline"]
     assert table["text"]["text"].startswith("```") and "Unique visitors" in table["text"]["text"]
-    lines = table["text"]["text"].strip("`").split("\n")
+    lines = table["text"]["text"].strip("`").strip("\n").split("\n")
     assert len({len(line) for line in lines}) == 1  # right-aligned numbers line up
     assert "Michael &lt;Jones&gt; &amp; co" in section["text"]["text"]
     assert "<https://us.posthog.com/project/1/replay/01a1|Replay>" in section["text"]["text"]
@@ -166,7 +166,7 @@ def test_the_slack_message_escapes_text_and_aligns_the_table():
         text = block["text"]["text"]
         assert len(text) <= 3000 and "&am" not in text.replace("&amp;", "")
     table = slack_connection.message(wide, title="T", link=None)["blocks"][2]["text"]["text"]
-    assert table.startswith("```'x'") and table.endswith("```")
+    assert table.startswith("```\n'x'") and table.endswith("\n```")
     ping = slack_connection.message(
         {**run_summaries.parse(SUMMARY), "headline": "<!channel> hi"}, title="T", link=None
     )
