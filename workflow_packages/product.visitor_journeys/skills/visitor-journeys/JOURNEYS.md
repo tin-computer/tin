@@ -199,8 +199,8 @@ def default_map():
 
 
 def check_map(m):
-    """Validate the map you wrote; returns a normalized copy. Refuses anything a query would
-    quote unsafely: event names and properties go into HogQL as literals."""
+    """Validate the map you wrote; returns a normalized copy. Event names and properties go
+    into HogQL as literals, so anything unsafe is refused."""
     if not isinstance(m, dict):
         raise ContractError("the map must be an object")
     base = default_map()
@@ -366,6 +366,14 @@ def _exclusions(c, m):
     )
 
 
+def _message(width):
+    return (
+        "left(coalesce(toString(properties.$exception_values), properties.$exception_message,"
+        " properties.error, properties.reason, properties.message, if(isNull(properties.status),"
+        f" NULL, concat('status ', toString(properties.status))), ''), {width}) AS message"
+    )
+
+
 def _reached(names):
     return f"countIf(event IN {_list(names)}) > 0" if names else "0"
 
@@ -453,9 +461,7 @@ def request(c, m, step, person_ids=None, session_ids=None):
             "frictions",
             f"""SELECT event, properties.$pathname AS path,
             left(coalesce(properties.$el_text, elements_chain_href, ''), 80) AS element,
-            left(coalesce(toString(properties.$exception_values), properties.$exception_message,
-                 properties.error, properties.reason, properties.message,
-                 if(isNull(properties.status), NULL, concat('status ', toString(properties.status))), ''), 160) AS message,
+            {_message(160)},
             count() AS n, uniq(person_id) AS people, uniq(properties.$session_id) AS sessions,
             min(timestamp) AS first_at, max(timestamp) AS last_at,
             groupUniqArray(10)(toString(person_id)) AS person_ids,
@@ -548,9 +554,7 @@ def request(c, m, step, person_ids=None, session_ids=None):
             properties.$session_id AS session, properties.$host AS host,
             properties.$pathname AS path,
             left(coalesce(properties.$el_text, elements_chain_href, ''), 60) AS element,
-            left(coalesce(toString(properties.$exception_values), properties.$exception_message,
-                 properties.error, properties.reason, properties.message,
-                 if(isNull(properties.status), NULL, concat('status ', toString(properties.status))), ''), 120) AS message,
+            {_message(120)},
             properties.$prev_pageview_max_content_percentage AS scroll,
             row_number() OVER (PARTITION BY person_id ORDER BY timestamp) AS n,
             count() OVER (PARTITION BY person_id) AS total
@@ -563,10 +567,8 @@ def request(c, m, step, person_ids=None, session_ids=None):
     if step == "recordings":
         # Only a session in the replay table has a replay; a site's SDK may not record.
         ids = list(dict.fromkeys(str(s) for s in (session_ids or [])))
-        if not 1 <= len(ids) <= MAX_RECORDING_SESSIONS or any(not SESSION.fullmatch(s) for s in ids):
-            raise ContractError(
-                f"recordings take 1-{MAX_RECORDING_SESSIONS} session IDs from the census or timelines"
-            )
+        if not 1 <= len(ids) <= MAX_RECORDING_SESSIONS or not all(map(SESSION.fullmatch, ids)):
+            raise ContractError(f"recordings take 1-{MAX_RECORDING_SESSIONS} session IDs")
         return _query(
             "recordings",
             f"""SELECT session_id FROM raw_session_replay_events
@@ -590,107 +592,35 @@ def table(result, columns):
 
 def outcome(step, operation, result=None, error=None):
     """One request's line in the evidence. A refused or failed call is never zero."""
+    row = {"step": step, "operation": operation, "outcome": "ok", "rows": 0, "truncated": False}
     if error is not None:
-        return {
-            "step": step,
-            "operation": operation,
-            "outcome": "refused",
-            "rows": 0,
-            "truncated": False,
-            "note": str(error)[:200],
-        }
+        return {**row, "outcome": "refused", "note": str(error)[:200]}
     rows = result.get("rows") if isinstance(result, dict) else None
-    return {
-        "step": step,
-        "operation": operation,
-        "outcome": "ok",
-        "rows": len(rows) if isinstance(rows, list) else 1,
-        "truncated": bool(
-            isinstance(result, dict) and (result.get("truncated") or result.get("has_more"))
-        ),
-    }
+    row["rows"] = len(rows) if isinstance(rows, list) else 1
+    row["truncated"] = isinstance(result, dict) and bool(
+        result.get("truncated") or result.get("has_more")
+    )
+    return row
 
 
-INVENTORY = ["event", "n", "people", "first_at", "last_at"]
-HOSTS = ["host", "pageviews", "people"]
-CENSUS = [
-    "person_id",
-    "email",
-    "name",
-    "first_seen",
-    "last_seen",
-    "sessions",
-    "pageviews",
-    "paths",
-    "path_sample",
-    "entry_path",
-    "last_path",
-    "referrer",
-    "utm_source",
-    "utm_campaign",
-    "first_touch",
-    "country",
-    "city",
-    "device",
-    "browser",
-    "key_events",
-    "rage_clicks",
-    "dead_clicks",
-    "errors",
-    "hosts",
-    "session_ids",
-]
-PRIOR = ["person_id", "prior_sessions", "prior_days", "first_ever", "last_before"]
-FRICTIONS = [
-    "event",
-    "path",
-    "element",
-    "message",
-    "n",
-    "people",
-    "sessions",
-    "first_at",
-    "last_at",
-    "person_ids",
-    "session_ids",
-]
-LOOPS = ["path", "people", "sessions", "most", "person_ids"]
-PATHS = [
-    "entry",
-    "route",
-    "exit",
-    "sessions",
-    "people",
-    "known",
-    "pageviews",
-    "bounced",
-    "intent",
-    "signup",
-    "rage",
-]
+INVENTORY = "event n people first_at last_at".split()
+HOSTS = "host pageviews people".split()
+CENSUS = "person_id email name first_seen last_seen sessions pageviews paths path_sample entry_path last_path referrer utm_source utm_campaign first_touch country city device browser key_events rage_clicks dead_clicks errors hosts session_ids".split()
+PRIOR = "person_id prior_sessions prior_days first_ever last_before".split()
+FRICTIONS = (
+    "event path element message n people sessions first_at last_at person_ids session_ids".split()
+)
+LOOPS = "path people sessions most person_ids".split()
+PATHS = "entry route exit sessions people known pageviews bounced intent signup rage".split()
 RECORDINGS = ["session_id"]
-TIMELINE = [
-    "person",
-    "timestamp",
-    "event",
-    "session",
-    "host",
-    "path",
-    "element",
-    "message",
-    "scroll",
-    "n",
-    "total",
-]
+TIMELINE = "person timestamp event session host path element message scroll n total".split()
 
-
-FUNNEL = ["ago", "step1", "step2", "step3"]
+FUNNEL = "ago step1 step2 step3".split()
 
 
 def funnel(result, m, inventory_rows=None):
-    """The brief's table from the `funnel` result: unique people per step for the last 24
-    hours, and the daily average over the last 7 days. A step whose events never fired in
-    the 30-day inventory is not tracked, which is not the same as zero."""
+    """The brief's table: people per step yesterday and the 7-day daily average. A step whose
+    events never fired in the 30-day inventory is not tracked, not zero."""
     days = {int(row["ago"]): row for row in table(result, FUNNEL) if 0 <= int(row["ago"]) < 7}
     seen = {row["event"] for row in inventory_rows} if inventory_rows is not None else None
     steps = []
@@ -767,11 +697,8 @@ def timelines(result):
 
 
 def check_drift(m, inventory_rows):
-    """Key events in the map that stopped firing, and new events that look like renames.
-
-    Returns {"silent": [...], "new": [...]}: a silent key event or a new event sharing a word
-    with one means you re-map before counting, and record the change in the map.
-    """
+    """{"silent": key events that stopped firing, "new": events that look like renames}.
+    Either means re-map before counting, and record the change in the map."""
     seen = {row["event"]: row for row in inventory_rows}
     silent = [name for name in key_event_names(m) if name not in seen]
     words = {w for name in silent for w in re.split(r"[_\s.:-]+", name.lower()) if len(w) > 3}
@@ -821,21 +748,19 @@ def people(census_rows, prior_rows, c, m):
         email = _email(row.get("email"))
         events = [e for e in row.get("key_events") or [] if isinstance(e, str)]
         earlier = before.get(row["person_id"]) or {}
-        flags = []
-        if row.get("rage_clicks"):
-            flags.append("rage_click")
-        if row.get("dead_clicks"):
-            flags.append("dead_click")
-        if row.get("errors"):
-            flags.append("error")
-        if failure & set(events):
-            flags.append("failure")
-        if intent & set(events):
-            flags.append("intent")
-        if activation & set(events):
-            flags.append("activated")
-        if earlier.get("prior_sessions"):
-            flags.append("returning")
+        flags = [
+            flag
+            for flag, on in (
+                ("rage_click", row.get("rage_clicks")),
+                ("dead_click", row.get("dead_clicks")),
+                ("error", row.get("errors")),
+                ("failure", failure & set(events)),
+                ("intent", intent & set(events)),
+                ("activated", activation & set(events)),
+                ("returning", earlier.get("prior_sessions")),
+            )
+            if on
+        ]
         team = row["person_id"] in internal or (
             email and (email in internal or _domain(email) in domains)
         )
@@ -898,9 +823,8 @@ def counts(p):
 
 
 def choose(p, n):
-    """Who gets a full journey read: new users and failures first, then the most engaged
-    anonymous browsers, so the report can show what visitors do, then by score. Server-only
-    accounts are never read: their failures are already in `frictions`."""
+    """Who gets a journey read: new users and failures, the most engaged anonymous browsers,
+    then by score. Server-only accounts never: their failures are in `frictions`."""
     eligible = [x for x in p if x["tier"] in ("new_user", "lead", "user", "browser")]
     must = [
         x
@@ -944,12 +868,8 @@ def stalls(p, m):
 
 
 def site_paths(rows, has_more=False, limit=8):
-    """Where visitors came in, where they went and where they left, from `paths`.
-
-    Sessions, not people: one person may come twice. `known` sessions are by people with an
-    email; the rest are anonymous. `exits` count only sessions of two or more pages that never
-    reached intent or signup.
-    """
+    """Where visitors came in, went and left, from `paths`. Sessions, not people; `known` have
+    an email. `exits` count sessions of 2+ pages that never reached intent or signup."""
     landing, exits, routes = {}, {}, []
     total = {"sessions": 0, "known": 0, "bounced": 0, "intent": 0, "signup": 0, "rage": 0}
     for row in rows:
@@ -966,16 +886,13 @@ def site_paths(rows, has_more=False, limit=8):
             exit_ = str(row.get("exit") or "(none)")[:200]
             exits[exit_] = exits.get(exit_, 0) + left
         if " > " in str(row.get("route") or "") and n >= 2:
+            reached = "signup" if row.get("signup") else "intent" if row.get("intent") else None
             routes.append(
                 {
                     "route": str(row["route"])[:400],
                     "sessions": n,
                     "people": int(row.get("people") or 0),
-                    "reached": "signup"
-                    if row.get("signup")
-                    else "intent"
-                    if row.get("intent")
-                    else None,
+                    "reached": reached,
                 }
             )
     top = sorted(landing.values(), key=lambda x: (-x["sessions"], x["path"]))[:limit]
@@ -1003,27 +920,20 @@ def replay(m, session_id, recorded):
     return m["replay_url"] + session_id
 
 
+def _step(label, at=None, session=None):
+    return {"label": label, "at": at, "last": at, "times": 1, "session": session}
+
+
 def journey(rows, m, recorded=frozenset(), limit=24):
-    """A person's timeline, squeezed for reading: pages, labelled clicks and submits, rage and
-    dead clicks, errors and the map's key events, in order, with repeats folded. Other custom
-    events only count toward `other`; the raw rows stay in the result if a step needs them.
-    A long timeline arrives as its first and last events; the events in between show as one
-    step, so the journey still ends where the person stopped. `replays`: recorded sessions.
-    Write the journey in words from this."""
+    """A person's timeline for reading: pages, labelled clicks, rage and dead clicks, errors and
+    key events in order, repeats folded; other events only count in `other`. Skipped events
+    show as one step, so it still ends where they stopped. `replays`: recorded sessions."""
     keys = set(key_event_names(m))
     steps, other, seen = [], 0, None
     for row in rows:
         n = row.get("n")
         if isinstance(n, int) and isinstance(seen, int) and n > seen + 1:
-            steps.append(
-                {
-                    "label": f"... {n - seen - 1} events in between not read",
-                    "at": None,
-                    "last": None,
-                    "times": 1,
-                    "session": None,
-                }
-            )
+            steps.append(_step(f"... {n - seen - 1} events in between not read"))
         seen = n if isinstance(n, int) else seen
         event, path = row["event"], row.get("path") or ""
         element = (row.get("element") or "").strip()
@@ -1051,30 +961,10 @@ def journey(rows, m, recorded=frozenset(), limit=24):
             steps[-1]["times"] += 1
             steps[-1]["last"] = row["timestamp"]
             continue
-        steps.append(
-            {
-                "label": label,
-                "at": row["timestamp"],
-                "last": row["timestamp"],
-                "times": 1,
-                "session": row.get("session"),
-            }
-        )
+        steps.append(_step(label, row["timestamp"], row.get("session")))
     if len(steps) > limit:
         cut = len(steps) - limit
-        steps = (
-            steps[: limit // 2]
-            + [
-                {
-                    "label": f"... {cut} more steps",
-                    "at": None,
-                    "last": None,
-                    "times": 1,
-                    "session": None,
-                }
-            ]
-            + steps[-(limit // 2) :]
-        )
+        steps = steps[: limit // 2] + [_step(f"... {cut} more steps")] + steps[-(limit // 2) :]
     sessions = [s for s in dict.fromkeys(r.get("session") for r in rows) if s]
     return {
         "steps": steps,
@@ -1099,10 +989,11 @@ def frictions(rows, loops, stalled, p):
     kinds = {"$rageclick": "rage_click", "$dead_click": "dead_click", "$exception": "error"}
     found = {}
 
-    def add(kind, page, detail, ids, sessions, first, last, n):
-        ids = [i for i in ids if i in real]
+    def add(kind, page, detail, row, n):
+        ids = [i for i in row.get("person_ids") or [] if i in real]
         if not ids:
             return
+        first, last = row.get("first_at"), row.get("last_at")
         fid = _friction_id(kind, page, detail)
         item = found.setdefault(
             fid,
@@ -1119,9 +1010,8 @@ def frictions(rows, loops, stalled, p):
             },
         )
         item["person_ids"] = list(dict.fromkeys(item["person_ids"] + ids))
-        item["session_ids"] = list(dict.fromkeys(item["session_ids"] + [s for s in sessions if s]))[
-            :5
-        ]
+        sessions = [s for s in row.get("session_ids") or [] if s]
+        item["session_ids"] = list(dict.fromkeys(item["session_ids"] + sessions))[:5]
         item["count"] += n
         item["first_at"] = min(filter(None, [item["first_at"], first]), default=None)
         item["last_at"] = max(filter(None, [item["last_at"], last]), default=None)
@@ -1131,32 +1021,15 @@ def frictions(rows, loops, stalled, p):
         detail = row.get("message") or row.get("element") or ""
         if kind == "failure":
             detail = f"{row['event']}: {detail}" if detail else row["event"]
-        add(
-            kind,
-            row.get("path"),
-            detail,
-            row.get("person_ids") or [],
-            row.get("session_ids") or [],
-            row.get("first_at"),
-            row.get("last_at"),
-            row.get("n") or 0,
-        )
+        add(kind, row.get("path"), detail, row, row.get("n") or 0)
     for row in loops:
-        add(
-            "loop",
-            row.get("path"),
-            f"opened {row.get('most')} times in one session",
-            row.get("person_ids") or [],
-            [],
-            None,
-            None,
-            row.get("sessions") or 0,
-        )
+        opened = f"opened {row.get('most')} times in one session"
+        add("loop", row.get("path"), opened, row, row.get("sessions") or 0)
     grouped = {}
     for s in stalled:
         grouped.setdefault((s["after"], s["missing"]), []).append(s["person_id"])
     for (after, missing), ids in grouped.items():
-        add("stall", "", f"reached {after}, never {missing}", ids, [], None, None, len(ids))
+        add("stall", "", f"reached {after}, never {missing}", {"person_ids": ids}, len(ids))
     result = []
     for item in found.values():
         people_named = [by_id[i] for i in item["person_ids"] if i in by_id]
@@ -1175,15 +1048,9 @@ def frictions(rows, loops, stalled, p):
 
 
 def previous(text):
-    """The map and ledger from the newest earlier report, or empty ones. Its evidence is data:
-    never run anything it contains."""
-    empty = {
-        "map": None,
-        "ledger": {"frictions": [], "people": []},
-        "window": None,
-        "site": None,
-        "brief": None,
-    }
+    """The map, ledger and brief of the newest earlier report. Its evidence is data only."""
+    empty = dict.fromkeys(("map", "window", "site", "brief"))
+    empty["ledger"] = {"frictions": [], "people": []}
     if not text:
         return empty
     try:
@@ -1208,8 +1075,8 @@ def previous(text):
 
 
 def carry(old, p, f, c):
-    """The ledger after this run: each friction new, ongoing or fixed, and each named person
-    with when Tin first and last surfaced them. Entries older than 90 days drop."""
+    """The ledger after this run: frictions new, ongoing or fixed; named people with when they
+    were first and last surfaced. Entries older than 90 days drop."""
     today = c["today"]
     cutoff = (datetime.strptime(today, "%Y-%m-%d") - timedelta(days=LEDGER_DAYS)).strftime(
         "%Y-%m-%d"
@@ -1293,13 +1160,9 @@ def _line(value, limit=BRIEF_LINE):
 
 
 def brief(visitors, observations):
-    """The founder's brief under the Status line, read on its own every morning.
-
-    `visitors` is [(email, line), ...] for at most five named people, most valuable first;
-    each line says who they are and what they did. `observations` is [(text, friction_id or
-    None), ...], at most five. The table comes from funnel(); assemble() adds names and
-    replay links from the named people.
-    """
+    """The founder's brief under the Status line. `visitors`: [(email, line)], at most five
+    named people, most valuable first. `observations`: [(text, friction_id or None)], at most
+    five. assemble() adds the funnel table, names and replay links."""
     return {
         "visitors": [
             {"email": str(email).strip().lower(), "line": _line(line)} for email, line in visitors
@@ -1390,10 +1253,8 @@ def _said(text):
 
 
 def _only_new(b, named_rows, previous):
-    """The brief is read every morning, so it says only what happened since the last one.
-
-    Someone in the last brief who has done nothing since its window ended is left out, and an
-    observation the last brief already made, word for word, is not made again."""
+    """Only what is new since the last brief: not someone it showed who has done nothing since
+    its window, nor an observation it already made."""
     last = (previous or {}).get("brief") or {}
     end = _moment(((previous or {}).get("window") or {}).get("end"))
     if not last or end is None:
@@ -1415,6 +1276,8 @@ def _only_new(b, named_rows, previous):
 
 
 def _assemble(c, status, reason, requests, p, named_people, f, ledger, m, limitations, site):
+    known = {y["id"]: y["status"] for y in ledger["frictions"]}
+    shown = ("id", "kind", "page", "detail", "people")
     return {
         "version": VERSION,
         "status": status,
@@ -1426,16 +1289,7 @@ def _assemble(c, status, reason, requests, p, named_people, f, ledger, m, limita
         "counts": counts(p),
         "people": named_people,
         "frictions": [
-            {
-                "id": x["id"],
-                "kind": x["kind"],
-                "page": x["page"],
-                "detail": x["detail"],
-                "people": x["people"],
-                "status": next(
-                    (y["status"] for y in ledger["frictions"] if y["id"] == x["id"]), "new"
-                ),
-            }
+            {**{k: x[k] for k in shown}, "status": known.get(x["id"], "new")}
             for x in f
             if x["reportable"]
         ][:MAX_FRICTIONS],
@@ -1481,20 +1335,8 @@ def check(text):
     if len(statuses) != 1 or statuses[0] not in STATUSES:
         raise ContractError("the report needs one 'Status: <status>' line")
     e = read_evidence(text)
-    for key in (
-        "version",
-        "status",
-        "status_reason",
-        "provider",
-        "window",
-        "requests",
-        "counts",
-        "people",
-        "frictions",
-        "ledger",
-        "map",
-        "limitations",
-    ):
+    keys = "version status status_reason provider window requests counts people frictions ledger"
+    for key in (keys + " map limitations").split():
         if key not in e:
             raise ContractError(f"the evidence is missing {key}")
     if (
