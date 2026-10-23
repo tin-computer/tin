@@ -801,6 +801,98 @@ def test_the_brief_says_only_what_is_new_since_the_last_one(j, c, m, people):
     j.check(report(j, c, m, people, previous=j.previous(None)))
 
 
+def with_work(j, m, people):
+    """The default named people, with what a web search found about Ana's work."""
+    work = j.profile(
+        company="Fieldnotes",
+        role="Founder",
+        about="a research notebook for UX teams",
+        linkedin_url="https://www.linkedin.com/in/anasouza",
+        company_url="https://fieldnotes.dev",
+        basis="name and fieldnotes.dev email",
+    )
+    return [
+        j.named(
+            p,
+            f"{p['name'] or p['email']} came from {p['referrer']}.",
+            "Email them.",
+            "/connect",
+            j.replay(m, p["session_ids"][0], set(p["session_ids"])),
+            work=work if p["email"] == "ana@fieldnotes.dev" else None,
+        )
+        for p in people
+        if p["tier"] in j.NAMED_TIERS
+    ]
+
+
+def test_new_users_open_the_brief_with_where_they_work(j, c, m, people):
+    ana, ben, cara = "ana@fieldnotes.dev", "ben@quanta.io", "cara@studio.design"
+    named = with_work(j, m, people)
+    # New: Ana signed up, Ben gave an email for the first time; Cara has been here before.
+    assert [(n["email"], n["new"]) for n in named] == [(ana, True), (ben, True), (cara, False)]
+    b = j.brief(
+        [(cara, "Back again.")],
+        [],
+        [(ana, "Came from the hackathon and created an account."), (ben, "Booked a call.")],
+    )
+    text = report(j, c, m, people, named=named, brief=b)
+    j.check(text)
+    head = text.split(j.EVIDENCE_MARKER)[0]
+    assert head.index("**New users**") < head.index("**Some visitors**")
+    assert (
+        "- **Ana Souza** (ana@fieldnotes.dev): Founder at Fieldnotes; a research notebook for UX "
+        "teams. Came from the hackathon and created an account. "
+        "[LinkedIn](https://www.linkedin.com/in/anasouza) · [Fieldnotes](https://fieldnotes.dev) · "
+        "[Replay](" + REPLAY + "01a1-session-0001)"
+    ) in head
+    assert "- **Ben Ode** (ben@quanta.io): Booked a call. [Replay](" in head
+    brief = visitor_journal.read(text).brief
+    assert [v.email for v in brief.new] == [ana, ben] and [v.email for v in brief.visitors] == [
+        cara
+    ]
+    assert brief.new[0].work.headline == "Founder at Fieldnotes"
+    assert brief.new[0].work.linkedin_url == "https://www.linkedin.com/in/anasouza"
+    assert brief.new[1].work is None
+    # Nobody new is said plainly.
+    quiet = report(j, c, m, people, named=named, brief=j.brief([(cara, "Back again.")], []))
+    assert "**New users**\n\n- Nobody new signed up or left an email." in quiet
+    # Someone who is not new, a link that is not a profile, a role nothing ties to them.
+    with pytest.raises(j.ContractError, match="not a named new person"):
+        report(j, c, m, people, named=named, brief=j.brief([], [], [(cara, "Back again.")]))
+    with pytest.raises(j.ContractError, match="not a LinkedIn profile"):
+        j.profile(linkedin_url="https://evil.example/in/anasouza", basis="name")
+    with pytest.raises(j.ContractError, match="basis"):
+        j.profile(company="Fieldnotes", role="Founder")
+    assert j.profile() is None and j.profile(company="Fieldnotes")["company"] == "Fieldnotes"
+    # Turned off: no work at all.
+    assert c["look_up_new_people"] is True
+    off = j.settings({"look_up_new_people": False}, now=NOW)
+    assert off["look_up_new_people"] is False
+    with pytest.raises(j.ContractError, match="turned off looking up"):
+        report(j, {**c, "look_up_new_people": False}, m, people, named=named, brief=b)
+    # Tin keeps only a LinkedIn profile and an https site, and work only for new people.
+    tampered = text.replace("https://www.linkedin.com/in/anasouza", "javascript:alert(1)")
+    assert visitor_journal.read(tampered).people[0].work.linkedin_url is None
+    rows = [{**n, "new": False} for n in named]
+    assert (
+        visitor_journal.read(report(j, c, m, people, named=rows, brief=None)).people[0].work is None
+    )
+    # Tin enforces the switch and the basis itself, whatever the report says.
+    assert visitor_journal.work_allowed({}) and visitor_journal.work_allowed(None)
+    assert not visitor_journal.work_allowed({"look_up_new_people": False})
+    off_read = visitor_journal.read(text, work=False)
+    assert off_read.people[0].work is None and off_read.brief.new[0].work is None
+    untied = text.replace('"basis": "name and fieldnotes.dev email"', '"basis": ""')
+    loose = visitor_journal.read(untied).people[0].work
+    assert (loose.company, loose.role, loose.linkedin_url) == ("Fieldnotes", "", None)
+    # A new person the last brief listed, with nothing since, is left out like any visitor.
+    last = j.previous(text)
+    with pytest.raises(j.ContractError, match="ana@fieldnotes.dev was in the last brief"):
+        report(
+            j, c, m, people, named=named, brief=j.brief([], [], [(ana, "Again.")]), previous=last
+        )
+
+
 def test_the_check_refuses_what_tin_would_not_publish_or_trust(j, c, m, people):
     with pytest.raises(j.ContractError, match="Status:"):
         j.check(report(j, c, m, people).replace("Status: complete", "Status: done"))
@@ -1022,7 +1114,7 @@ async def project(db) -> UUID:
 
 async def test_a_published_report_writes_its_people_once(j, c, m, people, publication_db):
     project_id = await project(publication_db)
-    outcome = visitor_journal.read(report(j, c, m, people))
+    outcome = visitor_journal.read(report(j, c, m, people, named=with_work(j, m, people)))
     async with publication_db.pool.acquire() as conn:
         forgotten = await records.upsert_person(
             conn, project_id, {"email": "cara@studio.design"}, source="test"
@@ -1058,6 +1150,7 @@ async def test_a_published_report_writes_its_people_once(j, c, m, people, public
         and ana["fields"]["web_tier"]["reason"] == "/connect"
     )
     assert ana["fields"]["web_summary"]["value"] == "Ana Souza came from devpost.com."
+    assert ana["headline"] == "Founder at Fieldnotes"  # what a web search found
     assert ana["last_touch"]["kind"] == "visited"
     # A name another source set stays.
     assert by_email["ben@quanta.io"]["name"] == "Benedict Ode"

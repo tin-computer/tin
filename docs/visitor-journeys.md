@@ -4,7 +4,8 @@
 of the people who used the site and product in the window. It covers:
 
 - who to act on today, each with their journey, where they stopped and one suggested next step;
-- new users and how far they got;
+- new users and how far they got, with where they work: employer, role, what the company does
+  and their LinkedIn profile, found on the public web;
 - frictions: rage clicks, dead clicks, errors, failure events, stalls between key steps, and
   pages opened again and again in one session, each with who hit it and the code behind it when
   a repository is connected;
@@ -36,6 +37,33 @@ bots are counted and left out. A product account seen only in server events, wit
 no pageviews (often a tenant ID), is counted apart from website visitors. Replay links open the session in PostHog; the report never
 quotes what a person typed.
 
+## New users and where they work
+
+A named person is new when they signed up in the window, or gave an email for the first time
+(a lead with no earlier sessions). When `look_up_new_people` is on, the agent looks up each new
+person with web search before writing about them: at most 10 people and 3 searches each.
+
+- A work email domain names the company; the agent reads its site for what it does and its size.
+  A free mail domain (gmail.com and the like) names nothing.
+- A LinkedIn profile or role is kept only when the result shows the person's full name and
+  something from their own data, usually the company behind their email domain. `profile()`
+  refuses a role or profile without that `basis`. With a free mail address and nothing else that
+  ties, the report says nothing: a namesake is worse than no profile.
+- Work only: employer, role, the company, its size and a public professional profile. Never a
+  home address, family, age, personal social accounts or private life. Anonymous visitors, team
+  members and people who are not new are never looked up.
+
+The brief lists the new people under **New users**, above **Some visitors**:
+
+```text
+- **Ana Souza** (ana@fieldnotes.dev): Founder at Fieldnotes; a research notebook for UX teams.
+  Came from the hackathon and created an account. [LinkedIn](…) · [Fieldnotes](…) · [Replay](…)
+```
+
+Web search runs on the model provider's side and is billed per search, about $0.01 each, so a
+day with ten new people adds about $0.30. Turn it off for a consumer product, where a user's
+employer is none of the founder's business.
+
 ## Set it up
 
 Connect PostHog in Integrations (read scopes only) and choose the project. Every input is
@@ -48,6 +76,7 @@ optional:
 | `exclude_email_domains` | none | Team domains, left out in the queries themselves. |
 | `internal_people` | none | Team emails or PostHog person IDs on personal accounts. |
 | `max_people_detailed` | 12 | How many people get a full timeline read (up to 30). New users and anyone with a failure always do. |
+| `look_up_new_people` | on | Look up where new users work and their LinkedIn profile on the public web. |
 | `notes` | none | What your events mean, or what to watch. Outranks project files. |
 
 Schedule it daily. The first run maps the events and takes longer.
@@ -66,10 +95,10 @@ A procedure writes one file, so the memory lives in the report's evidence block:
   when they were first and last surfaced and whether they came back. A friction is `new`, then
   `ongoing`, and `fixed` once it has been seen on two or more days and then not for five. Entries
   older than 90 days drop.
-- **brief**: the table, visitors and observations that opened the last report. The founder reads
-  the brief every morning, so it says only what is new since then. `assemble()` refuses a visitor
-  who was in the last brief and has done nothing since its window ended, and an observation it
-  made word for word. A visitor who came back is listed for what they did since. A tracking gap
+- **brief**: the table, new users, visitors and observations that opened the last report. The
+  founder reads the brief every morning, so it says only what is new since then. `assemble()`
+  refuses a person who was in the last brief and has done nothing since its window ended, and an
+  observation it made word for word. A visitor who came back is listed for what they did since. A tracking gap
   or an ongoing friction is mentioned again only when it changes.
 
 The next run reads the newest report under `reports/visitors/` and starts from its map and
@@ -111,6 +140,9 @@ After publication, `visitor_people.py` writes each named person to [People](peop
 - a record recognized by their `email` (lowercase), created or reused;
 - `web_tier` (lead, new user or user, with where they stopped as the reason) and `web_summary`;
 - their `name`, only when no other source set one;
+- their `headline` ("Founder at Fieldnotes") from a new person's work, likewise only when unset.
+  Their LinkedIn profile is never added as an identifier, so a namesake found by search cannot
+  merge two records;
 - one `visited` event per person and window end date, with the summary, where they stopped,
   the suggested action and the replay link.
 
@@ -122,7 +154,7 @@ LinkedIn invitations, which need a LinkedIn member ID.
 ## Limits
 
 - PostHog only. Search Console, Stripe and GitHub stay out of the queries. Connected repositories
-  are read only to find the code behind a friction.
+  are read only to find the code behind a friction. Web search is only for new people's work.
 - Replays are linked, not read: PostHog keeps recording contents out of its query API for Tin's
   read-only scopes.
 - `paths` counts signup only when the signup event carries the browser session. A signup on

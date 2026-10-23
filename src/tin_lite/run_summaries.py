@@ -96,10 +96,20 @@ def parse(value: Any) -> dict[str, Any] | None:
     return {"version": VERSION, "headline": headline, "table": table, "sections": sections}
 
 
-def _visitor_journal(content: bytes | str) -> dict[str, Any] | None:
+def _new_user(v) -> dict[str, Any]:
+    """A new person: who, where they work, what they did; their LinkedIn, else the replay."""
+    who = f"{v.name} ({v.email})" if v.name else v.email
+    if v.work and v.work.headline:
+        who += f", {v.work.headline}"
+    if v.work and v.work.linkedin_url:
+        return {"text": f"{who}: {v.line}", "url": v.work.linkedin_url, "label": "LinkedIn"}
+    return {"text": f"{who}: {v.line}", "url": v.replay_url, "label": "Replay"}
+
+
+def _visitor_journal(content: bytes | str, inputs: Any = None) -> dict[str, Any] | None:
     from tin_lite import visitor_journal
 
-    outcome = visitor_journal.read(content)
+    outcome = visitor_journal.read(content, work=visitor_journal.work_allowed(inputs))
     if outcome.measured_nothing or outcome.status == "invalid configuration":
         return None
     brief = outcome.brief
@@ -118,6 +128,13 @@ def _visitor_journal(content: bytes | str) -> dict[str, Any] | None:
                     ["Last 7 days, daily average", *(cell(step.average) for step in brief.steps)],
                 ],
             }
+        if brief.new:
+            sections.append(
+                {
+                    "heading": "New users",
+                    "items": [_new_user(v) for v in brief.new],
+                }
+            )
         if brief.visitors:
             sections.append(
                 {
@@ -144,18 +161,21 @@ def _visitor_journal(content: bytes | str) -> dict[str, Any] | None:
 
 
 # Output validator -> reader of the published content. Add a workflow by adding its reader.
-SOURCES: dict[str, Callable[[bytes | str], dict[str, Any] | None]] = {
+SOURCES: dict[str, Callable[[bytes | str, Any], dict[str, Any] | None]] = {
     "visitor-journal.v1": _visitor_journal,
 }
 
 
-def from_output(validator: str | None, content: bytes | str) -> dict[str, Any] | None:
-    """The summary of a published procedure result, or None. Never raises."""
+def from_output(
+    validator: str | None, content: bytes | str, inputs: Any = None
+) -> dict[str, Any] | None:
+    """The summary of a published procedure result, or None. Never raises. `inputs` are the
+    run's pinned inputs."""
     reader = SOURCES.get(validator or "")
     if reader is None:
         return None
     try:
-        return reader(content)
+        return reader(content, inputs)
     except Exception:  # noqa: BLE001 - a summary is never grounds to fail a published run
         return None
 

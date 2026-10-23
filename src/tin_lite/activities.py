@@ -4506,7 +4506,9 @@ class TinActivities:
                     result["summary"] = visitor_journal.summary(visitors)
                 from tin_lite import run_summaries
 
-                summarized = run_summaries.from_output(procedure.output_validator, content)
+                summarized = run_summaries.from_output(
+                    procedure.output_validator, content, run.input
+                )
                 if summarized is not None:
                     result["run_summary"] = summarized
                 if procedure.review_revision_context is not None:

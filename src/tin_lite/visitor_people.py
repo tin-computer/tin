@@ -4,8 +4,10 @@ A `product.visitor_journeys` report names people only by an email they gave the 
 signing up or in a form. After the report is published, each named person becomes (or joins)
 a People record recognized by that email, with what they were on the site (`web_tier`), the
 latest summary (`web_summary`) and, once per window end date, a `visited` event holding the
-summary, where they stopped, the suggested action and a replay link. Anonymous visitors never
-get a record, and a person the founder asked Tin to forget is skipped.
+summary, where they stopped, the suggested action and a replay link. A new person's work found
+on the public web (1.4.0) fills `headline`; a run never adds their LinkedIn profile as an
+identifier, so a namesake found by search can't merge two records. Anonymous visitors never get
+a record, and a person the founder asked Tin to forget is skipped.
 
 Every write is idempotent (one record per email, a `visited` key per person and day), so a
 retried publication adds nothing. A failure here is logged and never fails the run that
@@ -57,12 +59,16 @@ async def write(conn, project_id: UUID, run_id: UUID, outcome: visitor_journal.O
             records.Value("web_tier", person.tier, person.stopped_at),
             records.Value("web_summary", person.summary),
         ]
-        # A name another source already set (a LinkedIn profile, a member) stays.
-        if person.name and not await conn.fetchval(
-            "SELECT value_text FROM record_values WHERE record_id = $1 AND field = 'name'",
-            await records.current(conn, project_id, record_id),
-        ):
-            values.append(records.Value("name", person.name))
+        # A name or headline another source already set (a LinkedIn profile, a member) stays.
+        current = await records.current(conn, project_id, record_id)
+        work = person.work
+        for key, value in (("name", person.name), ("headline", work.headline if work else "")):
+            if value and not await conn.fetchval(
+                "SELECT value_text FROM record_values WHERE record_id = $1 AND field = $2",
+                current,
+                key,
+            ):
+                values.append(records.Value(key, value))
         await records.set_values(
             conn, project_id, record_id, values, set_by_kind="run", set_by=str(run_id)
         )
@@ -89,7 +95,7 @@ async def write(conn, project_id: UUID, run_id: UUID, outcome: visitor_journal.O
 async def record(*, database, run, content: bytes) -> None:
     """After publication: put the report's named people in People. Never fails the run."""
     try:
-        outcome = visitor_journal.read(content)
+        outcome = visitor_journal.read(content, work=visitor_journal.work_allowed(run.input))
         async with database.pool.acquire() as conn:
             touched = await write(conn, run.project_id, run.id, outcome)
         if touched:
