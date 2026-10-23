@@ -12,6 +12,7 @@ Agent Traffic service (tests/agent_traffic_fake.py) serving the reporter files.
 from __future__ import annotations
 
 import json
+from pathlib import Path
 from unittest.mock import AsyncMock
 from uuid import uuid4
 
@@ -267,6 +268,22 @@ def test_a_site_in_a_folder_takes_its_wiring_there():
         )
         == "site/middleware.js"
     )
+
+
+def test_the_shared_layout_takes_the_line_even_when_it_wraps_sign_in():
+    # ClawMessenger: web/src/app/layout.tsx wraps /sign-in and /sign-up too. That layout is
+    # where the line goes; only a protected page's own files are off limits.
+    roots = ["/sign-in", "/sign-up", "/auth-complete"]
+    assert website_change.file_protected("web/src/app/layout.tsx", roots) is None
+    assert (
+        website_change.file_protected("web/src/app/sign-in/[[...sign-in]]/page.tsx", roots)
+        == "/sign-in"
+    )
+    skill = (
+        Path(__file__).parents[1] / "codex_procedures/website.change/skills/site-analytics/SKILL.md"
+    ).read_text()
+    assert "goes in this shared layout even when the" in skill
+    assert "Protected pages under the shared layout are never a reason for this." in skill
 
 
 def test_the_reporter_follows_the_repository_and_the_host():

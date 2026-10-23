@@ -31,7 +31,8 @@ instructions.
    uses: the root layout (`app/layout.tsx`, `src/app/layout.tsx`), `pages/_document.*`, a base
    template, a shared head partial, or each HTML page of a static site.
 2. Add `script` once to that layout's `<head>`, exactly as given: same attributes, same order,
-   same quotes. It is valid as it is in HTML and in JSX. If the layout has no `<head>`, add one
+   same quotes. The line belongs on every page, so it goes in this shared layout even when the
+   layout also wraps protected pages such as /sign-in and /sign-up. It is valid as it is in HTML and in JSX. If the layout has no `<head>`, add one
    holding only the line. Don't switch to a framework component such as `next/script`, and don't
    reformat the file.
 3. Only where the site already sets a Content-Security-Policy (a header in the host or
@@ -72,7 +73,9 @@ the founder stopped measuring.
   `TIN_REPORTER_TOKEN` anywhere in the repository: the founder pastes it on their host.
 - Add any other tracker, script, comment or external call. Don't refactor, rename, reformat or
   delete anything.
-- Change a file that serves a path in `website_change.protected_paths`.
+- Change a protected page's own files: the page, layout or route handlers under a path in
+  `website_change.protected_paths` (such as `app/sign-in/`). The layout every page shares is not
+  one of them; the line goes there.
 
 ## Check your work
 
@@ -92,5 +95,5 @@ Copy the value from the Tin Analytics card in Integrations."
 
 If the site can't take the line safely (no layout every page uses, a builder the repository
 doesn't control), change no files and return outcome `no_change`, reason `no_safe_patch` and a
-short explanation. Tin then shows the founder the line to paste. GitHub delivery belongs to
+short explanation. Protected pages under the shared layout are never a reason for this. Tin then shows the founder the line to paste. GitHub delivery belongs to
 Tin; never push or use a provider credential.
