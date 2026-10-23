@@ -96,6 +96,16 @@ def parse(value: Any) -> dict[str, Any] | None:
     return {"version": VERSION, "headline": headline, "table": table, "sections": sections}
 
 
+def _new_user(v) -> dict[str, Any]:
+    """A new person: who, where they work, what they did; their LinkedIn, else the replay."""
+    who = f"{v.name} ({v.email})" if v.name else v.email
+    if v.work and v.work.headline:
+        who += f", {v.work.headline}"
+    if v.work and v.work.linkedin_url:
+        return {"text": f"{who}: {v.line}", "url": v.work.linkedin_url, "label": "LinkedIn"}
+    return {"text": f"{who}: {v.line}", "url": v.replay_url, "label": "Replay"}
+
+
 def _visitor_journal(content: bytes | str) -> dict[str, Any] | None:
     from tin_lite import visitor_journal
 
@@ -118,6 +128,13 @@ def _visitor_journal(content: bytes | str) -> dict[str, Any] | None:
                     ["Last 7 days, daily average", *(cell(step.average) for step in brief.steps)],
                 ],
             }
+        if brief.new:
+            sections.append(
+                {
+                    "heading": "New users",
+                    "items": [_new_user(v) for v in brief.new],
+                }
+            )
         if brief.visitors:
             sections.append(
                 {

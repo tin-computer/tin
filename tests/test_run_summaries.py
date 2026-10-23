@@ -107,6 +107,33 @@ def test_a_visitor_journal_brief_becomes_the_runs_summary(j, c, m, people):
     assert run_summaries.from_output("visitor-journal.v1", "not a journal") is None
 
 
+def test_new_users_lead_the_summary_with_where_they_work(j, c, m, people):
+    from test_visitor_journeys import with_work
+
+    text = report(
+        j,
+        c,
+        m,
+        people,
+        named=with_work(j, m, people),
+        brief=j.brief(
+            [],
+            [],
+            [("ana@fieldnotes.dev", "Created an account."), ("ben@quanta.io", "Booked a call.")],
+        ),
+    )
+    [new] = run_summaries.from_output("visitor-journal.v1", text)["sections"]
+    assert new["heading"] == "New users"
+    assert new["items"][0] == {
+        "text": "Ana Souza (ana@fieldnotes.dev), Founder at Fieldnotes: Created an account.",
+        "url": "https://www.linkedin.com/in/anasouza",
+        "label": "LinkedIn",
+    }
+    # Without a profile, the replay.
+    assert new["items"][1]["text"] == "Ben Ode (ben@quanta.io): Booked a call."
+    assert new["items"][1]["label"] == "Replay"
+
+
 def code_definition(summary: bool):
     manifest = json.loads(
         (Path(workflow_code.__file__).with_name("code_example") / "workflow.json").read_text()

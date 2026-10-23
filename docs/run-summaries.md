@@ -26,8 +26,9 @@ breaks the shape is dropped, never grounds to fail a run that already published 
 ## Which workflows write one
 
 - **A procedure** whose output validator has a reader in `run_summaries.SOURCES`. Today that is
-  `visitor-journal.v1` (`product.visitor_journeys`): the brief's table, visitors with replay
-  links, and observations, under the run's one-line summary. To add a procedure, add a reader
+  `visitor-journal.v1` (`product.visitor_journeys`): the brief's table, new users with where
+  they work (linked to their LinkedIn profile when found), visitors with replay links, and
+  observations, under the run's one-line summary. To add a procedure, add a reader
   for its validator.
 - **A code workflow** that declares `"summary": true` in `code.output` and returns `summary`
   beside `path` and `content`:

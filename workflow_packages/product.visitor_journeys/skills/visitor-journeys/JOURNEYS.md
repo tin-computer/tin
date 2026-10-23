@@ -27,8 +27,10 @@ recordings       -> rec = recordings(result)  # which of their sessions PostHog 
                     journey(rows, m, rec); replay(m, session_id, rec)
 funnel           -> fn = funnel(result, m, inventory_rows)  # the brief's table
 f = frictions(friction_rows, loop_rows, stalls(p, m), p)
+web search       -> w = profile(...)      # each new person's work, when look_up_new_people
+                    named(person, ..., work=w)
 ledger = carry(prev["ledger"], p, f, c)
-b = brief(visitors, observations)         # the founder's brief, in your words: only what is new
+b = brief(visitors, observations, new)    # the founder's brief, in your words: only what is new
 evidence = assemble(..., brief=b, funnel=fn, previous=prev)
 text = report (render_brief(evidence["brief"]) under Status) + render_evidence(evidence)
 check(text)
@@ -73,6 +75,7 @@ SUMMARY_LIMIT = 300
 FUNNEL_DAYS = 7
 FUNNEL_STEPS = 3
 BRIEF_VISITORS = 5
+BRIEF_NEW = 10
 BRIEF_OBSERVATIONS = 5
 BRIEF_LINE = 240
 # Words from inside this resource that mean nothing to a founder.
@@ -101,6 +104,8 @@ EVENT_NAME = re.compile(r"^[^\x00-\x1f'\\]{1,200}$")
 PROPERTY = re.compile(r"^\$?[A-Za-z_][A-Za-z0-9_$]{0,99}$")
 SESSION = re.compile(r"^[0-9A-Za-z-]{8,80}$")
 UUID = re.compile(r"^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$")
+LINKEDIN = re.compile(r"^https://(?:www\.)?linkedin\.com/in/[^/?#\s()<>]{1,100}/?$")
+SITE = re.compile(r"^https://[a-z0-9.-]{1,253}\.[a-z]{2,63}(?:/[^\s()<>]{0,200})?$")
 
 
 class ContractError(ValueError):
@@ -174,6 +179,7 @@ def settings(inputs, now=None):
         ),
         "internal_people": internal,
         "notes": notes,
+        "look_up_new_people": inputs.get("look_up_new_people") is not False,
         "today": end.strftime("%Y-%m-%d"),
     }
 
@@ -1137,8 +1143,22 @@ def carry(old, p, f, c):
 # ---------------------------------------------------------------- evidence and the check
 
 
-def named(person, summary, action="", stopped_at="", replay_url=None):
-    """One person's row for the evidence and for People. Only identified tiers."""
+def profile(company="", role="", about="", linkedin_url=None, company_url=None, basis=""):
+    """What the public web says about a new person's work. `basis` says what ties a role or
+    profile to them, such as their email's domain; leave out anything nothing ties."""
+    for url, pattern in ((linkedin_url, LINKEDIN), (company_url, SITE)):
+        if url is not None and not pattern.fullmatch(url):
+            raise ContractError(f"not a LinkedIn profile or https site: {str(url)[:80]}")
+    w = {"company": _line(company, 100), "role": _line(role, 100), "about": _line(about, 200)}
+    w |= {"linkedin_url": linkedin_url, "company_url": company_url, "basis": _line(basis, 160)}
+    if (w["role"] or linkedin_url) and not w["basis"]:
+        raise ContractError("a role or LinkedIn profile needs the basis that ties it to them")
+    return w if any(w.values()) else None
+
+
+def named(person, summary, action="", stopped_at="", replay_url=None, work=None):
+    """One person's row for the evidence and for People. Only identified tiers. New: signed up,
+    or gave an email for the first time, in the window."""
     if person["tier"] not in NAMED_TIERS or not person["email"]:
         raise ContractError("only identified people are named")
     return {
@@ -1152,6 +1172,9 @@ def named(person, summary, action="", stopped_at="", replay_url=None):
         "last_seen": str(person.get("last_seen") or "")[:40],
         "source": str(person.get("utm_source") or person.get("referrer") or "")[:100],
         "replay_url": replay_url,
+        "new": person["tier"] == "new_user"
+        or (person["tier"] == "lead" and not person.get("prior_sessions")),
+        "work": work,
     }
 
 
@@ -1159,11 +1182,12 @@ def _line(value, limit=BRIEF_LINE):
     return " ".join(str(value or "").split())[:limit]
 
 
-def brief(visitors, observations):
-    """The founder's brief under the Status line. `visitors`: [(email, line)], at most five
-    named people, most valuable first. `observations`: [(text, friction_id or None)], at most
-    five. assemble() adds the funnel table, names and replay links."""
+def brief(visitors, observations, new=()):
+    """The founder's brief under the Status line. `new` and `visitors`: [(email, line)], the
+    new people and up to five others. `observations`: [(text, friction_id or None)].
+    assemble() adds the table, names, work and replay links."""
     return {
+        "new": [{"email": str(e).strip().lower(), "line": _line(x)} for e, x in new][:BRIEF_NEW],
         "visitors": [
             {"email": str(email).strip().lower(), "line": _line(line)} for email, line in visitors
         ][:BRIEF_VISITORS],
@@ -1177,6 +1201,22 @@ def _number(value):
     if value is None:
         return "not tracked"
     return f"{value:.1f}".rstrip("0").rstrip(".") if isinstance(value, float) else str(value)
+
+
+def _brief_person(v):
+    """One person in the brief: who, their work when known, what they did, then links."""
+    w = v.get("work") or {}
+    who = f"**{v['name']}** ({v['email']})" if v["name"] else f"**{v['email']}**"
+    job = "; ".join(
+        filter(None, (" at ".join(filter(None, (w.get("role"), w.get("company")))), w.get("about")))
+    )
+    links = (
+        ("LinkedIn", w.get("linkedin_url")),
+        (w.get("company") or "Site", w.get("company_url")),
+        ("Replay", v["replay_url"]),
+    )
+    links = " · ".join(f"[{k}]({u})" for k, u in links if u)
+    return f"- {who}: " + " ".join(filter(None, (job and job + ".", v["line"], links)))
 
 
 def render_brief(b):
@@ -1194,13 +1234,12 @@ def render_brief(b):
             + " | ".join(_number(x["average"]) for x in fn["steps"])
             + " |",
         ]
+    lines += ["", "**New users**", ""]
+    lines += [_brief_person(v) for v in b.get("new") or []] or [
+        "- Nobody new signed up or left an email."
+    ]
     lines += ["", "**Some visitors**", ""]
-    for v in b["visitors"]:
-        who = f"**{v['name']}** ({v['email']})" if v["name"] else f"**{v['email']}**"
-        replay = f" [Replay]({v['replay_url']})" if v["replay_url"] else ""
-        lines.append(f"- {who}: {v['line']}{replay}")
-    if not b["visitors"]:
-        lines.append("- Nobody we can name.")
+    lines += [_brief_person(v) for v in b["visitors"]] or ["- Nobody we can name."]
     lines += ["", "**Some observations**", ""]
     lines += [f"- {o['text']}" for o in b["observations"]] or ["- Nothing stood out."]
     return "\n".join(lines)
@@ -1225,16 +1264,21 @@ def assemble(
     evidence = _assemble(
         c, status, reason, requests, p, named_people, f, ledger, m, limitations, site
     )
+    if not c["look_up_new_people"] and any(row.get("work") for row in named_people):
+        raise ContractError("the founder turned off looking up new people; leave out work")
     if brief is not None:
         named_rows = {row["email"]: row for row in named_people}
-        visitors = []
-        for v in brief["visitors"]:
-            row = named_rows.get(v["email"])
-            if row is None:
-                raise ContractError(f"{v['email']} is in the brief but is not a named person")
-            visitors.append({**v, "name": row["name"], "replay_url": row["replay_url"]})
+        out = {"new": [], "visitors": []}
+        for part, shown in out.items():
+            for v in brief.get(part) or []:
+                row = named_rows.get(v["email"]) or {}
+                if not row or (part == "new" and not row.get("new")):
+                    kind = "new person; put them under visitors" if row else "person"
+                    raise ContractError(f"{v['email']} is in the brief but is not a named {kind}")
+                shown.append({**v, "name": row["name"], "replay_url": row["replay_url"]})
+                shown[-1]["work"] = row.get("work")
         _only_new(brief, named_rows, previous)
-        evidence["brief"] = {**brief, "visitors": visitors, "funnel": funnel}
+        evidence["brief"] = {**brief, **out, "funnel": funnel}
     return evidence
 
 
@@ -1259,8 +1303,9 @@ def _only_new(b, named_rows, previous):
     end = _moment(((previous or {}).get("window") or {}).get("end"))
     if not last or end is None:
         return
-    shown = {v.get("email") for v in last.get("visitors") or [] if isinstance(v, dict)}
-    for v in b["visitors"]:
+    were = (last.get("visitors") or []) + (last.get("new") or [])
+    shown = {v.get("email") for v in were if isinstance(v, dict)}
+    for v in b["visitors"] + b.get("new", []):
         seen = _moment(named_rows[v["email"]].get("last_seen"))
         if v["email"] in shown and seen is not None and seen <= end:
             raise ContractError(
@@ -1414,7 +1459,7 @@ def _check_brief(e, head):
     if len(b.get("visitors") or []) > BRIEF_VISITORS:
         raise ContractError(f"show at most {BRIEF_VISITORS} visitors")
     named_emails = {row["email"] for row in e["people"]}
-    for v in b.get("visitors") or []:
+    for v in (b.get("visitors") or []) + (b.get("new") or []):
         if v.get("email") not in named_emails:
             raise ContractError(f"{v.get('email')} is in the brief but is not a named person")
     observations = b.get("observations") or []
@@ -1431,7 +1476,8 @@ def _check_brief(e, head):
                 "an observation that something is broken needs a recorded failure or error "
                 "as its friction, or say 'there may be a bug'"
             )
-    lines = [v["line"] for v in b.get("visitors") or []] + [o["text"] for o in observations]
+    lines = [v["line"] for v in (b.get("visitors") or []) + (b.get("new") or [])]
+    lines += [o["text"] for o in observations]
     text = " ".join(lines)
     found = INTERNAL_WORDS.search(text)
     if found:

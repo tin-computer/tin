@@ -15,6 +15,11 @@ A report may open with the founder's brief (`brief` in the evidence, from visito
 product's conversion steps (yesterday, and the daily average over the last 7 days), a few
 named visitors and a few observations. Tin keeps it bounded and plain; a brief that breaks the
 shape is dropped, never fatal.
+
+From 1.4.0 the brief also lists the people new in the window (`brief.new`), and a new person may
+carry `work`: what the run found on the public web about where they work (company, role, what
+the company does, a LinkedIn profile and the company's site). Links that are not a LinkedIn
+profile or an https site are dropped.
 """
 
 from __future__ import annotations
@@ -52,10 +57,26 @@ SUMMARY_LIMIT = 300
 ACTION_LIMIT = 300
 BRIEF_LINE = 240
 EMAIL = re.compile(r"[^@\s]{1,64}@[a-z0-9.-]{1,253}\.[a-z]{2,63}")
+LINKEDIN = re.compile(r"https://(?:www\.)?linkedin\.com/in/[^/?#\s()<>]{1,100}/?")
+SITE = re.compile(r"https://[a-z0-9.-]{1,253}\.[a-z]{2,63}(?:/[^\s()<>]{0,200})?")
 REPLAY = re.compile(r"https://(?:us|eu)\.posthog\.com/project/\d{1,12}/replay/[0-9A-Za-z-]{8,80}")
 WINDOW = re.compile(r"\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}")
 _STATUS = re.compile(r"^Status: (.*?)[ \t]*$", re.MULTILINE)
 _EVIDENCE = re.compile(r"\A\s*```json\n(.+?)\n```\s*\Z", re.DOTALL)
+
+
+@dataclass(frozen=True)
+class Work:
+    company: str
+    role: str
+    about: str
+    linkedin_url: str | None
+    company_url: str | None
+
+    @property
+    def headline(self) -> str:
+        """Their role at the company, such as "Head of Growth at Acme"; empty if unknown."""
+        return " at ".join(x for x in (self.role, self.company) if x)
 
 
 @dataclass(frozen=True)
@@ -68,6 +89,7 @@ class Person:
     action: str
     last_seen: str
     replay_url: str | None
+    work: Work | None = None
 
 
 @dataclass(frozen=True)
@@ -84,6 +106,7 @@ class Visitor:
     name: str
     line: str
     replay_url: str | None
+    work: Work | None = None
 
 
 @dataclass(frozen=True)
@@ -91,6 +114,7 @@ class Brief:
     steps: tuple[Step, ...]
     visitors: tuple[Visitor, ...]
     observations: tuple[str, ...]
+    new: tuple[Visitor, ...] = ()
 
 
 @dataclass(frozen=True)
@@ -186,6 +210,24 @@ def _text(value, limit: int) -> str:
     return " ".join(value.split())[:limit] if isinstance(value, str) else ""
 
 
+def _work(value) -> Work | None:
+    if not isinstance(value, dict):
+        return None
+
+    def link(key, pattern):
+        url = value.get(key)
+        return url if isinstance(url, str) and pattern.fullmatch(url) else None
+
+    work = Work(
+        company=_text(value.get("company"), 100),
+        role=_text(value.get("role"), 100),
+        about=_text(value.get("about"), 200),
+        linkedin_url=link("linkedin_url", LINKEDIN),
+        company_url=link("company_url", SITE),
+    )
+    return work if any(vars(work).values()) else None
+
+
 def _people(rows, head: str, replay_base) -> tuple[Person, ...]:
     """The named people Tin may write to People. A row that breaks the contract is skipped:
     no email, an anonymous tier, no summary, or a person the report itself never names."""
@@ -222,6 +264,7 @@ def _people(rows, head: str, replay_base) -> tuple[Person, ...]:
             action=_text(row.get("action"), ACTION_LIMIT),
             last_seen=_text(row.get("last_seen"), 40),
             replay_url=replay,
+            work=_work(row.get("work")) if row.get("new") is True else None,
         )
     return tuple(found.values())
 
@@ -250,28 +293,34 @@ def _brief(value, people: tuple[Person, ...]) -> Brief | None:
             if isinstance(x, dict) and _text(x.get("label"), 40)
         )
     named = {p.email: p for p in people}
-    rows = value.get("visitors") if isinstance(value.get("visitors"), list) else []
-    visitors = tuple(
-        Visitor(
-            email=email,
-            name=named[email].name,
-            line=_text(row.get("line"), BRIEF_LINE),
-            replay_url=named[email].replay_url,
+
+    def listed(key, limit):
+        rows = value.get(key) if isinstance(value.get(key), list) else []
+        return tuple(
+            Visitor(
+                email=email,
+                name=named[email].name,
+                line=_text(row.get("line"), BRIEF_LINE),
+                replay_url=named[email].replay_url,
+                work=named[email].work,
+            )
+            for row in rows[:limit]
+            if isinstance(row, dict)
+            and (email := _text(row.get("email"), 320).lower()) in named
+            and _text(row.get("line"), BRIEF_LINE)
         )
-        for row in rows[:5]
-        if isinstance(row, dict)
-        and (email := _text(row.get("email"), 320).lower()) in named
-        and _text(row.get("line"), BRIEF_LINE)
-    )
+
+    new = listed("new", 10)
+    visitors = listed("visitors", 5)
     notes = value.get("observations") if isinstance(value.get("observations"), list) else []
     observations = tuple(
         text
         for row in notes[:5]
         if isinstance(row, dict) and (text := _text(row.get("text"), BRIEF_LINE))
     )
-    if not (steps or visitors or observations):
+    if not (steps or new or visitors or observations):
         return None
-    return Brief(steps=steps, visitors=visitors, observations=observations)
+    return Brief(steps=steps, visitors=visitors, observations=observations, new=new)
 
 
 def _measured_nothing(status: str, requests: list[dict]) -> str | None:
