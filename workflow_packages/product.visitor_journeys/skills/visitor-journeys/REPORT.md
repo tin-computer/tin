@@ -9,16 +9,18 @@ Leave out a section with nothing in it, except Status and Numbers.
 Status: <complete | incomplete | nothing to report | invalid configuration>
 
 <render_brief(evidence["brief"]), exactly as it returns:>
-**<Headline: the one thing that matters most today, with names and what happened>**
+| | Unique visitors | <middle step, if the map has one> | <main conversion> |
+|---|---:|---:|---:|
+| Yesterday | <n> | <n> | <n> |
+| Last 7 days, daily average | <n> | <n> | <n> |
 
-- **People:** <written by assemble() from the counts>
-- **Money:** <trials, checkouts, upgrades and cancellations, each with the person>
-- **Do today:** <one to three things: who, why, and what to check or do first>
-- **Broken:** <a failure the product recorded: what fails, how often, for how many, since when>
-- **Worth a look:** <a weaker signal worth a minute, such as clicks that changed nothing>
-- **Worked:** <who came back or got value, and what they did>
-- **Traffic:** <visits, the pages people land on and leave from, the main sources>
-- **Can't see:** <the one tracking gap that changes how to read the lines above>
+**Some visitors**
+
+- **<Name>** (<email>): <who they are and what they did, in one line>. [Replay](<link>)
+
+**Some observations**
+
+- <What stood out: "there may be a bug in ..." for anything without a recorded failure>
 
 ## People to act on today
 ### <Name or email> · <lead | new user | user>

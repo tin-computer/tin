@@ -11,8 +11,10 @@ person row that breaks the contract is left out of People rather than failing a 
 already paid for its work.
 
 A report may open with the founder's brief (`brief` in the evidence, from visitor journeys
-1.2.0): a headline and a few short lines meant to be read on their own, in a daily report.
-Tin keeps it bounded and plain; a brief that breaks the shape is dropped, never fatal.
+1.2.0), meant to be read on its own in a daily report: a table of unique visitors and the
+product's conversion steps (yesterday, and the daily average over the last 7 days), a few
+named visitors and a few observations. Tin keeps it bounded and plain; a brief that breaks the
+shape is dropped, never fatal.
 """
 
 from __future__ import annotations
@@ -49,7 +51,6 @@ MAX_PEOPLE = 60
 SUMMARY_LIMIT = 300
 ACTION_LIMIT = 300
 BRIEF_LINE = 240
-BRIEF_LINES = ("people", "money", "worth_a_look", "traffic", "cant_see")
 EMAIL = re.compile(r"[^@\s]{1,64}@[a-z0-9.-]{1,253}\.[a-z]{2,63}")
 REPLAY = re.compile(r"https://(?:us|eu)\.posthog\.com/project/\d{1,12}/replay/[0-9A-Za-z-]{8,80}")
 WINDOW = re.compile(r"\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}")
@@ -70,16 +71,26 @@ class Person:
 
 
 @dataclass(frozen=True)
+class Step:
+    label: str
+    # None when the product does not track the step; that is not zero.
+    yesterday: int | None
+    average: float | None
+
+
+@dataclass(frozen=True)
+class Visitor:
+    email: str
+    name: str
+    line: str
+    replay_url: str | None
+
+
+@dataclass(frozen=True)
 class Brief:
-    headline: str
-    people: str
-    do_today: tuple[str, ...]
-    money: str = ""
-    broken: str = ""
-    worth_a_look: str = ""
-    worked: str = ""
-    traffic: str = ""
-    cant_see: str = ""
+    steps: tuple[Step, ...]
+    visitors: tuple[Visitor, ...]
+    observations: tuple[str, ...]
 
 
 @dataclass(frozen=True)
@@ -151,18 +162,19 @@ def read(content: bytes | str) -> Outcome:
         if isinstance(evidence["frictions"], list)
         else []
     )
+    people = _people(evidence["people"], head, replay_base)
     return Outcome(
         status=status,
         reason=reason.strip(),
         window_end=window["end"],
-        people=_people(evidence["people"], head, replay_base),
+        people=people,
         counts={k: v for k, v in evidence["counts"].items() if type(v) is int}
         if isinstance(evidence["counts"], dict)
         else {},
         frictions=len(frictions),
         new_frictions=sum(1 for f in frictions if f.get("status") == "new"),
         measured_nothing=_measured_nothing(status, requests),
-        brief=_brief(evidence.get("brief")),
+        brief=_brief(evidence.get("brief"), people),
     )
 
 
@@ -214,34 +226,52 @@ def _people(rows, head: str, replay_base) -> tuple[Person, ...]:
     return tuple(found.values())
 
 
-def _brief(value) -> Brief | None:
+def _count(value, kind):
+    if value is None or type(value) is bool:
+        return None
+    return kind(value) if isinstance(value, int | float) and value >= 0 else None
+
+
+def _brief(value, people: tuple[Person, ...]) -> Brief | None:
+    """The founder's brief, kept only when it is the expected shape. Visitors must be people
+    the report names, so the brief never introduces anyone People would not."""
     if not isinstance(value, dict):
         return None
-    headline = _text(value.get("headline"), 200)
-    do_today = value.get("do_today")
-    items = (
-        tuple(
-            text
-            for item in do_today[:3]
-            if isinstance(item, dict) and (text := _text(item.get("text"), BRIEF_LINE))
+    funnel = value.get("funnel")
+    steps: tuple[Step, ...] = ()
+    if isinstance(funnel, dict) and isinstance(funnel.get("steps"), list):
+        steps = tuple(
+            Step(
+                label=_text(x.get("label"), 40),
+                yesterday=_count(x.get("yesterday"), int),
+                average=_count(x.get("average"), float),
+            )
+            for x in funnel["steps"][:3]
+            if isinstance(x, dict) and _text(x.get("label"), 40)
         )
-        if isinstance(do_today, list)
-        else ()
+    named = {p.email: p for p in people}
+    rows = value.get("visitors") if isinstance(value.get("visitors"), list) else []
+    visitors = tuple(
+        Visitor(
+            email=email,
+            name=named[email].name,
+            line=_text(row.get("line"), BRIEF_LINE),
+            replay_url=named[email].replay_url,
+        )
+        for row in rows[:5]
+        if isinstance(row, dict)
+        and (email := _text(row.get("email"), 320).lower()) in named
+        and _text(row.get("line"), BRIEF_LINE)
     )
-    if not headline or not items:
+    notes = value.get("observations") if isinstance(value.get("observations"), list) else []
+    observations = tuple(
+        text
+        for row in notes[:5]
+        if isinstance(row, dict) and (text := _text(row.get("text"), BRIEF_LINE))
+    )
+    if not (steps or visitors or observations):
         return None
-
-    def ref(key):
-        item = value.get(key)
-        return _text(item.get("text"), BRIEF_LINE) if isinstance(item, dict) else ""
-
-    return Brief(
-        headline=headline,
-        do_today=items,
-        broken=ref("broken"),
-        worked=ref("worked"),
-        **{key: _text(value.get(key), BRIEF_LINE) for key in BRIEF_LINES},
-    )
+    return Brief(steps=steps, visitors=visitors, observations=observations)
 
 
 def _measured_nothing(status: str, requests: list[dict]) -> str | None:
@@ -259,8 +289,17 @@ def summary(outcome: Outcome) -> str:
         return f"Visitor journeys could not start: {outcome.reason.rstrip('.')}."
     if outcome.status == "nothing to report":
         return "Nobody outside the team came in the window."
-    if outcome.brief is not None:
-        line = outcome.brief.headline.rstrip(".") + "."
+    if outcome.brief is not None and outcome.brief.steps:
+        line = (
+            "Yesterday: "
+            + ", ".join(
+                f"{step.label.lower()} not tracked"
+                if step.yesterday is None
+                else f"{step.yesterday} {step.label[:1].lower()}{step.label[1:]}"
+                for step in outcome.brief.steps
+            )
+            + "."
+        )
         if outcome.status == "incomplete":
             line += f" Incomplete: {outcome.reason.rstrip('.')}."
         return line
