@@ -600,17 +600,52 @@ async def test_a_run_from_before_still_reads_who_accepted_when_it_asks(collectio
     assert await status(f, known[member(1)]) == "accepted"
 
 
-async def test_approvals_not_sent_within_two_weeks_lapse(collection_db, monkeypatch):
+async def test_approvals_wait_in_the_line_until_they_are_sent(collection_db, monkeypatch):
     f = await fixture(collection_db)
     batch, known = await approved(f, 1)
-    await f.db.pool.execute(
-        "UPDATE linkedin_requests SET queued_at = now() - interval '15 days' WHERE status='queued'"
-    )
-    acts = sender(f, InviteCloud(f.db))
     run_id = await requests_run(f, batch)
+    await f.db.pool.execute(
+        "UPDATE linkedin_requests SET queued_at = $1 WHERE status = 'queued'",
+        MONDAY - timedelta(days=60),
+    )
+    # Someone chosen long after still joins the run holding the old approval, behind it.
+    await ran(f, [person(5)], n=2)
+    known = await ids(f)
+    async with client(f) as http:
+        picked = await http.post(
+            f"/api/projects/{f.project.id}/linkedin-requests/send",
+            json={"request_id": str(uuid4()), "people": [str(known[member(5)])]},
+        )
+    assert picked.status_code == 200, picked.text
+    assert len(STARTED) == 1 and await sent_by(f, picked.json()["batch_id"]) == run_id
+    monkeypatch.setattr(linkedin_requests_activities, "datetime", Clock(MONDAY)())
+    cloud = InviteCloud(f.db)
+    acts = sender(f, cloud)
     await acts.prepare(run_id)
-    assert (await acts.next(run_id))["action"] == "done"
-    assert await status(f, known[member(1)]) == "lapsed"
+    step = await acts.next(run_id)
+    assert step["action"] == "send"
+    await acts.send({"run_id": run_id, "request_id": step["request_id"]})
+    assert [call["member"] for call in cloud.calls] == [member(1)]
+    assert [await status(f, known[member(n)]) for n in (1, 5)] == ["sent", "queued"]
+
+
+async def test_a_long_list_is_chosen_in_one_go(collection_db):
+    f = await fixture(collection_db)
+    await ran(f, [person(1)])
+    path = f"/api/projects/{f.project.id}/linkedin-requests/send"
+
+    def choice(count):
+        return {"request_id": str(uuid4()), "people": [str(uuid4()) for _ in range(count)]}
+
+    async with client(f) as http:
+        await turn_on(http, f)
+        long_list = await http.post(path, json=choice(requests.MAX_PICKED))
+        too_long = await http.post(path, json=choice(requests.MAX_PICKED + 1))
+    # Well past the old 100, the list reaches the check of each person (none of these exist).
+    assert requests.MAX_PICKED >= 1000
+    assert long_list.status_code == 422
+    assert "Choose again in People" in long_list.json()["detail"]
+    assert too_long.status_code == 422 and isinstance(too_long.json()["detail"], list)
 
 
 async def test_mcp_lists_and_approves_your_requests(collection_db, monkeypatch):

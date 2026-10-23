@@ -175,7 +175,7 @@ window.TinRequests = (() => {
         ? `<p class="linkedin-part-needs" role="status">LinkedIn’s weekly limit for invitations was reached. Tin waits until ${escape(when(sending.paused_until, { at: true }).replace(/^around /, ""))}.</p>` : "";
       body = `${head(toggle(true), "Connection requests you approve")}
         <span class="requests-line">${escape(limitsLine(sending))}</span>
-        <span class="requests-line">stops at LinkedIn’s first warning · requests not sent within 14 days drop off</span>
+        <span class="requests-line">stops at LinkedIn’s first warning</span>
         ${held}
         ${ui.editingLimits ? limitsForm(sending) : '<button class="requests-settings-link" type="button" data-requests-limits>Change limits</button>'}`;
     } else if (ui.consenting) {

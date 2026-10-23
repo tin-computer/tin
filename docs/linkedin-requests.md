@@ -46,7 +46,7 @@ approved batch. Anyone chosen must be someone the member can ask (`pickable`): w
 profile ID, not a customer, not the member's connection or invitee as far as Tin knows, and
 with no request from the member that went out or waits. A request that lapsed, was declined in
 Decisions or never went out doesn't stop them; someone waiting in the member's batch in
-Decisions moves to the new one. The fit doesn't matter: the member chose them. Up to 100 at a
+Decisions moves to the new one. The fit doesn't matter: the member chose them. Up to 1,000 at a
 time; the same `request_id` repeats the same choice. If a new run can't start, the batch is
 removed, anyone it took from Decisions waits there again, and the member reads why.
 
@@ -114,7 +114,10 @@ shows neither a connection nor an invitation. Outcomes:
 | a checkpoint, signed out, blocked, slow down | queued again | paused until the member resumes |
 | may have gone out (no answer, a sandbox that started and stopped) | `uncertain`, never sent again | goes on |
 
-Approvals not sent within 14 days lapse.
+An approved request waits in the member's line, however long, until it is sent, the member
+cancels it, or the person can't be asked any more: connected or invited (the fresh read before
+sending), marked a customer, or forgotten. The sending limits set the pace, so a long list is
+queued once and worked through. While sending is off or paused, the run waits with it.
 
 When nothing is queued, the run writes `people/connection-requests.md` (who, and what happened,
 for every batch it held) and finishes with a one-line summary ("13 connection requests sent.").
