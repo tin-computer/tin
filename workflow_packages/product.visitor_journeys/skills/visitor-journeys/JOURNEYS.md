@@ -1273,8 +1273,7 @@ def brief(visitors, observations):
     """
     return {
         "visitors": [
-            {"email": str(email).strip().lower(), "line": _line(line)}
-            for email, line in visitors
+            {"email": str(email).strip().lower(), "line": _line(line)} for email, line in visitors
         ][:BRIEF_VISITORS],
         "observations": [
             {"text": _line(text), "friction": friction or None} for text, friction in observations
