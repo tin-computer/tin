@@ -33,7 +33,8 @@ def register_billing_tools(server, *, runtime, settings, caller):
 
         funding "invoiced" means Tin bills this workspace by invoice: starts are not checked
         against credits (limits still apply), never suggest adding credits, and a billing admin
-        sees owed_usd and workspace_spent_this_month_usd instead of top-up bounds.
+        sees credits_left_usd (spent first), used_usd (usage past those credits, not yet
+        paid) and workspace_spent_this_month_usd instead of top-up bounds.
         """
         token = await caller()
         return await result(service().overview(UUID(project_id), token.subject))

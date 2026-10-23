@@ -509,8 +509,8 @@ class BillingService:
     async def record_invoice_payment(self, workspace_id, amount_nanos, *, reference):
         """Operator CLI only: an invoice paid outside Stripe brings the balance back up.
 
-        Idempotent per reference. Never more than the wallet owes: this settles usage
-        already charged and never grants credits.
+        Idempotent per reference. Never more than the wallet's unpaid usage: this settles
+        usage already charged and never grants credits.
         """
         reference = (reference or "").strip()
         if not 0 < len(reference) <= 200:
@@ -532,11 +532,11 @@ class BillingService:
             if prior is None:
                 if account["funding"] != "invoiced":
                     raise BillingError("not_invoiced", "This workspace is not billed by invoice.")
-                owed = max(-account["balance_nanos"], 0)
-                if amount_nanos > owed:
+                used = max(-account["balance_nanos"], 0)
+                if amount_nanos > used:
                     raise BillingError(
                         "overpayment",
-                        f"This workspace owes ${usd(owed)}; record at most that amount.",
+                        f"This workspace has ${usd(used)} of unpaid usage; record at most that.",
                     )
             recorded = await self.post_ledger(
                 conn,
@@ -552,7 +552,7 @@ class BillingService:
         return {
             "workspace_id": str(workspace_id),
             "recorded": recorded,
-            "owed_usd": usd(max(-balance, 0)),
+            "used_usd": usd(max(-balance, 0)),
         }
 
     async def update_policy(self, project_id, actor, policy: ProjectSpendingPolicy):
@@ -1912,10 +1912,11 @@ class BillingService:
                     set_aside_usd=usd(credits["set_aside"]),
                 )
                 if credits["invoiced"]:
-                    # Charged usage Tin has not yet been paid for; runs in progress add to it
-                    # as they settle.
+                    # Credits left are spent first. After that, used_usd is charged usage
+                    # not yet invoiced and paid; runs in progress add to it as they settle.
                     result.update(
-                        owed_usd=usd(max(-account["balance_nanos"], 0)),
+                        credits_left_usd=usd(max(account["balance_nanos"], 0)),
+                        used_usd=usd(max(-account["balance_nanos"], 0)),
                         workspace_spent_this_month_usd=usd(
                             await conn.fetchval(
                                 """SELECT COALESCE(-sum(amount_nanos),0) FROM billing_ledger

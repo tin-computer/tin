@@ -125,13 +125,14 @@ window.TinBilling = (() => {
 
     function render(data, payments) {
       const invoices = payments.filter((p) => safeLink(p.invoice_url, "invoice.stripe.com"));
-      // An invoiced workspace is billed by Tin outside Stripe: no top-ups, and its admin sees what
-      // is owed rather than credits.
+      // An invoiced workspace is billed by Tin outside Stripe: no top-ups. Its admin sees the
+      // credits left, which are spent first, then the usage past them.
       const invoiced = data.funding === "invoiced";
+      const creditsLeft = invoiced && Number(data.credits_left_usd) > 0;
       root.innerHTML = `<header class="workspace-header billing-heading"><h1>${data.is_admin ? "Billing" : "Spending"}</h1>
         <span>${escape(workspaceName)}${data.mode === "test" ? " · Test mode" : ""}</span></header>
-        <div class="billing-balance"><div class="billing-balance-facts"><span class="billing-label">${!data.is_admin ? "Spent this month" : invoiced ? "Owed" : "Available"}</span>
-          <div class="billing-amount">${dollars(!data.is_admin ? data.spent_this_month_usd : invoiced ? data.owed_usd : data.available_usd)}</div>
+        <div class="billing-balance"><div class="billing-balance-facts"><span class="billing-label">${!data.is_admin ? "Spent this month" : creditsLeft ? "Credits left" : invoiced ? "Used" : "Available"}</span>
+          <div class="billing-amount">${dollars(!data.is_admin ? data.spent_this_month_usd : creditsLeft ? data.credits_left_usd : invoiced ? data.used_usd : data.available_usd)}</div>
           ${data.is_admin ? "" : `<p>${escape(projectName)}</p>`}
           ${data.is_admin && invoiced ? `<p>Billed by invoice · ${dollars(data.workspace_spent_this_month_usd)} used this month</p>` : ""}
           ${data.status === "suspended" ? '<p role="status">New paid runs paused</p>' : ""}

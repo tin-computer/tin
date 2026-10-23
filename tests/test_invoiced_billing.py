@@ -25,7 +25,7 @@ async def invoiced(f):
     )
 
 
-async def owe(f):
+async def charge_usage(f):
     """Run one paid audit step on an empty invoiced wallet and settle it; return the charge."""
     run = await direct(f)
     await operation(f, run, "one", 500_000_000)
@@ -44,16 +44,17 @@ def test_invoiced_room_is_capped_by_limits_alone():
     assert run_room(policy, {"exposure": 0}, {**credits, "invoiced": False}) < 0
 
 
-async def test_invoiced_wallet_runs_without_credits_and_owes_its_usage(billed):
+async def test_invoiced_wallet_runs_without_credits_and_records_its_usage(billed):
     f = billed
     with pytest.raises(BillingError) as error:
         await direct(f)
     assert error.value.code == "insufficient_funds"
     await invoiced(f)
-    charge = await owe(f)
+    charge = await charge_usage(f)
     view = await f.billing.overview(f.project.id, ACTOR)
     assert view["funding"] == "invoiced"
-    assert view["owed_usd"] == usd(charge)
+    assert view["used_usd"] == usd(charge)
+    assert view["credits_left_usd"] == "0.00"
     assert view["workspace_spent_this_month_usd"] == usd(charge)
     assert "topup_min_cents" not in view
     assert await f.db.pool.fetchval("SELECT count(*) FROM billing_ledger WHERE kind='charge'") == 1
@@ -78,7 +79,7 @@ async def test_invoiced_wallet_keeps_project_limits(billed):
 async def test_back_to_prepaid_stops_paid_work_until_the_balance_is_cleared(billed):
     f = billed
     await invoiced(f)
-    await owe(f)
+    await charge_usage(f)
     changed = await f.billing.set_funding(
         f.project.workspace_id, "prepaid", reason="Contract ended", operator="ops"
     )
@@ -86,6 +87,14 @@ async def test_back_to_prepaid_stops_paid_work_until_the_balance_is_cleared(bill
     with pytest.raises(BillingError) as error:
         await direct(f)
     assert error.value.code == "insufficient_funds"
+
+
+async def test_invoiced_wallet_shows_credits_left_until_they_run_out(billed):
+    f = billed
+    await fund(f, 1000)
+    await invoiced(f)
+    view = await f.billing.overview(f.project.id, ACTOR)
+    assert (view["credits_left_usd"], view["used_usd"]) == ("10.00", "0.00")
 
 
 async def test_invoiced_wallet_refuses_checkout(billed):
@@ -119,19 +128,19 @@ async def test_funding_changes_are_audited_once_and_append_only(billed):
         await f.billing.set_funding(uuid4(), "invoiced", reason="x", operator="ops")
 
 
-async def test_invoice_payment_settles_what_is_owed_once(billed):
+async def test_invoice_payment_settles_unpaid_usage_once(billed):
     f = billed
     workspace = f.project.workspace_id
     with pytest.raises(BillingError) as error:
         await f.billing.record_invoice_payment(workspace, 1, reference="INV-1")
     assert error.value.code == "not_invoiced"
     await invoiced(f)
-    charge = await owe(f)
+    charge = await charge_usage(f)
     with pytest.raises(BillingError) as error:
         await f.billing.record_invoice_payment(workspace, charge + 1, reference="INV-1")
     assert error.value.code == "overpayment"
     paid = await f.billing.record_invoice_payment(workspace, charge, reference="INV-1")
-    assert paid == {"workspace_id": str(workspace), "recorded": True, "owed_usd": "0.00"}
+    assert paid == {"workspace_id": str(workspace), "recorded": True, "used_usd": "0.00"}
     again = await f.billing.record_invoice_payment(workspace, charge, reference="INV-1")
     assert not again["recorded"]
     with pytest.raises(BillingError) as error:
