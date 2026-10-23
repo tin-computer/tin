@@ -4093,7 +4093,9 @@ class TinActivities:
                             problems=analytics_problems,
                             pull_request=pull_request,
                             reporter_at=website_change_analytics.reporter_path(
-                                analytics_files or [], analytics_reporter
+                                analytics_files or [],
+                                analytics_reporter,
+                                analytics_source["change"]["detail"].get("folder") or "",
                             ),
                         )
                     elif website_repairs:

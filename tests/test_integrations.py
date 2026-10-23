@@ -1740,6 +1740,45 @@ async def test_only_two_repository_snapshots_are_built_at_once(monkeypatch):
 
 
 @pytest.mark.asyncio
+async def test_github_site_files_read_the_folder_the_site_is_built_from(monkeypatch) -> None:
+    """A site in a folder (ClawMessenger's web/): the names and settings come from there."""
+    requests: list[httpx.Request] = []
+    tree = [
+        {"type": "blob", "path": path}
+        for path in (
+            "README.md",
+            "mcp/package.json",
+            "web/next.config.ts",
+            "web/package.json",
+            "web/vercel.json",
+            "web/src/app/layout.tsx",
+        )
+    ] + [{"type": "tree", "path": "web"}]
+
+    async def github(request: httpx.Request) -> httpx.Response:
+        requests.append(request)
+        if request.url.path == "/repos/example-org/site/git/trees/HEAD":
+            assert request.url.params["recursive"] == "1"
+            return httpx.Response(200, json={"tree": tree, "truncated": False})
+        if request.url.path == "/repos/example-org/site/contents/web/package.json":
+            assert request.headers["accept"] == "application/vnd.github.raw+json"
+            return httpx.Response(200, content=b'{"dependencies": {"next": "15.5.0"}}')
+        raise AssertionError(f"unexpected GitHub request {request.method} {request.url}")
+
+    async with repository_service(monkeypatch, github) as service:
+        found = await service.github_site_files(
+            project_id=PROJECT_ID, repository="example-org/site"
+        )
+        with pytest.raises(IntegrationAuthorizationError):
+            await service.github_site_files(project_id=PROJECT_ID, repository="example-org/other")
+    assert found == {
+        "folder": "web",
+        "names": ["next.config.ts", "package.json", "src", "vercel.json"],
+        "package.json": '{"dependencies": {"next": "15.5.0"}}',
+    }
+    assert all(request.method == "GET" for request in requests)
+
+
 async def test_github_repository_bundle_is_pinned_bounded_and_tokenless(tmp_path) -> None:
     private_key = rsa.generate_private_key(public_exponent=65537, key_size=2048)
     private_key_path = tmp_path / "github-app.pem"

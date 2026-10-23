@@ -126,18 +126,25 @@ OTHER_HOST_WHERE = (
 
 
 def detect_host(names: set[str], hosting: str | None) -> str | None:
-    """The host the site deploys to: from the repository's root files, then the setup answer."""
-    if "vercel.json" in names or ".vercel" in names:
-        return "vercel"
-    if "netlify.toml" in names:
-        return "netlify"
-    if names & {"wrangler.toml", "wrangler.json", "wrangler.jsonc"}:
-        return "cloudflare"
+    """The host the site deploys to: from the site folder's files, then the setup answer. When
+    the files name more than one host (a vercel.json kept after a move to Cloudflare), the setup
+    answer picks between them, and without one Tin doesn't guess."""
+    named = [
+        host
+        for host, files in (
+            ("vercel", {"vercel.json", ".vercel"}),
+            ("netlify", {"netlify.toml"}),
+            ("cloudflare", {"wrangler.toml", "wrangler.json", "wrangler.jsonc"}),
+        )
+        if names & files
+    ]
     words = (hosting or "").lower()
-    for host in ("vercel", "netlify", "cloudflare"):
-        if host in words:
-            return host
-    return None
+    answered = [host for host in ("vercel", "netlify", "cloudflare") if host in words]
+    if len(named) == 1:
+        return named[0]
+    if named:
+        return next((host for host in answered if host in named), None)
+    return answered[0] if answered else None
 
 
 def _dependencies(package: str | None) -> set[str]:
@@ -153,19 +160,24 @@ def _dependencies(package: str | None) -> set[str]:
 
 
 def detect_variant(facts: dict[str, Any], host: str | None) -> str | None:
-    """The reporter variant for this repository, from its root files: Next.js first (any
-    host), then the host's own reporter, then an Express-style Node server. None when nothing
-    says which one runs, so the change carries the line alone."""
+    """The reporter variant for this site, from its folder's files: the host's own reporter when
+    it sees each response's status (a Cloudflare Worker, Netlify), then Next.js's on any other
+    host, then Vercel's, then an Express-style Node server's. None when nothing says which one
+    runs, so the change carries the line alone."""
     names = set(facts.get("names") or ())
     dependencies = _dependencies(facts.get("package.json"))
-    if "next" in dependencies or any(name.startswith("next.config.") for name in names):
-        return "nextjs"
+    if host == "cloudflare":
+        # Workers name their entry point; a Pages site without one has no Worker to wrap, and a
+        # generated entry (OpenNext's .open-next/worker.js) is rebuilt on every deploy.
+        main = re.search(
+            r'(?:^|\n)\s*"?main"?\s*[=:]\s*["\']([^"\']+)', facts.get("wrangler") or ""
+        )
+        if main and not any(part.startswith(".") for part in main[1].split("/")[:-1]):
+            return "cloudflare-worker"
     if host == "netlify":
         return "netlify"
-    if host == "cloudflare":
-        # Workers name their entry point; a Pages site without one has no Worker to wrap.
-        wrangler = facts.get("wrangler") or ""
-        return "cloudflare-worker" if re.search(r'(^|\n)\s*"?main"?\s*[=:]', wrangler) else None
+    if "next" in dependencies or any(name.startswith("next.config.") for name in names):
+        return "nextjs"
     if host == "vercel":
         return "vercel"
     if dependencies & {"express", "connect"}:
@@ -207,6 +219,7 @@ def change_row(
     csp: dict[str, list[str]],
     reporter: dict[str, str] | None,
     reporter_host: str | None,
+    folder: str = "",
     previous: dict[str, Any] | None = None,
 ) -> ChangeRow:
     pieces = {
@@ -215,6 +228,7 @@ def change_row(
         "script": script,
         "csp": csp,
         "reporter": reporter,
+        "folder": folder,
         "previous_script": (previous or {}).get("script"),
     }
     title = {
@@ -238,6 +252,8 @@ def change_row(
             else None
         ),
         "reporter_host": reporter_host,
+        # The folder the site is built from, "" for the repository's root.
+        "folder": folder,
     }
     if previous:
         detail["previous"] = {
@@ -321,6 +337,7 @@ async def line_on_site(database, project_id: UUID) -> dict[str, Any] | None:
         return {
             "script": detail.get("script"),
             "site_id": detail.get("site_id"),
+            "folder": detail.get("folder") or "",
             "reporter": result.get("reporter"),
             "files": result.get("files") or [],
             "new_files": result.get("new_files") or [],
@@ -386,7 +403,7 @@ async def propose_install(integrations, *, project_id: UUID, configuration: dict
     if on_site and on_site.get("script") == configuration["script"]:
         await website_change.retire(database, project_id=project_id, source=SOURCE, keep=[])
         return None
-    facts = await integrations.github_root_files(project_id=project_id, repository=repository)
+    facts = await integrations.github_site_files(project_id=project_id, repository=repository)
     reporter_host = detect_host(
         set(facts.get("names") or ()), await setup_hosting(database, project_id)
     )
@@ -405,6 +422,7 @@ async def propose_install(integrations, *, project_id: UUID, configuration: dict
         csp=configuration.get("csp") or {},
         reporter=reporter,
         reporter_host=reporter_host,
+        folder=facts.get("folder") or "",
         previous=on_site,
     )
     await website_change.retire(
@@ -434,6 +452,7 @@ async def propose_remove(integrations, *, project_id: UUID, configuration: dict,
         csp=configuration.get("csp") or {},
         reporter=None,
         reporter_host=None,
+        folder=on_site.get("folder") or "",
         previous=on_site,
     )
     [stored] = await website_change.propose(database, project_id=project_id, rows=[row])
@@ -757,6 +776,7 @@ def workspace(source: dict, reporter: dict | None) -> dict:
         "kind": change["kind"],
         "script": detail["script"],
         "csp": detail.get("csp") or {},
+        "folder": detail.get("folder") or "",
     }
     if change["kind"] in {"replace", "remove"}:
         pieces["previous_script"] = (detail.get("previous") or {}).get("script")
@@ -852,14 +872,17 @@ class PatchRefused(ValueError):
     """The patch touches what no analytics change may: dependencies, CI or secrets."""
 
 
-def is_reporter(path: str, variant: str | None) -> bool:
+def is_reporter(path: str, variant: str | None, folder: str = "") -> bool:
     if variant is None:
         return False
     for name in REPORTER_NAMES[variant]:
         if "/" in name:
             if path == name or path.endswith("/" + name):
                 return True
-        elif posixpath.basename(path) == name and (name != "middleware.js" or path == name):
+        elif posixpath.basename(path) == name and (
+            # Vercel runs Routing Middleware only from the site folder's root.
+            name != "middleware.js" or path == posixpath.join(folder, name)
+        ):
             return True
     return False
 
@@ -942,6 +965,7 @@ def check_patch(
         else None,
     }
     variant = reporter["variant"] if reporter else None
+    folder = detail.get("folder") or ""
     strings = allowed_text(pieces, reporter_header(reporter["content"]) if reporter else "")
     files: list[dict[str, str]] = []
     problems: list[str] = []
@@ -956,7 +980,7 @@ def check_patch(
         if path.startswith(NEVER) or name.startswith(".env") or name in delivery.DEPENDENCY_FILES:
             raise PatchRefused(f"The patch changes {path}, which an analytics change never does.")
         before = originals.get(path)
-        if reporter and kind == "install" and is_reporter(path, variant):
+        if reporter and kind == "install" and is_reporter(path, variant, folder):
             copies += 1
             if before is not None:
                 problems.append(f"It writes the reporter over the existing {path}.")
@@ -966,7 +990,8 @@ def check_patch(
         files.append({"path": path, "content": after})
         if before is None:
             wiring = WIRING_FILES.get(variant or "")
-            if kind != "install" or not wiring or not wiring.fullmatch(path):
+            inside = posixpath.relpath(path, folder or ".")
+            if kind != "install" or not wiring or not wiring.fullmatch(inside):
                 problems.append(f"It adds {path}.")
                 continue
             before = ""
@@ -1014,10 +1039,14 @@ def check_patch(
     return files, problems
 
 
-def reporter_path(files: list[dict[str, str]], reporter: dict[str, Any] | None) -> str | None:
+def reporter_path(
+    files: list[dict[str, str]], reporter: dict[str, Any] | None, folder: str = ""
+) -> str | None:
     if not reporter:
         return None
-    return next((f["path"] for f in files if is_reporter(f["path"], reporter["variant"])), None)
+    return next(
+        (f["path"] for f in files if is_reporter(f["path"], reporter["variant"], folder)), None
+    )
 
 
 async def snapshot_files(integrations, run, binding, paths) -> dict[str, str | None]:
@@ -1167,9 +1196,13 @@ async def publish(*, database, storage, integrations, run, sleep=None, clock=Non
             )
             number = published["pull_request_number"]
             kind = source["change"]["kind"]
-            at = reporter_path(files, reporter) if kind == "install" else None
-            # A replace keeps the earlier change's reporter and the files it added on the site.
             detail = source["change"]["detail"]
+            at = (
+                reporter_path(files, reporter, detail.get("folder") or "")
+                if kind == "install"
+                else None
+            )
+            # A replace keeps the earlier change's reporter and the files it added on the site.
             previous = (detail.get("previous") or {}) if kind == "replace" else {}
             base = {
                 "pull_request": published["external_url"],

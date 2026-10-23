@@ -142,12 +142,19 @@ too, for a repository connected after Set up. A linked site gets no row: its lin
 there.
 
 - The row's pieces are the script line, the CSP entries and the reporter variant for the site's
-  host, by its SHA-256. Tin picks the variant from the repository's root files: a `next`
-  dependency or `next.config.*` means `nextjs` on any host; otherwise `netlify.toml` means
-  `netlify`, a Wrangler file with `main` means `cloudflare-worker`, `vercel.json` (or the setup
-  answer naming Vercel) means `vercel`, and an Express or Connect dependency means `node`. With
-  none, the change carries the line alone. The host for the reporter's value comes from the same
-  files, then from the setup answer (`system_hosting`).
+  host, by its SHA-256, and the folder the site is built from. That folder is the repository's
+  root when the root holds the site's settings (`next.config.*`, `netlify.toml`, a Wrangler
+  file, `vercel.json`); otherwise it is the one folder nearest the root that does, such as
+  ClawMessenger's `web/` or keketerminal.com's `client/`. With two such folders side by side,
+  Tin doesn't guess and reads the root (`site_folder`, one GitHub tree read).
+- The host comes from that folder's files. When they name more than one host (a `vercel.json`
+  kept after a move to Cloudflare), the setup answer (`system_hosting`) picks between them, and
+  without one there is no host. With no host file, the setup answer names it.
+- The variant: a Wrangler file whose `main` is the site's own Worker entry means
+  `cloudflare-worker` (a generated entry such as OpenNext's `.open-next/worker.js` doesn't
+  count); Netlify means `netlify`. These see each response's status, so they come first. Then a
+  `next` dependency or `next.config.*` means `nextjs`, Vercel means `vercel`, and an Express or
+  Connect dependency means `node`. With none, the change carries the line alone.
 - The approval covers those pieces (`content_sha256`), not the files the run writes. Approving,
   in Decisions or with `approve_website_change`, starts website.change with `source: analytics`.
   If the start is refused (credits, a disconnected repository), the approval stands and the

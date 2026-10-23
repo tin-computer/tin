@@ -194,6 +194,31 @@ class IntegrationAuthorizationError(IntegrationError):
     pass
 
 
+# Files that say a folder holds a site: a framework's or a host's settings. A package.json alone
+# doesn't; tools and packages have one too.
+SITE_FILES = re.compile(
+    r"next\.config\.[a-z]+|netlify\.toml|wrangler\.(?:toml|jsonc?)|vercel\.json"
+)
+
+
+def site_folder(paths: list[str]) -> str:
+    """The folder a repository's site is built from: the root when it holds the site's files,
+    else the one folder nearest the root that does (`web`, `client`, `apps/web`), else the root.
+    Folders under node_modules or a hidden folder don't count."""
+    folders: dict[str, int] = {}
+    for path in paths:
+        parts = path.split("/")
+        if any(part == "node_modules" or part.startswith(".") for part in parts[:-1]):
+            continue
+        if SITE_FILES.fullmatch(parts[-1]) and len(parts) <= 4:
+            folders.setdefault("/".join(parts[:-1]), len(parts) - 1)
+    if "" in folders or not folders:
+        return ""
+    nearest = min(folders.values())
+    found = [folder for folder, depth in folders.items() if depth == nearest]
+    return found[0] if len(found) == 1 else ""
+
+
 class IntegrationUpstreamError(IntegrationError):
     pass
 
@@ -2519,27 +2544,37 @@ class IntegrationService:
             and re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9_.-]{0,120}\.mdx?", item["name"])
         ][:50]
 
-    async def github_root_files(self, *, project_id: UUID, repository: str) -> dict[str, Any]:
-        """The names at the root of the selected repository's default branch, with the text of
-        its package.json and Wrangler settings when present: what Tin needs to tell which
-        framework and host a site runs on. Reads only; nothing is cloned."""
+    async def github_site_files(self, *, project_id: UUID, repository: str) -> dict[str, Any]:
+        """The folder the site is built from on the selected repository's default branch, the
+        names in it, and the text of its package.json and Wrangler settings when present: what
+        Tin needs to tell which framework and host the site runs on (see `site_folder`). Reads
+        only; nothing is cloned."""
         token = await self._selected_repository_token(project_id, repository)
-        root = f"https://api.github.com/repos/{quote(repository, safe='/')}/contents"
-        response = await self._client.get(f"{root}/", headers=self._github_headers(token))
+        root = f"https://api.github.com/repos/{quote(repository, safe='/')}"
+        response = await self._client.get(
+            f"{root}/git/trees/HEAD",
+            params={"recursive": "1"},
+            headers=self._github_headers(token),
+        )
         try:
-            listing = response.json() if response.status_code == 200 else None
-        except ValueError:
+            listing = response.json().get("tree") if response.status_code == 200 else None
+        except (ValueError, AttributeError):
             listing = None
         if not isinstance(listing, list):
             raise IntegrationUpstreamError("The repository's files could not be listed")
-        names = [
-            item["name"]
-            for item in listing[:1000]
+        paths = [
+            item["path"]
+            for item in listing[:100_000]
             if isinstance(item, dict)
-            and isinstance(item.get("name"), str)
-            and re.fullmatch(r"[A-Za-z0-9._-]{1,120}", item["name"])
+            and item.get("type") == "blob"
+            and isinstance(item.get("path"), str)
         ]
-        found: dict[str, Any] = {"names": names}
+        folder = site_folder(paths)
+        prefix = f"{folder}/" if folder else ""
+        inside = {path[len(prefix) :].split("/")[0] for path in paths if path.startswith(prefix)}
+        names = sorted(name for name in inside if re.fullmatch(r"[A-Za-z0-9._-]{1,120}", name))
+        names = names[:1000]
+        found: dict[str, Any] = {"folder": folder, "names": names}
         wanted = {"package.json": "package.json"}
         wrangler = next(
             (
@@ -2555,7 +2590,7 @@ class IntegrationService:
             if name not in names:
                 continue
             file_response = await self._client.get(
-                f"{root}/{quote(name, safe='')}",
+                f"{root}/contents/{quote(prefix + name, safe='/')}",
                 headers={
                     **self._github_headers(token),
                     "Accept": "application/vnd.github.raw+json",

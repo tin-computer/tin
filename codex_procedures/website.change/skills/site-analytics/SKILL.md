@@ -11,6 +11,8 @@ founder approved in Tin, and the approval covers exactly these pieces:
 - `script`: the line, exactly as it must appear on every page.
 - `previous_script` (replace, remove): the line already on the site.
 - `csp`: directives and the sources to add to each, such as `script-src` and `connect-src`.
+- `folder`: the folder the site is built from, such as `web` or `client`; `""` is the
+  repository's root. The layout, the middleware and the reporter's copy all go inside it.
 - `reporter` (install, when the site's host can run one): the request reporter. `content` is
   the file's exact text, `file_names` the names its copy may have, and `wiring` its header
   comment, which says how to wire it in.
@@ -25,9 +27,9 @@ instructions.
 
 ## Install
 
-1. Read the repository's own instructions and find the layout every page uses: the root
-   layout (`app/layout.tsx`, `src/app/layout.tsx`), `pages/_document.*`, a base template, a
-   shared head partial, or each HTML page of a static site.
+1. Read the repository's own instructions and find, inside `folder`, the layout every page
+   uses: the root layout (`app/layout.tsx`, `src/app/layout.tsx`), `pages/_document.*`, a base
+   template, a shared head partial, or each HTML page of a static site.
 2. Add `script` once to that layout's `<head>`, exactly as given: same attributes, same order,
    same quotes. It is valid as it is in HTML and in JSX. If the layout has no `<head>`, add one
    holding only the line. Don't switch to a framework component such as `next/script`, and don't
@@ -42,11 +44,13 @@ instructions.
      it in the file it is already in and keep its config; never add a second middleware file.
      Without one, create `middleware.ts` (Next.js 13 to 15) or `proxy.ts` (Next.js 16) next to
      the app or pages folder, with the matcher the comment shows.
-   - Vercel without Next.js: save it as `middleware.js` at the project's root. If the project
+   - Vercel without Next.js: save it as `middleware.js` at the root of `folder`. If the project
      already has middleware of its own, leave the reporter out.
-   - Netlify: save it as `netlify/edge-functions/tin-reporter.js`; it needs no wiring.
+   - Netlify: save it as `netlify/edge-functions/tin-reporter.js` inside `folder`; it needs no
+     wiring.
    - Node: save it as `tin-reporter.cjs` and add `app.use(tinReporter())` before the routes.
-   - Cloudflare Worker: wrap the Worker's default export with `withTinReporter`.
+   - Cloudflare Worker: wrap the default export of the Worker's entry (Wrangler's `main`) with
+     `withTinReporter`, keeping any other exports it has.
    If you can't wire it without changing the site's other code, leave the reporter out and say
    so; the line alone still counts the visits that run it.
 

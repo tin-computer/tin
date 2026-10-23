@@ -27,7 +27,7 @@ from tin_lite import content_repository_delivery as delivery
 from tin_lite import website_change
 from tin_lite import website_change_analytics as analytics_change
 from tin_lite.agent_traffic_connection import PROVIDER, site_from
-from tin_lite.integrations import ServiceCallRefused
+from tin_lite.integrations import ServiceCallRefused, site_folder
 from tin_lite.organic_audit import canonical_json
 from tin_lite.procedures import procedure_checkpoint_path
 
@@ -74,7 +74,7 @@ REPO = {
 }
 
 
-def source(kind="install", *, reporter=True, previous=None):
+def source(kind="install", *, reporter=True, previous=None, folder=""):
     detail = {
         "repository": "owner/site",
         "host": "example.com",
@@ -86,6 +86,7 @@ def source(kind="install", *, reporter=True, previous=None):
             if reporter
             else None
         ),
+        "folder": folder,
     }
     if previous:
         detail["previous"] = previous
@@ -224,18 +225,72 @@ def test_a_replace_swaps_only_the_line_and_a_remove_only_takes_out():
     assert problems and "removes 'body" in problems[0]
 
 
+def test_a_site_in_a_folder_takes_its_wiring_there():
+    # ClawMessenger's site is web/, with Clerk's middleware already in web/src/middleware.ts.
+    clerk = (
+        'import { clerkMiddleware } from "@clerk/nextjs/server";\n'
+        "export default clerkMiddleware();\n"
+    )
+    wrapped = (
+        'import { clerkMiddleware } from "@clerk/nextjs/server";\n'
+        'import { withTinReporter } from "../tin-reporter.js";\n'
+        "export default withTinReporter(clerkMiddleware());\n"
+    )
+    layout = "web/src/app/layout.tsx"
+    files, problems = analytics_change.check_patch(
+        manifest(
+            (layout, LAYOUT_WITH_LINE),
+            ("web/src/middleware.ts", wrapped),
+            ("web/tin-reporter.js", REPORTER_FILES["nextjs"]),
+        ),
+        {layout: LAYOUT, "web/src/middleware.ts": clerk, "web/tin-reporter.js": None},
+        source(folder="web"),
+        NEXT_REPORTER,
+    )
+    assert problems == []
+    assert analytics_change.reporter_path(files, NEXT_REPORTER, "web") == "web/tin-reporter.js"
+    # A new middleware file is wiring only inside the site's folder.
+    _files, problems = analytics_change.check_patch(
+        manifest((layout, LAYOUT_WITH_LINE), ("middleware.ts", MIDDLEWARE)),
+        {layout: LAYOUT, "middleware.ts": None},
+        source(folder="web"),
+        NEXT_REPORTER,
+    )
+    assert "It adds middleware.ts." in problems
+    # Vercel runs Routing Middleware from the site folder's root, so that's where its copy goes.
+    vercel = {**NEXT_REPORTER, "variant": "vercel"}
+    assert analytics_change.is_reporter("site/middleware.js", "vercel", "site")
+    assert not analytics_change.is_reporter("middleware.js", "vercel", "site")
+    assert (
+        analytics_change.reporter_path(
+            [{"path": "site/middleware.js", "content": ""}], vercel, "site"
+        )
+        == "site/middleware.js"
+    )
+
+
 def test_the_reporter_follows_the_repository_and_the_host():
     detect = analytics_change.detect_variant
     host = analytics_change.detect_host
     assert (
         detect({"names": ["package.json"], "package.json": REPO["package.json"]}, None) == "nextjs"
     )
-    assert detect({"names": ["next.config.mjs"]}, "netlify") == "nextjs"
+    assert detect({"names": ["next.config.ts"]}, "vercel") == "nextjs"
+    # The host's own reporter sees each response's status, so it comes before Next.js's.
+    assert detect({"names": ["next.config.mjs"]}, "netlify") == "netlify"
     assert (
         detect({"names": ["netlify.toml", "index.html"]}, host({"netlify.toml"}, None)) == "netlify"
     )
     worker = {"names": ["wrangler.toml"], "wrangler": 'name = "site"\nmain = "src/index.ts"\n'}
     assert detect(worker, host({"wrangler.toml"}, None)) == "cloudflare-worker"
+    # keketerminal.com: Next.js built for a Worker with OpenNext; the reporter wraps the Worker.
+    opennext = {**worker, "names": ["next.config.ts", "wrangler.jsonc"]}
+    opennext["wrangler"] = '{\n  "name": "keke-site",\n  "main": "worker.ts",\n}'
+    assert detect(opennext, "cloudflare") == "cloudflare-worker"
+    # OpenNext's own entry is generated on every build, so Next.js's middleware reports instead.
+    generated = {**opennext, "wrangler": '{"main": ".open-next/worker.js"}'}
+    assert detect(generated, "cloudflare") == "nextjs"
+    assert detect({**generated, "names": ["wrangler.jsonc"]}, "cloudflare") is None
     pages = {"names": ["wrangler.toml"], "wrangler": 'pages_build_output_dir = "dist"\n'}
     assert detect(pages, "cloudflare") is None
     assert detect({"names": ["vercel.json", "astro.config.mjs"]}, "vercel") == "vercel"
@@ -245,6 +300,34 @@ def test_the_reporter_follows_the_repository_and_the_host():
     # The setup answer names the host when the repository doesn't.
     assert host(set(), "Next.js on Vercel") == "vercel"
     assert host({"vercel.json"}, "Netlify") == "vercel"
+    # A vercel.json kept after a move to Cloudflare: the setup answer picks, or Tin doesn't guess.
+    both = {"vercel.json", "wrangler.jsonc", "next.config.ts"}
+    assert host(both, "Cloudflare Workers through OpenNext") == "cloudflare"
+    assert host(both, None) is None
+    assert host(both, "Netlify") is None
+
+
+def test_the_site_folder_is_the_root_or_the_one_folder_nearest_it():
+    folder = site_folder
+    # ClawMessenger: Next.js in web/, beside packages that aren't sites.
+    claw = ["mcp/package.json", "plugin/package.json", "web/next.config.ts", "web/vercel.json"]
+    assert folder(["README.md", *claw]) == "web"
+    # keketerminal.com: the site in client/, Workers of its own deeper under server/.
+    keke = [
+        "client/next.config.ts",
+        "client/wrangler.jsonc",
+        "server/cloudflare/curate-runner/wrangler.jsonc",
+        "server/cloudflare/museum-img/wrangler.toml",
+    ]
+    assert folder(keke) == "client"
+    assert folder(["apps/web/next.config.mjs", "package.json"]) == "apps/web"
+    assert folder(["next.config.js", "docs/vercel.json"]) == ""
+    assert folder(["index.html", "package.json"]) == ""
+    # Two sites side by side: Tin doesn't guess, so the change carries the line alone.
+    assert folder(["site/next.config.js", "docs/next.config.js"]) == ""
+    assert folder(["node_modules/x/next.config.js", ".vercel/vercel.json", "web/vercel.json"]) == (
+        "web"
+    )
 
 
 # --- Set up, the card and the reporter's value ----------------------------------------------
@@ -265,8 +348,8 @@ async def connect_github(service, project_id):
         credential_key_version=None,
         connected_by_clerk_user_id=ACTOR,
     )
-    service.github_root_files = AsyncMock(
-        return_value={"names": list(REPO), "package.json": REPO["package.json"]}
+    service.github_site_files = AsyncMock(
+        return_value={"folder": "", "names": list(REPO), "package.json": REPO["package.json"]}
     )
 
 
@@ -381,8 +464,8 @@ async def site_fixture(db, monkeypatch, repo=None):
     integrations = f.runtime.integrations
     integrations._database = db
     integrations._client = httpx.AsyncClient(transport=httpx.MockTransport(f.api))
-    integrations.github_root_files = AsyncMock(
-        return_value={"names": list(REPO), "package.json": REPO["package.json"]}
+    integrations.github_site_files = AsyncMock(
+        return_value={"folder": "", "names": list(REPO), "package.json": REPO["package.json"]}
     )
     return f
 

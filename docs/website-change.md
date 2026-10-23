@@ -457,7 +457,9 @@ is in [the connection's guide](agent-traffic-connection.md#putting-the-line-on-t
 
 - The row's kind is `install`, `replace` (a new site's line in place of the old one) or `remove`.
   Its path is `/`. Its `content_sha256` covers the pieces: the script line, the CSP entries, the
-  reporter variant by SHA-256 and, for a replace or remove, the line already on the site.
+  reporter variant by SHA-256, the folder the site is built from (`web/` in a repository that
+  holds more than the site) and, for a replace or remove, the line already on the site. A new
+  middleware file counts as wiring only inside that folder.
 - Approving it starts website.change with `source: analytics` and the row's `change_id`. One
   analytics run works at a time, and a change Tin already made isn't made again.
 - A Codex session writes the patch with the `site-analytics` skill (the `site-repair` skill
