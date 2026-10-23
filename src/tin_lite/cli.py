@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import argparse
 import asyncio
+import getpass
 from pathlib import Path
 from uuid import UUID
 
@@ -119,6 +120,54 @@ async def _grant_workspace_access(workspace_id: UUID, clerk_user_id: str) -> Non
     finally:
         await database.close()
     print(f"granted administration of workspace {workspace_id}")
+
+
+async def _set_billing_funding(
+    workspace_id: UUID, funding: str, *, reason: str, operator: str
+) -> None:
+    """Operator-only: managed clients Tin bills by invoice start paid runs without credits."""
+    from tin_lite.billing import BillingService
+    from tin_lite.billing_contracts import BillingError
+
+    settings = get_settings()
+    database = Database(settings.runtime_dsn)
+    await database.connect()
+    try:
+        billing = BillingService(database=database, settings=settings)
+        result = await billing.set_funding(workspace_id, funding, reason=reason, operator=operator)
+    except LookupError:
+        raise SystemExit(
+            f"workspace {workspace_id} has no billing account; open its Billing page once first"
+        ) from None
+    except BillingError as error:
+        raise SystemExit(str(error)) from None
+    finally:
+        await database.close()
+    state = "now" if result["changed"] else "already"
+    print(f"workspace {workspace_id} is {state} {funding}")
+
+
+async def _record_invoice_payment(workspace_id: UUID, amount_usd: str, *, reference: str) -> None:
+    """Operator-only: an invoice a managed client paid outside Stripe."""
+    from tin_lite.billing import BillingService
+    from tin_lite.billing_contracts import BillingError, usd_nanos
+
+    settings = get_settings()
+    database = Database(settings.runtime_dsn)
+    await database.connect()
+    try:
+        billing = BillingService(database=database, settings=settings)
+        result = await billing.record_invoice_payment(
+            workspace_id, usd_nanos(amount_usd), reference=reference
+        )
+    except LookupError:
+        raise SystemExit(f"workspace {workspace_id} has no billing account") from None
+    except (BillingError, ValueError) as error:
+        raise SystemExit(str(error)) from None
+    finally:
+        await database.close()
+    action = "recorded" if result["recorded"] else "already recorded"
+    print(f"{action} ${amount_usd} for {reference}; still owed: ${result['owed_usd']}")
 
 
 async def _rollouts(run_id: UUID, *, out: Path | None, trace: bool, max_output_chars: int) -> None:
@@ -263,6 +312,21 @@ def main() -> None:
     workspace_access = commands.add_parser("grant-workspace-access")
     workspace_access.add_argument("--workspace-id", required=True, type=UUID)
     workspace_access.add_argument("--clerk-user-id", required=True)
+    funding = commands.add_parser(
+        "set-billing-funding",
+        help="bill a managed client's workspace by invoice (no credits needed), or by credits",
+    )
+    funding.add_argument("--workspace-id", required=True, type=UUID)
+    funding.add_argument("--funding", required=True, choices=("invoiced", "prepaid"))
+    funding.add_argument("--reason", required=True, help="kept in the audit trail")
+    funding.add_argument("--operator", default=getpass.getuser(), help="defaults to your login")
+    invoice = commands.add_parser(
+        "record-invoice-payment",
+        help="record an invoice an invoiced workspace paid outside Stripe",
+    )
+    invoice.add_argument("--workspace-id", required=True, type=UUID)
+    invoice.add_argument("--amount-usd", required=True, help="such as 412.50")
+    invoice.add_argument("--reference", required=True, help="the invoice number; one entry each")
     rollouts = commands.add_parser(
         "rollouts", help="list, export, or print the Codex rollouts captured for a run"
     )
@@ -287,6 +351,16 @@ def main() -> None:
         asyncio.run(_grant_project_access(args.project_id, args.clerk_user_id))
     elif args.command == "grant-workspace-access":
         asyncio.run(_grant_workspace_access(args.workspace_id, args.clerk_user_id))
+    elif args.command == "set-billing-funding":
+        asyncio.run(
+            _set_billing_funding(
+                args.workspace_id, args.funding, reason=args.reason, operator=args.operator
+            )
+        )
+    elif args.command == "record-invoice-payment":
+        asyncio.run(
+            _record_invoice_payment(args.workspace_id, args.amount_usd, reference=args.reference)
+        )
     elif args.command == "rollouts":
         asyncio.run(
             _rollouts(

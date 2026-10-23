@@ -101,13 +101,14 @@ _UNSTARTED_ESTIMATE_SQL = f"""CASE WHEN b.status='reserved' AND {_ROOT_CAN_WORK_
     ELSE 0 END"""
 
 
-def run_room(policy, usage, credits) -> int:
+def run_room(policy, usage, credits) -> int | None:
     """What one new root run may still spend: available credits, capped by the project's
-    per-run limit and the rest of this month's limit."""
-    room = credits["available"]
+    per-run limit and the rest of this month's limit. An invoiced wallet has no credit cap,
+    so only its limits count; None when nothing caps the run."""
+    caps = [] if credits["invoiced"] else [credits["available"]]
     if policy:
-        room = min(room, policy["per_run_nanos"], policy["monthly_nanos"] - usage["exposure"])
-    return room
+        caps += [policy["per_run_nanos"], policy["monthly_nanos"] - usage["exposure"]]
+    return min(caps) if caps else None
 
 
 def cost_words(terms) -> str:
@@ -378,6 +379,9 @@ class BillingService:
         at admission, so the rest of the estimate of each per-call run that can buy work
         now is set aside too; otherwise parallel starts all pass before their first paid
         call and then fail mid-work.
+
+        An invoiced wallet is billed outside Stripe: `invoiced` tells callers to skip the
+        credit check, and its available figure may be negative.
         """
         estimates = await conn.fetchval(
             f"""SELECT COALESCE(sum(GREATEST(
@@ -393,6 +397,7 @@ class BillingService:
             "reserved": account["reserved_nanos"],
             "set_aside": set_aside,
             "available": unreserved - set_aside,
+            "invoiced": account["funding"] == "invoiced",
         }
 
     async def require_spending_actor(self, conn, run, project_id):
@@ -431,6 +436,91 @@ class BillingService:
                 self.mode,
             )
         return {"workspace_id": str(workspace_id), "mode": self.mode}
+
+    async def set_funding(self, workspace_id, funding, *, reason, operator):
+        """Operator CLI only: bill a managed client's workspace by invoice, or back to credits.
+
+        Changes what later admissions and paid steps check; charges already in the ledger
+        stay. A wallet returned to prepaid with a negative balance starts nothing paid until
+        the balance is cleared.
+        """
+        if funding not in {"prepaid", "invoiced"}:
+            raise BillingError("invalid_funding", "Funding is prepaid or invoiced.", 422)
+        reason = (reason or "").strip()
+        if not 0 < len(reason) <= 500:
+            raise BillingError("invalid_reason", "Give a reason of at most 500 characters.", 422)
+        async with self.db.pool.acquire() as conn, conn.transaction():
+            account = await conn.fetchrow(
+                "SELECT * FROM billing_accounts WHERE workspace_id=$1 FOR UPDATE", workspace_id
+            )
+            if account is None:
+                raise LookupError("billing account not found")
+            if account["funding"] == funding:
+                return {"workspace_id": str(workspace_id), "funding": funding, "changed": False}
+            await conn.execute(
+                "UPDATE billing_accounts SET funding=$2 WHERE workspace_id=$1",
+                workspace_id,
+                funding,
+            )
+            await conn.execute(
+                """INSERT INTO billing_funding_changes(id, workspace_id, funding, reason, operator)
+                   VALUES($1,$2,$3,$4,$5)""",
+                uuid4(),
+                workspace_id,
+                funding,
+                reason,
+                operator,
+            )
+        return {"workspace_id": str(workspace_id), "funding": funding, "changed": True}
+
+    async def record_invoice_payment(self, workspace_id, amount_nanos, *, reference):
+        """Operator CLI only: an invoice paid outside Stripe brings the balance back up.
+
+        Idempotent per reference. Never more than the wallet owes: this settles usage
+        already charged and never grants credits.
+        """
+        reference = (reference or "").strip()
+        if not 0 < len(reference) <= 200:
+            raise BillingError(
+                "invalid_reference", "Name the invoice in at most 200 characters.", 422
+            )
+        if type(amount_nanos) is not int or amount_nanos <= 0:
+            raise BillingError("invalid_amount", "The payment must be a positive amount.", 422)
+        async with self.db.pool.acquire() as conn, conn.transaction():
+            account = await conn.fetchrow(
+                "SELECT * FROM billing_accounts WHERE workspace_id=$1 FOR UPDATE", workspace_id
+            )
+            if account is None:
+                raise LookupError("billing account not found")
+            event_key = f"invoice_payment:{workspace_id}:{digest(reference)}"
+            prior = await conn.fetchval(
+                "SELECT amount_nanos FROM billing_ledger WHERE event_key=$1", event_key
+            )
+            if prior is None:
+                if account["funding"] != "invoiced":
+                    raise BillingError("not_invoiced", "This workspace is not billed by invoice.")
+                owed = max(-account["balance_nanos"], 0)
+                if amount_nanos > owed:
+                    raise BillingError(
+                        "overpayment",
+                        f"This workspace owes ${usd(owed)}; record at most that amount.",
+                    )
+            recorded = await self.post_ledger(
+                conn,
+                account=account,
+                event_key=event_key,
+                kind="adjustment",
+                amount=amount_nanos,
+                reference=f"Invoice paid: {reference}",
+            )
+            balance = await conn.fetchval(
+                "SELECT balance_nanos FROM billing_accounts WHERE workspace_id=$1", workspace_id
+            )
+        return {
+            "workspace_id": str(workspace_id),
+            "recorded": recorded,
+            "owed_usd": usd(max(-balance, 0)),
+        }
 
     async def update_policy(self, project_id, actor, policy: ProjectSpendingPolicy):
         if not policy.per_run_nanos or not policy.monthly_nanos or policy.schedule_max_nanos == 0:
@@ -787,17 +877,16 @@ class BillingService:
                         "WHERE run_id=$1",
                         parent["root_run_id"],
                     )
-                    spend_room = min(
-                        run_room(
-                            await conn.fetchrow(
-                                "SELECT * FROM billing_project_policies WHERE project_id=$1",
-                                run["project_id"],
-                            ),
-                            await self.month_usage(conn, run["project_id"]),
-                            await self.wallet_credits(conn, account),
+                    room = run_room(
+                        await conn.fetchrow(
+                            "SELECT * FROM billing_project_policies WHERE project_id=$1",
+                            run["project_id"],
                         ),
-                        root_budget["maximum_nanos"] - root_budget["committed_nanos"],
+                        await self.month_usage(conn, run["project_id"]),
+                        await self.wallet_credits(conn, account),
                     )
+                    remaining = root_budget["maximum_nanos"] - root_budget["committed_nanos"]
+                    spend_room = remaining if room is None else min(room, remaining)
                     terms = api_terms(definition, child=True, spend_room=spend_room)
                 else:
                     terms = self.fallback_terms(definition)
@@ -934,7 +1023,7 @@ class BillingService:
         period = datetime.now(UTC).date().replace(day=1)
         if limit := project_limit_message(policy, amount, usage, terms=terms):
             raise BillingError("project_limit", limit, 402)
-        if credits["available"] < amount:
+        if not credits["invoiced"] and credits["available"] < amount:
             set_aside = credits["set_aside"]
             raise BillingError(
                 "insufficient_funds",
@@ -1313,7 +1402,11 @@ class BillingService:
                     "run_limit", "The next paid operation would exceed this run's maximum.", 402
                 )
             if incremental(root_terms):
-                if account["balance_nanos"] - account["reserved_nanos"] < added_liability:
+                # An invoiced wallet's usage is billed afterwards; only its limits stop it.
+                if (
+                    account["funding"] != "invoiced"
+                    and account["balance_nanos"] - account["reserved_nanos"] < added_liability
+                ):
                     raise BillingError(
                         "insufficient_funds",
                         "Not enough credits for the next paid step. No new call was made; "
@@ -1746,6 +1839,7 @@ class BillingService:
                 "project_id": str(project_id),
                 "spent_this_month_usd": usd(spent),
                 "status": account["status"],
+                "funding": account["funding"],
                 "policies": [
                     {
                         **dict(p),
@@ -1783,7 +1877,22 @@ class BillingService:
                     available_usd=usd(credits["available"]),
                     reserved_usd=usd(credits["reserved"]),
                     set_aside_usd=usd(credits["set_aside"]),
-                    topup_min_cents=1000,
-                    topup_max_cents=100000,
                 )
+                if credits["invoiced"]:
+                    # Charged usage Tin has not yet been paid for; runs in progress add to it
+                    # as they settle.
+                    result.update(
+                        owed_usd=usd(max(-account["balance_nanos"], 0)),
+                        workspace_spent_this_month_usd=usd(
+                            await conn.fetchval(
+                                """SELECT COALESCE(-sum(amount_nanos),0) FROM billing_ledger
+                                   WHERE workspace_id=$1 AND kind='charge'
+                                     AND created_at>=date_trunc('month',
+                                       now() AT TIME ZONE 'UTC') AT TIME ZONE 'UTC'""",
+                                project["workspace_id"],
+                            )
+                        ),
+                    )
+                else:
+                    result.update(topup_min_cents=1000, topup_max_cents=100000)
             return result
