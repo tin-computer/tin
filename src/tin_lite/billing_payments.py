@@ -126,7 +126,12 @@ class StripePayments:
         if type(amount_cents) is not int or not 1000 <= amount_cents <= 100000:
             raise BillingError("invalid_amount", "Choose a top-up between $10 and $1,000.", 422)
         async with self.db.pool.acquire() as conn, conn.transaction():
-            await self.billing.require_admin(conn, workspace_id, actor, lock=True)
+            account = await self.billing.require_admin(conn, workspace_id, actor, lock=True)
+            if account["funding"] == "invoiced":
+                raise BillingError(
+                    "invoiced_account",
+                    "This workspace is billed by invoice, so it needs no credit top-ups.",
+                )
             prior = await conn.fetchrow(
                 "SELECT * FROM billing_payments WHERE workspace_id=$1 AND request_id=$2",
                 workspace_id,

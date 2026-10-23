@@ -9,6 +9,7 @@ from datetime import datetime
 from pathlib import Path
 from tempfile import TemporaryDirectory
 from types import SimpleNamespace
+from unittest.mock import AsyncMock
 
 import jsonschema
 import pytest
@@ -16,7 +17,7 @@ import pytest
 from tin_lite.code_models import request_contract
 from tin_lite.community import REPOSITORY_ROOT
 from tin_lite.workflow_code import validate_code_definition, validate_code_result
-from tin_lite.x_posts import validate_draft
+from tin_lite.x_posts import XPosts, validate_draft
 from tin_lite.x_text import weighted_length
 
 ROOT = REPOSITORY_ROOT / "workflow_packages" / "social.x_compose"
@@ -177,12 +178,50 @@ async def test_partial_batch_explains_gap_and_duplicate_batch_fails():
 
 
 @pytest.mark.parametrize(
+    "text, label",
+    [
+        ("An unavailable check is not a score of 0.", "number"),
+        ('An unavailable check should say "not measured".', "quotation"),
+        ("Read about missing checks at https://example.com/checks.", "URL"),
+    ],
+)
+async def test_unsupported_claim_keeps_batch_for_review(text, label, monkeypatch):
+    module, definition = package()
+    spec = validate_code_definition(definition)
+    direction = "An unavailable check is not a score of zero."
+    supported = {**deepcopy(POST), "text": direction}
+    uncertain = {**deepcopy(POST), "text": text}
+    ctx = Context({}, spec, {"posts": [supported, uncertain]})
+
+    result = await module.run(ctx, inputs(direction=direction, post_count=2))
+
+    draft = validate_draft(json.loads(result["content"]))
+    assert len(draft["posts"]) == 2
+    assert draft["posts"][0]["readiness"] == "ready"
+    assert draft["posts"][1]["text"] == text
+    assert draft["posts"][1]["readiness"] == "needs_evidence"
+    assert label in draft["posts"][1]["editor_notes"]
+    assert POST["editor_notes"] in draft["posts"][1]["editor_notes"]
+    connection = AsyncMock()
+    publisher = XPosts(
+        SimpleNamespace(
+            database=None,
+            storage=None,
+            integrations=SimpleNamespace(x=SimpleNamespace(connection=connection)),
+        ),
+        None,
+    )
+    monkeypatch.setattr(publisher, "read", AsyncMock(return_value={"draft": draft}))
+    with pytest.raises(ValueError, match="missing facts"):
+        await publisher.snapshot(PROJECT_ID, "founder", result["path"], "p2")
+    connection.assert_not_called()
+
+
+@pytest.mark.parametrize(
     "change, message",
     [
         ({"support_ids": ["s999"]}, "nonexistent"),
         ({"support_ids": []}, "cite"),
-        ({"text": "We built 50 workflows overnight."}, "unsupported number"),
-        ({"text": "We built a workflow. “We doubled revenue”"}, "unsupported quotation"),
         ({"text": "x" * 281}, "280 weighted"),
         (
             {"attachments": [{"type": "image", "path": "assets/fake.png", "alt_text": "fake"}]},

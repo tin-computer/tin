@@ -156,7 +156,7 @@ async def code_readiness(
                 issues.append("Paid model or data steps need an enabled credit account.")
             elif not getattr(settings, "billing_test_enabled", False):
                 issues.append("New paid runs are paused.")
-            elif account["balance_nanos"] <= 0:
+            elif account["funding"] != "invoiced" and account["balance_nanos"] <= 0:
                 issues.append("Add Tin credits before running this paid workflow.")
             if not policy or (policy["schedule_max_nanos"] or 0) < terms["maximum_nanos"]:
                 schedule_issues.append(

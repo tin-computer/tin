@@ -19,8 +19,8 @@ remain authoritative; older contract versions are retained for compatibility.
 
 - [Engineering reference](engineering.md): configuration, local commands and service APIs.
 - [Staging](staging.md): deploying a change end to end before production, and what it shares.
-- [Optional billing](self-hosted-billing.md), [billing coverage](workflow-billing-coverage.md)
-  and [model accounting](model-service-accounting.md).
+- [Optional billing](self-hosted-billing.md), [billing coverage](workflow-billing-coverage.md),
+  [invoiced workspaces](invoiced-billing.md) and [model accounting](model-service-accounting.md).
 - [Authentication and integrations](auth-and-integrations.md),
   [GitHub repositories](github-repositories.md),
   [MCP authentication](clerk-agent-connection.md) and [domain configuration](app-domain-rollout.md).
