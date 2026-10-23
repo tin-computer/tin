@@ -270,6 +270,16 @@ def test_a_site_in_a_folder_takes_its_wiring_there():
     )
 
 
+def test_the_line_goes_in_the_head_with_nothing_deciding_whether_it_renders():
+    # Agent Traffic records every page and every visitor; Claw's own consent and public-page
+    # gates had cut its visits to a third of PostHog's.
+    skill = (
+        Path(__file__).parents[1] / "codex_procedures/website.change/skills/site-analytics/SKILL.md"
+    ).read_text()
+    assert "never inside a condition or wrapper that decides whether it" in skill
+    assert "`agentTrafficConsent`" in skill and "`agentTrafficPublic`" in skill
+
+
 def test_the_shared_layout_takes_the_line_even_when_it_wraps_sign_in():
     # ClawMessenger: web/src/app/layout.tsx wraps /sign-in and /sign-up too. That layout is
     # where the line goes; only a protected page's own files are off limits.
