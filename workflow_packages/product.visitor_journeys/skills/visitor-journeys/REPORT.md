@@ -8,8 +8,19 @@ Leave out a section with nothing in it, except Status and Numbers.
 
 Status: <complete | incomplete | nothing to report | invalid configuration>
 
-<One sentence: the most important thing today, for example "Two hackathon signups stalled on
-Connect GitHub; the pricing calculator failed four times for one visitor.">
+<render_brief(evidence["brief"]), exactly as it returns:>
+| | Unique visitors | <middle step, if the map has one> | <main conversion> |
+|---|---:|---:|---:|
+| Yesterday | <n> | <n> | <n> |
+| Last 7 days, daily average | <n> | <n> | <n> |
+
+**Some visitors**
+
+- **<Name>** (<email>): <who they are and what they did, in one line>. [Replay](<link>)
+
+**Some observations**
+
+- <What stood out: "there may be a bug in ..." for anything without a recorded failure>
 
 ## People to act on today
 ### <Name or email> · <lead | new user | user>

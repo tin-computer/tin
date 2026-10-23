@@ -4,7 +4,7 @@
     "key": "product.visitor_journeys",
     "title": "Visitor journeys",
     "description": "A daily read of who used your site and product: each signed-up person's journey, where people struggled, what worked for them, who to follow up with and what to fix. Writes people who told you who they are to People.",
-    "version": "1.1.0",
+    "version": "1.2.0",
     "executor": "codex.procedure",
     "schedule_modes": [
       "on_demand",
@@ -140,7 +140,7 @@
           {"id": "census", "kind": "step", "label": "Everyone active in the window", "fact": "team and bots left out, one tier each"},
           {"id": "nothing", "kind": "ghost", "label": "PostHog answered nothing", "fact": "run fails, the diagnostic stays readable"},
           {"id": "read", "kind": "step", "label": "Journeys, site paths, frictions", "fact": "up to 30 people, repositories name the file"},
-          {"id": "report", "kind": "receipt", "label": "Visitor journal in Files", "fact": "people to act on, fixes, tracking gaps"},
+          {"id": "report", "kind": "receipt", "label": "Visitor journal in Files", "fact": "a daily brief, people to act on, fixes"},
           {"id": "people", "kind": "receipt", "label": "People", "fact": "only people who signed up or gave an email"}
         ],
         "edges": [

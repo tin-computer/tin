@@ -20,8 +20,8 @@ folder, and read it back through the matching resource function. Record every ca
 refused, with `outcome()`. A refused or truncated call is missing evidence, never zero. Do not
 retry a refused query under a new step; say what it would have shown.
 
-The call budget is 16. A normal run uses 9 to 11: project, inventory and hosts (on the first run
-or on drift), census, prior, frictions, loops, paths, and one or two timeline batches.
+The call budget is 16. A normal run uses 10 to 12: project, inventory and hosts (on the first run
+or on drift), census, prior, frictions, loops, paths, one or two timeline batches, and funnel.
 
 ## 1. Settings and memory
 
@@ -61,6 +61,14 @@ likely rename, run `inventory` and `hosts` and write the map:
   only names that appear in the inventory. Never guess a name.
 - `steps`: the main path as 2 to 6 key events in order, starting with `$pageview` when the site
   leads into the product.
+- `funnel`: the brief's table, two or three steps, each a short `label` and its `events`. The
+  first is always `{"label": "Unique visitors", "events": ["$pageview"]}`. The last is the main
+  conversion the product exists to get: a started trial or payment, a booked call, a signup, or
+  activation when there is nothing to pay. Add a middle step only when one clearly leads to it,
+  such as clicking a trial or sign-up button. Use only events that fire. Labels are plain
+  phrases a founder reads in a table, such as "Started a trial" or "Clicked Book a call".
+  Choose it once and keep it: change it only when its events go silent or are renamed, and
+  record the change. A map from an earlier version has no funnel; choose one on this run.
 - `internal`: team email domains and team people. A person with very many sessions on admin or
   dashboard pages, or a name matching the founder or a project member, is likely team. List them
   under `internal.people` and say so in the report so the founder can correct it.
@@ -185,10 +193,37 @@ Keep tracking problems apart, each with its exact fix:
 - team members who are not excluded;
 - capture settings that hide frictions, such as dead clicks or exceptions switched off.
 
-## 10. Write
+## 10. The brief
+
+The brief opens the report and is also read on its own, in the founder's daily report, by
+someone who has not read the rest. It has three parts.
+
+**The table.** After the timelines, call `request(c, m, "funnel")` and pass the result to
+`funnel(result, m, inventory_rows)`. It counts unique people for each funnel step over the last
+24 hours and the daily average over the last 7 days. Pass it to `assemble()` as `funnel=`. The
+numbers are the resource's; never write or adjust them. If the funnel call is refused, pass
+`funnel=None`: the table then says visitors were not measured.
+
+**Some visitors.** Up to five named people, most valuable first: anyone who paid or started a
+trial, then anyone stuck on the way in, then returning users who reached value. One line each:
+who they are, from their own data, and what they did. For example "started a trial, registered
+a phone, then clicked Ask about Enterprise". Pass `(email, line)`; the name and replay link come
+from the named people. When nobody can be named, leave it empty.
+
+**Some observations.** Up to five lines, the most useful first: possible bugs, failures the
+product recorded, where visitors come from and where they leave, a tracking gap that changes
+how to read the table. Pass `(text, friction_id or None)`. Something without a recorded failure
+or error behind it is "there may be a bug in ...", never "X is broken"; `check()` refuses
+otherwise. Clicks that changed nothing are a "may", and the line says to watch the replay.
+
+Write for the founder: plain words, no internal terms such as census, ledger, timeline, tier or
+query. Build it with `brief(visitors, observations)`, pass it to `assemble()` with
+`brief=b, funnel=fn`, and put `render_brief(evidence["brief"])` directly under the Status line.
+
+## 11. Write
 
 Build the ledger with `carry(prev["ledger"], p, f, c)`. Build the evidence with `assemble()`,
-passing `site=s`.
+passing `site=s`, `brief=b` and `funnel=fn`.
 Write the report in REPORT.md's order, append `render_evidence(evidence)`, and run `check()` on
 the whole text. Fix what it raises, then save the report to context.output.path.
 
