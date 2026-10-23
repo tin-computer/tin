@@ -1,0 +1,37 @@
+{
+  "_metadata": {
+    "major_version": 2,
+    "minor_version": 1
+  },
+  "display_information": {
+    "name": "Tin",
+    "description": "Posts the summaries of your Tin workflows to the channels you pick. Never reads messages.",
+    "long_description": "Tin runs marketing for your business as scheduled workflows. Connect this app from Integrations in your Tin project, then choose, for each saved workflow that writes a summary, the Slack channels where it is posted when a run finishes. Tin can list channels and post; it never reads messages. It posts to any public channel, and to a private channel once someone adds the app to it.",
+    "background_color": "#26231c"
+  },
+  "features": {
+    "bot_user": {
+      "display_name": "tin",
+      "always_online": false
+    }
+  },
+  "oauth_config": {
+    "redirect_urls": [
+      "https://app.tin.computer/integrations/callback/slack",
+      "https://app.staging.tin.computer/integrations/callback/slack"
+    ],
+    "scopes": {
+      "bot": [
+        "channels:read",
+        "groups:read",
+        "chat:write",
+        "chat:write.public"
+      ]
+    }
+  },
+  "settings": {
+    "org_deploy_enabled": false,
+    "socket_mode_enabled": false,
+    "token_rotation_enabled": false
+  }
+}

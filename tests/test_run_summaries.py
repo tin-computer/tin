@@ -352,6 +352,20 @@ async def test_slack_refuses_a_grant_without_its_scopes_or_with_rotating_tokens(
         await integrations.close()
 
 
+def test_the_slack_app_manifest_asks_for_what_tin_asks_for():
+    manifest = json.loads(
+        (Path(__file__).parents[1] / "infra" / "slack-app-manifest.json").read_text()
+    )
+    assert manifest["oauth_config"]["scopes"] == {"bot": list(slack_connection.SCOPES)}
+    assert manifest["settings"]["token_rotation_enabled"] is False
+    for url in manifest["oauth_config"]["redirect_urls"]:
+        assert url.startswith("https://")
+        assert url.endswith(f"/integrations/callback/{slack_connection.CALLBACK}")
+    display = manifest["display_information"]
+    assert len(display["name"]) <= 35 and len(display["description"]) <= 140
+    assert 174 <= len(display["long_description"]) <= 4000
+
+
 def test_slack_settings_come_in_pairs_and_need_the_credential_key(monkeypatch):
     from tin_lite.settings import Settings
 

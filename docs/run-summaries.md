@@ -115,12 +115,15 @@ never reads messages. The token is stored encrypted and is revoked (`auth.revoke
 
 Operator setup:
 
-1. Create a Slack app at api.slack.com/apps. Under *OAuth & Permissions*:
-   - add the redirect URL `{TIN_LITE_PUBLIC_URL}/integrations/callback/slack`;
-   - add the four bot scopes above;
-   - leave token rotation off.
+1. Create the Slack app from [`infra/slack-app-manifest.json`](../infra/slack-app-manifest.json):
+   api.slack.com/apps → *Create New App* → *From a manifest* → pick the workspace → paste the
+   file (JSON). It sets the name, the bot user, the four bot scopes above, token rotation off,
+   and the redirect URLs for app.tin.computer and app.staging.tin.computer. A self-hosted
+   deployment replaces them with `{TIN_LITE_PUBLIC_URL}/integrations/callback/slack`. A test
+   keeps the manifest's scopes and callback path equal to the code's.
 
-   To install in workspaces other than the app's own, turn on *Manage Distribution*.
+   To install in workspaces other than the app's own, turn on *Manage Distribution*; a manifest
+   cannot. Token rotation cannot be turned off again once on, so never enable it.
 2. Set `TIN_LITE_SLACK_OAUTH_CLIENT_ID` and `TIN_LITE_SLACK_OAUTH_CLIENT_SECRET` (both or
    neither). They need `TIN_LITE_INTEGRATION_CREDENTIAL_KEY`.
 3. Apply migration 079 before deploying.
