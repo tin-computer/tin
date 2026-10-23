@@ -17,13 +17,10 @@ Merging to `main` deploys to production, so staging is where a change is tested 
 
 A change to the deploy scripts themselves (`infra/`) cannot be tried this way, because
 deploy-staging always runs `main`'s scripts. Run the branch's `infra/deploy.sh` with
-`TIN_LITE_DEPLOY_TARGET=staging` from a workstation, and a maintainer sets the `staging`
-status by running **staging-check** by hand with the commit and how it was tested. A
-status set from a personal account does not count.
+`TIN_LITE_DEPLOY_TARGET=staging` from a workstation.
 
-Deploying marks that exact commit with the `staging` status that `main` requires. A new
-push resets it. Changes that cannot reach the running service (docs, tests, evals,
-Markdown) pass without a deploy. Staging has one slot: whoever deployed last owns it until
+Deploying marks that exact commit with a `staging` status on its pull request, so reviewers
+can see it ran there; `main` does not require it. Staging has one slot: whoever deployed last owns it until
 the next deploy, and a merge to `main` also takes it, so say in the team channel when you
 are testing there.
 

@@ -30,14 +30,10 @@ A merge to `main` deploys the application. When `ci` passes on `main`, the `depl
 workflow ships that commit to staging and, if staging starts cleanly, the same commit to
 production. There is no separate release step, so test before merging:
 
-- The required `staging` status passes on its own for changes that cannot reach the
-  running service (docs, tests, evals, Markdown). Anything else stays pending until that
-  exact commit is deployed to staging by `deploy-staging`. Every new push resets it.
-- Deploying marks the commit; it does not prove the change works. The PR's
-  **Tested on staging** section says what was exercised there and what happened, and the
-  reviewer judges it.
-- The maintainer bypass covers this check too. Skipping staging for a service change is
-  the same as deploying it untested.
+- Try a service change on staging with `deploy-staging`. It marks the deployed commit with a
+  `staging` status for reviewers; `main` does not require it.
+- Deploying does not prove the change works. The PR's **Tested on staging** section says
+  what was exercised there and what happened, and the reviewer judges it.
 - Set the repository variable `PROD_AUTO_DEPLOY=false` to stop automatic production
   deploys; merges then stop at staging. Running `deploy` by hand with a commit on `main`
   redeploys it, which is also how to roll back. Nothing rolls back on its own: a release
@@ -53,8 +49,7 @@ deployment. Superseded PR checks are cancelled; main-branch checks run independe
 Do not execute contributor code with `pull_request_target`, production environments,
 privileged self-hosted runners or a secret-bearing follow-up workflow. Live-provider
 acceptance stays a separate maintainer-run check against authorized test resources.
-`staging-check` uses `pull_request_target` only to read a PR's changed paths and set its
-status; it never checks out the code. Deploying an outside PR to staging runs it next to
+Deploying an outside PR to staging runs it next to
 real provider credentials, so a maintainer reads the diff first.
 
 When public, use **Require approval for first-time contributors** for fork workflow
@@ -65,8 +60,7 @@ See [GitHub's fork approval guidance](https://docs.github.com/en/actions/how-tos
 
 ## Repository settings
 
-- Require the verify and staging checks, one code-owner review and resolved review threads
-  on main.
+- Require the verify check, one code-owner review and resolved review threads on main.
 - Let only `tin-lite-maintainers` update `main` ("Main: only maintainers merge"); other
   writers open pull requests and deploy branches to staging.
 - Limit manual runs of `deploy` to `PROD_DEPLOYERS`.

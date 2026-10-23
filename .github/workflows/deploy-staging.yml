@@ -104,8 +104,8 @@ jobs:
           OUTCOME: ${{ steps.deploy.outcome == 'success' && 'deployed' || 'failed' }}
         run: test -f trusted/.github/scripts/deploy-summary.sh && bash trusted/.github/scripts/deploy-summary.sh staging "${SHA}" "${RUNNER_TEMP}/deploy.log" "${OUTCOME}"
 
-  # The required "staging" check on main: this exact commit ran on staging. Testing it there,
-  # and saying what was tested in the pull request, is up to its author. This job runs no
+  # A "staging" status for reviewers: this exact commit ran on staging. main does not require
+  # it. Testing it there, and saying what was tested in the pull request, is up to its author. This job runs no
   # branch code, so the status token never reaches it.
   mark:
     needs: [resolve, deploy]
