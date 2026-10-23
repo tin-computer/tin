@@ -230,7 +230,9 @@ def test_a_change_row_is_defined_once_for_every_source():
         "planned",
         "blog_index",
         "feedback",
+        "analytics",
     }
+    assert website_change.SOURCES["analytics"] == ("install", "replace", "remove")
     for bad, match in (
         ({"change_id": "oa_short"}, "change ID"),
         ({"kind": "page"}, "cannot be of kind"),

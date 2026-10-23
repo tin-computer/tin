@@ -2813,6 +2813,8 @@ class TinActivities:
                 return False
             if content_repository_delivery.repairs_site(run):
                 return await self._prepare_website_repairs(run)
+            if content_repository_delivery.installs_analytics(run):
+                return await self._prepare_analytics_change(run)
             if content_repository_delivery.applies_plan(run):
                 return await self._apply_plan(run)
             await content_repository_delivery.saved_source(self._db, run_id)
@@ -2891,6 +2893,28 @@ class TinActivities:
                 summary="Preparing one pull request for the audit's changes.",
             )
         return handled
+
+    async def _prepare_analytics_change(self, run) -> bool:
+        """A website.change run with Tin Analytics: fetch the approved reporter file once and
+        check its SHA-256 before the session, which writes the rest."""
+        from tin_lite import website_change_analytics
+
+        await self._db.mark_run_running(run.id)
+        await self._db.project_run_progress(
+            run_id=run.id,
+            mode="steps",
+            current=1,
+            total=3,
+            step="prepare_analytics",
+            summary="Preparing the change that puts Tin Analytics on your site.",
+        )
+        await self._await_with_heartbeats(
+            website_change_analytics.prepare(
+                database=self._db, integrations=self._integrations, run=run
+            ),
+            details={"stage": "website_change_analytics"},
+        )
+        return False
 
     async def _apply_plan(self, run) -> bool:
         """A website.change run with a planned patch (the blog index plan or a copy fix): no
@@ -3175,8 +3199,11 @@ class TinActivities:
             api_attempt = await self._db.get_effect(attempt_key(run_id), conn=conn)
 
             repository_delivery = content_repository_delivery.adapts(run)
-            # A website.change run with the audit's changes is a repair, not a page delivery.
-            technical_run = content_repository_delivery.repairs_site(run)
+            # A website.change run with the audit's changes is a repair, not a page delivery;
+            # one that adds Tin Analytics keeps its patch the same way.
+            technical_run = content_repository_delivery.repairs_site(
+                run
+            ) or content_repository_delivery.installs_analytics(run)
             if (
                 procedure.result_kind == PROJECT_ARTIFACT_RESULT
                 or technical_run
@@ -3492,6 +3519,14 @@ class TinActivities:
 
                         technical = await prepared_result(self._db, run_id)
                         expected_binding = binding_from(technical)
+                    analytics_source = None
+                    if content_repository_delivery.installs_analytics(run):
+                        analytics_source = await content_repository_delivery.saved_source(
+                            self._db, run_id
+                        )
+                        expected_binding = content_repository_delivery.binding_from(
+                            analytics_source
+                        )
                     target = (
                         None
                         if expected_binding
@@ -3525,6 +3560,14 @@ class TinActivities:
                         # The rows, publish mode and protected paths beside the plan.
                         workspace_context["website_change"] = website_change_audit.workspace(
                             await content_repository_delivery.saved_source(self._db, run_id)
+                        )
+                    if analytics_source is not None:
+                        from tin_lite import website_change_analytics
+
+                        # The approved pieces, with the reporter's exact bytes to copy.
+                        workspace_context["website_change"] = website_change_analytics.workspace(
+                            analytics_source,
+                            await website_change_analytics.prepared_reporter(self._db, run_id),
                         )
                     if content_source is not None:
                         # website.change reads its change row, route and protected paths too.
@@ -3921,7 +3964,10 @@ class TinActivities:
                 from tin_lite import content_repository_delivery
 
                 website_repairs = content_repository_delivery.repairs_site(run)
-                immutable_checkpoint = website_repairs or content_repository_delivery.adapts(run)
+                analytics_run = content_repository_delivery.installs_analytics(run)
+                immutable_checkpoint = (
+                    website_repairs or analytics_run or content_repository_delivery.adapts(run)
+                )
                 checkpoint = (
                     b""
                     if immutable_checkpoint
@@ -3977,6 +4023,27 @@ class TinActivities:
                             technical_fix.validate_manifest(manifest, technical)
                         else:
                             await execution.validate_delivery(run, manifest, technical)
+                    analytics_files, analytics_problems = None, []
+                    if analytics_run:
+                        from tin_lite import website_change_analytics
+
+                        analytics_source = await content_repository_delivery.saved_source(
+                            self._db, run_id
+                        )
+                        expected_binding = content_repository_delivery.binding_from(
+                            analytics_source
+                        )
+                        analytics_reporter = await website_change_analytics.prepared_reporter(
+                            self._db, run_id
+                        )
+                        # Held to the approved pieces; the reporter copy gets its exact bytes.
+                        (
+                            analytics_files,
+                            analytics_problems,
+                            _added,
+                        ) = await website_change_analytics.checked_files(
+                            self._integrations, run, analytics_source, manifest, analytics_reporter
+                        )
                     pull_request = None
                     no_change = manifest.get("outcome") == "no_change" and (
                         technical is not None or procedure.allow_no_change
@@ -3994,7 +4061,11 @@ class TinActivities:
                             body=str(manifest["body"]),
                             files=tuple(
                                 GitHubFileChange(path=item["path"], content=item["content"])
-                                for item in manifest["files"]
+                                for item in (
+                                    manifest["files"]
+                                    if analytics_files is None
+                                    else analytics_files
+                                )
                             ),
                             base_branch=str(manifest["default_branch"]),
                             expected_base_sha=str(manifest["head_sha"]),
@@ -4015,7 +4086,19 @@ class TinActivities:
                             ),
                         )
                     artifact_path = procedure_receipt_path(spec=procedure, run_id=run_id)
-                    if website_repairs:
+                    if analytics_run:
+                        receipt = website_change_analytics.report(
+                            analytics_source,
+                            manifest,
+                            problems=analytics_problems,
+                            pull_request=pull_request,
+                            reporter_at=website_change_analytics.reporter_path(
+                                analytics_files or [],
+                                analytics_reporter,
+                                analytics_source["change"]["detail"].get("folder") or "",
+                            ),
+                        )
+                    elif website_repairs:
                         from tin_lite import website_change_audit
 
                         receipt = website_change_audit.report(
@@ -4723,6 +4806,22 @@ class TinActivities:
         run = await self._require_run(UUID(run_id_text))
         if content_repository_delivery.applies_plan(run):
             # A planned patch's run merged or left its pull request while it applied the plan.
+            return
+        if content_repository_delivery.installs_analytics(run):
+            if run.status == RunStatus.SUCCEEDED:
+                from tin_lite import website_change_analytics
+
+                # Tin merges the approved analytics change once the required checks pass, when
+                # the patch holds only its pieces; anything else stays open for the founder.
+                await self._await_with_heartbeats(
+                    website_change_analytics.publish(
+                        database=self._db,
+                        storage=self._storage,
+                        integrations=self._integrations,
+                        run=run,
+                    ),
+                    details={"stage": "website_change_merge"},
+                )
             return
         if content_repository_delivery.repairs_site(run):
             if run.status == RunStatus.SUCCEEDED:

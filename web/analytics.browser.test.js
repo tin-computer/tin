@@ -297,3 +297,101 @@ test("card: a linked site's Stop keeps its history", {timeout: 120000}, async ()
     assert.deepEqual(served.removed, [KEY]);
   });
 });
+
+const pending = {change_id: "an_" + "1".repeat(20), kind: "install", title: "Add Tin Analytics to example.com", status: "pending", content_sha256: "a".repeat(64)};
+
+test("card: getting the line on the site, from Decisions to added (Paper INST-1)", {timeout: 120000}, async () => {
+  const integrations = [card("waiting")];
+  const builder = {key: "webflow", label: "Webflow", where: "In Webflow: …", source: "setup"};
+  const states = [
+    [{state: "decide", change: pending}, "the line isn't on the site yet", "approve “Add Tin Analytics” in Decisions"],
+    [{state: "adding", change: {...pending, status: "approved"}, pull_request: {number: 41, url: "https://github.com/owner/site/pull/41"}}, "adding the line · pull request #41", "merges once example.com's own build passes"],
+    [{state: "added", change: {...pending, status: "approved"}, pull_request: {number: 41}, added: {at: "2026-10-22T10:00:00Z", number: 41}}, /^waiting for the first visit · checked \d\d:\d\d$/, "line added oct 22 · pull request #41"],
+    [{state: "not_added", change: {...pending, status: "approved"}}, "Tin couldn't add the line", "start it again in Configure, or paste it in Webflow"],
+    [{state: null}, "the line isn't on the site yet", "paste it in Webflow · Analytics shows where"],
+  ];
+  await open({integrations, analytics: {pages: {}, answer: () => ({})}}, "/integrations", async page => {
+    // After Stop measuring, taking Tin's line back off the site waits in Decisions (INST-5).
+    integrations[0] = card("not_set_up", {removal: {state: "removing", requested_at: new Date().toISOString(), deleted_by: new Date(Date.now() + 86400000).toISOString()},
+      install: {state: "decide", change: {...pending, kind: "remove", title: "Remove Tin Analytics from example.com"}, reporter_added: true}});
+    await page.reload();
+    await analyticsCard(page).locator(".analytics-health").waitFor();
+    assert.equal(await analyticsCard(page).locator(".analytics-health small").innerText(), "removing the line and the reporter: approve it in Decisions");
+    for (const [install, first, second] of states) {
+      integrations[0] = card("waiting", {install, builder});
+      await page.reload();
+      const health = analyticsCard(page).locator(".analytics-health");
+      await health.waitFor();
+      if (first instanceof RegExp) assert.match(await health.locator("span").innerText(), first);
+      else assert.equal(await health.locator("span").innerText(), first);
+      assert.equal(await health.locator("small").innerText(), second);
+    }
+    // Tin's change added the line, and no page has run it yet: the Script row says so.
+    integrations[0] = card("waiting", {install: {state: "added", change: {...pending, status: "approved"}, added: {at: "2026-10-22T10:00:00Z", number: 41}}, builder});
+    await page.reload();
+    await analyticsCard(page).getByRole("button", {name: "Configure"}).click();
+    await analyticsCard(page).getByText("Added oct 22 · no page has run it yet").waitFor();
+    // A run that made no change can start again from Configure, as a refused start can.
+    integrations[0] = card("waiting", {install: {state: "not_added", change: {...pending, status: "approved"}}, builder});
+    await page.reload();
+    await analyticsCard(page).getByRole("button", {name: "Configure"}).click();
+    await analyticsCard(page).getByRole("button", {name: "Start again"}).waitFor();
+  });
+});
+
+test("card: the reporter's one paste, shown only on request (Paper INST-4)", {timeout: 120000}, async () => {
+  const step = {via: "tin", variant: "nextjs", label: "Next.js", path: "tin-reporter.js", added_at: "2026-10-22T10:00:00Z", number: 41,
+    env_name: "TIN_REPORTER_TOKEN", host: "Vercel", where: "Vercel: your project → Settings → Environment Variables. Add it for Production, then redeploy so the reporter reads it.",
+    issued_at: null, previous_expires_at: null, connected: false};
+  const integrations = [card("live", {reporter_step: step, install: {state: "added", added: {at: "2026-10-22T10:00:00Z", number: 41}}})];
+  const writes = [];
+  let issued = 0;
+  const analytics = {writes, pages: {}, answer: action => action === "reporter-token"
+    ? {body: {env_name: "TIN_REPORTER_TOKEN", value: `reporter-value-${++issued}-synthetic`, issued_at: recent(), previous_expires_at: null}}
+    : {body: integrations[0]}};
+  await open({integrations, analytics}, "/integrations", async page => {
+    await page.locator(".integration-list").waitFor();
+    assert.equal(await analyticsCard(page).locator(".analytics-health small").innerText(), "reporter: one paste left on Vercel");
+    await analyticsCard(page).getByRole("button", {name: "Configure"}).click();
+    const row = analyticsCard(page).locator(".linkedin-part").nth(2);
+    assert.match(await row.innerText(), /Reporter\s*Paste one value on Vercel, and every page request is counted\s*next\.js reporter added oct 22 · pull request #41 · it sends nothing until the value is set/);
+    const value = row.locator(".analytics-step-value").nth(1);
+    assert.match(await value.innerText(), /^•+$/);
+    assert.match(await row.locator(".analytics-step").innerText(), /Name\s*TIN_REPORTER_TOKEN\s*Copy\s*Value\s*•+\s*Show\s*Copy\s*Where\s*Vercel: your project → Settings → Environment Variables\./);
+    assert.match(await row.locator(".analytics-step-foot").innerText(), /^waiting for the first record · the step closes once one arrives · New value$/);
+    // Nothing is asked for until a member opens the value.
+    assert.deepEqual(writes, []);
+    await row.getByRole("button", {name: "Show"}).click();
+    await row.getByText("reporter-value-1-synthetic").waitFor();
+    assert.deepEqual(writes, [{action: "reporter-token", body: {new: false}}]);
+    await row.getByRole("button", {name: "Hide", exact: true}).click();
+    assert.match(await row.locator(".analytics-step-value").nth(1).innerText(), /^•+$/);
+    await row.getByRole("button", {name: "New value"}).click();
+    await row.getByText("reporter-value-2-synthetic").waitFor();
+    assert.deepEqual(writes.at(-1), {action: "reporter-token", body: {new: true}});
+    await row.getByRole("button", {name: "Hide the step"}).click();
+    assert.equal(await row.locator(".analytics-step").count(), 0);
+    assert.equal(await row.getByRole("button", {name: "Show the step"}).count(), 1);
+  });
+});
+
+test("page: without GitHub, where the line goes in the founder's site builder (Paper INST-3)", {timeout: 120000}, async () => {
+  const builders = [{key: "webflow", label: "Webflow"}, {key: "framer", label: "Framer"}, {key: "other", label: "another builder"}];
+  const webflow = card("waiting", {address: "https://sheepdogs.io", counted_hosts: ["sheepdogs.io", "*.sheepdogs.io"], install: {state: null}, builders,
+    builder: {key: "webflow", label: "Webflow", where: "In Webflow: Site settings → Custom code → Head code. Paste the line, save, then publish the site.", source: "setup"}});
+  const framer = {...webflow.analytics, builder: {key: "framer", label: "Framer", where: "In Framer: Site Settings → Custom Code, at the end of the <head> tag. Paste the line, save, then publish the site.", source: "chosen"}};
+  const integrations = [webflow];
+  const writes = [];
+  const analytics = {writes, pages: {today: pageOf("today", null, webflow)}, answer: () => ({body: {...webflow, analytics: framer}})};
+  await open({integrations, analytics}, "/analytics", async page => {
+    await page.locator(".analytics-install").waitFor();
+    assert.equal(await page.locator(".analytics-summary p").innerText(), "Once this line is in sheepdogs.io's head code in Webflow and the site is published, the first visit shows up here within a minute. Tin checks again each time you open this page.");
+    const where = page.locator(".analytics-install-row").nth(1);
+    assert.match(await where.innerText(), /Where it goes\s*In Webflow: Site settings → Custom code → Head code\. Paste the line, save, then publish the site\.\s*Webflow, from your setup answers\s*Change/);
+    await where.getByRole("button", {name: "Change"}).click();
+    await where.getByLabel("Site builder").selectOption("framer");
+    await where.getByText("Framer, your pick").waitFor();
+    assert.deepEqual(writes, [{action: "builder", body: {builder: "framer"}}]);
+    assert.match(await page.locator(".analytics-summary p").innerText(), /in Framer and the site is published/);
+  });
+});

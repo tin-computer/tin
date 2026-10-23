@@ -96,6 +96,68 @@ STILL_REMOVING = (
 READ_LOST = (
     "Tin Analytics can't read this site anymore. Press Set up again on its card in Integrations."
 )
+# Install states in which Tin's own change, not a coding agent, adds the reporter.
+TIN_INSTALLING = frozenset({"decide", "approved", "adding", "left_open", "not_added", "failed"})
+REPORTER_NOT_NEEDED = "This site already sends every page request, so it needs no reporter."
+# Site builders the founder pastes the line into without GitHub: the words a setup answer or
+# the site's own address uses for each, and where the line goes there. "other" covers the rest.
+BUILDERS: dict[str, dict[str, Any]] = {
+    "webflow": {
+        "label": "Webflow",
+        "words": ("webflow",),
+        "hosts": ("webflow.io",),
+        "where": "In Webflow: Site settings → Custom code → Head code. Paste the line, save, "
+        "then publish the site.",
+    },
+    "framer": {
+        "label": "Framer",
+        "words": ("framer",),
+        "hosts": ("framer.website", "framer.app"),
+        "where": "In Framer: Site Settings → Custom Code, at the end of the <head> tag. Paste "
+        "the line, save, then publish the site.",
+    },
+    "wordpress": {
+        "label": "WordPress",
+        "words": ("wordpress", "wp engine", "kinsta"),
+        "hosts": ("wordpress.com",),
+        "where": "In WordPress: paste the line into your theme's header, just before </head>, "
+        "or into a header code plugin such as WPCode, then save.",
+    },
+    "squarespace": {
+        "label": "Squarespace",
+        "words": ("squarespace",),
+        "hosts": ("squarespace.com",),
+        "where": "In Squarespace: Code Injection → Header (under Website → Pages → Custom "
+        "Code, or Settings → Advanced on older sites). Paste the line, then save.",
+    },
+    "wix": {
+        "label": "Wix",
+        "words": ("wix",),
+        "hosts": ("wixsite.com",),
+        "where": "In Wix: Settings → Custom Code → Add Custom Code. Paste the line, choose All "
+        "pages and Head, then apply.",
+    },
+    "shopify": {
+        "label": "Shopify",
+        "words": ("shopify",),
+        "hosts": ("myshopify.com",),
+        "where": "In Shopify: Online Store → Themes → Edit code → theme.liquid. Paste the line "
+        "just before </head>, then save.",
+    },
+    "ghost": {
+        "label": "Ghost",
+        "words": ("ghost",),
+        "hosts": ("ghost.io",),
+        "where": "In Ghost: Settings → Code injection → Site header. Paste the line, then save.",
+    },
+    "other": {
+        "label": "another builder",
+        "words": (),
+        "hosts": (),
+        "where": "In the head of every page: your site builder's custom code or head "
+        "settings, or the layout file every page uses. Then publish the site.",
+    },
+}
 # Hosts a founder's site lives on as one exact host among many. A host on one of them in
 # `uncounted_hosts` is usually a preview deployment, not a move.
 SHARED_HOSTING = (
@@ -360,6 +422,11 @@ class AgentTraffic:
 
     async def delete_site(self, ref: str) -> Answer:
         return await self._call("DELETE", self._site_path(ref), token=self._service_token())
+
+    async def reporter_token(self, ref: str) -> Answer:
+        return await self._call(
+            "POST", self._site_path(ref) + "/reporter-token", token=self._service_token()
+        )
 
     async def status(self, site_id: str, token: str, tz: str) -> Answer:
         return await self._call(
@@ -708,13 +775,15 @@ class AgentTrafficConnections:
             address, source = latest[0], "setup"
         else:
             raise IntegrationInputError(NO_ADDRESS)
-        return await self._put(
+        connection = await self._put(
             project_id,
             clerk_user_id,
             address=address,
             source=source,
             run_id=latest[1] if latest else None,
         )
+        await self.propose_install(connection)
+        return connection
 
     async def count_host(self, *, project_id: UUID, clerk_user_id: str, host: str):
         """Count the host the script moved to instead, from the card's offer."""
@@ -807,6 +876,18 @@ class AgentTrafficConnections:
                         ELSE EXCLUDED.status END,
                     status_checked_at = CASE WHEN agent_traffic_sites.site_id = EXCLUDED.site_id
                         THEN agent_traffic_sites.status_checked_at END,
+                    -- A new site has its own reporter token; the old one stops with its site.
+                    reporter_token_ciphertext = CASE WHEN agent_traffic_sites.site_id
+                        = EXCLUDED.site_id THEN agent_traffic_sites.reporter_token_ciphertext END,
+                    reporter_token_key_version = CASE WHEN agent_traffic_sites.site_id
+                        = EXCLUDED.site_id THEN agent_traffic_sites.reporter_token_key_version END,
+                    reporter_token_issued_at = CASE WHEN agent_traffic_sites.site_id
+                        = EXCLUDED.site_id THEN agent_traffic_sites.reporter_token_issued_at END,
+                    reporter_previous_expires_at = CASE WHEN agent_traffic_sites.site_id
+                        = EXCLUDED.site_id THEN agent_traffic_sites.reporter_previous_expires_at
+                        END,
+                    reporter_offered_at = CASE WHEN agent_traffic_sites.site_id
+                        = EXCLUDED.site_id THEN agent_traffic_sites.reporter_offered_at END,
                     site_id = EXCLUDED.site_id,
                     status_claimed_at = NULL, status_retry_at = NULL, status_failures = 0,
                     updated_at = now()
@@ -847,6 +928,221 @@ class AgentTrafficConnections:
             event="integration_configured",
         )
 
+    # ----- the line on the site (website.change, source analytics)
+
+    async def propose_install(self, connection: Any) -> dict[str, Any] | None:
+        """Put the change that adds this site's line in Decisions when Tin can make it: GitHub
+        connected with a website repository Tin may open pull requests in. Setting up never
+        fails over it; without the row the card offers the line to paste."""
+        from tin_lite import website_change_analytics
+
+        try:
+            return await website_change_analytics.propose_install(
+                self.integrations,
+                project_id=connection.project_id,
+                configuration=connection.configuration,
+                host=domain(site_url(connection.configuration)) or _label(connection.configuration),
+            )
+        except Exception:  # noqa: BLE001 — the card offers the line to paste instead
+            logger.warning(
+                "Tin couldn't propose the analytics change",
+                extra={"project": str(connection.project_id)},
+            )
+            return None
+
+    async def propose_remove(self, connection: Any) -> None:
+        """After Stop measuring, the change that takes Tin's line back off the site."""
+        from tin_lite import website_change_analytics
+
+        try:
+            await website_change_analytics.propose_remove(
+                self.integrations,
+                project_id=connection.project_id,
+                configuration=connection.configuration,
+                host=domain(site_url(connection.configuration)) or _label(connection.configuration),
+            )
+        except Exception:  # noqa: BLE001 — the founder can still take the line out themselves
+            logger.warning(
+                "Tin couldn't propose removing the analytics line",
+                extra={"project": str(connection.project_id)},
+            )
+
+    async def builder(self, project_id: UUID, site: dict[str, Any] | None, address: Any):
+        """The site builder the founder pastes the line into: their pick on the card, else the
+        one their setup answer or the site's address names, else the general entry."""
+        from tin_lite.website_change_analytics import setup_hosting
+
+        chosen = (site or {}).get("builder")
+        if chosen in BUILDERS:
+            key, source = chosen, "chosen"
+        else:
+            words = (await setup_hosting(self.db, project_id) or "").lower()
+            host = host_of(address)
+            key = next(
+                (name for name, item in BUILDERS.items() if any(w in words for w in item["words"])),
+                None,
+            )
+            source = "setup" if key else None
+            if key is None:
+                key = next(
+                    (
+                        name
+                        for name, item in BUILDERS.items()
+                        if any(host == h or host.endswith("." + h) for h in item["hosts"])
+                    ),
+                    None,
+                )
+                source = "address" if key else None
+            key = key or "other"
+        item = BUILDERS[key]
+        return {"key": key, "label": item["label"], "where": item["where"], "source": source}
+
+    async def set_builder(self, *, project_id: UUID, builder: str) -> None:
+        """The founder's pick of where they paste the line, kept with the site."""
+        if builder not in BUILDERS:
+            raise IntegrationInputError("Choose one of the site builders Tin lists.")
+        updated = await self.db.pool.execute(
+            "UPDATE agent_traffic_sites SET builder = $2, updated_at = now() WHERE project_id = $1",
+            project_id,
+            builder,
+        )
+        if updated.endswith(" 0"):
+            raise IntegrationAuthorizationError("Set up Tin Analytics first.")
+
+    def _reporter_cipher(self):
+        cipher = self.integrations._cipher
+        if cipher is None:
+            raise IntegrationNotConfiguredError("integration credential key is not configured")
+        return cipher
+
+    async def reporter_value(
+        self, *, project_id: UUID, clerk_user_id: str, new: bool = False
+    ) -> dict[str, Any]:
+        """The reporter token a project member pastes on their host, for the browser only.
+
+        Tin asks the service for one the first time the step is opened and when the founder
+        asks for a new value (the previous one keeps working for 24 hours); otherwise it shows
+        the stored one again. It never goes to MCP, a log or a workflow input.
+        """
+        self._require_enabled(project_id)
+        connection = await self.db.get_integration_connection(
+            project_id=project_id, provider_key=PROVIDER
+        )
+        if connection is None or connection.status != "connected":
+            raise IntegrationAuthorizationError("Set up Tin Analytics first.")
+        if connection.configuration.get("linked") is True:
+            raise ServiceCallRefused(REPORTER_NOT_NEEDED, code="reporter_not_needed")
+        context = f"reporter:{project_id}:{PROVIDER}"
+        env_name = (connection.configuration.get("reporter") or {}).get("env_name")
+        async with self.db.integration_refresh_lock(project_id=project_id, provider_key=PROVIDER):
+            site = await self.site(project_id)
+            if site is None:
+                raise IntegrationAuthorizationError("Set up Tin Analytics first.")
+            if site.get("reporter_token_ciphertext") and not new:
+                return {
+                    "env_name": env_name or "TIN_REPORTER_TOKEN",
+                    "value": self._reporter_cipher().decrypt(
+                        site["reporter_token_ciphertext"], context=context
+                    ),
+                    "issued_at": _iso(site.get("reporter_token_issued_at")),
+                    "previous_expires_at": _iso(site.get("reporter_previous_expires_at")),
+                }
+            ref = connection.configuration.get("project_ref") or project_ref(
+                self.settings, project_id
+            )
+            answer = await self.service.reporter_token(ref)
+            if answer.status == 409 and answer.code == "reporter_not_needed":
+                raise ServiceCallRefused(REPORTER_NOT_NEEDED, code="reporter_not_needed")
+            if answer.status not in {200, 201}:
+                raise self.service._refused(answer, "reporter token")
+            body = answer.body if isinstance(answer.body, dict) else {}
+            token = body.get("reporter_token")
+            if body.get("site_id") != connection.external_account_id or not (
+                isinstance(token, str) and re.fullmatch(r"[\x21-\x7e]{16,512}", token)
+            ):
+                raise IntegrationUpstreamError("Analytics returned no usable reporter value")
+            previous = _moment(body.get("previous_expires_at"))
+            cipher = self._reporter_cipher()
+            await self.db.pool.execute(
+                """UPDATE agent_traffic_sites SET reporter_token_ciphertext = $2,
+                   reporter_token_key_version = $3, reporter_token_issued_at = now(),
+                   reporter_previous_expires_at = $4::timestamptz, updated_at = now()
+                   WHERE project_id = $1""",
+                project_id,
+                cipher.encrypt(token, context=context),
+                cipher.version,
+                datetime.fromisoformat(previous.replace("Z", "+00:00")) if previous else None,
+            )
+        await self.integrations._record_activity(
+            connection,
+            "integration_configured",
+            "Analytics issued a new reporter value."
+            if new
+            else "Analytics issued the reporter value.",
+            suffix=str(uuid4()),
+        )
+        return {
+            "env_name": text(body.get("env_name"), 100) or env_name or "TIN_REPORTER_TOKEN",
+            "value": token,
+            "issued_at": datetime.now(UTC).isoformat(),
+            "previous_expires_at": previous,
+        }
+
+    async def install_guide(self, project_id: UUID) -> dict[str, Any]:
+        """What a coding agent needs to put the line and the reporter on the site itself: the
+        line, the CSP entries, the published reporter files and where each piece goes. The
+        reporter's value is not in it; the founder copies it from the card, which this opens."""
+        from tin_lite import website_change_analytics as analytics
+
+        connection = await self.db.get_integration_connection(
+            project_id=project_id, provider_key=PROVIDER
+        )
+        if connection is None:
+            raise IntegrationAuthorizationError("Set up Tin Analytics on its card first.")
+        configuration = connection.configuration
+        install = await analytics.install_view(self.db, project_id, configuration.get("site_id"))
+        linked = configuration.get("linked") is True
+        variants = [] if linked else (configuration.get("reporter") or {}).get("variants") or []
+        if variants:
+            await self.db.pool.execute(
+                "UPDATE agent_traffic_sites SET reporter_offered_at = coalesce("
+                "reporter_offered_at, now()), updated_at = now() WHERE project_id = $1",
+                project_id,
+            )
+        suggested = (install.get("reporter") or {}).get("variant")
+        return {
+            "site": domain(site_url(configuration)),
+            "linked": linked,
+            "script": configuration.get("script"),
+            "script_goes": "In the <head> of every page, usually the layout file every page "
+            "uses. Add it exactly as it is.",
+            "csp": configuration.get("csp") or {},
+            "csp_goes": "Only where the site already sends a Content-Security-Policy (a header "
+            "or a meta tag): add these sources to its directives.",
+            "reporter": None
+            if linked or not variants
+            else {
+                "env_name": (configuration.get("reporter") or {}).get("env_name")
+                or "TIN_REPORTER_TOKEN",
+                "suggested": suggested,
+                "variants": [
+                    {
+                        **item,
+                        "for": analytics.VARIANT_FOR.get(item["variant"], ""),
+                        "file": analytics.REPORTER_NAMES.get(item["variant"], ("",))[0],
+                    }
+                    for item in variants
+                ],
+                "goes": "Download the variant for the site's host from its url, check its "
+                "sha256, save it unchanged and wire it in as its header comment says.",
+                "value": "The reporter sends nothing until TIN_REPORTER_TOKEN is set on the host. "
+                "Ask the founder to copy the value from the Tin Analytics card in Integrations "
+                "(Configure, then Reporter) and add it to the host's environment variables. "
+                "Tin never gives the value to an agent.",
+            },
+            "tin_change": install,
+        }
+
     # ----- the card
 
     async def card(self, project_id: UUID, connection: Any | None) -> dict[str, Any]:
@@ -868,6 +1164,8 @@ class AgentTrafficConnections:
                     "requested_at": _iso(removal["requested_at"]),
                     "deleted_by": _iso(removal["deleted_by"]),
                 }
+                # Taking Tin's line back off the site: waiting in Decisions, or done.
+                view["install"] = await self._install(project_id, None)
             return view
         site = await self.site(project_id)
         if site is None:
@@ -893,7 +1191,27 @@ class AgentTrafficConnections:
         status = (site or {}).get("status") or {}
         state = "needs_attention" if connection.status != "connected" else status.get("state")
         configuration = connection.configuration
+        linked = configuration.get("linked") is True
+        install = None if linked else await self._install(project_id, configuration["site_id"])
+        if install is not None and install["state"] is None and (state or "waiting") == "waiting":
+            # GitHub connected after Set up: propose the change now.
+            if await self.propose_install(connection):
+                install = await self._install(project_id, configuration["site_id"])
         return {
+            **(
+                {}
+                if linked
+                else {
+                    "install": install,
+                    "builder": await self.builder(project_id, site, site_url(configuration)),
+                    "builders": [
+                        {"key": key, "label": item["label"]} for key, item in BUILDERS.items()
+                    ],
+                    "reporter_step": await self._reporter_step(
+                        project_id, configuration, site, install, status
+                    ),
+                }
+            ),
             "state": state or "waiting",
             "address": site_url(configuration),
             "site_id": configuration.get("site_id"),
@@ -915,6 +1233,45 @@ class AgentTrafficConnections:
             "stale": bool(
                 site and site.get("status_retry_at") and site["status_retry_at"] > datetime.now(UTC)
             ),
+        }
+
+    async def _install(self, project_id: UUID, site_id: str | None) -> dict[str, Any]:
+        from tin_lite import website_change_analytics
+
+        return await website_change_analytics.install_view(self.db, project_id, site_id)
+
+    async def _reporter_step(self, project_id, configuration, site, install, status):
+        """The reporter's one paste, once the reporter is on the site: added by Tin's change, or
+        given to a coding agent over MCP. Never the value itself; the browser asks for it."""
+        from tin_lite import website_change_analytics as analytics
+
+        added = ((install or {}).get("added") or {}).get("reporter")
+        offered = (site or {}).get("reporter_offered_at")
+        # While Tin's own change is putting the line on the site, it adds the reporter too; a
+        # coding agent reading the guide meanwhile doesn't mean the reporter is there.
+        tin_owns = (install or {}).get("state") in TIN_INSTALLING
+        if not added and (not offered or tin_owns):
+            return None
+        key = (install or {}).get("reporter_host") or analytics.detect_host(
+            set(), await analytics.setup_hosting(self.db, project_id)
+        )
+        host = analytics.HOSTS.get(key or "")
+        variant = (added or {}).get("variant")
+        return {
+            "via": "tin" if added else "agent",
+            "variant": variant,
+            "label": analytics.VARIANTS.get(variant or "", {}).get("label"),
+            "path": (added or {}).get("path"),
+            "added_at": (install.get("added") or {}).get("at") if added else None,
+            "number": (install.get("added") or {}).get("number") if added else None,
+            "pull_request": (install.get("added") or {}).get("pull_request") if added else None,
+            "env_name": (configuration.get("reporter") or {}).get("env_name")
+            or "TIN_REPORTER_TOKEN",
+            "host": host["label"] if host else None,
+            "where": host["where"] if host else analytics.OTHER_HOST_WHERE,
+            "issued_at": _iso((site or {}).get("reporter_token_issued_at")),
+            "previous_expires_at": _iso((site or {}).get("reporter_previous_expires_at")),
+            "connected": reporter_connected(status),
         }
 
     async def refresh(self, connection: Any, site: dict[str, Any]):
@@ -1180,6 +1537,7 @@ class AgentTrafficConnections:
         ref = connection.configuration.get("project_ref") or project_ref(
             self.settings, connection.project_id
         )
+        await self.propose_remove(connection)
         await self.db.pool.execute(
             """
             INSERT INTO agent_traffic_removals (project_ref, project_id, site_id, state)

@@ -1809,6 +1809,25 @@ def create_mcp_app(
                 else f"Approved, but website.change did not start: {reason} Start it with "
                 "source feedback when that is resolved."
             )
+        if action == "approve" and row["source"] == "analytics":
+            from tin_lite import website_change_analytics
+
+            # Approving the pieces starts the run that writes them in the repository.
+            run, reason = await website_change_analytics.start_after_approval(
+                runtime=runtime(),
+                settings=settings,
+                project_id=project,
+                change=row,
+                actor=token.subject,
+            )
+            row["next"] = {"run_id": str(run.id) if run else None, "reason": reason}
+            said = (
+                "Approved. Tin started website.change, which adds exactly these pieces in a pull "
+                "request and merges it once the site's build and required checks pass."
+                if run
+                else f"Approved, but website.change did not start: {reason} The Tin Analytics "
+                "card offers to start it again once that is resolved."
+            )
         return {"change": row, **_founder_words(relay=[said])}
 
     @server.tool()
@@ -5375,7 +5394,7 @@ def create_mcp_app(
         `period` is `day` (midnight to midnight) or `week` (the 7 days ending on `date`).
         `date` is YYYY-MM-DD in the founder's time zone, today when omitted, within the last 180
         days. The result is Tin's stored copy, read again once it is ten minutes old, with the
-        report's own `markdown`. A null number was withheld for covering too few visits.
+        report's own `markdown`. Every number is exact.
         """
         from tin_lite.agent_traffic_connection import ServiceArgumentError, report_date
 
@@ -5396,6 +5415,41 @@ def create_mcp_app(
         if stored is None:
             raise ToolError("Tin Analytics has no report for that period yet")
         return {"project_id": str(parsed_project_id), "period": period, **stored}
+
+    @server.tool()
+    async def get_analytics_install(project_id: str) -> dict[str, Any]:
+        """What putting Tin Analytics on the founder's site takes, for a coding agent that makes
+        the change itself: the script line and where it goes, the CSP entries, the request
+        reporter files (url, sha256, which host each is for) and how each is wired in.
+
+        Copy the reporter file unchanged and check its sha256. The reporter's value
+        (TIN_REPORTER_TOKEN) is never in this answer: ask the founder to copy it from the Tin
+        Analytics card in Integrations and set it on their host. `tin_change` says whether Tin
+        is already making the change from Decisions, so you don't make it twice.
+        """
+        token = await caller()
+        parsed_project_id = _mcp_uuid(project_id, field="project_id")
+        await require_project(parsed_project_id, token, tool_name="get_analytics_install")
+        try:
+            guide = await runtime().integrations.agent_traffic.install_guide(parsed_project_id)
+        except IntegrationError as exc:
+            raise ToolError(str(exc)) from exc
+        relay = (
+            ["This site is measured already, so nothing needs to go on it."]
+            if guide["linked"]
+            else [
+                "Add the script line to the head of every page, exactly as it is.",
+                *(
+                    [
+                        "The reporter needs one value on the host: the founder copies it from "
+                        "the Tin Analytics card in Integrations."
+                    ]
+                    if guide["reporter"]
+                    else []
+                ),
+            ]
+        )
+        return {"project_id": str(parsed_project_id), **guide, **_founder_words(relay=relay)}
 
     @server.tool()
     async def start_integration_connection(

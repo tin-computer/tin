@@ -303,6 +303,12 @@ const state = {
   analyticsAddress: "",
   analyticsLine: false,
   analyticsConfirm: false,
+  // The reporter's step (Paper INST-4): hidden by the founder, its value shown, and the value
+  // itself once a member asked for it. The value lives only in this tab's memory.
+  analyticsStepHidden: false,
+  analyticsStepOpen: false,
+  analyticsValueShown: false,
+  analyticsReporter: null,
   githubInstallationChoice: null,
   resourceChoice: null,
   stripeKeyChoice: null,
@@ -1997,6 +2003,17 @@ function renderAnalytics() {
     countHost: async (host) => {
       await analyticsRequest("address", { host });
       return state.analyticsError ? null : state.integrations.find((item) => item.key === ANALYTICS_KEY)?.analytics;
+    },
+    // Where the founder pastes the line: another site builder than setup named (INST-3).
+    chooseBuilder: async (builder) => {
+      try {
+        const updated = await api(analyticsPath("builder"), { method: "POST", body: JSON.stringify({ builder }) });
+        replaceIntegration(updated);
+        return updated.analytics;
+      } catch (error) {
+        showToast(`Could not change the site builder: ${error.message}`);
+        return null;
+      }
     },
   });
 }
@@ -5268,7 +5285,7 @@ function decisionListTitle(item) {
   return String(item.title || "").replace(/^Review:\s*/, "");
 }
 
-const CHANGE_SOURCES = { audit: "Audit fix", planned: "Planned URL change", blog_index: "Blog index", feedback: "Copy fix" };
+const CHANGE_SOURCES = { audit: "Audit fix", planned: "Planned URL change", blog_index: "Blog index", feedback: "Copy fix", analytics: "Analytics" };
 
 // What the change does, in one line: the audit's repair, the planned move, or the plan's summary.
 function websiteChangeSummary(change) {
@@ -5281,6 +5298,13 @@ function websiteChangeSummary(change) {
   }
   if (change.source === "blog_index") return detail.summary || `A blog index at ${detail.route || change.paths?.[0] || ""}.`;
   if (change.source === "feedback") return `${detail.summary || change.title} ${detail.people || 2} different people said it in public threads.`;
+  if (change.source === "analytics") {
+    if (change.kind === "remove") return "Tin takes its analytics line off every page, with its CSP entries and the reporter's wiring. Nothing else on the site changes.";
+    if (change.kind === "replace") return "Tin swaps the analytics line on every page for this site's new one. Nothing else on the site changes.";
+    return detail.reporter
+      ? "Tin adds its analytics line to every page, and the reporter that counts crawlers and AI assistants that don't run scripts. Nothing else on the site changes."
+      : "Tin adds its analytics line to every page. Nothing else on the site changes.";
+  }
   const decided = detail.decision ? ` Decision: ${detail.decision}.` : "";
   return detail.change ? `Tin ${detail.change}.${decided}` : change.title;
 }
@@ -5294,10 +5318,42 @@ function websiteChangeEditsHtml(detail) {
       ${quotes.length ? `<ul class="website-change-quotes" aria-label="What people said">${quotes.map((url, index) => `<li><a href="${escapeHtml(url)}" target="_blank" rel="noopener noreferrer">Thread ${index + 1}</a></li>`).join("")}</ul>` : ""}`;
 }
 
+// Tin Analytics' change (Paper INST-2): the exact pieces the approval covers, one row each.
+function analyticsPiecesHtml(change) {
+  const detail = change.detail || {};
+  const previous = detail.previous || {};
+  const line = change.kind === "remove" ? previous.script : detail.script;
+  const csp = Object.keys(detail.csp || {});
+  const reporter = detail.reporter;
+  const file = reporter ? String(reporter.url || "").split("/").pop() : "";
+  const sha = reporter ? `${reporter.sha256.slice(0, 8)}…${reporter.sha256.slice(-10)}` : "";
+  const piece = (label, main, meta, { code = false } = {}) => `<div class="website-change-piece">
+      <span class="website-change-piece-label">${escapeHtml(label)}</span>
+      <span class="website-change-piece-body">
+        ${code ? `<code class="website-change-piece-code">${escapeHtml(main)}</code>` : `<span>${escapeHtml(main)}</span>`}
+        <code>${escapeHtml(meta)}</code>
+      </span>
+    </div>`;
+  const added = previous.new_files || [];
+  return `<div class="website-change-pieces">
+      ${piece("The line", line || "", change.kind === "remove" ? "taken out of every page" : change.kind === "replace" ? "in place of the line already on every page" : "in the head of the layout file every page uses", { code: true })}
+      ${csp.length ? piece("CSP", `Tin's address in ${csp.join(" and ")}`, change.kind === "remove" ? "taken out wherever Tin added it" : "only where the site already sets a Content-Security-Policy") : ""}
+      ${reporter ? piece("Reporter", `The ${reporter.label} reporter, ${reporter.where}`, `${file} version ${reporter.version} · sha256 ${sha}`) : ""}
+      ${change.kind === "remove" && (previous.reporter || added.length) ? piece("Reporter", "Its wiring comes out; Tin can't delete files", `delete ${(added.length ? added : [previous.reporter.path]).join(", ")} yourself`) : ""}
+    </div>`;
+}
+
+function analyticsChangeNote(change) {
+  return change.kind === "remove"
+    ? "Approving lets Tin take exactly these out and merge the pull request once your site's build and your repository's required checks pass. Any other edit waits for your review. Declining leaves them on your site, where they do nothing now that you stopped measuring."
+    : "Approving lets Tin add exactly these to your repository and merge the pull request once your site's build and your repository's required checks pass. Any other edit waits for your review. Declining keeps them off your site; you can still paste the line yourself.";
+}
+
 function websiteChangeDetailHtml(item) {
   const change = item.change;
+  const analytics = change.source === "analytics";
   const files = change.detail?.files || [];
-  const paths = change.paths || [];
+  const paths = analytics ? [] : change.paths || [];
   return `<article class="decision-detail-card website-change-card" data-change-id="${escapeHtml(change.change_id)}">
     <header>
       <span class="decision-workflow-mark">W</span>
@@ -5308,8 +5364,9 @@ function websiteChangeDetailHtml(item) {
       ${paths.length ? `<ul class="website-change-paths" aria-label="Pages">${paths.map((path) => `<li><code>${escapeHtml(path)}</code></li>`).join("")}</ul>` : ""}
       ${websiteChangeEditsHtml(change.detail)}
       ${files.length ? `<ul class="website-change-files" aria-label="Files">${files.map((file) => `<li><code>${escapeHtml(file.path)}</code><span>${escapeHtml(file.action)}</span></li>`).join("")}</ul>` : ""}
+      ${analytics ? analyticsPiecesHtml(change) : ""}
       ${change.protected ? `<p class="decision-note website-change-protected">Protected: ${escapeHtml(change.protected)} opens a pull request for you to merge, even when approved.</p>` : ""}
-      <p class="decision-note">Approving lets Tin publish it: Tin merges the pull request once your site's build and your repository's required checks pass. Declining keeps it off your site, and Tin won't propose it again.</p>
+      <p class="decision-note">${escapeHtml(analytics ? analyticsChangeNote(change) : "Approving lets Tin publish it: Tin merges the pull request once your site's build and your repository's required checks pass. Declining keeps it off your site, and Tin won't propose it again.")}</p>
     </div>
     <footer>
       <button class="decision-discard" type="button" data-change-action="decline">Decline</button>
@@ -5340,7 +5397,7 @@ async function decideWebsiteChange(item, button) {
   const buttons = [...main.querySelectorAll("[data-change-action]")];
   buttons.forEach((each) => { each.disabled = true; });
   try {
-    await api(`/api/projects/${encodeURIComponent(context.projectId)}/website-changes/${encodeURIComponent(item.change.change_id)}/${action}`, {
+    const decided = await api(`/api/projects/${encodeURIComponent(context.projectId)}/website-changes/${encodeURIComponent(item.change.change_id)}/${action}`, {
       method: "POST",
       body: JSON.stringify({ request_id: window.crypto.randomUUID(), content_sha256: item.change.content_sha256 }),
     });
@@ -5348,8 +5405,13 @@ async function decideWebsiteChange(item, button) {
     state.websiteChanges = state.websiteChanges.filter((change) => change.change_id !== item.change.change_id);
     state.decisionId = null;
     render();
+    const started = decided?.next;
     showToast(action === "decline"
       ? "Declined. Tin won't make this change or propose it again."
+      : item.change.source === "analytics" && started
+        ? started.run_id
+          ? "Approved. Tin is making the change; its card in Integrations shows the pull request."
+          : `Approved, but Tin couldn't start the change: ${started.reason} Start it again from Tin Analytics in Integrations.`
       : item.change.protected
         ? "Approved. It touches a protected page, so its pull request waits for your merge."
         : "Approved. Tin publishes it with the next website change run.");
@@ -6882,27 +6944,72 @@ function analyticsCounted(view) {
   return (view.counted_hosts || []).some((item) => item.startsWith("*.")) ? `${domain} and every subdomain` : host;
 }
 
+// Where Tin's change for the line stands while no visit has arrived (Paper INST-1): waiting in
+// Decisions, being added in a pull request, added, or for the founder to paste.
+function analyticsWaiting(view) {
+  const install = view.install || {};
+  const checked = `waiting for the first visit${view.checked_at ? ` · checked ${ledgerTime(view.checked_at)}` : ""}`;
+  const number = install.pull_request?.number || install.added?.number;
+  const pr = number ? ` · pull request #${number}` : "";
+  const builder = view.builder?.key && view.builder.key !== "other" ? `in ${view.builder.label}` : "in your site's head";
+  const paste = ["the line isn't on the site yet", `paste it ${builder} · Analytics shows where`];
+  const name = String(install.change?.title || "Add Tin Analytics").replace(/ (to|on|from) \S+$/, "");
+  const domain = analyticsHost(view.address).replace(/^www\./, "");
+  if (!view.install) return [checked];
+  switch (install.state) {
+    case "decide": return ["the line isn't on the site yet", `approve “${name}” in Decisions`];
+    case "adding": return [`adding the line${pr}`, `merges once ${domain}'s own build passes`];
+    case "added": return [checked, `line added ${analyticsDay(install.added?.at)}${pr}`];
+    case "left_open": return [`the line waits in pull request #${number}`, "review and merge it on GitHub"];
+    case "approved": return ["approved · Tin couldn't start the change", "start it again in Configure"];
+    case "failed": return ["Tin couldn't add the line", "start it again in Configure, or paste it yourself"];
+    case "not_added": return ["Tin couldn't add the line", `start it again in Configure, or paste it ${builder}`];
+    case "declined": return paste;
+    default: return view.linked ? [checked] : paste;
+  }
+}
+
+// The reporter's one paste left, as the card's second line (Paper INST-4).
+function analyticsReporterLeft(view) {
+  const step = view.reporter_step;
+  if (!step || step.connected) return "";
+  return `reporter: one paste left${step.host ? ` on ${step.host}` : ""}`;
+}
+
+// After Stop measuring: taking Tin's line back off the site (Paper INST-5).
+function analyticsRemoveLine(view) {
+  const install = view.install || {};
+  if (install.change?.kind !== "remove") return "";
+  const what = install.reporter_added ? "the line and the reporter" : "the line";
+  const number = install.pull_request?.number;
+  if (install.state === "decide") return `removing ${what}: approve it in Decisions`;
+  if (install.state === "adding") return `removing the line${number ? ` · pull request #${number}` : ""}`;
+  if (install.state === "removed") return `line removed${number ? ` · pull request #${number}` : ""}`;
+  return "";
+}
+
 function analyticsHealth(view) {
   if (state.analyticsError) return [state.analyticsError.code === "staging_limit" ? "couldn't set up on staging" : "couldn't set up"];
   if (view.state === "unavailable") return ["Analytics isn't set up on this deployment"];
   if (view.state === "needs_attention") return ["Tin can no longer read this site's numbers"];
   if (view.state === "quiet") return ["No visits recorded in 7 days. Check that the script is still on the site."];
-  if (view.state === "waiting") return [`waiting for the first visit${view.checked_at ? ` · checked ${ledgerTime(view.checked_at)}` : ""}`];
+  if (view.state === "waiting") return analyticsWaiting(view);
   if (view.state === "live") {
     const moved = (view.moved_hosts || [])[0];
     return [
       `${view.pages_today ?? "–"} pages today`,
       moved ? `${moved.host} isn't counted`
-        : view.reporter_connected ? `reporter on · last request ${ledgerTime(view.requests_last_at)}` : "",
+        : view.reporter_connected ? `reporter on · last request ${ledgerTime(view.requests_last_at)}` : analyticsReporterLeft(view),
     ];
   }
   const removal = view.removal;
   if (removal?.state === "unlinked") return [`stopped ${analyticsDay(removal.requested_at)} · history kept`];
-  if (removal?.state === "pending") return ["stopping · Tin keeps asking until the deletion is confirmed"];
+  if (removal?.state === "pending") return ["stopping · Tin keeps asking until the deletion is confirmed", analyticsRemoveLine(view)];
   if (removal?.state === "removing" && removal.deleted_by && Date.parse(removal.deleted_by) > Date.now()) {
-    return [`stopped ${analyticsDay(removal.requested_at)} · numbers deleted by ${analyticsDay(removal.deleted_by, { time: true })}`];
+    return [`stopped ${analyticsDay(removal.requested_at)} · numbers deleted by ${analyticsDay(removal.deleted_by, { time: true })}`, analyticsRemoveLine(view)];
   }
-  return null;
+  const removing = analyticsRemoveLine(view);
+  return removing ? [`stopped ${analyticsDay(removal?.requested_at)}`, removing] : null;
 }
 
 function renderAnalyticsCard(integration) {
@@ -6971,14 +7078,16 @@ function renderAnalyticsExpanded(integration, view) {
       : linkedInPart("Address", analyticsCounted(view), { meta: source }),
     linkedInPart("Script", view.first_page_at
       ? `On the site since ${analyticsDay(view.first_page_at)} · last page ${ledgerTime(view.last_page_at)}`
-      : "Not on the site yet", {
+      : view.install?.state === "added"
+        ? `Added ${analyticsDay(view.install.added?.at)} · no page has run it yet`
+        : "Not on the site yet", {
       meta: `site ${view.site_id}${hosts ? ` · last 7 days: ${hosts}` : ""}`,
       extra: state.analyticsLine ? `<div class="analytics-line"><code>${escapeHtml(view.script || "")}</code><button type="button" data-analytics-copy>Copy</button></div>` : "",
-      action: `<button class="linkedin-part-action" type="button" data-analytics-line aria-expanded="${Boolean(state.analyticsLine)}">${state.analyticsLine ? "Hide the line" : "See the line"}</button>`,
+      action: ["approved", "failed", "not_added"].includes(view.install?.state)
+        ? `<button class="linkedin-part-action" type="button" data-analytics-install${state.analyticsBusy ? " disabled" : ""}>Start again</button>`
+        : `<button class="linkedin-part-action" type="button" data-analytics-line aria-expanded="${Boolean(state.analyticsLine)}">${state.analyticsLine ? "Hide the line" : "See the line"}</button>`,
     }),
-    view.reporter_connected
-      ? linkedInPart("Reporter", "Every page request, including crawlers that don't run scripts", { meta: `last request ${ledgerTime(view.requests_last_at)}` })
-      : "",
+    analyticsReporterPart(view),
   ];
   const domain = analyticsHost(view.address).replace(/^www\./, "");
   // A linked site was measured before Tin: stopping only unlinks it, and its history stays.
@@ -6991,7 +7100,7 @@ function renderAnalyticsExpanded(integration, view) {
     }
     : {
       title: `Stop measuring ${domain}?`,
-      text: "The script turns itself off on the next page load, and the site's numbers are deleted within a day.",
+      text: `The script turns itself off on the next page load, and the site's numbers are deleted within a day.${view.install?.added ? " Tin then prepares a change that removes the line from your site." : ""}`,
       button: `<button class="analytics-stop" type="button" data-analytics-stop-confirm${state.analyticsBusy ? " disabled" : ""}>Stop and delete</button>`,
       footnote: "Visits are recorded on Tin's analytics service. Stopping deletes this site's numbers within a day.",
     };
@@ -7011,6 +7120,69 @@ function renderAnalyticsExpanded(integration, view) {
       <button class="integration-done" type="button" data-integration-expand="${ANALYTICS_KEY}">Done</button>
     </div>`;
   return `<div class="integration-expanded analytics-expanded">${rows.join("")}${footer}</div>`;
+}
+
+// The reporter's row in Configure (Paper INST-4): one value to paste on the host, shown to
+// project members only; once a record arrives the row says so, and the step opens on request.
+function analyticsReporterPart(view) {
+  const step = view.reporter_step;
+  if (!step) {
+    return view.reporter_connected
+      ? linkedInPart("Reporter", "Every page request, including crawlers that don't run scripts", { meta: `last request ${ledgerTime(view.requests_last_at)}` })
+      : "";
+  }
+  const reporter = step.label ? `${step.label.toLowerCase()} reporter` : "reporter";
+  const open = step.connected ? state.analyticsStepOpen : !state.analyticsStepHidden;
+  const meta = step.connected
+    ? `${reporter} · ${step.env_name}${step.host ? ` on ${step.host}` : ""} · last request ${ledgerTime(view.requests_last_at)}`
+    : step.via === "tin"
+      ? `${reporter} added ${analyticsDay(step.added_at)}${step.number ? ` · pull request #${step.number}` : ""} · it sends nothing until the value is set`
+      : "added by your coding agent · it sends nothing until the value is set";
+  const value = state.analyticsReporter?.value;
+  const hidden = "•".repeat(42);
+  const block = open ? `<div class="analytics-step">
+      <div class="analytics-step-row">
+        <span class="analytics-step-label">Name</span>
+        <code class="analytics-step-value">${escapeHtml(step.env_name)}</code>
+        <button type="button" data-analytics-reporter-copy="name">Copy</button>
+      </div>
+      <div class="analytics-step-row">
+        <span class="analytics-step-label">Value</span>
+        <code class="analytics-step-value ${state.analyticsValueShown && value ? "" : "is-hidden"}">${escapeHtml(state.analyticsValueShown && value ? value : hidden)}</code>
+        <button type="button" data-analytics-reporter-show${state.analyticsBusy ? " disabled" : ""}>${state.analyticsValueShown && value ? "Hide" : "Show"}</button>
+        <button type="button" data-analytics-reporter-copy="value"${state.analyticsBusy ? " disabled" : ""}>Copy</button>
+      </div>
+      <div class="analytics-step-row is-where">
+        <span class="analytics-step-label">Where</span>
+        <span class="analytics-step-where">${escapeHtml(step.where)}</span>
+      </div>
+    </div>
+    <span class="analytics-step-foot">${escapeHtml(step.connected ? "records arriving · a new value replaces this one, and the old one works for 24 hours" : "waiting for the first record · the step closes once one arrives")} · <button type="button" data-analytics-reporter-new${state.analyticsBusy ? " disabled" : ""}>New value</button></span>` : "";
+  return linkedInPart("Reporter", step.connected
+    ? "Every page request, including crawlers that don't run scripts"
+    : `Paste one value${step.host ? ` on ${step.host}` : " on your host"}, and every page request is counted`, {
+    meta,
+    extra: block,
+    action: `<button class="linkedin-part-action" type="button" data-analytics-step aria-expanded="${Boolean(open)}">${open ? "Hide the step" : "Show the step"}</button>`,
+  });
+}
+
+// The reporter's value, asked for only when a member opens or copies it, and kept in memory.
+async function analyticsReporterValue({ fresh = false } = {}) {
+  const context = currentProjectContext();
+  if (!fresh && state.analyticsReporter?.projectId === context.projectId) return state.analyticsReporter.value;
+  state.analyticsBusy = true;
+  try {
+    const answer = await api(analyticsPath("reporter-token"), { method: "POST", body: JSON.stringify({ new: fresh }) });
+    if (!isCurrentProjectContext(context)) return null;
+    state.analyticsReporter = { projectId: context.projectId, value: answer.value, issuedAt: answer.issued_at };
+    return answer.value;
+  } catch (error) {
+    if (isCurrentProjectContext(context)) showToast(`Could not get the reporter's value: ${error.message}`);
+    return null;
+  } finally {
+    state.analyticsBusy = false;
+  }
 }
 
 function analyticsPath(action) {
@@ -7036,7 +7208,8 @@ async function analyticsRequest(action, body) {
     if (action === "address") showToast(`Now counting ${analyticsCounted(updated.analytics)}. The script line on your site stays the same.`);
   } catch (error) {
     if (!isCurrentProjectContext(context)) return;
-    state.analyticsError = { message: error.message, code: error.code };
+    if (action === "install") showToast(`Could not start the change: ${error.message}`);
+    else state.analyticsError = { message: error.message, code: error.code };
   } finally {
     state.analyticsBusy = false;
   }
@@ -7102,6 +7275,45 @@ function bindAnalyticsCard() {
     renderIntegrations();
   });
   document.querySelector("[data-analytics-stop-confirm]")?.addEventListener("click", stopAnalytics);
+  document.querySelector("[data-analytics-install]")?.addEventListener("click", () => analyticsRequest("install"));
+  document.querySelector("[data-analytics-step]")?.addEventListener("click", () => {
+    const step = state.integrations.find((item) => item.key === ANALYTICS_KEY)?.analytics?.reporter_step;
+    if (step?.connected) state.analyticsStepOpen = !state.analyticsStepOpen;
+    else state.analyticsStepHidden = !state.analyticsStepHidden;
+    state.analyticsValueShown = false;
+    renderIntegrations();
+  });
+  document.querySelector("[data-analytics-reporter-show]")?.addEventListener("click", async () => {
+    if (state.analyticsValueShown) {
+      state.analyticsValueShown = false;
+    } else {
+      renderIntegrations();
+      state.analyticsValueShown = Boolean(await analyticsReporterValue());
+    }
+    if (state.view === "integrations") renderIntegrations();
+  });
+  document.querySelectorAll("[data-analytics-reporter-copy]").forEach((button) => {
+    button.addEventListener("click", async () => {
+      const step = state.integrations.find((item) => item.key === ANALYTICS_KEY)?.analytics?.reporter_step;
+      const text = button.dataset.analyticsReporterCopy === "name" ? step?.env_name : await analyticsReporterValue();
+      if (!text) return;
+      try {
+        await navigator.clipboard.writeText(text);
+        showToast(button.dataset.analyticsReporterCopy === "name" ? "Copied the name." : "Copied the value.");
+      } catch (_error) {
+        showToast("Could not copy. Show the value, select it and copy it.");
+      }
+      if (state.view === "integrations") renderIntegrations();
+    });
+  });
+  document.querySelector("[data-analytics-reporter-new]")?.addEventListener("click", async () => {
+    renderIntegrations();
+    if (await analyticsReporterValue({ fresh: true })) {
+      state.analyticsValueShown = true;
+      showToast("New value issued. Paste it on your host; the old one keeps working for 24 hours.");
+    }
+    if (state.view === "integrations") renderIntegrations();
+  });
 }
 
 function googleAdsHealth(integration) {
@@ -7468,6 +7680,7 @@ async function toggleIntegration(providerKey) {
   }
   state.analyticsLine = false;
   state.analyticsConfirm = false;
+  state.analyticsValueShown = false;
   if (state.expandedIntegration === providerKey) {
     state.expandedIntegration = null;
     renderIntegrations();
@@ -7985,7 +8198,15 @@ function resetProjectState(project) {
   state.websiteChanges = [];
   state.judgmentCalls = [];
   state.integrations = [];
-  Object.assign(state, { analyticsError: null, analyticsAddress: "", analyticsLine: false, analyticsConfirm: false });
+  Object.assign(state, {
+    analyticsError: null,
+    analyticsAddress: "",
+    analyticsLine: false,
+    analyticsConfirm: false,
+    analyticsStepHidden: false,
+    analyticsValueShown: false,
+    analyticsReporter: null,
+  });
   state.billing = null;
   state.taskDetail = null;
   state.taskLoadingRunId = null;

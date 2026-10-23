@@ -1467,6 +1467,19 @@ class AnalyticsHostRequest(BaseModel):
     host: str = Field(min_length=1, max_length=253)
 
 
+class AnalyticsReporterRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    # A new value replaces the stored one; the previous one keeps working for 24 hours.
+    new: bool = False
+
+
+class AnalyticsBuilderRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    builder: str = Field(min_length=1, max_length=31, pattern=r"^[a-z][a-z0-9_]{0,30}$")
+
+
 class GoogleIntegrationComplete(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
@@ -2363,6 +2376,72 @@ async def count_analytics_host(
         )
     except IntegrationError as exc:
         raise _analytics_http_error(exc) from None
+    return await _analytics_view(request.app.state.runtime, project_id)
+
+
+@router.post("/api/projects/{project_id}/integrations/analytics.agent_traffic/reporter-token")
+async def analytics_reporter_value(
+    project_id: UUID,
+    request: Request,
+    payload: AnalyticsReporterRequest | None = None,
+    user: AuthContext = AUTHENTICATED_USER,
+) -> JSONResponse:
+    """The reporter's value for a project member to paste on their host. Browser sessions only:
+    MCP and workflows never receive it, and the answer is never cached."""
+    await _require_project_access(project_id, request, user)
+    service = request.app.state.runtime.integrations
+    try:
+        value = await service.agent_traffic.reporter_value(
+            project_id=project_id,
+            clerk_user_id=user.clerk_user_id,
+            new=bool(payload and payload.new),
+        )
+    except IntegrationError as exc:
+        raise _analytics_http_error(exc) from None
+    return JSONResponse(value, headers={"Cache-Control": "private, no-store"})
+
+
+@router.post(
+    "/api/projects/{project_id}/integrations/analytics.agent_traffic/builder",
+    response_model=IntegrationView,
+)
+async def choose_analytics_builder(
+    project_id: UUID,
+    payload: AnalyticsBuilderRequest,
+    request: Request,
+    user: AuthContext = AUTHENTICATED_USER,
+) -> IntegrationView:
+    """Where the founder pastes the line: another site builder than their setup answer named."""
+    await _require_project_access(project_id, request, user)
+    service = request.app.state.runtime.integrations
+    try:
+        await service.agent_traffic.set_builder(project_id=project_id, builder=payload.builder)
+    except IntegrationError as exc:
+        raise _analytics_http_error(exc) from None
+    return await _analytics_view(request.app.state.runtime, project_id)
+
+
+@router.post(
+    "/api/projects/{project_id}/integrations/analytics.agent_traffic/install",
+    response_model=IntegrationView,
+)
+async def start_analytics_change(
+    project_id: UUID,
+    request: Request,
+    user: AuthContext = AUTHENTICATED_USER,
+) -> IntegrationView:
+    """Start the approved analytics change again, after a start or a run that didn't finish."""
+    from tin_lite import website_change_analytics
+
+    await _require_project_access(project_id, request, user)
+    reason = await website_change_analytics.start_again(
+        runtime=request.app.state.runtime,
+        settings=request.app.state.settings,
+        project_id=project_id,
+        actor=user.clerk_user_id,
+    )
+    if reason:
+        raise HTTPException(status_code=409, detail=reason)
     return await _analytics_view(request.app.state.runtime, project_id)
 
 

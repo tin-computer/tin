@@ -84,6 +84,9 @@ BLOG_INDEX_SOURCE = "blog_index"
 # The same for the copy fix qa.feedback_to_fix planned.
 FEEDBACK_SOURCE = "feedback"
 PLAN_SOURCES = frozenset({BLOG_INDEX_SOURCE, FEEDBACK_SOURCE})
+# A website.change run that puts Tin Analytics' line, CSP entries and reporter on the site (or
+# takes them off again), written by Codex and held to those pieces (website_change_analytics).
+ANALYTICS_SOURCE = "analytics"
 
 
 def _website_source(run):
@@ -104,12 +107,18 @@ def applies_plan(run):
     return _website_source(run) in PLAN_SOURCES
 
 
+def installs_analytics(run):
+    """Whether this is a website.change run that adds or removes Tin Analytics."""
+    return _website_source(run) == ANALYTICS_SOURCE
+
+
 def adapts(run):
     """Whether this run adapts an approved page to the site (website.change)."""
     return (
         getattr(run, "workflow_id", None) in ADAPTER_WORKFLOW_IDS
         and not repairs_site(run)
         and not applies_plan(run)
+        and not installs_analytics(run)
     )
 
 

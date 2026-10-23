@@ -236,7 +236,8 @@ outside marketing, or were written without ever being run. Full rules:
   Email-send approval, recipients and pacing are a separate contract.
 - `website.change` puts approved changes on a founder's site: approved pages, the technical
   fixes the latest audit found (`source: audit`; organic.technical_fix is gone), planned
-  redirects and noindex changes (`planned`). organic.site_architecture, content.blog_index and the `blog_index` source
+  redirects and noindex changes (`planned`), and Tin Analytics' line and reporter (`analytics`, held
+  to its approved pieces). organic.site_architecture, content.blog_index and the `blog_index` source
   refuse new starts and are kept only for pinned runs. Approved pages reach it from their
   approval (content.deliver is gone). Deleting a page stays with the
   founder. Change rows

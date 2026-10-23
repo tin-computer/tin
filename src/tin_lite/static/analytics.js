@@ -119,10 +119,31 @@ window.TinAnalytics = (() => {
     </div>`;
   }
 
+  // Without GitHub the founder pastes the line in their site builder (Paper INST-3): its own
+  // steps, picked from the setup answer, with Change to pick another.
+  function pasted(card) {
+    return !card.linked && [null, undefined, "declined", "not_added"].includes(card.install?.state);
+  }
+
+  function whereItGoes(card) {
+    const builder = card.builder;
+    if (!pasted(card) || !builder) {
+      return `<span class="analytics-install-main">In the head of every page, which usually means the layout file that every page uses.</span>
+          <span class="analytics-install-slot"></span>`;
+    }
+    const from = { setup: `${builder.label}, from your setup answers`, address: `${builder.label}, from your site's address`, chosen: `${builder.label}, your pick` }[builder.source] || "";
+    const picker = view.choosing
+      ? `<select class="tin-select analytics-builder" data-analytics-builder aria-label="Site builder">${(card.builders || []).map((item) => `<option value="${escape(item.key)}"${item.key === builder.key ? " selected" : ""}>${escape(item.key === "other" ? "Another builder" : item.label)}</option>`).join("")}</select>`
+      : from ? `<code>${escape(from)}</code>` : "";
+    return `<span class="analytics-install-main">${escape(builder.where)}${picker}</span>
+          <button type="button" data-analytics-change>${view.choosing ? "Cancel" : "Change"}</button>`;
+  }
+
   // REP-V2c: no visit yet, so no tabs; the line and where it goes.
   function waiting(data) {
     const card = data.card;
     const domain = host(card.address).replace(/^www\./, "");
+    const builder = pasted(card) && card.builder?.key !== "other" ? card.builder : null;
     const csp = Object.entries(card.csp || {}).map(([directive, sources]) => `${directive} ${sources.join(" ")}`).join(" · ");
     const wildcard = (card.counted_hosts || []).some((item) => item.startsWith("*."));
     return `<div class="analytics-tabs is-bare">
@@ -130,7 +151,9 @@ window.TinAnalytics = (() => {
       </div>
       <div class="analytics-summary">
         <div class="analytics-heading"><span class="analytics-ring" aria-hidden="true"></span><h2>Waiting for the first visit</h2></div>
-        <p>Once this line is on every page of ${escape(domain || "your site")}, the first visit shows up here within a minute. Tin checks again each time you open this page.</p>
+        <p>${builder
+          ? `Once this line is in ${escape(domain || "your site")}'s head code in ${escape(builder.label)} and the site is published, the first visit shows up here within a minute.`
+          : `Once this line is on every page of ${escape(domain || "your site")}, the first visit shows up here within a minute.`} Tin checks again each time you open this page.</p>
       </div>
       <div class="analytics-install">
         <div class="analytics-install-row">
@@ -140,8 +163,7 @@ window.TinAnalytics = (() => {
         </div>
         <div class="analytics-install-row">
           <span class="analytics-install-label">Where it goes</span>
-          <span class="analytics-install-main">In the head of every page, which usually means the layout file that every page uses.</span>
-          <span class="analytics-install-slot"></span>
+          ${whereItGoes(card)}
         </div>
         ${csp ? `<div class="analytics-install-row">
           <span class="analytics-install-label">If you set a CSP</span>
@@ -438,6 +460,17 @@ window.TinAnalytics = (() => {
         }
         render();
       });
+    });
+    body.querySelector("[data-analytics-change]")?.addEventListener("click", () => {
+      view.choosing = !view.choosing;
+      render();
+    });
+    body.querySelector("[data-analytics-builder]")?.addEventListener("change", async (event) => {
+      const updated = await view.chooseBuilder?.(event.currentTarget.value);
+      if (!view.active) return;
+      view.choosing = false;
+      if (updated) view.data = { ...view.data, card: updated };
+      render();
     });
     body.querySelectorAll("[data-analytics-copy]").forEach((button) => {
       button.addEventListener("click", async () => {

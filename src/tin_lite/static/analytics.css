@@ -743,3 +743,85 @@
   .analytics-install-label { width: 100%; flex-basis: 100%; }
   .analytics-confirm { flex-wrap: wrap; }
 }
+
+/* The reporter's one paste in Configure (Paper INST-4): name, value and where, each a row. */
+.analytics-step {
+  display: flex;
+  width: min(100%, 640px);
+  flex-direction: column;
+  margin-top: 8px;
+  background: var(--paper-bg);
+  border: 1px solid var(--paper-border);
+  border-radius: var(--radius-card);
+}
+
+.analytics-step-row {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  padding: 10px 12px;
+}
+
+.analytics-step-row.is-where { align-items: flex-start; }
+
+.analytics-step-row + .analytics-step-row { border-top: 1px solid var(--paper-border); }
+
+.analytics-step-label {
+  width: 52px;
+  flex: 0 0 52px;
+  color: var(--ink-secondary);
+  font: 13px/18px var(--sans);
+}
+
+.analytics-step-value {
+  min-width: 0;
+  flex: 1 1 0;
+  overflow-wrap: anywhere;
+  color: var(--ink);
+  font: 12px/18px var(--mono);
+}
+
+.analytics-step-value.is-hidden { color: var(--ink-muted); }
+
+.analytics-step-where {
+  flex: 1 1 0;
+  color: var(--ink);
+  font: 13px/19px var(--sans);
+}
+
+.analytics-step-row button,
+.analytics-step-foot button {
+  flex: 0 0 auto;
+  padding: 0;
+  background: transparent;
+  color: var(--ink-secondary);
+  font: 13px/18px var(--sans);
+  cursor: pointer;
+}
+
+.analytics-step-row button[data-analytics-reporter-copy] {
+  width: 44px;
+  text-align: right;
+}
+
+.analytics-step-row button:hover,
+.analytics-step-foot button:hover { color: var(--ink); }
+
+.analytics-step-foot {
+  padding-top: 2px;
+  color: var(--ink-muted);
+  font: 11px/16px var(--mono);
+}
+
+.analytics-step-foot button { font: inherit; }
+
+@media (max-width: 640px) {
+  .analytics-step-row { flex-wrap: wrap; }
+}
+
+/* The waiting page's site builder picker (Paper INST-3): Change opens it in place. */
+.analytics-builder {
+  max-width: 280px;
+  margin-top: 4px;
+}
+

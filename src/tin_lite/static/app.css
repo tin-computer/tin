@@ -5688,6 +5688,55 @@ p.page-url-line[hidden],
   font-size: 13px;
 }
 
+/* Tin Analytics' change (Paper INST-2): the pieces an approval covers, one row each. */
+.website-change-pieces {
+  display: flex;
+  flex-direction: column;
+  background: var(--paper-bg);
+  border: 1px solid var(--paper-border);
+  border-radius: var(--radius-card);
+}
+
+.website-change-piece {
+  display: flex;
+  align-items: flex-start;
+  gap: 16px;
+  padding: 12px 14px;
+}
+
+.website-change-piece + .website-change-piece { border-top: 1px solid var(--paper-border); }
+
+.website-change-piece-label {
+  width: 96px;
+  flex: 0 0 96px;
+  color: var(--ink-secondary);
+  font: 13px/20px var(--sans);
+}
+
+.website-change-piece-body {
+  display: flex;
+  min-width: 0;
+  flex: 1 1 0;
+  flex-direction: column;
+  gap: 4px;
+  color: var(--ink);
+  font: 14px/20px var(--sans);
+}
+
+.website-change-piece-body > code {
+  color: var(--ink-muted);
+  font: 11px/14px var(--mono);
+  overflow-wrap: anywhere;
+}
+
+.website-change-piece-body > code.website-change-piece-code {
+  padding: 6px 10px;
+  background: var(--paper-well);
+  border-radius: var(--radius-chip);
+  color: var(--ink);
+  font: 12px/18px var(--mono);
+}
+
 .website-change-quotes a {
   color: var(--accent-deep);
 }
