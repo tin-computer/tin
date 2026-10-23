@@ -11,6 +11,7 @@ from fastapi import APIRouter, Depends, HTTPException, Request
 from pydantic import BaseModel, ConfigDict, Field
 
 from tin_lite.auth import AuthContext, require_user
+from tin_lite.linkedin_requests import MAX_PICKED
 from tin_lite.linkedin_requests_service import ConnectionRequests, RequestsRefused
 
 router = APIRouter(prefix="/api/projects/{project_id}/linkedin-requests")
@@ -45,7 +46,7 @@ class Choice(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     request_id: UUID
-    people: list[UUID] = Field(min_length=1, max_length=100)
+    people: list[UUID] = Field(min_length=1, max_length=MAX_PICKED)
 
 
 def _service(request: Request) -> ConnectionRequests:

@@ -1709,8 +1709,10 @@ def create_mcp_app(
         approval: Tin queues them and sends them one at a time on its own schedule from the
         caller's own LinkedIn session, and stops at LinkedIn's first warning. Sending is on by
         default once their LinkedIn reading runs in the cloud; only a founder who turned it off
-        turns it back on, on the LinkedIn card. `request_id` is a fresh UUID; the same one
-        repeats the same choice."""
+        turns it back on, on the LinkedIn card. Up to 1,000 people at a time; each request
+        waits in the caller's line until it is sent, cancelled (cancel_connection_request) or the
+        person can't be asked any more, however long that takes at the sending limits.
+        `request_id` is a fresh UUID; the same one repeats the same choice."""
         from tin_lite.linkedin_requests_service import ConnectionRequests, RequestsRefused
 
         token = await caller()
