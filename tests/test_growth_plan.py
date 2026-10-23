@@ -694,6 +694,49 @@ async def test_code_adds_the_research_run_when_the_model_leaves_it_out():
     assert f"rewrite:{plan.DEFAULT_SYSTEM}" in model.calls
 
 
+async def test_pacing_keeps_a_daily_only_workflow_in_a_mode_it_declares():
+    # Visitor journeys declares on_demand and daily only. Under a weekly allowance, Start here
+    # paces a daily pick down; weekly would fail the final check, so it runs once instead.
+    def daily(value, user):
+        return {
+            **value,
+            "workflows": [
+                {
+                    "key": "competitor.watch",
+                    "mode": "daily",
+                    "weekdays": [],
+                    "local_time": "08:00",
+                    "inputs": [],
+                }
+            ],
+        }
+
+    state = with_research_run(tin_state())
+    watch = next(w for w in state["workflows"] if w["key"] == "competitor.watch")
+    watch["schedule_modes"] = ["on_demand", "daily"]
+    model = FakeModel(overrides={f"system:{plan.DEFAULT_SYSTEM}": daily})
+    result = await plan.build_plan(inputs(tin_state=state), SITE, SITE_TEXT, TODAY, model)
+    plan.validate_plan(result["plan"], state)
+    [entry] = [
+        w for w in block_of(result["plan"])[0]["workflows"] if w["key"] == "competitor.watch"
+    ]
+    assert entry["mode"] == "once" and "local_time" not in entry
+    # A workflow that declares weekly is still paced to weekly.
+    watch["schedule_modes"] = ["on_demand", "daily", "weekly"]
+    result = await plan.build_plan(
+        inputs(tin_state=state),
+        SITE,
+        SITE_TEXT,
+        TODAY,
+        FakeModel(overrides={f"system:{plan.DEFAULT_SYSTEM}": daily}),
+    )
+    plan.validate_plan(result["plan"], state)
+    [entry] = [
+        w for w in block_of(result["plan"])[0]["workflows"] if w["key"] == "competitor.watch"
+    ]
+    assert (entry["mode"], entry["weekdays"]) == ("weekly", ["monday"])
+
+
 async def test_the_default_needs_a_live_site_a_supported_market_and_no_earlier_run():
     def elsewhere(value, user):
         return {**value, "search_market": "other"}

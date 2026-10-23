@@ -1494,8 +1494,19 @@ async def build_plan(inputs, site, site_text, today, generate):
                 w["weekdays"] = w["weekdays"][: picks.get(sid, 1)]
                 touched.add(sid)
             if w["mode"] == "daily" and picks.get(sid, 1) < 5:
-                notes.append(f"{sid}/{w['key']}: daily -> weekly")
-                w.update(mode="weekly", weekdays=["monday"])
+                # Paced to the founder's allowance, in a mode the workflow declares: a daily-only
+                # read (Visitor journeys) runs once instead, as validate_system falls back.
+                modes = next(
+                    (r["schedule_modes"] for r in avail[sid]["workflows"] if r["key"] == w["key"]),
+                    [],
+                )
+                if "weekly" in modes:
+                    notes.append(f"{sid}/{w['key']}: daily -> weekly")
+                    w.update(mode="weekly", weekdays=["monday"])
+                else:
+                    notes.append(f"{sid}/{w['key']}: daily -> once")
+                    w.update(mode="once", weekdays=[])
+                    w.pop("local_time", None)
                 touched.add(sid)
             if w["key"] in claimed:
                 owner_sid, owner_cfg = claimed[w["key"]]
