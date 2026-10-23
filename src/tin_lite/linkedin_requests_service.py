@@ -321,7 +321,7 @@ class ConnectionRequests:
         unlocked."""
 
         async with self.db.pool.acquire() as conn, conn.transaction():
-            run_id = await requests.sending_run(conn, batch_id, datetime.now(UTC))
+            run_id = await requests.sending_run(conn, batch_id)
             if run_id is None:
                 run_id = await self._start(
                     project_id, batch_id, member, trigger_source, oauth_client_id

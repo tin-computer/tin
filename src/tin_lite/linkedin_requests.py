@@ -17,9 +17,11 @@ approved while a run still sends theirs joins it, behind what it already holds.
 
 A request that may have gone out is never sent again. LinkedIn's warning, a signed-out session
 or a refusal pauses the member's sending until they resume; LinkedIn's weekly limit holds it
-until the next week. Approvals not sent within 14 days lapse. The run finishes once nothing is
-left to send. Who accepted is read by the member's own LinkedIn reads (profile viewers, daily,
-and engagers): about once a day, for three weeks after each request went out.
+until the next week. An approved request waits in the line, however long, until it is sent, the
+member cancels it, or the person can't be asked any more (connected, invited, a customer or
+forgotten); only a failed run lets go of what it held. The run finishes once nothing is left to
+send. Who accepted is read by the member's own LinkedIn reads (profile viewers, daily, and
+engagers): about once a day, for three weeks after each request went out.
 """
 
 from __future__ import annotations
@@ -47,9 +49,9 @@ INPUT_SCHEMA = {
 }
 CONSENT_VERSION = 1
 FIT = 0.6
-QUEUE_DAYS = 14
-# People a member can choose at once in People: a runaway guard above a fortnight's sending.
-MAX_PICKED = 100
+# People a member can choose at once in People or over MCP: a runaway guard well above a
+# prospect list. The caps set the pace; chosen requests wait in the line until they go.
+MAX_PICKED = 1000
 CHECK_DAYS = 21
 # Who accepted is read about once a day, whichever of the member's LinkedIn reads comes first.
 READ_EVERY = timedelta(hours=20)
@@ -798,7 +800,7 @@ async def _line_lock(conn, project_id: UUID, member: str) -> None:
     )
 
 
-async def sending_run(conn, batch_id: UUID, now: datetime) -> UUID | None:
+async def sending_run(conn, batch_id: UUID) -> UUID | None:
     """The run that sends this approved batch, or None when a new one should start.
 
     A batch joins the member's run on the project while that run still has requests waiting,
@@ -818,11 +820,10 @@ async def sending_run(conn, batch_id: UUID, now: datetime) -> UUID | None:
            JOIN workflow_runs w ON w.id = b.send_run_id
            JOIN linkedin_requests q ON q.batch_id = b.id
            WHERE b.project_id = $1 AND b.member = $2 AND w.status IN ('pending', 'running')
-             AND q.status = 'queued' AND q.queued_at >= $3
+             AND q.status = 'queued'
            ORDER BY w.created_at DESC LIMIT 1""",
         batch["project_id"],
         batch["member"],
-        now - timedelta(days=QUEUE_DAYS),
     )
     if run_id is not None:
         await conn.execute(
@@ -832,18 +833,6 @@ async def sending_run(conn, batch_id: UUID, now: datetime) -> UUID | None:
 
 
 # What a sending run does next. It sends every batch it holds (`send_run_id`).
-
-
-async def lapse(conn, run_id: UUID, now: datetime) -> int:
-    result = await conn.execute(
-        """UPDATE linkedin_requests q SET status = 'lapsed', settled_at = now()
-           FROM linkedin_request_batches b
-           WHERE b.id = q.batch_id AND b.send_run_id = $1 AND q.status = 'queued'
-             AND q.queued_at < $2""",
-        run_id,
-        now - timedelta(days=QUEUE_DAYS),
-    )
-    return int(result.split()[-1])
 
 
 async def next_step(conn, run_id: UUID, now: datetime) -> dict:
@@ -866,7 +855,6 @@ async def next_step(conn, run_id: UUID, now: datetime) -> dict:
         if held is None:
             return {"action": "done"}
         await _line_lock(conn, held["project_id"], held["member"])
-        await lapse(conn, run_id, now)
         queued = await conn.fetchrow(
             """SELECT q.id FROM linkedin_requests q
                JOIN linkedin_request_batches b ON b.id = q.batch_id

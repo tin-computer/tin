@@ -340,7 +340,7 @@ LABELS = {
     "refused": "refused by LinkedIn",
     "uncertain": "may have gone out",
     "not_sent": "not sent",
-    "lapsed": "not sent within 14 days",
+    "lapsed": "not sent, the run stopped",
     "queued": "waiting",
 }
 
