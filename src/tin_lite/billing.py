@@ -395,6 +395,39 @@ class BillingService:
             "available": unreserved - set_aside,
         }
 
+    async def schedule_affordable(self, conn, *, project_id, definition, inputs):
+        """Whether a scheduled run of this definition would pass admission's credit and project
+        limit checks now. A schedule paused because credits ran out resumes on this, so it reads
+        the same figures `admit` does."""
+        workspace_id = await conn.fetchval(
+            "SELECT workspace_id FROM projects WHERE id=$1", project_id
+        )
+        account = await conn.fetchrow(
+            "SELECT * FROM billing_accounts WHERE workspace_id=$1", workspace_id
+        )
+        if (
+            account is None
+            or not account["run_billing_enabled"]
+            or account["status"] != "active"
+            or not getattr(self.settings, "billing_test_enabled", False)
+        ):
+            return False
+        policy = await conn.fetchrow(
+            "SELECT * FROM billing_project_policies WHERE project_id=$1", project_id
+        )
+        usage = await self.month_usage(conn, project_id)
+        credits = await self.wallet_credits(conn, account)
+        try:
+            terms = self.terms(
+                definition, project_id, inputs, room=run_room(policy, usage, credits)
+            )
+        except BillingError:
+            return False
+        amount = admitted_amount(terms)
+        return credits["available"] >= amount and not project_limit_message(
+            policy, amount, usage, terms=terms
+        )
+
     async def require_spending_actor(self, conn, run, project_id):
         actor = run["started_by_clerk_user_id"]
         if not actor and run["trigger_source"] == "schedule":
