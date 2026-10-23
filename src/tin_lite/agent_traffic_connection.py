@@ -96,6 +96,8 @@ STILL_REMOVING = (
 READ_LOST = (
     "Tin Analytics can't read this site anymore. Press Set up again on its card in Integrations."
 )
+# Install states in which Tin's own change, not a coding agent, adds the reporter.
+TIN_INSTALLING = frozenset({"decide", "approved", "adding", "left_open", "not_added", "failed"})
 REPORTER_NOT_NEEDED = "This site already sends every page request, so it needs no reporter."
 # Site builders the founder pastes the line into without GitHub: the words a setup answer or
 # the site's own address uses for each, and where the line goes there. "other" covers the rest.
@@ -1245,7 +1247,10 @@ class AgentTrafficConnections:
 
         added = ((install or {}).get("added") or {}).get("reporter")
         offered = (site or {}).get("reporter_offered_at")
-        if not added and not offered:
+        # While Tin's own change is putting the line on the site, it adds the reporter too; a
+        # coding agent reading the guide meanwhile doesn't mean the reporter is there.
+        tin_owns = (install or {}).get("state") in TIN_INSTALLING
+        if not added and (not offered or tin_owns):
             return None
         key = (install or {}).get("reporter_host") or analytics.detect_host(
             set(), await analytics.setup_hosting(self.db, project_id)

@@ -7078,7 +7078,9 @@ function renderAnalyticsExpanded(integration, view) {
       : linkedInPart("Address", analyticsCounted(view), { meta: source }),
     linkedInPart("Script", view.first_page_at
       ? `On the site since ${analyticsDay(view.first_page_at)} · last page ${ledgerTime(view.last_page_at)}`
-      : "Not on the site yet", {
+      : view.install?.state === "added"
+        ? `Added ${analyticsDay(view.install.added?.at)} · no page has run it yet`
+        : "Not on the site yet", {
       meta: `site ${view.site_id}${hosts ? ` · last 7 days: ${hosts}` : ""}`,
       extra: state.analyticsLine ? `<div class="analytics-line"><code>${escapeHtml(view.script || "")}</code><button type="button" data-analytics-copy>Copy</button></div>` : "",
       action: ["approved", "failed", "not_added"].includes(view.install?.state)

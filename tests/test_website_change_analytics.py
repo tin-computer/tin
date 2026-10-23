@@ -458,6 +458,34 @@ async def test_the_reporter_value_is_sealed_shown_again_and_renewed(publication_
     assert step["via"] == "agent" and step["env_name"] == "TIN_REPORTER_TOKEN"
 
 
+async def test_an_agent_reading_the_guide_waits_while_tins_change_adds_the_reporter(
+    publication_db,
+):
+    service, api, project = await analytics(publication_db)
+    await connect_github(service, project.id)
+    await service.agent_traffic.set_up(project_id=project.id, clerk_user_id=ACTOR)
+    await service.agent_traffic.install_guide(project.id)
+    view = await card(service, project.id)
+    assert view["install"]["state"] == "decide" and view["reporter_step"] is None
+    # Declined, the line and the reporter are the founder's or their agent's to add.
+    [row] = await website_change.list_changes(publication_db, project_id=project.id)
+    await publication_db.pool.execute(
+        "INSERT INTO project_memberships (project_id, clerk_user_id) VALUES ($1, $2)",
+        project.id,
+        ACTOR,
+    )
+    await website_change.decide(
+        publication_db,
+        project_id=project.id,
+        change_id=row["change_id"],
+        action="decline",
+        actor=ACTOR,
+        request_id=uuid4(),
+        content_sha256=row["content_sha256"],
+    )
+    assert (await card(service, project.id))["reporter_step"]["via"] == "agent"
+
+
 # --- Approve, make, merge, stop -------------------------------------------------------------
 
 

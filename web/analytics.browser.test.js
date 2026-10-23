@@ -326,6 +326,11 @@ test("card: getting the line on the site, from Decisions to added (Paper INST-1)
       else assert.equal(await health.locator("span").innerText(), first);
       assert.equal(await health.locator("small").innerText(), second);
     }
+    // Tin's change added the line, and no page has run it yet: the Script row says so.
+    integrations[0] = card("waiting", {install: {state: "added", change: {...pending, status: "approved"}, added: {at: "2026-10-22T10:00:00Z", number: 41}}, builder});
+    await page.reload();
+    await analyticsCard(page).getByRole("button", {name: "Configure"}).click();
+    await analyticsCard(page).getByText("Added oct 22 · no page has run it yet").waitFor();
     // A run that made no change can start again from Configure, as a refused start can.
     integrations[0] = card("waiting", {install: {state: "not_added", change: {...pending, status: "approved"}}, builder});
     await page.reload();
