@@ -74,20 +74,20 @@ test("workflow forms set words in sans and keep mono for keys, paths, URLs, time
       return `${/mono/i.test(style.fontFamily) ? "mono" : "sans"} ${style.fontSize}`;
     });
     // Words: the name, free text, choices and counts.
-    assert.equal(await type(form.getByLabel("Name", {exact: true})), "sans 13px");
-    assert.equal(await type(form.locator('[name="input:audience"]')), "sans 13px");
-    assert.equal(await type(form.locator(".tin-select-trigger").first()), "sans 13px");
-    assert.equal(await type(form.locator(".tin-select-option").first()), "sans 13px");
+    assert.equal(await type(form.getByLabel("Name", {exact: true})), "sans 15px");
+    assert.equal(await type(form.locator('[name="input:audience"]')), "sans 15px");
+    assert.equal(await type(form.locator(".tin-select-trigger").first()), "sans 15px");
+    assert.equal(await type(form.locator(".tin-select-option").first()), "sans 15px");
     assert.equal(await type(form.locator(".tin-segment").first()), "sans 12.5px");
     assert.equal(await type(form.locator(".tin-counter input")), "sans 13px");
-    assert.equal(await type(form.locator('[name="input:topics"]')), "sans 13px");
+    assert.equal(await type(form.locator('[name="input:topics"]')), "sans 15px");
     // Tabular figures in the sans draw a footed 1 that reads as mono.
     assert.equal(await form.locator(".tin-counter input").evaluate((node) => getComputedStyle(node).fontVariantNumeric), "normal");
     // Literals someone must get exactly right stay mono, a step smaller.
-    assert.equal(await type(form.locator('[name="input:site_url"]')), "mono 12px");
-    assert.equal(await type(form.locator('[name="input:platforms"]')), "mono 12px");
-    assert.equal(await type(form.locator('[name="schedule_time"]')), "mono 12px");
-    assert.equal(await type(form.locator('[name="schedule_timezone"]')), "mono 12px");
+    assert.equal(await type(form.locator('[name="input:site_url"]')), "mono 14px");
+    assert.equal(await type(form.locator('[name="input:platforms"]')), "mono 14px");
+    assert.equal(await type(form.locator('[name="schedule_time"]')), "mono 14px");
+    assert.equal(await type(form.locator('[name="schedule_timezone"]')), "mono 14px");
 
     // A counter and a choice keep their own width, and the count has no browser border.
     const sizes = await form.evaluate((node) => ({
@@ -116,7 +116,7 @@ test("workflow forms set words in sans and keep mono for keys, paths, URLs, time
       }
       return best;
     }, (await audience.screenshot()).toString("base64"));
-    const muted = [133, 124, 111];
+    const muted = [154, 146, 133];
     assert.ok(brightest.every((channel, index) => Math.abs(channel - muted[index]) <= 8), JSON.stringify(brightest));
     assert.deepEqual(errors, []);
   } finally {

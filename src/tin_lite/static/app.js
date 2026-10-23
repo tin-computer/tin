@@ -432,6 +432,13 @@ function timeLabel(value) {
   return date.toLocaleDateString(undefined, { month: "short", day: "numeric" });
 }
 
+// Dates in documents and files are written in full, as the documents write them: 16 Oct 2026.
+const DOCUMENT_MONTHS = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
+function documentDate(date, withTime = false) {
+  const day = `${date.getDate()} ${DOCUMENT_MONTHS[date.getMonth()]} ${date.getFullYear()}`;
+  return withTime ? `${day}, ${ledgerTime(date)}` : day;
+}
+
 function clockTime(date = new Date()) {
   const value = date instanceof Date ? date : new Date(date);
   if (Number.isNaN(value.getTime())) return "";
@@ -1143,13 +1150,13 @@ function systemTemplateSetupCard(workflow) {
     </header>
     <div class="system-template-setup-body">
       <section>
-        ${isXAuthoring(workflow) ? "" : `<code class="system-config-kicker">what it works on</code><label class="system-setting"><strong>Name</strong><input class="workflow-inline-input" name="workflow_name" required maxlength="120" value="${escapeHtml(workflow.title)}" /></label>`}
+        ${isXAuthoring(workflow) ? "" : `<h3 class="system-config-kicker">What it works on</h3><label class="system-setting"><strong>Name</strong><input class="workflow-inline-input" name="workflow_name" required maxlength="120" value="${escapeHtml(workflow.title)}" /></label>`}
         ${fields || '<span class="system-config-note">No additional choices.</span>'}
         ${isXAuthoring(workflow) ? `<label class="system-setting"><strong>Name</strong><input class="workflow-inline-input" name="workflow_name" required maxlength="120" value="${escapeHtml(workflow.title)}" /></label>` : ""}
-        ${requirementRows ? `<div class="system-requirements"><code class="system-config-kicker">connections</code>${requirementRows}</div>` : ""}
+        ${requirementRows ? `<div class="system-requirements"><h3 class="system-config-kicker">Connections</h3>${requirementRows}</div>` : ""}
       </section>
       <section class="system-config-when">
-        ${isXAuthoring(workflow) ? "" : '<code class="system-config-kicker">when</code>'}
+        ${isXAuthoring(workflow) ? "" : '<h3 class="system-config-kicker">When</h3>'}
         ${isXAuthoring(workflow) ? xWorkflowRunControls(workflow) : `${workflowScheduleControls(workflow.id, workflow.key === "content.plan" ? {cadence: "weekly", weekdays: ["monday"], local_time: "09:00", timezone: state.project?.timezone || "UTC"} : workflowDefaultSchedule(workflow), false, workflow.definition?.schedule_modes)}<p>Saving pins v${escapeHtml(workflow.version_label)}. You can change the schedule later.</p>`}
       </section>
     </div>
@@ -3302,13 +3309,13 @@ function reviewQueueBanner(queue) {
   const remaining = Math.max(0, queue.length - 4);
   return `<section class="needs-you-queue" aria-label="Workflows needing your review">
     <div class="needs-you-head">
+      <p>${escapeHtml(isTask ? (head.task_question || head.task_summary || "Your one-off task is waiting for you.") : (policy.summary || `${workflow?.title || "This workflow"} is ready for your review and will stay on hold until you act.`))}</p>
       <div class="needs-you-kicker">
         <span class="needs-you-dot" aria-hidden="true"></span>
-        <code>needs you · ${escapeHtml(isTask ? head.task_title || "project task" : formatWorkflowKey(workflow?.key || head.workflow_name))} · ${escapeHtml(shortRunId(head.id))}</code>
+        <span class="needs-you-state"><strong>Needs you</strong> · ${escapeHtml(isTask ? head.task_title || "Project task" : workflow?.title || formatWorkflowKey(workflow?.key || head.workflow_name))}</span>
         <span class="needs-you-spacer"></span>
         <time datetime="${escapeHtml(head.review_requested_at || "")}">${escapeHtml(position)}waiting ${escapeHtml(waitingLabel(head.review_requested_at))}</time>
       </div>
-      <p>${escapeHtml(isTask ? (head.task_question || head.task_summary || "Your one-off task is waiting for you.") : (policy.summary || `${workflow?.title || "This workflow"} is ready for your review and will stay on hold until you act.`))}</p>
       <div class="needs-you-actions">
         ${primaryAction}
         <button class="needs-you-secondary" type="button" data-defer-review="${escapeHtml(head.id)}">${escapeHtml(policy.defer_label || "Not now")}</button>
@@ -5849,7 +5856,7 @@ function projectFileModified(path) {
   const date = raw ? new Date(raw) : null;
   if (!date || Number.isNaN(date.getTime())) return { text: "—", title: "Last modified date unavailable" };
   return {
-    text: date.toLocaleDateString(undefined, { year: "numeric", month: "short", day: "numeric" }),
+    text: documentDate(date),
     title: `Last modified ${date.toLocaleString(undefined, { dateStyle: "full", timeStyle: "long" })}`,
   };
 }

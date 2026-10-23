@@ -617,13 +617,13 @@
 
 .analytics-input {
   width: min(420px, 100%);
-  height: 32px;
-  padding: 0 10px;
+  height: 40px;
+  padding: 0 12px;
   background: var(--input-bg, var(--paper-well));
   border: 1px solid rgb(var(--ink-rgb) / 18%);
   border-radius: var(--radius-chip);
   color: var(--ink);
-  font: 13px/16px var(--sans);
+  font: 15px/20px var(--sans);
 }
 
 .analytics-prompt {
