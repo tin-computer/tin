@@ -4641,6 +4641,11 @@ html[data-theme="dark"] .system-week-nav button {
   flex: 0 0 360px;
 }
 
+.system-config-body > .system-config-summary {
+  width: 260px;
+  flex: 0 0 260px;
+}
+
 /* Each settings group is named by a small heading in sans, never a mono label above it. */
 .system-config-kicker {
   margin: 0;

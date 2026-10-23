@@ -42,9 +42,10 @@ can finish its own connection. The rest of an empty project's dashboard stays lo
 Back to setup closes the connection view. GitHub and Search Console count as ready only
 after a repository or property is selected.
 
-Reports currently arrive inside Tin's Files and drafts in Decisions. The only
-supported result destination is `tin`; there are no email or Slack result notifications
-in this contract. A connected mailbox does not enable audit notifications. Individual
+Reports currently arrive inside Tin's Files and drafts in Decisions. A saved workflow
+that writes a [run summary](run-summaries.md) can also post it to Slack channels the
+founder picks, when the deployment has Slack configured; `delivery_destination` lists
+`slack` then. There are no email result notifications. A connected mailbox does not enable audit notifications. Individual
 documents use `/document/{run_id}?project={project_id}` on the configured app origin;
 links are emitted only when a durable artifact revision exists. The document reader
 continues to enforce its own membership checks.

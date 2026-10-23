@@ -119,6 +119,8 @@ class CodeSpec:
     approved_article_input: str | None = None
     evidence: tuple[EvidenceSlot, ...] = ()
     author: bool = False
+    # code.output.summary: the result may carry a run summary (run_summaries.py).
+    summary: bool = False
 
     @property
     def paid_services(self) -> tuple[ServiceBinding, ...]:
@@ -198,8 +200,15 @@ def validate_code_definition(definition) -> CodeSpec:
     if type(timeout) is not int or not 1 <= timeout <= MAX_TIMEOUT_SECONDS:
         raise ValueError(f"code timeout must be 1-{MAX_TIMEOUT_SECONDS} seconds")
     output = code["output"]
-    if not isinstance(output, dict) or set(output) != {"kind", "path", "media_type", "max_bytes"}:
+    if not isinstance(output, dict) or set(output) - {"summary"} != {
+        "kind",
+        "path",
+        "media_type",
+        "max_bytes",
+    }:
         raise ValueError("code output must declare one bounded project artifact")
+    if output.get("summary", True) is not True:
+        raise ValueError("code output summary must be true when declared")
     path = relative_path(output["path"])
     if (
         output["kind"] != "project.artifact"
@@ -244,6 +253,7 @@ def validate_code_definition(definition) -> CodeSpec:
         article_input,
         evidence,
         author,
+        "summary" in output,
     )
 
 
@@ -398,7 +408,7 @@ def validate_code_result(raw: bytes, spec: CodeSpec, *, created_at=None) -> byte
     value = json.loads(raw)
     if (
         not isinstance(value, dict)
-        or set(value) != {"path", "content"}
+        or set(value) - ({"summary"} if spec.summary else set()) != {"path", "content"}
         or not output_path_allowed(spec, value["path"], created_at)
         or not isinstance(value["content"], str)
     ):
@@ -409,6 +419,16 @@ def validate_code_result(raw: bytes, spec: CodeSpec, *, created_at=None) -> byte
     if spec.media_type == "application/json":
         json.loads(content)
     return content
+
+
+def code_result_summary(raw: bytes, spec: CodeSpec) -> dict | None:
+    """The run summary a result carries beside its file, when the contract declares one. A
+    summary that breaks the shape is dropped, never grounds to fail the run."""
+    if not spec.summary:
+        return None
+    from tin_lite import run_summaries
+
+    return run_summaries.parse(json.loads(raw).get("summary"))
 
 
 def example_files(key="custom.order_report", *, model_steps=False, connections=False):

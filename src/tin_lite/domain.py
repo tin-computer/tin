@@ -252,6 +252,10 @@ class ProjectWorkflow:
     content_revision: dict[str, Any] | None = None
     # Whether today's definition draws how it runs (presentation.flow).
     workflow_drawn: bool = False
+    # Where each run's summary is posted (run_summaries.py); pinned on the run at creation.
+    summary_destinations: tuple[dict[str, Any], ...] = ()
+    # Whether today's definition produces a run summary.
+    summary_supported: bool = False
 
 
 @dataclass(frozen=True)
@@ -291,6 +295,9 @@ class WorkflowRun:
     artifact_ref: str | None = None
     retained_output: dict[str, Any] | None = None
     output_resolution: dict[str, Any] | None = None
+    # The run's summary (run_summaries.py) and the destinations pinned from its saved workflow.
+    run_summary: dict[str, Any] | None = None
+    summary_destinations: tuple[dict[str, Any], ...] = ()
     error_message: str | None = None
     # failures.py kinds; the raw cause (error_detail) stays in the database for operators.
     error_kind: str | None = None

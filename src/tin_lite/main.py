@@ -72,6 +72,11 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         removal_task = asyncio.create_task(
             removal_loop(runtime.integrations), name="analytics-removals"
         )
+        from tin_lite.summary_posts import summary_posts_loop
+
+        summary_task = asyncio.create_task(
+            summary_posts_loop(runtime, resolved_settings), name="run-summary-posts"
+        )
         billing_task = (
             asyncio.create_task(
                 billing_reconciliation_loop(runtime, resolved_settings),
@@ -92,6 +97,8 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             await asyncio.gather(session_task, return_exceptions=True)
             removal_task.cancel()
             await asyncio.gather(removal_task, return_exceptions=True)
+            summary_task.cancel()
+            await asyncio.gather(summary_task, return_exceptions=True)
             review_task.cancel()
             await asyncio.gather(review_task, return_exceptions=True)
             if billing_task is not None:

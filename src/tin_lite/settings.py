@@ -189,6 +189,14 @@ class Settings(BaseSettings):
     x_oauth_client_secret: SecretStr | None = Field(
         default=None, alias="TIN_LITE_X_OAUTH_CLIENT_SECRET"
     )
+    # Tin's Slack app (api.slack.com/apps): a founder adds it to their workspace so run
+    # summaries can be posted to the channels they choose.
+    slack_oauth_client_id: str | None = Field(
+        default=None, alias="TIN_LITE_SLACK_OAUTH_CLIENT_ID", pattern=r"^[0-9]{1,20}\.[0-9]{1,20}$"
+    )
+    slack_oauth_client_secret: SecretStr | None = Field(
+        default=None, alias="TIN_LITE_SLACK_OAUTH_CLIENT_SECRET"
+    )
     # Bearer secret the tin repository's contributor gate sends; unset disables the check.
     contributor_check_token: SecretStr | None = Field(
         default=None, alias="TIN_LITE_CONTRIBUTOR_CHECK_TOKEN"
@@ -538,6 +546,17 @@ class Settings(BaseSettings):
             if self.integration_credential_key is None:
                 raise ValueError(
                     "TIN_LITE_INTEGRATION_CREDENTIAL_KEY is required when X OAuth is configured"
+                )
+        slack_values = (self.slack_oauth_client_id, self.slack_oauth_client_secret)
+        if any(value is not None for value in slack_values):
+            if not all(value is not None for value in slack_values):
+                raise ValueError(
+                    "TIN_LITE_SLACK_OAUTH_CLIENT_ID and TIN_LITE_SLACK_OAUTH_CLIENT_SECRET "
+                    "must be configured together"
+                )
+            if self.integration_credential_key is None:
+                raise ValueError(
+                    "TIN_LITE_INTEGRATION_CREDENTIAL_KEY is required when Slack is configured"
                 )
         if self.integration_credential_key is None and self.google_oauth_client_id is not None:
             raise ValueError(

@@ -19,6 +19,9 @@ project's events, hosts and identity setup differ. A reviewed Python resource, `
 owns every query, tier, count and ledger entry. The agent writes the map of the project's
 events and does the judgment: journeys in words, causes, actions and changes.
 
+The brief at the top of each report is also the run's [summary](run-summaries.md), which a saved
+schedule can post to a Slack channel.
+
 It differs from the [product analytics brief](product-analytics-brief.md), which reports
 aggregate funnels and trends with no people and no recommendations. This workflow is per
 person and ends in actions.
