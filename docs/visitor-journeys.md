@@ -63,6 +63,11 @@ A procedure writes one file, so the memory lives in the report's evidence block:
   when they were first and last surfaced and whether they came back. A friction is `new`, then
   `ongoing`, and `fixed` once it has been seen on two or more days and then not for five. Entries
   older than 90 days drop.
+- **brief**: the table, visitors and observations that opened the last report. The founder reads
+  the brief every morning, so it says only what is new since then. `assemble()` refuses a visitor
+  who was in the last brief and has done nothing since its window ended, and an observation it
+  made word for word. A visitor who came back is listed for what they did since. A tracking gap
+  or an ongoing friction is mentioned again only when it changes.
 
 The next run reads the newest report under `reports/visitors/` and starts from its map and
 ledger. When a mapped key event stops firing, or a new event looks like its rename,

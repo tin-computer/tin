@@ -198,6 +198,10 @@ Keep tracking problems apart, each with its exact fix:
 The brief opens the report and is also read on its own, in the founder's daily report, by
 someone who has not read the rest. It has three parts.
 
+The founder reads it every morning, so it says only what is new since the last brief:
+`previous()` returns that brief and its window. Its window may overlap this one, for example
+after a run started by hand.
+
 **The table.** After the timelines, call `request(c, m, "funnel")` and pass the result to
 `funnel(result, m, inventory_rows)`. It counts unique people for each funnel step over the last
 24 hours and the daily average over the last 7 days. Pass it to `assemble()` as `funnel=`. The
@@ -210,20 +214,37 @@ who they are, from their own data, and what they did. For example "started a tri
 a phone, then clicked Ask about Enterprise". Pass `(email, line)`; the name and replay link come
 from the named people. When nobody can be named, leave it empty.
 
+Leave out anyone in the last brief who has done nothing since its window ended; `assemble()`
+refuses them. Someone in it who came back is listed again only for what they did since, and the
+line says so: "came back and upgraded to Plus". Fewer visitors, or none, is the right brief on
+a quiet day.
+
 **Some observations.** Up to five lines, the most useful first: possible bugs, failures the
 product recorded, where visitors come from and where they leave, a tracking gap that changes
 how to read the table. Pass `(text, friction_id or None)`. Something without a recorded failure
 or error behind it is "there may be a bug in ...", never "X is broken"; `check()` refuses
 otherwise. Clicks that changed nothing are a "may", and the line says to watch the replay.
 
+Say each thing once:
+- leave out an observation the last brief made, unless it changed, and then say what changed:
+  "the checkout error hit 3 more people", "signups are tracked now";
+- a tracking gap goes in the brief when it first shows and again when it changes or is fixed,
+  never every day;
+- a friction the ledger marks ongoing gets at most one line, saying it is still happening and
+  since when, unless more people hit it.
+
+`assemble()` refuses an observation the last brief made word for word. When nothing is new,
+leave the observations empty: the brief then says "Nothing stood out".
+
 Write for the founder: plain words, no internal terms such as census, ledger, timeline, tier or
 query. Build it with `brief(visitors, observations)`, pass it to `assemble()` with
-`brief=b, funnel=fn`, and put `render_brief(evidence["brief"])` directly under the Status line.
+`brief=b, funnel=fn, previous=prev`, and put `render_brief(evidence["brief"])` directly under
+the Status line.
 
 ## 11. Write
 
 Build the ledger with `carry(prev["ledger"], p, f, c)`. Build the evidence with `assemble()`,
-passing `site=s`, `brief=b` and `funnel=fn`.
+passing `site=s`, `brief=b`, `funnel=fn` and `previous=prev`.
 Write the report in REPORT.md's order, append `render_evidence(evidence)`, and run `check()` on
 the whole text. Fix what it raises, then save the report to context.output.path.
 

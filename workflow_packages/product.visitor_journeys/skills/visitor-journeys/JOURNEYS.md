@@ -26,8 +26,8 @@ timelines (1-3)  -> timelines(result)     # for choose(p, c["max_people_detailed
 funnel           -> fn = funnel(result, m, inventory_rows)  # the brief's table
 f = frictions(friction_rows, loop_rows, stalls(p, m), p)
 ledger = carry(prev["ledger"], p, f, c)
-b = brief(visitors, observations)         # the founder's brief, in your words
-evidence = assemble(..., brief=b, funnel=fn)
+b = brief(visitors, observations)         # the founder's brief, in your words: only what is new
+evidence = assemble(..., brief=b, funnel=fn, previous=prev)
 text = report (render_brief(evidence["brief"]) under Status) + render_evidence(evidence)
 check(text)
 ```
@@ -1155,6 +1155,7 @@ def previous(text):
         "ledger": {"frictions": [], "people": []},
         "window": None,
         "site": None,
+        "brief": None,
     }
     if not text:
         return empty
@@ -1175,6 +1176,7 @@ def previous(text):
         },
         "window": evidence.get("window"),
         "site": evidence.get("site") if isinstance(evidence.get("site"), dict) else None,
+        "brief": evidence.get("brief") if isinstance(evidence.get("brief"), dict) else None,
     }
 
 
@@ -1328,6 +1330,7 @@ def assemble(
     site=None,
     brief=None,
     funnel=None,
+    previous=None,
 ):
     evidence = _assemble(
         c, status, reason, requests, p, named_people, f, ledger, m, limitations, site
@@ -1340,8 +1343,48 @@ def assemble(
             if row is None:
                 raise ContractError(f"{v['email']} is in the brief but is not a named person")
             visitors.append({**v, "name": row["name"], "replay_url": row["replay_url"]})
+        _only_new(brief, named_rows, previous)
         evidence["brief"] = {**brief, "visitors": visitors, "funnel": funnel}
     return evidence
+
+
+def _moment(value):
+    """A census or window time as an aware datetime, or None when it cannot be read."""
+    text = str(value or "").strip().replace(" ", "T").removesuffix("Z")
+    try:
+        moment = datetime.fromisoformat(text[:26])
+    except ValueError:
+        return None
+    return moment if moment.tzinfo else moment.replace(tzinfo=UTC)
+
+
+def _said(text):
+    return re.sub(r"[^a-z0-9]+", " ", str(text or "").lower()).strip()
+
+
+def _only_new(b, named_rows, previous):
+    """The brief is read every morning, so it says only what happened since the last one.
+
+    Someone in the last brief who has done nothing since its window ended is left out, and an
+    observation the last brief already made, word for word, is not made again."""
+    last = (previous or {}).get("brief") or {}
+    end = _moment(((previous or {}).get("window") or {}).get("end"))
+    if not last or end is None:
+        return
+    shown = {v.get("email") for v in last.get("visitors") or [] if isinstance(v, dict)}
+    for v in b["visitors"]:
+        seen = _moment(named_rows[v["email"]].get("last_seen"))
+        if v["email"] in shown and seen is not None and seen <= end:
+            raise ContractError(
+                f"{v['email']} was in the last brief and has done nothing since it; leave them out"
+            )
+    said = {_said(o.get("text")) for o in last.get("observations") or [] if isinstance(o, dict)}
+    for o in b["observations"]:
+        if _said(o["text"]) in said:
+            raise ContractError(
+                "the last brief already said '" + o["text"][:80] + "'; leave it out, or say "
+                "what changed since"
+            )
 
 
 def _assemble(c, status, reason, requests, p, named_people, f, ledger, m, limitations, site):

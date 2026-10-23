@@ -548,6 +548,7 @@ def report(
     brief=DEFAULT,
     frictions=(),
     funnel=DEFAULT,
+    previous=None,
 ):
     named = (
         named
@@ -614,6 +615,7 @@ def report(
         site=site,
         brief=brief,
         funnel=funnel,
+        previous=previous,
     )
     top = "\n\n" + j.render_brief(evidence["brief"]) if brief is not None else ""
     text = (
@@ -743,6 +745,47 @@ def test_the_check_refuses_a_brief_tin_could_not_stand_behind(j, c, m, people):
         j.check(moved)
     with pytest.raises(j.ContractError, match="funnel starts with visitors"):
         j.check_map({**m, "funnel": m["funnel"][1:]})
+
+
+def test_the_brief_says_only_what_is_new_since_the_last_one(j, c, m, people):
+    ben, cara = "ben@quanta.io", "cara@studio.design"
+    gap = "Signups are not tracked, so the table cannot count them."
+    last = j.previous(
+        report(j, c, m, people, brief=j.brief([(ben, "Clicked pricing.")], [(gap, None)]))
+    )
+    assert last["brief"]["visitors"][0]["email"] == ben and last["window"]["end"] == c["end"]
+    # The next morning's run: its window overlaps the last one, as after a run started by hand.
+    later = {**last, "window": {"start": "2026-10-15 09:00:00", "end": "2026-10-16 10:00:00"}}
+    with pytest.raises(j.ContractError, match="ben@quanta.io was in the last brief"):
+        report(j, c, m, people, brief=j.brief([(ben, "Clicked pricing.")], []), previous=later)
+    with pytest.raises(j.ContractError, match="already said"):
+        report(j, c, m, people, brief=j.brief([], [(gap.upper(), None)]), previous=later)
+    # Someone new, and an observation that says what changed, are fine.
+    j.check(
+        report(
+            j,
+            c,
+            m,
+            people,
+            brief=j.brief([(cara, "Back again.")], [("Signups are tracked now.", None)]),
+            previous=later,
+        )
+    )
+    # Ben came back after the last brief's window ended (his last activity is 09:30).
+    earlier = {**later, "window": {"start": "2026-10-15 08:00:00", "end": "2026-10-16 09:00:00"}}
+    j.check(
+        report(
+            j,
+            c,
+            m,
+            people,
+            brief=j.brief([(ben, "Came back and booked a call.")], []),
+            previous=earlier,
+        )
+    )
+    # The first run, or a report from before 1.3.0, has no brief to compare with.
+    assert j.previous(None)["brief"] is None
+    j.check(report(j, c, m, people, previous=j.previous(None)))
 
 
 def test_the_check_refuses_what_tin_would_not_publish_or_trust(j, c, m, people):
