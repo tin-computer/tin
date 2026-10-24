@@ -475,6 +475,18 @@ def accepted_text(count: int) -> str:
     return f" {count} people accepted your connection requests."
 
 
+def approved_text(count: int) -> str:
+    """The people Tin approved for the member after this read, because they asked it to."""
+
+    if not count:
+        return ""
+    who = "1 person who fits" if count == 1 else f"{count} people who fit"
+    return (
+        f" Approved automatically: connection requests to {who}. Tin sends them one at a "
+        "time on your schedule."
+    )
+
+
 def sentence(notes: dict) -> str:
     posts, people = notes.get("posts", 0), notes.get("reactions", 0)
     text = (
@@ -494,4 +506,4 @@ def sentence(notes: dict) -> str:
             f" {count} {'people' if count != 1 else 'person'} who fit and aren't connected "
             "wait in Decisions for your connection requests."
         )
-    return text
+    return text + approved_text(notes.get("auto_approved", 0))

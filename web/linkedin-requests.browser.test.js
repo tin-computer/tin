@@ -147,6 +147,26 @@ test("turning sending back on starts with the consent box ticked, then shows the
   });
 });
 
+test("with sending on, Tin can approve the people who fit after each read", {timeout: 120000}, async () => {
+  await open({url: "/integrations", state: requests({on: true})}, async (page, served) => {
+    await page.locator(".linkedin-card").getByRole("button", {name: "Configure"}).click();
+    const row = page.locator(".requests-sending");
+    await row.waitFor();
+    const auto = row.getByRole("switch", {name: "Approve people who fit automatically"});
+    assert.equal(await auto.getAttribute("aria-checked"), "false");
+    assert.match(await row.innerText(), /people who fit wait in Decisions for you to approve/);
+    await auto.click();
+    await page.locator(".toast", {hasText: "Tin approves the people who fit after each LinkedIn read"}).waitFor();
+    // It goes with the consent sending already has, never without it.
+    assert.deepEqual(served.requestWrites.at(-1), {method: "PUT", path: "/sending", body: {enabled: true, consent_version: 1, auto_approve: true}});
+    assert.equal(await row.getByRole("switch", {name: "Approve people who fit automatically"}).getAttribute("aria-checked"), "true");
+    assert.match(await row.innerText(), /after each LinkedIn read, Tin approves the people who fit and aren’t connected/);
+    await row.getByRole("switch", {name: "Approve people who fit automatically"}).click();
+    await page.locator(".toast", {hasText: "People who fit wait in Decisions for you again."}).waitFor();
+    assert.equal(served.requestWrites.at(-1).body.auto_approve, false);
+  });
+});
+
 test("with reading in this browser only, sending waits for cloud reading", {timeout: 120000}, async () => {
   await open({url: "/integrations", state: {...requests({on: false}), reading: false, browser_only: true}}, async page => {
     await page.locator(".linkedin-card").getByRole("button", {name: "Configure"}).click();
