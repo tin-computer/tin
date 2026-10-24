@@ -128,7 +128,7 @@ chosen again.
 
 Not the sending run: it would sit in Running for weeks only to wait. The member's own LinkedIn
 reads read it instead, after their main reads and before they publish:
-[profile viewers](linkedin-profile-viewers.md) (daily) and [engagers](linkedin-engagers.md).
+[profile viewers](linkedin-profile-viewers.md) and [engagers](linkedin-engagers.md), both daily.
 
 - **When:** about once a day (`linkedin_requests.reading_due`): while a request of the member's
   on the project waits for an answer, and the last read was 20 hours ago or more, whichever of

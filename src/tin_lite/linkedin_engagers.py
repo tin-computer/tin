@@ -1,7 +1,8 @@
 """Who engaged with a founder's own LinkedIn posts, kept as People records (#435).
 
 `social.linkedin_engagers` reads the founder's own posts from the last 90 days with their saved
-LinkedIn session, then each post's reactions. Every person who reacted becomes a People record
+LinkedIn session, then the reactions of each post that is new or whose reaction count changed
+since their last run read it. Every person who reacted becomes a People record
 (matched on their LinkedIn profile ID) with their name, headline and whether they're already a
 connection, and a `reacted` event per post. A model step scores each person against the
 project's ICP file. The list is rendered to project Files as a CSV and a short summary; the
@@ -67,6 +68,59 @@ INPUT_SCHEMA: dict[str, Any] = {
 
 def reacted_key(thread_urn: str, member: str) -> str:
     return f"linkedin:reacted:{thread_urn}:{member}"
+
+
+# Reading again only what changed. A run that reads all of a post's reactions keeps a receipt
+# of how many LinkedIn counted on the post then; a later run of the same member skips a post
+# whose count is the same, so a daily run reads new posts and posts with new reactions only.
+
+
+def read_key(run_id, thread_urn: str) -> str:
+    return f"{run_id}:engagers:read:{thread_urn}"
+
+
+async def earlier_reads(
+    conn, project_id: UUID, member: str, run_id: UUID, threads: list[str]
+) -> dict[str, dict]:
+    """The member's newest finished read of each post, from their earlier runs: LinkedIn's
+    reaction count then, and whether the read stopped at MAX_REACTIONS. A post is at most
+    WINDOW_DAYS old, so only runs from that span can have read it."""
+
+    rows = await conn.fetch(
+        """SELECT DISTINCT ON (t.thread) t.thread, e.result
+           FROM unnest($4::text[]) AS t(thread)
+           JOIN workflow_runs w ON w.project_id = $1 AND w.executor = $5
+                AND w.started_by_clerk_user_id = $2 AND w.id <> $3
+                AND w.created_at >= now() - make_interval(days => $6)
+           JOIN effect_receipts e ON e.execution_key = w.id::text || ':engagers:read:' || t.thread
+                AND e.status = 'completed'
+           ORDER BY t.thread, e.updated_at DESC""",
+        project_id,
+        member,
+        run_id,
+        threads,
+        KEY,
+        WINDOW_DAYS + 1,
+    )
+    return {
+        row["thread"]: row["result"]
+        if isinstance(row["result"], dict)
+        else json.loads(row["result"])
+        for row in rows
+    }
+
+
+def unchanged(post: dict, earlier: dict | None) -> bool:
+    """Whether a post can be left unread: an earlier run read all of it and LinkedIn counts the
+    same reactions now. A post read to MAX_REACTIONS isn't read again, since a new read would
+    page through the same first reactions. A post LinkedIn showed no count for is read."""
+
+    if not earlier:
+        return False
+    if earlier.get("capped"):
+        return True
+    count = post.get("reactions")
+    return type(count) is int and count == earlier.get("reactions")
 
 
 async def record_reactions(
@@ -483,6 +537,12 @@ def sentence(notes: dict) -> str:
     )
     if notes.get("new_people"):
         text += f", {notes['new_people']} new to Tin"
+    if notes.get("unchanged"):
+        count = notes["unchanged"]
+        text += (
+            f"; {count} post{'s' if count != 1 else ''} had no new reactions, "
+            f"so Tin didn't read {'them' if count != 1 else 'it'} again"
+        )
     if notes.get("unread"):
         text += f"; {notes['unread']} post{'s' if notes['unread'] != 1 else ''} couldn't be read"
     if notes.get("capped"):
