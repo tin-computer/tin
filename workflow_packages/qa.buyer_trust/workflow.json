@@ -4,7 +4,7 @@
     "key": "qa.buyer_trust",
     "title": "Check if a buyer would trust your checkout",
     "description": "Run before launch or after a signup walkthrough: get a fixed-rule PASS, FAIL or UNVERIFIED verdict on whether a careful buyer would trust your site and checkout, with ranked fixes handed to Improve site health or to you. Public GET requests only; it never signs in, submits forms, changes your site or claims CVE coverage.",
-    "version": "1.1.0",
+    "version": "1.2.0",
     "executor": "codex.procedure",
     "system": "product-qa",
     "schedule_modes": ["on_demand"],
