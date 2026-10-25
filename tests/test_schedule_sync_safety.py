@@ -4,8 +4,10 @@ from __future__ import annotations
 
 import logging
 from datetime import UTC, datetime, timedelta
+from pathlib import Path
 from types import SimpleNamespace
 from uuid import uuid4
+from zoneinfo import TZPATH, ZoneInfo, ZoneInfoNotFoundError
 
 import httpx
 import pytest
@@ -14,7 +16,7 @@ from temporalio.service import RPCError, RPCStatusCode
 from test_procedure_publication import publication_db as publication_db
 from test_workflow_definitions import SCHEDULE, fixture, http_app, mcp
 
-from tin_lite import growth_onboarding
+from tin_lite import growth_onboarding, schedules
 from tin_lite.activities import TinActivities
 from tin_lite.organic_system_activities import founder_timezone
 from tin_lite.project_workflow_operations import sync_project_workflow
@@ -272,9 +274,32 @@ def test_new_schedules_refuse_host_and_alternate_zone_files(name):
         require_saveable_schedule(schedule)
 
 
-@pytest.mark.parametrize("name", ["Europe/Berlin", "America/New_York", "US/Eastern", "UTC"])
+@pytest.mark.parametrize("name", ["Europe/Berlin", "America/New_York", "UTC"])
 def test_iana_names_and_links_remain_supported(name):
     assert supported_timezone(name)
+
+
+@pytest.mark.parametrize("available", [True, False])
+def test_iana_link_support_follows_installed_zone_data(monkeypatch, available):
+    # Legacy links are optional OS data; exercise both cases with a real TZif file.
+    source = next(
+        Path(root) / "America/New_York"
+        for root in TZPATH
+        if (Path(root) / "America/New_York").is_file()
+    )
+    with source.open("rb") as data:
+        alias = ZoneInfo.from_file(data, key="US/Eastern")
+    requested = []
+
+    def resolve(name):
+        requested.append(name)
+        if not available:
+            raise ZoneInfoNotFoundError(name)
+        return alias
+
+    monkeypatch.setattr(schedules, "ZoneInfo", resolve)
+    assert supported_timezone("US/Eastern") is available
+    assert requested == ["US/Eastern"]
 
 
 def test_a_saved_schedule_with_a_now_refused_zone_still_loads_and_projects():
