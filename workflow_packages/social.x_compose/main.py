@@ -468,8 +468,9 @@ def _validate_model(parsed, count, units, source_texts, assets):
             raise ValueError("A ready X post must cite current factual support")
         support_text = "\n".join(source_by_id[source_id]["excerpt"] for source_id in support_ids)
         evidence_notes = []
+        numeric_body = re.sub(r"(?m)^[ \t]*\d+[.)][ \t]+", "", body)
         for pattern, label in ((_NUMBER, "number"), (_QUOTE, "quotation"), (_URL, "URL")):
-            for claim in pattern.findall(body):
+            for claim in pattern.findall(numeric_body if label == "number" else body):
                 if isinstance(claim, tuple):
                     claim = claim[0]
                 if label == "URL":
