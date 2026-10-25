@@ -9,8 +9,9 @@ under Interpretation next to that fix.
 
 ## Evidence object
 
-Every key is required. `null` means the check was not made or the sandbox refused it; it is
-never the same as a failed check.
+Every key is required, except a missing `refund_checked` in older evidence is treated as
+`false`. `null` means the check was not made or the sandbox refused it; it is never the
+same as a failed check.
 
 ```json
 {
@@ -38,7 +39,8 @@ never the same as a failed check.
     "guest_option": null,
     "total_before_pay": true,
     "contact_url": "https://example.com/contact",
-    "refund_url": null
+    "refund_url": null,
+    "refund_checked": false
   }
 }
 ```
@@ -58,8 +60,14 @@ never the same as a failed check.
 - `checkout`: `null` when no pricing or checkout page was reached. Otherwise
   `guest_option` and `total_before_pay` are `true`, `false` or `null` (not visible without
   signing in), and `contact_url` / `refund_url` are the `https://` pages linked within one
-  click of pricing or checkout, or `null`. Use the latest signup walkthrough's `## Billing`
-  and `## Steps` for what lies behind signup; never sign in to find out.
+  click of pricing or checkout, or `null`. A refund or cancellation section in Terms counts;
+  its link need not be labelled "Refunds". Set `refund_checked` to `true` only after reading
+  the relevant linked policy pages and checking for refund or cancellation terms. Keep it
+  `false` or `null` when the pages were unread, unreachable or outside this run's depth.
+  A link alone cannot verify its content. With `refund_checked: true`, `refund_url: null`
+  means the completed check found no accessible linked terms. This checks presence and
+  access, never legal adequacy. Use the latest signup walkthrough's `## Billing` and
+  `## Steps` for what lies behind signup; never sign in to find out.
 
 ## Ranks and owners
 
@@ -92,7 +100,7 @@ STATUS_KEYS = (
     "env",
 )
 HEADER_KEYS = ("hsts", "csp", "x_frame_options", "referrer_policy", "x_content_type_options")
-CHECKOUT_KEYS = ("guest_option", "total_before_pay", "contact_url", "refund_url")
+CHECKOUT_KEYS = ("guest_option", "total_before_pay", "contact_url", "refund_url", "refund_checked")
 TOP_KEYS = (
     "origin",
     "status",
@@ -207,12 +215,16 @@ def check(evidence):
             if clean["headers"][key] is None:
                 raise ValueError(f"headers.{key} must be the observed value or empty")
     if evidence["checkout"] is not None:
-        checkout = _keys(evidence["checkout"], "checkout", CHECKOUT_KEYS)
+        checkout = evidence["checkout"]
+        if isinstance(checkout, dict):
+            checkout = {"refund_checked": False, **checkout}
+        checkout = _keys(checkout, "checkout", CHECKOUT_KEYS)
         clean["checkout"] = {
             "guest_option": _flag(checkout["guest_option"], "checkout.guest_option"),
             "total_before_pay": _flag(checkout["total_before_pay"], "checkout.total_before_pay"),
             "contact_url": _link(checkout["contact_url"], "checkout.contact_url"),
             "refund_url": _link(checkout["refund_url"], "checkout.refund_url"),
+            "refund_checked": _flag(checkout["refund_checked"], "checkout.refund_checked"),
         }
     return clean
 
@@ -491,8 +503,10 @@ def gate(evidence, as_of):
         )
         row(
             "Refund terms within one click",
-            checkout["refund_url"] or "",
-            "pass" if checkout["refund_url"] else "fix",
+            (checkout["refund_url"] or "") if checkout["refund_checked"] else None,
+            "unknown"
+            if not checkout["refund_checked"]
+            else ("pass" if checkout["refund_url"] else "fix"),
         )
         if total is False:
             fix(
@@ -509,11 +523,12 @@ def gate(evidence, as_of):
                 "within one click of pricing or checkout.",
                 "founder",
             )
-        if not checkout["refund_url"]:
+        if checkout["refund_checked"] and not checkout["refund_url"]:
             fix(
                 "refund",
                 "fix_week",
-                "Publish refund or cancellation terms and link them within one click of checkout.",
+                "Link existing refund or cancellation terms within one click of checkout; "
+                "publish terms only if none exist.",
                 "founder",
             )
         if guest is False:

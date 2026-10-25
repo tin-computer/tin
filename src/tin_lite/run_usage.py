@@ -277,8 +277,10 @@ def observation(row, facts, *, legacy=False):
         "gak",
         "google_ads",
         "pagespeed",
+        "fal",
+        "podscan",
     }:
-        provider = "dataforseo" if kind == "tool" else "unknown"
+        provider = "unknown"
     model = (
         object_value(facts.get("usage")).get("model")
         if codex

@@ -25,6 +25,8 @@ quote a maximum price, or turn a ChatGPT subscription's token counters into API 
 The readout selects metadata, not full report/prompt/error bodies. It returns normalized bounded
 token counts, provider/model, outcome, opaque observation ID, and explicitly named cost bases.
 It does not expose sandbox identifiers, credentials, raw provider errors or hidden model reasoning.
+Tool observations keep known provider names, including `fal` and `podscan`; a missing or
+unrecognized name stays `unknown` instead of being attributed to DataForSEO.
 
 ## What is measured
 

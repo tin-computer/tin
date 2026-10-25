@@ -456,6 +456,10 @@ constraint), and v10 discards the whole panel. Under v11:
   crawler's user agent (GPTBot, OAI-SearchBot, ChatGPT-User, PerplexityBot, ClaudeBot,
   Claude-SearchBot). A CDN that serves the browser and refuses a crawler likely blocks it;
   CDNs can verify crawlers by IP address, so the finding says "likely".
+- v17 compares each refused crawler and sampled path with the recorded robots rules.
+  An explicit disallow is not a second firewall finding. Unread robots permission stays
+  unknown, and a training-only refusal does not suggest unblocking search crawlers.
+  Earlier pins keep their original findings. This interpretation adds no network calls.
 - Search Console adds page rows for the 28 days before the audit window, and URL
   Inspection for up to ten key pages (the homepage, the pages with the most impressions and
   pages Tin found noindexed or canonicalized elsewhere), within Google's 2,000-a-day quota.

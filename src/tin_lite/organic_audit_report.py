@@ -17,7 +17,7 @@ from tin_lite.organic_audit_checks import (
     site_findings,
     speed_rows,
 )
-from tin_lite.organic_audit_format import AREAS, PRIORITIES, urgency_key
+from tin_lite.organic_audit_format import AREAS, PRIORITIES, count, urgency_key
 from tin_lite.organic_audit_search import brand_terms, search_findings
 from tin_lite.organic_audit_site import crawler_stances, url_key
 
@@ -94,6 +94,7 @@ def analyze(
         search_queries=queries,
         angles=bool(policy.get("site_angles")),
         basics=bool(policy.get("site_basics")),
+        crawler_access_policy=bool(policy.get("crawler_access_policy")),
     )
     cover = coverage(view, site.get("plan"), page_cap=scope.get("page_cap"))
     titles = {}
@@ -235,6 +236,7 @@ def report_lines(
     complete: bool,
     ai_details: list[str],
     evidence_limit: int = 8,
+    report_engine_coverage: bool = False,
 ) -> list[str]:
     host = scope["host"]
     cover = analysis["coverage"]
@@ -688,13 +690,26 @@ def report_lines(
                 "- provider checks with unknown pages: " + ", ".join(unknown_technical[:12])
             )
         lines.append("")
-    lines.extend(
-        [
-            "A check is an observation, not proof of indexing or ranking impact. Unknown checks "
-            "are not passes. Tin read the static HTML without running JavaScript. This version "
-            "does not measure backlinks, private product analytics or AI engines other than "
-            "the one named above.",
-            "",
-        ]
+    limits = (
+        "A check is an observation, not proof of indexing or ranking impact. Unknown checks "
+        "are not passes. Tin read the static HTML without running JavaScript. This version "
+        "does not measure backlinks"
     )
+    if report_engine_coverage:
+        rows = (ai.get("engines") or {}).get("by_engine") or []
+        answers = sum(row["answered"] for row in rows)
+        engines = sum(row["answered"] > 0 for row in rows)
+        limits += " or private product analytics. " + (
+            f"The separate cross-engine tables record {count(answers, 'answer')} "
+            f"from {count(engines, 'engine')}. "
+            if answers
+            else "No cross-engine answers were measured for this run. "
+        )
+        limits += (
+            "Missing or unconfirmed answers are not results. The sampled API baseline remains "
+            "separate from those app and API-model measurements."
+        )
+    else:
+        limits += ", private product analytics or AI engines other than the one named above."
+    lines.extend([limits, ""])
     return lines

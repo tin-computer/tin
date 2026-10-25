@@ -25,6 +25,9 @@ should express relevant changes in plain language, not require people to manage 
 
 ## Implemented boundary
 
+Catalog materialization returns an independent definition, including nested schemas and
+policies. Editing that result cannot change the catalog template or later definitions.
+
 `workflow_definitions.resolve_execution_contract` resolves a complete selected definition.
 Direct starts, saved HTTP/MCP starts, prepared parent children, scheduled dispatch, and
 HTTP/MCP configuration creation/editing use it. The latest exact-revision Postgres projection

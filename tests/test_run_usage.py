@@ -48,6 +48,35 @@ def test_bad_amounts_are_unknown(value):
     assert dollars(0) == "0" and count(0) == 0
 
 
+@pytest.mark.parametrize(
+    ("provider", "expected"),
+    [
+        ("fal", "fal"),
+        ("podscan", "podscan"),
+        ("dataforseo", "dataforseo"),
+        ("gak", "gak"),
+        (None, "unknown"),
+        ("future_provider", "unknown"),
+        ("https://provider.test/?key=private-token", "unknown"),
+    ],
+)
+def test_tool_usage_names_only_the_observed_known_provider(provider, expected):
+    item = observation(
+        {"operation": "external_usage_v1", "execution_key": "test-provider-label"},
+        {
+            "category": "tool",
+            "provider": provider,
+            "reported_cost_usd": "0.25",
+            "outcome": "response_received",
+        },
+    )
+    assert item["provider"] == expected
+    assert item["kind"] == "tool"
+    assert item["provider_reported_cost_usd"] == "0.25"
+    assert item["outcome"] == "response_received"
+    assert "private-token" not in json.dumps(item)
+
+
 async def test_responses_captured_before_invalid_output_and_never_rebought(publication_db):
     db = publication_db
     _, _, run, _ = await activity_fixture(db)

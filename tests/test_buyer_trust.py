@@ -65,6 +65,7 @@ def evidence(**overrides):
             "total_before_pay": True,
             "contact_url": f"{ORIGIN}/contact",
             "refund_url": f"{ORIGIN}/refunds",
+            "refund_checked": True,
         },
     }
     for dotted, value in overrides.items():
@@ -280,6 +281,7 @@ def test_checkout_gaps_are_founder_decisions(trust):
                 "total_before_pay": False,
                 "contact_url": None,
                 "refund_url": None,
+                "refund_checked": True,
             }
         ),
         AS_OF,
@@ -299,6 +301,87 @@ def test_unchecked_checkout_is_unknown_not_a_fix(trust):
     assert result["verdict"] == "PASS"
     assert result["fixes"] == []
     assert {"signal": "Checkout", "observed": "not checked", "result": "unknown"} in result["rows"]
+
+
+@pytest.mark.parametrize("refund_url", [None, f"{ORIGIN}/terms"])
+def test_unread_refund_policy_is_unknown_not_a_publish_fix(trust, refund_url):
+    observed = evidence(checkout__refund_url=refund_url)
+    observed["checkout"]["refund_checked"] = False
+    result = trust["gate"](observed, AS_OF)
+    refund = next(row for row in result["rows"] if row["signal"] == "Refund terms within one click")
+    assert refund["result"] == "unknown"
+    assert "refund" not in fixes_by_id(result)
+    assert result["evidence"]["checkout"]["refund_checked"] is False
+
+
+def test_legacy_refund_policy_without_a_checked_flag_stays_unknown(trust):
+    observed = evidence(checkout__refund_url=None)
+    observed["checkout"].pop("refund_checked", None)
+    result = trust["gate"](observed, AS_OF)
+    assert "refund" not in fixes_by_id(result)
+    assert (
+        next(row for row in result["rows"] if row["signal"] == "Refund terms within one click")[
+            "result"
+        ]
+        == "unknown"
+    )
+
+
+def test_checked_refund_section_in_terms_satisfies_presence_check(trust):
+    observed = evidence(checkout__refund_url=f"{ORIGIN}/terms")
+    observed["checkout"]["refund_checked"] = True
+    result = trust["gate"](observed, AS_OF)
+    assert result["verdict"] == "PASS"
+    assert next(
+        row for row in result["rows"] if row["signal"] == "Refund terms within one click"
+    ) == {
+        "signal": "Refund terms within one click",
+        "observed": f"{ORIGIN}/terms",
+        "result": "pass",
+    }
+    assert "refund" not in fixes_by_id(result)
+
+
+def test_unread_refund_policy_keeps_independent_hsts_failure(trust):
+    observed = evidence(headers__hsts="max-age=0", checkout__refund_url=None)
+    observed["checkout"]["refund_checked"] = False
+    result = trust["gate"](observed, AS_OF)
+    assert result["verdict"] == "FAIL"
+    assert set(fixes_by_id(result)) == {"hsts"}
+
+
+def test_checked_missing_refund_policy_has_a_scoped_founder_action(trust):
+    observed = evidence(checkout__refund_url=None)
+    observed["checkout"]["refund_checked"] = True
+    result = trust["gate"](observed, AS_OF)
+    refund = fixes_by_id(result)["refund"]
+    assert refund["owner"] == "founder"
+    assert refund["rank"] == "fix_week"
+    assert "existing" in refund["fix"].lower()
+    assert "only if" in refund["fix"].lower()
+
+
+def test_refund_policy_checked_state_round_trips(trust):
+    observed = evidence(checkout__refund_url=f"{ORIGIN}/terms")
+    observed["checkout"]["refund_checked"] = False
+    result = trust["gate"](observed, AS_OF)
+    payload = json.loads(trust["evidence_block"](result).split("\n", 1)[1].rsplit("\n", 1)[0])
+    repeated = trust["gate"](payload["evidence"], AS_OF)
+    assert repeated["rows"] == result["rows"]
+    assert "refund" not in fixes_by_id(repeated)
+
+
+def test_refused_refund_fetch_keeps_other_checkout_facts_and_row_count(trust):
+    observed = evidence(checkout__refund_url=f"{ORIGIN}/terms")
+    observed["checkout"]["refund_checked"] = None
+    result = trust["gate"](observed, AS_OF)
+    checked = trust["gate"](evidence(), AS_OF)
+    assert len(result["rows"]) == len(checked["rows"])
+    assert [row for row in result["rows"] if row["signal"] != "Refund terms within one click"] == [
+        row for row in checked["rows"] if row["signal"] != "Refund terms within one click"
+    ]
+    assert "refund" not in fixes_by_id(result)
+    assert result["evidence"]["checkout"]["refund_checked"] is None
 
 
 @pytest.mark.parametrize("key", ["privacy", "git_head", "env"])
@@ -363,6 +446,8 @@ def test_the_evidence_block_round_trips_for_the_next_run(trust):
         ({"origin": "https://user:pw@shop.example.com"}, "origin"),
         ({"checkout__refund_url": "http://shop.example.com/refunds"}, "refund_url"),
         ({"checkout__guest_option": "true"}, "guest_option"),
+        ({"checkout__refund_checked": "true"}, "refund_checked"),
+        ({"checkout__refund_checked": 1}, "refund_checked"),
         ({"public_contact": "security@example.com"}, "public_contact"),
         ({"mixed_content": True}, "mixed_content"),
         ({"mixed_content": ["https://cdn.example.net/app.js"]}, "mixed_content"),

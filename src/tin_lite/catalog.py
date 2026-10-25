@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+from copy import deepcopy
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
@@ -603,7 +604,7 @@ class BuiltinWorkflow:
         suite = suite_for_workflow(self.key)
         if suite is not None:
             definition["native_skill_suite"] = suite
-        return definition, resources
+        return deepcopy(definition), resources
 
     def definition_with_wiki(self, system_wiki: SystemWikiRef) -> dict[str, Any]:
         definition = self.definition
@@ -2207,7 +2208,8 @@ BUILTIN_WORKFLOWS = (
         # Search Console searches, and no longer reads organic.prompt_panel.
         # 0.12.0: organic-audit-v16 adds the other address (www or bare), missing structured
         # data, complete link previews and links to a privacy policy and terms.
-        version_label="0.12.0",
+        # 0.12.1: v17 respects crawler policy and states actual engine report coverage.
+        version_label="0.12.1",
         model_route=ModelRoute(
             key="organic.audit.visibility.v1",
             provider=ProviderName.OPENAI,

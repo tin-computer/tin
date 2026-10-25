@@ -120,12 +120,14 @@ class SiteView:
         search_queries: list[dict],
         angles: bool = True,
         basics: bool = False,
+        crawler_access_policy: bool = False,
     ) -> None:
         self.host, self.hosts = host, hosts
         # Audit policy v11's added checks; a run pinned to v10 keeps v10's findings.
         self.angles = angles
         # Audit policy v16's added checks; a run pinned to v15 or earlier keeps its findings.
         self.basics = basics
+        self.crawler_access_policy = crawler_access_policy
         files = site.get("files") or {}
         self.site_status = files.get("status", "not_collected")
         self.robots = files.get("robots") or {
@@ -1234,11 +1236,16 @@ def _access_findings(view: SiteView, host: str) -> list[dict]:
             )
         )
     blocked: dict[str, dict] = {}
+    robots_unknown = False
     for row in rows:
         if row["agent"] == "browser" or row.get("status") != "refused":
             continue
+        allowed = robots_allows(view.robots, row["agent"], row["url"])
+        if view.crawler_access_policy and allowed is False:
+            continue
         base = browser.get(row["url"]) or {}
         if base.get("status") == "observed" and base.get("status_code", 500) < 400:
+            robots_unknown |= allowed is None
             entry = blocked.setdefault(row["agent"], {"codes": set(), "urls": []})
             entry["codes"].add(row.get("status_code"))
             entry["urls"].append(row["url"])
@@ -1250,7 +1257,11 @@ def _access_findings(view: SiteView, host: str) -> list[dict]:
                 check_id="access.ai_crawlers_refused",
                 category="site",
                 area="crawlability_indexation",
-                issue="The site likely blocks AI crawlers that robots.txt allows",
+                issue=(
+                    "The site likely turns AI crawlers away; robots.txt permission is unknown"
+                    if view.crawler_access_policy and robots_unknown
+                    else "The site likely blocks AI crawlers that robots.txt allows"
+                ),
                 impact="high" if search_blocked else "medium",
                 evidence=[
                     *(
@@ -1258,6 +1269,11 @@ def _access_findings(view: SiteView, host: str) -> list[dict]:
                         + ", ".join(str(code) for code in sorted(c for c in entry["codes"] if c))
                         + f" on {count(len(entry['urls']), 'page')} that load for a browser."
                         for name, entry in sorted(blocked.items())
+                    ),
+                    *(
+                        ["robots.txt permission is unknown; the file could not be read."]
+                        if view.crawler_access_policy and robots_unknown
+                        else []
                     ),
                     "CDNs can verify crawlers by IP address and treat a real crawler "
                     "differently, so this is likely, not certain. Confirm in your CDN's bot "
@@ -1267,12 +1283,19 @@ def _access_findings(view: SiteView, host: str) -> list[dict]:
                     "Allow the AI search crawlers you want to be cited by (OAI-SearchBot, "
                     "ChatGPT-User, PerplexityBot, Claude-SearchBot) in your CDN or firewall, "
                     "not only in robots.txt. Training crawlers are a separate choice."
+                    if not view.crawler_access_policy or search_blocked
+                    else "These are training crawlers, a separate choice from search visibility. "
+                    "Keep them blocked if intended; otherwise check their CDN or firewall rules."
                 ),
                 priority="high_impact",
                 evidence_kind="page_fetch",
                 confidence="likely",
                 urls=sorted({u for entry in blocked.values() for u in entry["urls"]}),
-                evidence_refs=["site.access"],
+                evidence_refs=(
+                    ["site.access", "site.files.robots"]
+                    if view.crawler_access_policy
+                    else ["site.access"]
+                ),
             )
         )
     robots = view.robots
