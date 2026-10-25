@@ -17,12 +17,12 @@ from organic_site_stub import SyntheticSite, html_page
 from test_organic_audit_acceptance import run_audit
 from test_organic_audit_angles import BASE, HOST, facts, found, ids
 
-from tin_lite.catalog import BUILTIN_WORKFLOWS
 from tin_lite.dataforseo import DataForSEO
 from tin_lite.organic_audit import (
     AUDIT_POLICY,
     SITE_EVIDENCE_POLICY_KEYS,
     V15_AUDIT_POLICY,
+    V16_AUDIT_POLICY,
     audit_policy,
     digest,
 )
@@ -121,9 +121,9 @@ def test_v15_is_exactly_what_main_shipped():
     assert digest(ai_schemas(V15)) == V15_SCHEMAS_DIGEST
 
 
-def test_v16_is_the_default_and_only_adds_site_evidence_settings():
-    assert AUDIT_POLICY["version"] == V16 and audit_policy() is AUDIT_POLICY
-    assert {k: v for k, v in AUDIT_POLICY.items() if k != "version"} == {
+def test_v16_stays_pinned_and_only_adds_site_evidence_settings():
+    assert V16_AUDIT_POLICY["version"] == V16 and audit_policy(V16) is V16_AUDIT_POLICY
+    assert {k: v for k, v in V16_AUDIT_POLICY.items() if k != "version"} == {
         **{k: v for k, v in V15_AUDIT_POLICY.items() if k != "version"},
         "site_basics": True,
         "max_share_images": 3,
@@ -139,13 +139,10 @@ def test_v16_is_the_default_and_only_adds_site_evidence_settings():
         "entity_backlinks_reservation_usd",
         "max_entity_checks",
     } <= SITE_EVIDENCE_POLICY_KEYS
-    assert {k: v for k, v in AUDIT_POLICY.items() if k not in NEUTRAL_KEYS} == {
+    assert {k: v for k, v in V16_AUDIT_POLICY.items() if k not in NEUTRAL_KEYS} == {
         k: v for k, v in V15_AUDIT_POLICY.items() if k not in NEUTRAL_KEYS
     }
     assert ai_contract(V16) == ai_contract(V15) and ai_schemas(V16) == ai_schemas(V15)
-    workflow = next(w for w in BUILTIN_WORKFLOWS if w.key == "organic.audit")
-    assert workflow.version_label == "0.12.0"
-    assert workflow.definition["audit_policy"] == AUDIT_POLICY
 
 
 def test_page_facts_name_the_preview_image_x_card_and_legal_links():
