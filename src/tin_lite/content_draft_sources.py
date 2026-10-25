@@ -554,8 +554,10 @@ class ContentDraftSources:
                 if content is None:
                     continue
                 file_bytes += len(content)
-                if len(content) > 20_000 or file_bytes > 60_000:
-                    raise ValueError("Draft context files exceed 20 KB each or 60 KB together.")
+                # Sources may grow after planning. The combined source budget and the
+                # serialized-context bound still apply; keep each file's full contents.
+                if file_bytes > 60_000:
+                    raise ValueError("Draft context files exceed 60 KB together.")
                 evidence[source_id] = {
                     "source_id": source_id,
                     "path": path,
