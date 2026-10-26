@@ -7413,7 +7413,12 @@ class Database:
                     artifact_ref = $4,
                     error_message = CASE WHEN $7 = 'failed' THEN $5::text ELSE NULL END,
                     result_summary = COALESCE($8::text, result_summary),
-                    progress_summary = CASE WHEN $6 = 'organic.audit'
+                    progress_step = CASE WHEN $7 = 'succeeded'
+                        THEN 'complete' ELSE progress_step END,
+                    progress_current = CASE WHEN $7 = 'succeeded'
+                        THEN COALESCE(progress_total, progress_current) ELSE progress_current END,
+                    progress_summary = CASE WHEN $7 = 'succeeded'
+                        THEN COALESCE($8::text, $9::text) WHEN $6 = 'organic.audit'
                         THEN COALESCE($8::text, progress_summary) ELSE progress_summary END,
                     finished_at = COALESCE(finished_at, now()), progress_percent = 100,
                     progress_updated_at = now(), heartbeat_at = now()
@@ -7446,6 +7451,7 @@ class Database:
                 else workflow_key,
                 final_status,
                 result_line(summary),
+                default_summary,
             )
             if projected is None:
                 raise SideEffectConflictError("report cannot complete in its current state")
