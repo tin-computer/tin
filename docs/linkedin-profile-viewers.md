@@ -90,7 +90,9 @@ The same as engagers:
    summary says how many accepted. This daily run is what reads it, so the sending run can
    finish once its requests are out. It doesn't run after LinkedIn objected.
 7. **Propose and publish.** Newly eligible viewers join the member's open batch in Decisions,
-   under the same rules as people who reacted. Then it rewrites:
+   under the same rules as people who reacted. A member who turned on
+   [approving automatically](linkedin-requests.md#approved-automatically) has the batch
+   approved right after. Then it rewrites:
    - `people/linkedin-profile-viewers.csv`: everyone who viewed the member, best fit first, with
      when they last looked and how many times;
    - `people/linkedin-profile-viewers.md`: counts, LinkedIn's total of views, private viewers,

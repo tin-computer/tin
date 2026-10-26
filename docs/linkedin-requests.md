@@ -36,6 +36,33 @@ member's sending run (see [One line per member](#one-line-per-member)); nothing 
 one. Nothing is sent at the moment of approval. If a new run can't start, the batch goes back
 to Decisions as it was and the member reads why.
 
+## Approved automatically
+
+A member can let Tin approve for them: "Approve people who fit automatically" on the LinkedIn
+card's Sending row (`PUT …/linkedin-requests/sending` with `auto_approve: true`, which takes
+`enabled: true` and `consent_version` 1 like any change to sending). It needs sending on, and
+turning sending off turns it off too, so turning sending on again later doesn't bring it back
+unasked. MCP can't turn it on, as it can't turn sending on.
+
+Then, right after each of the member's engagers or profile viewers runs proposes, Tin approves
+their open batch for them (`ConnectionRequests.auto_approve`):
+
+- **Who:** people still proposed whose fit is still 0.6 or more, who aren't a customer and
+  aren't the member's connection or invitee as far as Tin knows now. The rest of the batch is
+  declined, as unticked people are.
+- **How:** through the same `decide` as Decisions, as the member, so the member-only rule, the
+  caps, the window, the wait between requests, the halved first week, the 14-day lapse and
+  pauses all apply as usual. It runs after `propose` commits, because approving starts or joins
+  the member's sending run.
+- **When not:** sending off, or paused until the member resumes it; the batch then waits in
+  Decisions as usual. A refusal (a run that can't start) leaves the batch there too.
+- **Retries:** the decision's `request_id` comes from the run that proposed
+  (`uuid5(AUTO_APPROVE, "auto-approve:<run>")`), so a retried read repeats the same approval
+  and starts no second run.
+- **How it shows:** the run's line ("Approved automatically: connection requests to 2 people
+  who fit. Tin sends them one at a time on your schedule."), and a sending run it starts reads
+  "approved automatically" in Activity (`trigger_source` `auto_approve`).
+
 ## Chosen in People
 
 A member can tick people in People and press "Send N requests"
@@ -157,8 +184,8 @@ helper, `read_accepted`.
   Its title names what brought them, in the words of the workflow that found them: "People who
   engaged with your LinkedIn posts", "People who viewed your LinkedIn profile", or "People who
   engaged with your posts or viewed your profile" for a batch with both.
-- **LinkedIn card:** the Sending row (switch, consent, limits, the paused state with Resume) and
-  This week (sent, accepted, queued, pending, next send). A held sending makes the card need
+- **LinkedIn card:** the Sending row (switch, consent, approving automatically, limits, the
+  paused state with Resume) and This week (sent, accepted, queued, pending, next send). A held sending makes the card need
   you.
 - **People:** the tick lane and its bar; "Queued", then "Invited oct 16", in the LinkedIn
   column; in the panel, when a queued request goes and "Cancel request" (Paper REQ-C2); an Invited segment once someone is invited; and "Connection request sent" /

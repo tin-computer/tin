@@ -196,6 +196,7 @@ class LinkedInProfileViewersActivities(LinkedInEngagersActivities):
             await requests.propose(
                 conn, run.project_id, run.started_by_clerk_user_id, run_id=run.id
             )
+        notes["auto_approved"] = await self._auto_approve(run)
         notes["proposed"] = await self.db.pool.fetchval(
             """SELECT count(*) FROM linkedin_requests q
                JOIN linkedin_request_batches b ON b.id = q.batch_id

@@ -33,6 +33,8 @@ class SendingChange(BaseModel):
     enabled: bool
     consent_version: int | None = None
     limits: Limits | None = None
+    # Let Tin approve the people the member's own LinkedIn reads propose; needs sending on.
+    auto_approve: bool | None = None
 
 
 class Decision(BaseModel):
@@ -77,6 +79,7 @@ async def change_sending(
             enabled_=change.enabled,
             consent_version=change.consent_version,
             limits=limits,
+            auto_approve=change.auto_approve,
         )
     )
 
