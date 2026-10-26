@@ -16,7 +16,7 @@
     "Depth sets how many pages beyond the fixed gate set are fetched: one entry page when focused, contact, refund and terms pages at standard, up to three more money pages when extensive."
   ],
   "rubric": [
-    {"id": "grounding", "question": "Does each fix cite its evidence URL and the exact header, status or quoted snippet, and does the verdict equal what GATE.md returns for the recorded evidence?"},
+    {"id": "grounding", "question": "Does each fix cite its evidence URL and the exact header, status or quoted snippet, and does the verdict equal what GATE.md returns for the recorded evidence? Are unread or unreachable refund pages marked unknown instead of missing, including unread Terms links in focused runs?"},
     {"id": "handoff", "question": "Is every repository-fixable item a complete site.health_improve input block, and is every host, policy or pricing item assigned to the founder instead?"},
     {"id": "context", "question": "Does the report cite the signup walkthrough, Feature map and onboarding plan when present, compare pricing and refund claims with them, and avoid re-walking signup?"}
   ],

@@ -70,6 +70,11 @@ Then by `depth`:
   enterprise or order form), checking headers and mixed content on each.
 
 Fill the evidence object in GATE.md from these observations and the signup report only.
+For refund terms, record whether the linked page content was checked. An unread Terms link,
+a refused fetch or a focused run that stops at pricing leaves `refund_checked` false and
+the result unknown. State which page needs inspection under `## Not checked`; do not call
+its policy missing or recommend publishing a replacement. A read Terms page with a refund
+or cancellation section can satisfy this presence check without a separate Refunds page.
 
 ## 4. Run the gate
 
