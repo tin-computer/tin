@@ -6,6 +6,15 @@ one writer: `content.generate` drafts the next item of the content plan, whateve
 `content.refresh` stays registered for pinned runs and saved schedules, but it leaves
 discovery. The standalone `content.answer_page` workflow is gone.
 
+## Selected source files
+
+Drafting reads each selected file in full at the prepared project revision and records its
+path, revision and SHA-256. A source may grow after planning. Drafting limits these files to
+60 KB together and the complete serialized context to 64 KB; it does not impose planning's
+20 KB per-file limit again. Neither the source files nor the wiki are shortened. Retries
+reuse the saved preparation. The separate limits for selecting files during planning are
+unchanged.
+
 ## Plan items have a kind
 
 A plan item (`content.plan`'s `ContentItem`) has an optional `kind`:
