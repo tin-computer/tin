@@ -96,7 +96,8 @@ STRIPE_CAPABILITIES = (
 )
 # Read-only PostHog capabilities for the one project the founder selects.
 POSTHOG_CAPABILITIES = ("query.read", "definitions.read", "insights.read")
-X_CAPABILITIES = ("x.posts.read", "x.posts.publish", "x.media.upload")
+# x.public.read reads other accounts' public posts for research; a project opts in to it.
+X_CAPABILITIES = ("x.posts.read", "x.posts.publish", "x.media.upload", "x.public.read")
 # List the channels Tin can post to (public, and private ones it was added to) and post Tin's
 # messages; nothing is read from channels.
 SLACK_CAPABILITIES = ("slack.channels.read", "slack.messages.post")
@@ -524,8 +525,11 @@ def registered_integrations() -> tuple[IntegrationDefinition, ...]:
             key=X_PROVIDER,
             name="X",
             badge="X",
-            description="Read your own posts and publish only posts you explicitly approve.",
-            access_label="Own posts · approved publishing",
+            description=(
+                "Read your own posts, optionally public posts for research, and publish only "
+                "posts you explicitly approve."
+            ),
+            access_label="Reads posts · approved publishing",
             capabilities=X_CAPABILITIES,
             unlocks=("X writing voice", "Approved X posts"),
         ),

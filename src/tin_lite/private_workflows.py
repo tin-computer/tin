@@ -822,6 +822,7 @@ def authoring_guide(*, settings, project_id):
                     "charges.read",
                 ],
                 "analytics.posthog": ["query.read", "definitions.read", "insights.read"],
+                "social.x": ["x.public.read"],
             },
             "prerequisites": {
                 "levels": ["required", "recommended"],
@@ -955,7 +956,17 @@ def authoring_guide(*, settings, project_id):
                 "no OFFSET (page with a WHERE on timestamp) and returns {columns, types, rows, "
                 "has_more, truncated}. Stripe customer records include full email and name. "
                 "Arguments, fields and errors: docs/stripe-and-posthog-connections.md in "
-                "Tin's source.",
+                "Tin's source. X (social.x, x.public.read; the founder opts in to it once) "
+                "reads public posts: x.posts.search {query (X search syntax, 1-512 "
+                "characters), max_results 10-100, start_time, end_time, next_token} covers "
+                "about the last seven days; x.user.posts {username, max_results 5-100, "
+                "start_time, end_time, pagination_token, exclude_replies (default true)} reads "
+                "one public account's own posts, newest first. Both return {posts, "
+                "next_token, truncated}; each post has id, url, text, created_at, author "
+                "{id, username, name}, public_metrics, urls and media. Pass next_token back "
+                "(as pagination_token for x.user.posts) in a new step. Each call is a paid X "
+                "read on Tin's X app, so keep max_calls and max_results small. Details: "
+                "docs/project-api-connections.md in Tin's source.",
                 "managed": "Tin holds the key; there is nothing to connect. Declare the provider "
                 "in integration_requirements with its capabilities and bind it in code.services. "
                 "managed.pagespeed (pagespeed.read, crux.read; $0): pagespeed.run {url, "

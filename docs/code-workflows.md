@@ -12,6 +12,14 @@ do not claim coverage of those later capabilities; see [current feature status](
 Code workflows can read [current project files](code-project-files.md) through `ctx.files`.
 Tin pins the latest project revision at launch for stable retries; users choose no revision.
 
+Code workflows call connected providers through `ctx.services.call`. The reviewed operations
+are listed in [API connections](project-api-connections.md#existing-adapters-and-contributions).
+They include public X posts on `social.x`: `x.posts.search` (recent search) and `x.user.posts`
+(one public account's recent posts), with bounded arguments and results. Each call is a paid X
+read on Tin's X app made through the project's own X connection, which needs the opt-in
+`x.public.read` capability; the package's declared call limit is the runaway guard. See
+[Public X posts](project-api-connections.md#public-x-posts).
+
 Private describes project ownership and access. `workflow.code` is a separately registered
 Temporal executor for ordinary Python functions. Existing reusable `codex.procedure` packages,
 interactive `project.task` runs, and their historical contracts remain supported.

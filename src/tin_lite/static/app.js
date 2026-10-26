@@ -7435,6 +7435,7 @@ function renderXIntegrationExpanded(integration) {
     ["x.posts.read", "Read your own posts"],
     ["x.posts.publish", "Publish posts you approve"],
     ["x.media.upload", "Upload media for approved posts"],
+    ["x.public.read", "Read public posts"],
   ];
   const missingPublish = !granted.has("x.posts.publish");
   const missingMedia = !granted.has("x.media.upload");

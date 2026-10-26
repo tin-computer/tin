@@ -13,6 +13,9 @@ and testing with a connected account are still needed before it is ready for pro
 The X card in Integrations connects one X account to the selected Tin project. Connecting
 for voice sampling grants read access. Publishing asks for write and media permissions
 through X's authorization screen. Reconnecting keeps existing granted capabilities.
+Reading other accounts' public posts for research (`x.public.read`) is a separate opt-in for
+code packages; it uses the same read scopes but needs one reconnect that asks for it. See
+[Public X posts](project-api-connections.md#public-x-posts).
 Tin stores the tokens encrypted and refreshes them on the server; workflows and project
 files never receive the credentials.
 
