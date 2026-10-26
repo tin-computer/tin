@@ -16,6 +16,8 @@ SERVICE_CAPABILITIES = {
     ),
     "analytics.posthog": frozenset({"query.read", "definitions.read", "insights.read"}),
     "analytics.agent_traffic": frozenset({"status.read", "reports.read"}),
+    # Public X posts (recent search, one account's posts); paid reads on Tin's X app.
+    "social.x": frozenset({"x.public.read"}),
     # Services Tin holds the key for (managed_services.py); no founder connection.
     "managed.pagespeed": frozenset({"pagespeed.read", "crux.read"}),
     "managed.dataforseo": frozenset({"serp.read", "keywords.read", "backlinks.read"}),

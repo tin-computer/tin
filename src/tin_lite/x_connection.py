@@ -3,6 +3,10 @@
 This adapter never exposes tokens to workflow code. Publishing callers must persist an
 approved intent and effect receipt before calling ``create_post``; the X API does not
 document a create-post idempotency key.
+
+Code packages read public posts through the service gateway (``call``): recent search and
+one public account's recent posts. Each is a paid X read on Tin's X app, made with the
+project's own connection; the package's declared call limit is the runaway guard.
 """
 
 from __future__ import annotations
@@ -12,22 +16,37 @@ import hashlib
 import json
 import re
 import time
+import unicodedata
+from datetime import datetime
 from typing import Any
 from urllib.parse import urlencode
 from uuid import UUID, uuid4
 
 import httpx
 
-from tin_lite.connection_records import open_credential, read_bounded_json, seal_credential
+from tin_lite.connection_records import (
+    ServiceArgumentError,
+    json_size,
+    open_credential,
+    read_bounded_json,
+    record_call,
+    seal_credential,
+)
+from tin_lite.connection_records import text as bounded
 from tin_lite.integrations import (
     X_PROVIDER,
     IntegrationAuthorizationError,
     IntegrationDeliveryUnknownError,
+    IntegrationError,
     IntegrationInputError,
+    IntegrationProviderError,
     IntegrationRateLimitedError,
     IntegrationUpstreamError,
     ServiceCallRefused,
+    ServiceResponseTooLarge,
 )
+from tin_lite.provider_errors import ProviderErrorDetail
+from tin_lite.provider_errors import detail as provider_error_detail
 
 API = "https://api.x.com"
 AUTHORIZE = "https://x.com/i/oauth2/authorize"
@@ -41,15 +60,64 @@ MAX_CHUNK_BYTES = 5_000_000
 MAX_VIDEO_BYTES = 64_000_000
 REFRESH_MARGIN_SECONDS = 120
 ID = re.compile(r"^[0-9]{1,19}$")
+PUBLIC_READ = "x.public.read"
 CAPABILITY_SCOPES = {
     "x.posts.read": {"tweet.read", "users.read"},
     "x.posts.publish": {"tweet.write"},
     "x.media.upload": {"tweet.write", "media.write"},
+    # The scopes every connection already holds, recorded as its own capability so a project
+    # opts in to reading other accounts' public posts explicitly (see capabilities_for).
+    PUBLIC_READ: {"tweet.read", "users.read"},
 }
+# Granted only when a connection asked for them, never inferred from the scopes alone.
+OPT_IN_CAPABILITIES = frozenset({PUBLIC_READ})
+
+# Public reads through the service gateway: operation -> closed argument names.
+OPERATIONS = {
+    "x.posts.search": frozenset({"query", "max_results", "start_time", "end_time", "next_token"}),
+    "x.user.posts": frozenset(
+        {
+            "username",
+            "max_results",
+            "start_time",
+            "end_time",
+            "pagination_token",
+            "exclude_replies",
+        }
+    ),
+}
+USERNAME = re.compile(r"[A-Za-z0-9_]{1,15}")
+CURSOR = re.compile(r"[A-Za-z0-9]{1,256}")
+TIME = re.compile(r"\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}Z")
+MEDIA_KEY = re.compile(r"[A-Za-z0-9_]{1,64}")
+MAX_QUERY_CHARACTERS = 512
+# X's long-post maximum; a longer text is not a post X documents.
+MAX_POST_CHARACTERS = 25_000
+MAX_POST_URLS = 10
+MAX_POST_MEDIA = 4
+POST_METRICS = (
+    "repost_count",
+    "reply_count",
+    "like_count",
+    "quote_count",
+    "bookmark_count",
+    "impression_count",
+)
+# The same field names timeline() sends; X's OpenAPI document names them post.fields.
+PUBLIC_POST_FIELDS = "created_at,public_metrics,entities,attachments,note_post"
+PUBLIC_MEDIA_FIELDS = "type,url,preview_image_url,width,height"
 
 
 class _XUnauthorized(IntegrationAuthorizationError):
     """A definite 401; refreshing once is safe even for a write."""
+
+
+class _XForbidden(IntegrationAuthorizationError):
+    """A 403; keeps what X said so a gateway read can name the refusal."""
+
+    def __init__(self, message: str, *, provider_error: ProviderErrorDetail | None) -> None:
+        super().__init__(message)
+        self.provider_error = provider_error
 
 
 def oauth_ready(settings: Any) -> bool:
@@ -69,8 +137,12 @@ def scopes_for(capabilities: tuple[str, ...] | list[str]) -> set[str]:
     return scopes
 
 
-def capabilities_for(scopes: set[str]) -> list[str]:
-    return [key for key, required in CAPABILITY_SCOPES.items() if required <= scopes]
+def capabilities_for(scopes: set[str], requested: tuple[str, ...] | list[str] = ()) -> list[str]:
+    return [
+        key
+        for key, required in CAPABILITY_SCOPES.items()
+        if required <= scopes and (key not in OPT_IN_CAPABILITIES or key in requested)
+    ]
 
 
 def authorization_url(
@@ -145,6 +217,49 @@ def _id(value: Any, *, name: str) -> str:
     return value
 
 
+def _problem(status: int | None, body: Any, token: str | None = None) -> ProviderErrorDetail:
+    """What X said, from its problem shape: `{type, title, detail, reason, errors[]}`.
+
+    The type is the last part of X's problem URL (`invalid-request`, `client-forbidden`); the
+    message is the first error's own message (an invalid search query names its fault there),
+    else X's detail or title.
+    """
+    if not isinstance(body, dict):
+        return provider_error_detail("X", status, None)
+    kind = body.get("type")
+    if isinstance(kind, str):
+        kind = kind.rstrip("/").rsplit("/", 1)[-1]
+    errors = body.get("errors")
+    first = errors[0] if isinstance(errors, list) and errors else None
+    message = next(
+        (
+            value
+            for value in (
+                first.get("message") if isinstance(first, dict) else None,
+                body.get("detail"),
+                body.get("title"),
+            )
+            if isinstance(value, str) and value.strip()
+        ),
+        None,
+    )
+    return provider_error_detail(
+        "X",
+        status,
+        {"type": kind, "code": body.get("reason"), "message": message},
+        secrets=(token,) if token else (),
+    )
+
+
+async def _read_problem(response: httpx.Response, token: str) -> ProviderErrorDetail:
+    # The status already settles the outcome; an unreadable body only loses X's words.
+    try:
+        body = await read_bounded_json(response, maximum=MAX_ERROR_BYTES, provider="X")
+    except (IntegrationError, httpx.HTTPError):
+        body = None
+    return _problem(response.status_code, body, token)
+
+
 def _retry_after(response: httpx.Response) -> int | None:
     raw = response.headers.get("retry-after")
     if raw is not None and raw.isdigit():
@@ -153,6 +268,287 @@ def _retry_after(response: httpx.Response) -> int | None:
     if reset is not None and reset.isdigit():
         return max(0, min(int(reset) - int(time.time()), 3600))
     return None
+
+
+# ---------------------------------------------------------------- public reads: arguments
+
+
+def _limit(value: Any, low: int) -> int:
+    if type(value) is not int or not low <= value <= 100:
+        raise IntegrationInputError(f"X max_results must be an integer from {low} to 100")
+    return value
+
+
+def _cursor(value: Any, name: str) -> str | None:
+    if value is not None and (not isinstance(value, str) or not CURSOR.fullmatch(value)):
+        raise IntegrationInputError(f"X {name} is invalid; pass back the next_token X returned")
+    return value
+
+
+def _window(start_time: Any, end_time: Any) -> dict[str, str]:
+    params: dict[str, str] = {}
+    moments = {}
+    for key, value in (("start_time", start_time), ("end_time", end_time)):
+        if value is None:
+            continue
+        try:
+            if not isinstance(value, str) or not TIME.fullmatch(value):
+                raise ValueError
+            moments[key] = datetime.strptime(value, "%Y-%m-%dT%H:%M:%SZ")
+        except ValueError:
+            raise IntegrationInputError(
+                f"X {key} must be a UTC time such as 2026-10-01T00:00:00Z"
+            ) from None
+        params[key] = value
+    if len(moments) == 2 and moments["start_time"] >= moments["end_time"]:
+        raise IntegrationInputError("X start_time must be before end_time")
+    return params
+
+
+def _username(value: Any) -> str:
+    if not isinstance(value, str) or not USERNAME.fullmatch(value):
+        raise IntegrationInputError(
+            "X username must be 1-15 letters, digits or underscores, without @ or a URL"
+        )
+    return value
+
+
+def _search_params(
+    *,
+    query: Any,
+    max_results: Any = 10,
+    start_time: Any = None,
+    end_time: Any = None,
+    next_token: Any = None,
+) -> dict[str, Any]:
+    if (
+        not isinstance(query, str)
+        or not query.strip()
+        or len(query) > MAX_QUERY_CHARACTERS
+        or any(unicodedata.category(char) == "Cc" for char in query)
+    ):
+        raise IntegrationInputError(
+            f"X search query must be 1-{MAX_QUERY_CHARACTERS} characters without line breaks "
+            "or control characters"
+        )
+    params: dict[str, Any] = {
+        "query": query,
+        "max_results": _limit(max_results, 10),
+        "post.fields": PUBLIC_POST_FIELDS,
+        "expansions": "author_id,attachments.media_keys",
+        "user.fields": "protected",
+        "media.fields": PUBLIC_MEDIA_FIELDS,
+        **_window(start_time, end_time),
+    }
+    if _cursor(next_token, "next_token"):
+        params["next_token"] = next_token
+    return params
+
+
+def _user_posts_params(
+    *,
+    max_results: Any = 10,
+    start_time: Any = None,
+    end_time: Any = None,
+    pagination_token: Any = None,
+    exclude_replies: Any = True,
+) -> dict[str, Any]:
+    if type(exclude_replies) is not bool:
+        raise IntegrationInputError("X exclude_replies must be true or false")
+    params: dict[str, Any] = {
+        "max_results": _limit(max_results, 5),
+        "post.fields": PUBLIC_POST_FIELDS,
+        "expansions": "attachments.media_keys",
+        "media.fields": PUBLIC_MEDIA_FIELDS,
+        # Reposts are other accounts' posts; this reads what the account itself posted.
+        "exclude": "replies,retweets" if exclude_replies else "retweets",
+        **_window(start_time, end_time),
+    }
+    if _cursor(pagination_token, "pagination_token"):
+        params["pagination_token"] = pagination_token
+    return params
+
+
+def check_arguments(operation: str, arguments: Any) -> None:
+    """Gateway hook: reject a malformed call before any receipt or X request exists."""
+    if operation not in OPERATIONS:
+        raise ServiceArgumentError("unknown X operation")
+    if not isinstance(arguments, dict):
+        raise ServiceArgumentError("arguments must be an object")
+    unknown = sorted(set(arguments) - OPERATIONS[operation])
+    if unknown:
+        raise ServiceArgumentError(f"unsupported argument {unknown[0]}")
+    try:
+        if operation == "x.posts.search":
+            _search_params(**{"query": None, **arguments})
+        else:
+            args = dict(arguments)
+            _username(args.pop("username", None))
+            _user_posts_params(**args)
+    except IntegrationInputError as exc:
+        raise ServiceArgumentError(str(exc)) from None
+
+
+# ---------------------------------------------------------------- public reads: results
+
+
+def _web_url(value: Any, *, secure: bool = False) -> str | None:
+    schemes = ("https://",) if secure else ("https://", "http://")
+    if (
+        isinstance(value, str)
+        and value.startswith(schemes)
+        and len(value) <= 2048
+        and not any(char.isspace() or not char.isprintable() for char in value)
+    ):
+        return value
+    return None
+
+
+def _count(value: Any) -> int | None:
+    return value if type(value) is int and value >= 0 else None
+
+
+def _includes(result: dict[str, Any]) -> tuple[dict[str, dict], dict[str, dict]]:
+    """Authors and media by id from `includes`; an entry without a usable id resolves nothing."""
+    includes = result.get("includes", {})
+    users = includes.get("users", []) if isinstance(includes, dict) else None
+    media = includes.get("media", []) if isinstance(includes, dict) else None
+    if not isinstance(users, list) or not isinstance(media, list):
+        raise IntegrationUpstreamError("X returned invalid authors or media")
+    authors = {
+        user["id"]: {
+            "id": user["id"],
+            "username": user.get("username")
+            if isinstance(user.get("username"), str) and USERNAME.fullmatch(user["username"])
+            else None,
+            "name": bounded(user.get("name"), 100),
+            "protected": user.get("protected") is True,
+        }
+        for user in users
+        if isinstance(user, dict) and isinstance(user.get("id"), str) and ID.fullmatch(user["id"])
+    }
+    attached = {
+        item["media_key"]: {
+            "type": bounded(item.get("type"), 40),
+            "url": _web_url(item.get("url"), secure=True),
+            "preview_image_url": _web_url(item.get("preview_image_url"), secure=True),
+            "width": _count(item.get("width")),
+            "height": _count(item.get("height")),
+        }
+        for item in media
+        if isinstance(item, dict)
+        and isinstance(item.get("media_key"), str)
+        and MEDIA_KEY.fullmatch(item["media_key"])
+    }
+    return authors, attached
+
+
+def _post_urls(*sources: Any) -> list[dict[str, Any]]:
+    """Links the post text carries, by expanded URL; attached media's own links are left out."""
+    found: dict[str, dict[str, Any]] = {}
+    for entities in sources:
+        urls = entities.get("urls") if isinstance(entities, dict) else None
+        for item in urls if isinstance(urls, list) else []:
+            if not isinstance(item, dict) or item.get("media_key"):
+                continue
+            expanded = _web_url(item.get("expanded_url"))
+            if expanded is None or expanded in found:
+                continue
+            if len(found) == MAX_POST_URLS:
+                return list(found.values())
+            found[expanded] = {
+                "expanded_url": expanded,
+                "unwound_url": _web_url(item.get("unwound_url")),
+                "title": bounded(item.get("title"), 300),
+                "description": bounded(item.get("description"), 500),
+            }
+    return list(found.values())
+
+
+def _public_post(
+    post: Any, authors: dict[str, dict], media: dict[str, dict], account: dict | None
+) -> dict[str, Any] | None:
+    """One cleaned post, or None for a post whose author protects their posts."""
+    if not isinstance(post, dict) or not isinstance(post.get("id"), str):
+        raise IntegrationUpstreamError("X returned an invalid post")
+    post_id = post["id"]
+    if not ID.fullmatch(post_id):
+        raise IntegrationUpstreamError("X returned an invalid post")
+    note = post.get("note_post") if isinstance(post.get("note_post"), dict) else None
+    body = note.get("text") if note is not None else None
+    if not isinstance(body, str):
+        body = post.get("text")
+    if not isinstance(body, str) or len(body) > MAX_POST_CHARACTERS:
+        raise IntegrationUpstreamError("X returned an incomplete post")
+    author_id = post.get("author_id")
+    author = account or authors.get(author_id)
+    if author is None and isinstance(author_id, str) and ID.fullmatch(author_id):
+        # X left the author out of includes (a partial error): keep the post with its id.
+        author = {"id": author_id, "username": None, "name": None, "protected": False}
+    if author is not None and author.get("protected"):
+        return None
+    attachments = post.get("attachments")
+    keys = attachments.get("media_keys") if isinstance(attachments, dict) else None
+    metrics = post.get("public_metrics")
+    metrics = metrics if isinstance(metrics, dict) else {}
+    created = post.get("created_at")
+    return {
+        "id": post_id,
+        "url": f"https://x.com/i/web/status/{post_id}",
+        "text": body,
+        "created_at": created if isinstance(created, str) and len(created) <= 40 else None,
+        "author": {key: author[key] for key in ("id", "username", "name")} if author else None,
+        "public_metrics": {
+            key: metrics[key] for key in POST_METRICS if _count(metrics.get(key)) is not None
+        },
+        "urls": _post_urls(post.get("entities"), note.get("entities") if note else None),
+        "media": [
+            media[key]
+            for key in (keys if isinstance(keys, list) else [])[:MAX_POST_MEDIA]
+            if isinstance(key, str) and key in media
+        ],
+    }
+
+
+def _public_page(
+    result: dict[str, Any], *, limit: int, account: dict | None = None
+) -> dict[str, Any]:
+    posts = result.get("data", [])
+    meta = result.get("meta", {})
+    if not isinstance(posts, list) or not isinstance(meta, dict) or len(posts) > limit:
+        raise IntegrationUpstreamError("X returned an invalid page of posts")
+    authors, media = _includes(result)
+    clean = [
+        post
+        for post in (_public_post(item, authors, media, account) for item in posts)
+        if post is not None
+    ]
+    cursor = meta.get("next_token")
+    if cursor is not None and (not isinstance(cursor, str) or not CURSOR.fullmatch(cursor)):
+        raise IntegrationUpstreamError("X returned an invalid next_token")
+    return {"posts": clean, "next_token": cursor}
+
+
+def _fit(page: dict[str, Any], maximum: int | None) -> dict[str, Any]:
+    """Keep the leading posts that fit the binding's bound, saying when some were left out.
+
+    X's next_token continues after the whole page, so a left-out post is skipped; a smaller
+    max_results reads every post. A single post too large on its own is a known outcome.
+    """
+    whole = {**page, "truncated": False}
+    if maximum is None or json_size(whole) <= maximum:
+        return whole
+    posts = page["posts"]
+    used = json_size({**page, "posts": [], "truncated": True})
+    kept = 0
+    for index, post in enumerate(posts):
+        used += json_size(post) + (2 if index else 0)  # ", " between posts
+        if used > maximum:
+            break
+        kept += 1
+    if posts and not kept:
+        raise ServiceResponseTooLarge("A single X post exceeds the response bound.")
+    return {**page, "posts": posts[:kept], "truncated": True}
 
 
 class XConnection:
@@ -275,7 +671,10 @@ class XConnection:
                     "username": user["username"][:100],
                     "protected": user["protected"],
                     "granted_scopes": sorted(scopes),
-                    "granted_capabilities": capabilities_for(scopes),
+                    # Reconnecting asks again for what was granted (start_connect merges it).
+                    "granted_capabilities": capabilities_for(
+                        scopes, attempt.requested_capabilities
+                    ),
                     "oauth_client_id": self.integrations._settings.x_oauth_client_id,
                     "auth_attempt": state_hash,
                 },
@@ -356,9 +755,18 @@ class XConnection:
             return renewed["access_token"]
 
     async def _request_token(
-        self, method: str, path: str, token: str, *, ambiguous_write: bool = False, **kwargs
+        self,
+        method: str,
+        path: str,
+        token: str,
+        *,
+        ambiguous_write: bool = False,
+        problems: bool = False,
+        **kwargs,
     ) -> dict[str, Any]:
-        # Every caller supplies a fixed path or a validated numeric X id; never accept a URL.
+        # Every caller supplies a fixed path, a validated numeric X id or a validated username;
+        # never accept a URL. A refusal keeps what X said as provider_error, beside Tin's own
+        # unchanged message. `problems` returns a read's errors-only body for the caller.
         try:
             async with self._client.stream(
                 method,
@@ -373,19 +781,26 @@ class XConnection:
                     raise IntegrationRateLimitedError(
                         "X rate limited this request; try again later",
                         retry_after=_retry_after(response),
+                        provider_error=await _read_problem(response, token),
                     )
                 if status == 401:
                     raise _XUnauthorized("X access token expired")
                 if status == 403:
-                    raise IntegrationAuthorizationError(
-                        "X rejected this access; reconnect or check your X plan"
+                    raise _XForbidden(
+                        "X rejected this access; reconnect or check your X plan",
+                        provider_error=await _read_problem(response, token),
                     )
                 if status >= 500 and ambiguous_write:
                     raise IntegrationDeliveryUnknownError(
                         "X may have completed the action; check its status before retrying"
                     )
-                if status >= 500 or 300 <= status < 400:
+                if 300 <= status < 400:
                     raise IntegrationUpstreamError("X could not complete the request")
+                if status >= 500:
+                    raise IntegrationProviderError(
+                        "X could not complete the request",
+                        provider_error=await _read_problem(response, token),
+                    )
                 try:
                     value = await read_bounded_json(
                         response,
@@ -399,12 +814,16 @@ class XConnection:
                         ) from None
                     raise
                 if status >= 400:
-                    raise IntegrationUpstreamError(f"X refused this request (HTTP {status})")
+                    raise IntegrationProviderError(
+                        f"X refused this request (HTTP {status})",
+                        provider_error=_problem(status, value, token),
+                    )
                 # X reports a referenced post it can't return (deleted or protected) as a
                 # partial error beside the data it did return. A read keeps that data; a write,
-                # or errors with no data, is still incomplete.
+                # or errors with no data, is still incomplete unless the caller reads them.
                 if not isinstance(value, dict) or (
-                    value.get("errors") and (method != "GET" or "data" not in value)
+                    value.get("errors")
+                    and (method != "GET" or ("data" not in value and not problems))
                 ):
                     if ambiguous_write:
                         raise IntegrationDeliveryUnknownError(
@@ -427,6 +846,7 @@ class XConnection:
         path: str,
         *,
         ambiguous_write: bool = False,
+        problems: bool = False,
         **kwargs,
     ) -> dict[str, Any]:
         current = await self.connection(connection.project_id, capability)
@@ -436,16 +856,13 @@ class XConnection:
         ):
             raise IntegrationAuthorizationError("X connection changed; start again")
         token = await self.access_token(current)
+        options = {"ambiguous_write": ambiguous_write, "problems": problems, **kwargs}
         try:
-            return await self._request_token(
-                method, path, token, ambiguous_write=ambiguous_write, **kwargs
-            )
+            return await self._request_token(method, path, token, **options)
         except _XUnauthorized:
             token = await self.access_token(current, rejected=token)
             try:
-                return await self._request_token(
-                    method, path, token, ambiguous_write=ambiguous_write, **kwargs
-                )
+                return await self._request_token(method, path, token, **options)
             except _XUnauthorized:
                 await self.db.mark_integration_attention(
                     project_id=current.project_id,
@@ -537,6 +954,176 @@ class XConnection:
         if cursor is not None and (not isinstance(cursor, str) or len(cursor) > 256):
             raise IntegrationUpstreamError("X returned an invalid timeline cursor")
         return {"posts": clean, "next_cursor": cursor}
+
+    async def search_recent(
+        self,
+        connection: Any,
+        *,
+        query: str,
+        max_results: int = 10,
+        start_time: str | None = None,
+        end_time: str | None = None,
+        next_token: str | None = None,
+    ) -> dict[str, Any]:
+        """Public posts from about the last seven days that match an X search query.
+
+        Posts by accounts that protect their posts are left out.
+        """
+        params = _search_params(
+            query=query,
+            max_results=max_results,
+            start_time=start_time,
+            end_time=end_time,
+            next_token=next_token,
+        )
+        result = await self._request(
+            connection, PUBLIC_READ, "GET", "/2/tweets/search/recent", params=params
+        )
+        return _public_page(result, limit=max_results)
+
+    async def user_posts(
+        self,
+        connection: Any,
+        *,
+        username: str,
+        max_results: int = 10,
+        start_time: str | None = None,
+        end_time: str | None = None,
+        pagination_token: str | None = None,
+        exclude_replies: bool = True,
+    ) -> dict[str, Any]:
+        """One public account's own recent posts, newest first; reposts are left out."""
+        username = _username(username)
+        params = _user_posts_params(
+            max_results=max_results,
+            start_time=start_time,
+            end_time=end_time,
+            pagination_token=pagination_token,
+            exclude_replies=exclude_replies,
+        )
+        account = await self._public_account(connection, username)
+        result = await self._request(
+            connection, PUBLIC_READ, "GET", f"/2/users/{account['id']}/tweets", params=params
+        )
+        page = _public_page(result, limit=max_results, account=account)
+        return {"account": {key: account[key] for key in ("id", "username", "name")}, **page}
+
+    async def _public_account(self, connection: Any, username: str) -> dict[str, Any]:
+        result = await self._request(
+            connection,
+            PUBLIC_READ,
+            "GET",
+            f"/2/users/by/username/{username}",
+            params={"user.fields": "protected"},
+            problems=True,
+        )
+        user = result.get("data")
+        if not isinstance(user, dict):
+            errors = result.get("errors")
+            first = errors[0] if isinstance(errors, list) and errors else None
+            if not isinstance(first, dict):
+                raise IntegrationUpstreamError("X returned an invalid account")
+            found = _problem(200, first)
+            if found.type == "resource-not-found":
+                raise ServiceCallRefused(
+                    f"X found no account @{username}.", code="not_found", provider_error=found
+                )
+            raise ServiceCallRefused(
+                f"X did not return @{username}; the account may be suspended or unavailable.",
+                code="account_unavailable",
+                provider_error=found,
+            )
+        name = user.get("username")
+        if (
+            not isinstance(user.get("id"), str)
+            or not ID.fullmatch(user["id"])
+            or not isinstance(name, str)
+            or not USERNAME.fullmatch(name)
+            or type(user.get("protected")) is not bool
+        ):
+            raise IntegrationUpstreamError("X returned an invalid account")
+        if user["protected"]:
+            raise ServiceCallRefused(
+                f"@{name} protects its posts; Tin reads only public posts.",
+                code="protected_account",
+            )
+        return {"id": user["id"], "username": name, "name": bounded(user.get("name"), 100)}
+
+    async def call(
+        self,
+        operation: str,
+        arguments: Any,
+        *,
+        connection: Any,
+        run_id: UUID | None,
+        execution_key: str,
+        max_response_bytes: int | None,
+    ) -> dict[str, Any]:
+        """One gateway read of public posts, fitted to the binding and receipted.
+
+        X's refusals settle as a named error for the step, so a later step may try again:
+        what X said rides along as provider_error. A lost or unreadable response stays
+        uncertain, as for every gateway read.
+        """
+        check_arguments(operation, arguments)
+        fingerprint = hashlib.sha256(
+            json.dumps(
+                {"account": connection.external_account_id, "operation": operation, **arguments},
+                sort_keys=True,
+                separators=(",", ":"),
+            ).encode()
+        ).hexdigest()
+        receipt = {
+            "connection": connection,
+            "capability": PUBLIC_READ,
+            "fingerprint": fingerprint,
+            "execution_key": execution_key,
+            "run_id": run_id,
+        }
+        read = self.search_recent if operation == "x.posts.search" else self.user_posts
+        try:
+            try:
+                page = await read(connection, **arguments)
+            except _XForbidden as exc:
+                raise ServiceCallRefused(
+                    "X refused this read. Check that Tin's X access covers public posts, "
+                    "or reconnect X.",
+                    code="permission_denied",
+                    provider_error=exc.provider_error,
+                ) from None
+            except IntegrationAuthorizationError as exc:
+                # Tin's own sentence (reconnect, more access, a changed account): settled.
+                raise ServiceCallRefused(str(exc), code="reauthorization_required") from None
+            result = _fit(page, max_response_bytes)
+        except ServiceResponseTooLarge:
+            # X answered; the outcome is known even though no post fits the bound.
+            await record_call(
+                self.db,
+                **receipt,
+                status="completed",
+                response_summary={"post_count": len(page["posts"]), "returned_count": 0},
+            )
+            raise
+        except IntegrationError as exc:
+            await record_call(
+                self.db,
+                **receipt,
+                status="failed",
+                error_code=getattr(exc, "code", None) or "provider_request_failed",
+            )
+            raise
+        await record_call(
+            self.db,
+            **receipt,
+            status="completed",
+            response_summary={
+                "post_count": len(page["posts"]),
+                "returned_count": len(result["posts"]),
+                "truncated": result["truncated"],
+                "has_more": result["next_token"] is not None,
+            },
+        )
+        return result
 
     async def upload_image(self, connection: Any, *, content: bytes, media_type: str):
         if (

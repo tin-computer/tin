@@ -11,7 +11,7 @@ test("X integration shows account and capabilities, upgrades without resource op
   let connection = true;
   const calls = [];
   const xIntegration = () => ({
-    key: "social.x", name: "X", badge: "X", description: "Read your own posts and publish only posts you explicitly approve.",
+    key: "social.x", name: "X", badge: "X", description: "Read your own posts, optionally public posts for research, and publish only posts you explicitly approve.",
     unlocks: ["X writing voice", "Approved X posts"], configured: true,
     connection_id: connection ? "connection-one" : null, status: connection ? "connected" : "available",
     external_account_label: connection ? "@tin" : null, connected_at: "2026-09-29T00:00:00Z", last_checked_at: "2026-09-29T01:00:00Z",
@@ -63,7 +63,7 @@ test("X integration shows account and capabilities, upgrades without resource op
     await card.waitFor();
     assert.match(await card.innerText(), /@tin[\s\S]*reading only/);
     await card.getByRole("button", {name: "Configure"}).click();
-    assert.match(await card.innerText(), /Read your own posts[\s\S]*Publish posts you approve[\s\S]*Upload media/);
+    assert.match(await card.innerText(), /Read your own posts[\s\S]*Publish posts you approve[\s\S]*Upload media[\s\S]*○ Read public posts/);
     assert.equal(calls.filter(call => call.path.endsWith("/options")).length, 0);
     await card.getByRole("button", {name: "Enable publishing"}).click();
     await page.waitForURL(`${base}/authorize`);

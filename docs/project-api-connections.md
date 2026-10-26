@@ -231,9 +231,87 @@ project connections with this explicit reviewed mapping:
 | `workspace.google` | `calendar.events.list` | `calendar.events.read` |
 | `payments.stripe` | `subscriptions.list`, `customers.list`, `invoices.list`, `prices.list`, `charges.list` | `subscriptions.read`, `customers.read`, `invoices.read`, `prices.read`, `charges.read` |
 | `analytics.posthog` | `query.hogql`; `event_definitions.list`, `property_definitions.list`; `insights.list` | `query.read`; `definitions.read`; `insights.read` |
+| `social.x` | `x.posts.search`, `x.user.posts` | `x.public.read` |
 
 Stripe and PostHog arguments, projected fields, paging and errors are documented in
-[Stripe and PostHog connections](stripe-and-posthog-connections.md).
+[Stripe and PostHog connections](stripe-and-posthog-connections.md). X is below.
+
+### Public X posts
+
+A package reads public X posts through the project's own X connection (`social.x`) with the
+`x.public.read` capability: recent search, and one public account's own recent posts. The
+capability uses the scopes every X connection already holds, but Tin records it on its own so a
+project opts in to it. A connection made for voice capture or publishing needs one reconnect
+that asks for it, for example `start_integration_connection` with
+`capabilities: ["x.public.read"]`; reconnecting keeps what was granted before. Until then a
+workflow that requires it does not start, and a call without it is refused before X is asked.
+Procedures can bind it through `call_service` the same way.
+
+```json
+{
+  "integration_requirements": [
+    {"provider_key": "social.x", "capabilities": ["x.public.read"], "required": true}
+  ],
+  "code": {
+    "services": {
+      "x": {"provider_key": "social.x", "max_calls": 6, "max_response_bytes": 200000}
+    }
+  }
+}
+```
+
+```python
+launches = await ctx.services.call(
+    service="x",
+    step="launches_1",
+    operation="x.posts.search",
+    arguments={
+        "query": '"brand identity" (launch OR unveil) has:media -is:retweet',
+        "max_results": 50,
+    },
+)
+studio = await ctx.services.call(
+    service="x",
+    step="studio_posts",
+    operation="x.user.posts",
+    arguments={"username": "studio", "max_results": 20},
+)
+```
+
+| Operation | Arguments | Returns |
+| --- | --- | --- |
+| `x.posts.search` | `query` in X's search syntax, 1-512 characters without line breaks or control characters; `max_results` 10-100 (default 10); `start_time`, `end_time` as UTC `YYYY-MM-DDTHH:MM:SSZ` (X searches about the last seven days); `next_token` | `posts`, `next_token`, `truncated` |
+| `x.user.posts` | `username`, 1-15 letters, digits or underscores without `@`; `max_results` 5-100 (default 10); `start_time`, `end_time`; `pagination_token` (the previous page's `next_token`); `exclude_replies` (default true) | `account` (`id`, `username`, `name`), `posts`, `next_token`, `truncated` |
+
+Each post has `id`, `url`, `text` (the whole text of a long post), `created_at`, `author`
+(`id`, `username`, `name`), `public_metrics` (repost, reply, like, quote, bookmark and
+impression counts), `urls` and `media`. `urls` lists up to ten links from the text, each with
+its `expanded_url`, `unwound_url`, and the linked page's `title` and `description` when X has
+them; links to the post's own media are left out. `media` lists up to four attachments with
+`type`, `url` (photos) or `preview_image_url` (videos and GIFs), `width` and `height`.
+
+- Search leaves out posts by accounts that protect their posts. `x.user.posts` refuses a
+  protected account (`protected_account`), and an unknown or suspended one (`not_found`,
+  `account_unavailable`), before reading any posts. It always leaves out reposts, and leaves
+  out replies unless `exclude_replies` is false.
+- Pass `next_token` back in a new step to read the next page, as `pagination_token` for
+  `x.user.posts`.
+- A page is fitted to `max_response_bytes`: the leading posts that fit, with `truncated: true`
+  when Tin left some out. X's `next_token` continues after the whole page, so left-out posts
+  are skipped; a smaller `max_results` reads every post.
+- X's own refusals are a named error for that step, with what X said in `provider_error`: an
+  invalid query, a `start_time` older than search covers, access X's plan does not include
+  (`permission_denied`), or a rate limit or usage cap (`rate_limited`). A later step may try
+  again. A response that was lost or could not be read stays uncertain, as for any adapter.
+
+Each call is a paid X read on Tin's X app, made through the project's own X connection, and
+`x.user.posts` makes two X requests: the account lookup and one page of posts. X bills per
+resource returned and does not charge twice for the same resource within a UTC day; at
+[X's list prices](https://docs.x.com/x-api/getting-started/pricing) in October 2026 a post read
+costs $0.005 and a user read $0.010 (X does not say whether the authors returned beside a page
+count as user reads). The reads are not charged to Tin credits, and their usage is recorded
+with an unknown cost. The binding's `max_calls` is the runaway guard: keep it and `max_results`
+as small as the job allows.
 
 Adapter arguments are those of the bounded `IntegrationService` operation; project, run,
 account, connection and execution IDs are supplied by Tin. Email sends and GitHub delivery
