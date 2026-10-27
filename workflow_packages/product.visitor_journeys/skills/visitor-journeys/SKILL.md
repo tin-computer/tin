@@ -202,12 +202,14 @@ before you write about them: at most 10 people, most valuable first, and 3 searc
 - Start from their own data: name, email domain, and any company or role they gave the product.
 - A work email domain names the company; a free mail service (gmail.com, outlook.com,
   hotmail.com, icloud.com, yahoo.com, proton.me and the like) does not. Open the company's site
-  and say in a few words what it does, and how big it is when it says so.
+  and say in a few words what it does, and how big it is when it says so. That is `about`, and
+  `company_url` is the company's own site, never a listing or directory page.
 - Search for their professional profile: their full name with the company or the domain. Keep a
   LinkedIn profile or a role only when the result shows their full name and something from their
   own data, such as the company behind their email domain. Write that tie in `basis`, for example
   "name and acme.com email". With a free mail address and nothing else that ties, keep nothing:
-  a namesake is worse than no profile.
+  a namesake is worse than no profile. Leave out what you could not confirm, such as an employer
+  a listing names but nothing ties, rather than hedging about it in `about`.
 - Work only: employer, role, what the company does, its size, their public professional profile.
   Never a home address, family, age, personal social accounts or anything about their private
   life.
