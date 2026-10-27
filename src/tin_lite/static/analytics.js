@@ -293,9 +293,10 @@ window.TinAnalytics = (() => {
   }
 
   // Each column stacks declared crawlers on automated browsers on visits with no automation seen.
+  // The busiest column fills the chart at any count; a quiet one keeps at most 17px a visit.
   function column(parts, total, max) {
     if (!total) return `<span class="analytics-bar is-empty${parts.future ? " is-future" : ""}"></span>`;
-    const unit = Math.min(17, Math.floor(118 / Math.max(max, 1)));
+    const unit = Math.min(17, 118 / Math.max(max, 1));
     const height = (value) => Math.max(2, Math.round(value * unit));
     return `<span class="analytics-bar">
       ${parts.declared ? `<i class="is-declared" style="height:${height(parts.declared)}px"></i>` : ""}
@@ -337,7 +338,7 @@ window.TinAnalytics = (() => {
       const last = rows.length - 1;
       bars = `<div class="analytics-days">${rows.map((row, index) => `<div class="analytics-day">
           <div class="analytics-day-bar">${column(row, row.visits, max)}</div>
-          <div class="analytics-day-label"><span>${escape(`${weekday(row.date).slice(0, 3)} ${day(row.date)?.getUTCDate() ?? ""}${index === last && !report.complete ? " so far" : ""}`)}</span><strong>${count(row.visits)}</strong></div>
+          <div class="analytics-day-label"><span>${escape(`${weekday(row.date).slice(0, 3)} ${day(row.date)?.getUTCDate() ?? ""}`)}${index === last && !report.complete ? ' <span class="analytics-day-so-far">so far</span>' : ""}</span><strong>${count(row.visits)}</strong></div>
         </div>`).join("")}</div>`;
       axis = "";
     }
