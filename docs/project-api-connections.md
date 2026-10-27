@@ -391,6 +391,7 @@ serp = await ctx.services.call(
 | `managed.podscan` | `podcasts.get`, `podcasts.episodes` (`podcasts.read`) | `podcast_id`; for episodes `per_page`, `page` | one show in full (description, style, website, social links, unverified `listed_email`), or its newest episodes with guests | $0 |
 | `managed.podscan` | `people.search`, `people.appearances` (`podcasts.read`) | `query` and `search_fields` (`name`, `company`, `occupation`, `industry`); or `entity_id`, `role`, `since`/`before` | people with company, occupation and appearance counts; or a person's episodes with their shows | $0 |
 | `managed.podscan` | `charts.top` (`podcasts.read`) | `platform` `apple` or `spotify`; `country`; `category` slug; `limit` | ranked shows with `podcast_id` | $0 |
+| `managed.github` | `people.lookup` (`people.read`) | `email`; optional `name` (the full name the person gave) | `status` `found`, `not_found` or `unavailable`; up to two `accounts` (login, url, name, company, site, bio, `linkedin_url`, other `links`, `public_repos`, `tie`, `commits`) and `commit_names` | $0 |
 | `managed.podscan` | `podcasts.sweep` (`podcasts.read`) | `topics` (1-10 phrases); `language`; `region`; `active_since`; `limit` 10-100 | four reads a topic (best matches, biggest matches, matching recent episodes) in one call that counts as five of the binding's `max_calls`, merged by show and ranked: what each show is, its size and cadence, which topics found it, feed networks marked, and any read that did not answer | $0 |
 
 Podscan reads are free to runs because Tin pays Podscan a flat subscription; a binding's
@@ -400,6 +401,18 @@ an unknown id `status: "not_found"`, both answers rather than errors. Podscan sp
 person across several entity records and its `audience_size` is an estimate, so packages
 merge people by company and compare audiences only within a niche; `listed_email` is never a
 verified pitch address. Procedures may bind it.
+
+The GitHub lookup ties an account to an email three ways, each named in `tie`: `exact_email`
+(GitHub linked a commit with that author email to the account, which needs the email verified
+on it), `email_commits_in_own_repos` (the owner of the repositories those commits went to, when
+its profile carries the name they were signed with) and `handle_and_name` (no commits; a name
+search, keeping an account whose login is the email's local part and whose profile name holds
+every word of the given name, at least two). A profile comes back as work facts only: no
+location, email or personal social accounts, and no phone or messenger links. It works without
+a token at GitHub's anonymous rate; `TIN_LITE_GITHUB_LOOKUP_TOKEN` (a token with no scopes)
+raises it. A rate limit or timeout returns `status: "unavailable"`, an answer rather than an
+error; a refused token is refused. One call makes at most about seven GitHub reads and counts as
+one.
 
 Every DataForSEO response carries `cost_usd`, the cost DataForSEO reported for that call.
 Prices are DataForSEO's list prices as of September 2026 (after the July 2026 update); the
@@ -418,7 +431,7 @@ usually $0, and later steps can still call. A read Tin can't confirm (a server e
 oversized, malformed or mismatched answer) stays unconfirmed: billing reconciles it rather than
 counting it free, Tin doesn't repeat it, and the run's later service calls stop with a named error. Paid managed services are for `workflow.code`
 packages only; a Codex procedure's session budget funds its own model calls, so procedures
-may bind `managed.pagespeed` and `managed.podscan` but not `managed.dataforseo`.
+may bind `managed.pagespeed`, `managed.podscan` and `managed.github` but not `managed.dataforseo`.
 
 **Responses and limits.** Tin cuts each response to what a report needs, never the provider's
 raw payload: a Lighthouse report of hundreds of kilobytes comes back as under 1 KB. List operations

@@ -42,14 +42,27 @@ quotes what a person typed.
 
 A named person is new when they signed up in the window, or gave an email for the first time
 (a lead with no earlier sessions). When `look_up_new_people` is on, the agent looks up each new
-person with web search before writing about them: at most 10 people and 3 searches each.
+person before writing about them: at most 10 people and about 8 steps each (a search, a page it
+opens or a GitHub lookup), in this order, stopping once it knows their role and company:
 
-- A work email domain names the company; the agent reads its site for what it does and its size.
-  A free mail domain (gmail.com and the like) names nothing.
-- A LinkedIn profile or role is kept only when the result shows the person's full name and
-  something from their own data, usually the company behind their email domain. `profile()`
-  refuses a role or profile without that `basis`. With a free mail address and nothing else that
-  ties, the report says nothing: a namesake is worse than no profile.
+1. What they gave the product: name, email, company, role, website.
+2. Their email domain. A work domain names the company, and the agent opens its site (home,
+   about or team page) for what it does, its size, and their role and profile when the team page
+   names them. A free mail domain (gmail.com and the like) names nothing; a shared inbox such
+   as info@ is the company, not a person.
+3. GitHub, through Tin's `managed.github` lookup: the account whose commits carry their exact
+   email, the owner of the repositories those commits went to when it carries the same name,
+   or, with no commits, an account whose username is their email's local part and whose profile
+   has their full name. It returns the company, site, bio and LinkedIn profile they published.
+   It only knows people who write code; for everyone else the other steps do the work.
+4. Their own links: the site they gave or GitHub names, and the employer and LinkedIn it links.
+5. Web search with what the steps above found (name with company, domain, site or username),
+   never the name alone.
+
+A LinkedIn profile or role is kept only when it ties to their own data, strongest first: exact
+email, a link they published, username and full name, full name and their email's company.
+`profile()` refuses a role or profile without that `basis`. With a free mail address and nothing
+else that ties, the report says nothing: a namesake is worse than no profile.
 - Work only: employer, role, the company, its size and a public professional profile. Never a
   home address, family, age, personal social accounts or private life. Anonymous visitors, team
   members and people who are not new are never looked up.
@@ -61,8 +74,9 @@ The brief lists the new people under **New users**, above **Some visitors**:
   Came from the hackathon and created an account. [LinkedIn](…) · [Fieldnotes](…) · [Replay](…)
 ```
 
-Web search runs on the model provider's side and is billed per search, about $0.01 each, so a
-day with ten new people adds about $0.30. Turn it off for a consumer product, where a user's
+Web search runs on the model provider's side and is billed per search, about $0.01 each; opening
+a page is not billed per call. A day with ten new people adds about $0.50. The GitHub lookup is
+free; it sends the email being looked up to GitHub's search. Turn it off for a consumer product, where a user's
 employer is none of the founder's business.
 
 ## Set it up

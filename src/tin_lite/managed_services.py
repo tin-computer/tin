@@ -1,14 +1,15 @@
-"""Services Tin holds the key for: PageSpeed Insights with CrUX, DataForSEO and Podscan.
+"""Services Tin holds the key for: PageSpeed Insights with CrUX, DataForSEO, Podscan and GitHub.
 
-A package binds `managed.pagespeed`, `managed.dataforseo` or `managed.podscan` the way it binds
-any provider: a
+A package binds `managed.pagespeed`, `managed.dataforseo`, `managed.podscan` or `managed.github`
+the way it binds any provider: a
 required `integration_requirements` entry plus one `code.services` alias. There is no founder
 connection. Tin's own settings hold the credentials; they stay on the switchboard and never
 reach the sandbox. Each call goes through the same service gateway, receipts and replay rules
 as connected providers. DataForSEO reads are paid: each call reserves a per-call ceiling
 before dispatch and settles the cost DataForSEO reports, through `service_pricing`, exactly
-as the native keyword workflows do. PageSpeed Insights, CrUX and Podscan are free to runs:
-Tin pays Podscan a flat subscription, and the binding's call limit is the runaway guard.
+as the native keyword workflows do. PageSpeed Insights, CrUX, Podscan and GitHub are free to
+runs: Tin pays Podscan a flat subscription, and the binding's call limit is the runaway guard.
+GitHub works without a token at a lower rate; TIN_LITE_GITHUB_LOOKUP_TOKEN raises it.
 
 Only live (synchronous) endpoints are exposed. DataForSEO task_post endpoints, such as the
 OnPage crawl, stay native.
@@ -27,7 +28,7 @@ from urllib.parse import urlsplit
 
 import httpx
 
-from tin_lite import podscan
+from tin_lite import github_people, podscan
 from tin_lite.connection_records import ServiceArgumentError, fit_records, text
 from tin_lite.integrations import (
     IntegrationDefinition,
@@ -41,11 +42,13 @@ from tin_lite.provider_errors import detail as provider_error_detail
 PAGESPEED_PROVIDER = "managed.pagespeed"
 DATAFORSEO_PROVIDER = "managed.dataforseo"
 PODSCAN_PROVIDER = podscan.PROVIDER
+GITHUB_PROVIDER = github_people.PROVIDER
 MANAGED_KEY = re.compile(r"managed\.[a-z][a-z0-9_]{0,47}\Z")
 CAPABILITIES = {
     PAGESPEED_PROVIDER: ("pagespeed.read", "crux.read"),
     DATAFORSEO_PROVIDER: ("serp.read", "keywords.read", "backlinks.read"),
     PODSCAN_PROVIDER: (podscan.CAPABILITY,),
+    GITHUB_PROVIDER: (github_people.CAPABILITY,),
 }
 # The settings each provider needs, named by their environment variables in errors.
 SETTINGS = {
@@ -55,6 +58,8 @@ SETTINGS = {
         "DATAFORSEO_LOGIN and DATAFORSEO_PASSWORD",
     ),
     PODSCAN_PROVIDER: (("podscan_api_key",), "TIN_LITE_PODSCAN_API_KEY"),
+    # Optional: without a token GitHub still answers, at its lower anonymous rate.
+    GITHUB_PROVIDER: ((), "TIN_LITE_GITHUB_LOOKUP_TOKEN"),
 }
 DEFINITIONS = {
     PAGESPEED_PROVIDER: IntegrationDefinition(
@@ -85,12 +90,23 @@ DEFINITIONS = {
         CAPABILITIES[PODSCAN_PROVIDER],
         ("Code workflows", "Codex procedures"),
     ),
+    GITHUB_PROVIDER: IntegrationDefinition(
+        GITHUB_PROVIDER,
+        "GitHub people lookup",
+        "Tin",
+        "The public GitHub account behind an email: its name, company, site and the LinkedIn "
+        "profile its owner linked, on Tin's GitHub token.",
+        "Public GitHub profiles; sends the email being looked up to GitHub",
+        CAPABILITIES[GITHUB_PROVIDER],
+        ("Codex procedures",),
+    ),
 }
 # The provider name each managed service's usage observations carry.
 USAGE_PROVIDER = {
     PAGESPEED_PROVIDER: "pagespeed",
     DATAFORSEO_PROVIDER: "dataforseo",
     PODSCAN_PROVIDER: "podscan",
+    GITHUB_PROVIDER: "github",
 }
 # What one paid call reserves before dispatch. The reported cost settles it; a supplier
 # overrun is Tin's loss, not a larger customer charge. At the argument bounds below every
@@ -177,6 +193,10 @@ OPERATIONS = {
     **{
         (PODSCAN_PROVIDER, name): Operation(podscan.CAPABILITY, spec.arguments)
         for name, spec in podscan.OPERATIONS.items()
+    },
+    **{
+        (GITHUB_PROVIDER, name): Operation(github_people.CAPABILITY, spec.arguments)
+        for name, spec in github_people.OPERATIONS.items()
     },
 }
 # Bounds on list arguments and pages; each keeps one call inside its reservation.
@@ -274,6 +294,8 @@ def request_for(operation: str, args: Any) -> dict[str, Any]:
         raise ServiceArgumentError(f"unsupported argument {sorted(extra)[0]}")
     if provider == PODSCAN_PROVIDER:
         return podscan.request_for(operation, args)
+    if provider == GITHUB_PROVIDER:
+        return github_people.request_for(operation, args)
     if operation == "pagespeed.run":
         if "url" not in args:
             raise ServiceArgumentError("url is required")
@@ -634,6 +656,8 @@ class ManagedServices:
             return await self._crux(request)
         if provider == PODSCAN_PROVIDER:
             return await self._podscan(operation, request, max_response_bytes=max_response_bytes)
+        if provider == GITHUB_PROVIDER:
+            return await self._github(request)
         return await self._dataforseo(
             operation, request, execution_key=execution_key, max_response_bytes=max_response_bytes
         )
@@ -883,6 +907,74 @@ class ManagedServices:
                 raise refusals[0]
             return {"status": "unavailable", **request["echo"], "failed_reads": failed}
         return podscan.sweep_result(request, answers, failed, max_response_bytes=max_response_bytes)
+
+    def _github_token(self) -> str | None:
+        token = getattr(self.settings, "github_lookup_token", None)
+        return token.get_secret_value() if token else None
+
+    async def _github_read(self, client, path, params) -> Any:
+        """One GitHub read: the parsed body, None for a 404, or Unanswered."""
+        token = self._github_token()
+        headers = {"Accept": "application/vnd.github+json", "X-GitHub-Api-Version": "2022-11-28"}
+        if token:
+            headers["Authorization"] = f"Bearer {token}"
+        try:
+            async with (
+                asyncio.timeout(github_people.SECONDS),
+                client.stream(
+                    "GET", github_people.ORIGIN + path, params=params, headers=headers
+                ) as response,
+            ):
+                status, body = response.status_code, bytearray()
+                remaining = response.headers.get("x-ratelimit-remaining")
+                async for chunk in response.aiter_bytes():
+                    body.extend(chunk)
+                    if len(body) > github_people.MAX_BYTES:
+                        raise github_people.Unanswered("response_too_large")
+        except (TimeoutError, httpx.TimeoutException):
+            raise github_people.Unanswered("timed_out") from None
+        except (httpx.HTTPError, OSError):
+            raise github_people.Unanswered("request_failed") from None
+        try:
+            payload = json.loads(body)
+        except (ValueError, UnicodeError, RecursionError):
+            payload = None
+        if status == 429 or (status == 403 and remaining == "0"):
+            raise github_people.Unanswered("rate_limited")
+        if status == 401:
+            raise ServiceCallRefused(
+                "GitHub refused Tin's token; an operator needs to check "
+                "TIN_LITE_GITHUB_LOOKUP_TOKEN.",
+                code="provider_refused",
+                provider_error=provider_error_detail(
+                    "GitHub", status, payload, secrets=tuple(filter(None, (token,)))
+                ),
+            )
+        if status == 404:
+            return None
+        if status != 200 or not isinstance(payload, dict | list):
+            raise github_people.Unanswered("provider_error")
+        return payload
+
+    async def _github(self, request):
+        """Free and read-only, so a slow, refused or rate-limited read is a known outcome."""
+        async with (
+            httpx.AsyncClient(
+                trust_env=False,
+                timeout=github_people.SECONDS,
+                follow_redirects=False,
+                transport=self.transport,
+            ) as client,
+        ):
+            try:
+                async with asyncio.timeout(github_people.CALL_SECONDS):
+                    return await github_people.lookup(
+                        request, lambda path, params: self._github_read(client, path, params)
+                    )
+            except github_people.Unanswered as exc:
+                return {"email": request["email"], "status": "unavailable", "reason": exc.reason}
+            except TimeoutError:
+                return {"email": request["email"], "status": "unavailable", "reason": "timed_out"}
 
     async def _dataforseo(self, operation, request, *, execution_key, max_response_bytes):
         from tin_lite.dataforseo import DataForSEOError

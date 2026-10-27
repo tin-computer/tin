@@ -113,6 +113,9 @@ class Settings(BaseSettings):
     pagespeed_api_key: SecretStr | None = Field(default=None, alias="TIN_LITE_PAGESPEED_API_KEY")
     # Optional Podscan API key for managed.podscan (podcast search for guest booking).
     podscan_api_key: SecretStr | None = Field(default=None, alias="TIN_LITE_PODSCAN_API_KEY")
+    github_lookup_token: SecretStr | None = Field(
+        default=None, alias="TIN_LITE_GITHUB_LOOKUP_TOKEN"
+    )
     keyword_plan_max_cost_usd: float = Field(
         default=0, ge=0, le=25, allow_inf_nan=False, alias="TIN_LITE_KEYWORD_PLAN_MAX_COST_USD"
     )
