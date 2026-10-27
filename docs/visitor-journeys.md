@@ -99,9 +99,12 @@ Schedule it daily, or weekly for a report read carefully once a week. The first 
 events and takes longer.
 
 A weekly run reads the last 7 days. Its table compares the week with the weekly average of the 4
-weeks before, where a daily one compares yesterday with the last 7 days. Its brief is longer: up
-to 20 new users, 12 other visitors and 10 observations, with lines of up to 400 characters
-instead of 10, 5, 5 and 240. It looks up as many as 16 new people instead of 10. "Only what is
+weeks before, where a daily one compares yesterday with the last 7 days. Its brief groups people
+rather than giving each a line: new users by how far they got (every new person in one group,
+with role and company), up to 6 worth knowing on their own (a known company, or something no
+group says), where people got stuck (each problem with who hit it and how often), returning
+users by what they did, and up to 5 observations that say nothing the table or groups already
+say. It looks up as many as 16 new people instead of 10. "Only what is
 new" is measured against the last weekly brief, so a project with a daily run as well still
 gets a full weekly brief. Slack carries a long section on in the next block rather than
 cutting it. The period follows the schedule when the config is saved

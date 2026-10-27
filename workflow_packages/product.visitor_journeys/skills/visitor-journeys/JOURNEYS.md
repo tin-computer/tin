@@ -77,8 +77,14 @@ FUNNEL_STEPS = 3
 # days against the 4 weeks before and keeps a longer brief.
 PERIODS = {
     "day": {"bucket": 1, "buckets": 7, "new": 10, "visitors": 5, "observations": 5, "line": 240},
-    "week": {"bucket": 7, "buckets": 5, "new": 20, "visitors": 12, "observations": 10, "line": 400},
+    "week": {"bucket": 7, "buckets": 5, "new": 6, "visitors": 0, "observations": 5, "line": 300},
 }
+# A weekly brief groups people instead of a line each: new users by how far they got, where
+# people got stuck, and what returning users did. A daily brief has no groups.
+GROUPS = ("stages", "stuck", "returning")
+MAX_GROUPS = 6
+GROUP_LABEL = 80
+GROUP_NOTE = 160
 ROWS = {
     "day": ("Yesterday", "Last 7 days, daily average"),
     "week": ("This week", "The 4 weeks before, weekly average"),
@@ -1198,11 +1204,27 @@ def _line(value, limit=PERIODS["week"]["line"]):
     return " ".join(str(value or "").split())[:limit]
 
 
-def brief(visitors, observations, new=()):
+def _group(value):
+    label, emails, *note = value
+    return {
+        "label": _line(label, GROUP_LABEL),
+        "emails": [str(e).strip().lower() for e in emails],
+        "note": _line(note[0] if note else "", GROUP_NOTE),
+    }
+
+
+def brief(visitors, observations, new=(), stages=(), stuck=(), returning=()):
     """The founder's brief under the Status line. `new` and `visitors`: [(email, line)], the
-    new people and the others worth naming. `observations`: [(text, friction_id or None)].
+    new people and the others worth naming; a week's `new` is only those worth knowing.
+    `observations`: [(text, friction_id or None)]. A week also groups people, each group
+    (label, [emails]) or (label, [emails], note): `stages`, every new person by how far they
+    got; `stuck`, who hit each problem; `returning`, what returning users did.
     assemble() keeps it to the period's limits and adds the table, names, work and links."""
     return {
+        **{
+            name: [_group(g) for g in groups]
+            for name, groups in zip(GROUPS, (stages, stuck, returning), strict=True)
+        },
         "new": [{"email": str(e).strip().lower(), "line": _line(x)} for e, x in new],
         "visitors": [
             {"email": str(email).strip().lower(), "line": _line(line)} for email, line in visitors
@@ -1235,6 +1257,39 @@ def _brief_person(v):
     return f"- {who}: " + " ".join(filter(None, (job and job.rstrip(".") + ".", v["line"], links)))
 
 
+def _short(work):
+    """Who someone is in a group: "Co-founder, Byro"."""
+    w = work or {}
+    return ", ".join(filter(None, (w.get("role"), w.get("company"))))
+
+
+def _group_line(g):
+    names = ", ".join(
+        (x["name"] or x["email"]) + (f" ({x['company']})" if x["company"] else "")
+        for x in g["people"]
+    )
+    note = f"; {g['note']}" if g["note"] else ""
+    return f"- {g['label']} ({len(g['people'])}): {names}{note}"
+
+
+def _render_week(b):
+    lines = [
+        "",
+        f"**New users: {sum(len(g['people']) for g in b['stages'])}, by how far they got**",
+        "",
+    ]
+    lines += [_group_line(g) for g in b["stages"]] or ["- Nobody new signed up or left an email."]
+    if b["new"]:
+        lines += ["", "**Worth knowing**", ""] + [_brief_person(v) for v in b["new"]]
+    if b["stuck"]:
+        lines += ["", "**Where people got stuck**", ""] + [_group_line(g) for g in b["stuck"]]
+    if b["returning"]:
+        n = sum(len(g["people"]) for g in b["returning"])
+        lines += ["", f"**Returning users ({n})**", ""] + [_group_line(g) for g in b["returning"]]
+    lines += ["", "**Also this week**", ""]
+    return lines + ([f"- {o['text']}" for o in b["observations"]] or ["- Nothing else stood out."])
+
+
 def render_brief(b):
     """The brief as Markdown, exactly as it goes under the Status line."""
     fn, period = b["funnel"], b.get("period", "day")
@@ -1245,6 +1300,8 @@ def render_brief(b):
         lines = ["| | " + " | ".join(labels) + " |", "|---|" + "---:|" * len(labels)]
         for row, key in zip(ROWS[period], ("yesterday", "average"), strict=True):
             lines.append(f"| {row} | " + " | ".join(_number(x[key]) for x in fn["steps"]) + " |")
+    if period == "week":
+        return "\n".join(lines + _render_week(b))
     lines += ["", "**New users**", ""]
     lines += [_brief_person(v) for v in b.get("new") or []] or [
         "- Nobody new signed up or left an email."
@@ -1280,12 +1337,42 @@ def assemble(
     if brief is not None:
         if funnel is not None and funnel.get("period", "day") != c["period"]:
             raise ContractError('pass c["period"] to funnel()')
-        limit = PERIODS[c["period"]]
+        limit, week = PERIODS[c["period"]], c["period"] == "week"
+        if not week and any(brief.get(k) for k in GROUPS):
+            raise ContractError("group people only in a weekly brief")
+        if week and brief.get("visitors"):
+            raise ContractError("a weekly brief groups returning users: pass them as returning")
+        groups = {k: (brief.get(k) or [])[:MAX_GROUPS] for k in GROUPS}
         brief = {
             k: [{**x, f: _line(x[f], limit["line"])} for x in brief.get(k) or []][: limit[k]]
             for k, f in (("new", "line"), ("visitors", "line"), ("observations", "text"))
         }
         named_rows = {row["email"]: row for row in named_people}
+        out_groups = {k: [] for k in GROUPS}
+        for k, kind in groups.items():
+            listed = set()
+            for g in kind:
+                people = []
+                for email in g["emails"]:
+                    row = named_rows.get(email)
+                    if row is None:
+                        raise ContractError(f"{email} is in the brief but is not a named person")
+                    if k == "stages" and not row.get("new"):
+                        raise ContractError(f"{email} is not new; put them under returning")
+                    if email in listed and k != "stuck":
+                        raise ContractError(f"{email} belongs to one {k} group only")
+                    listed.add(email)
+                    people.append(
+                        {"email": email, "name": row["name"], "company": _short(row.get("work"))}
+                    )
+                out_groups[k].append({"label": g["label"], "note": g["note"], "people": people})
+        new_people = {e for e, row in named_rows.items() if row.get("new")}
+        staged = {x["email"] for g in out_groups["stages"] for x in g["people"]}
+        if week and new_people - staged:
+            raise ContractError(
+                "put every new person in one of the stages; missing "
+                + ", ".join(sorted(new_people - staged))
+            )
         out = {"new": [], "visitors": []}
         for part, shown in out.items():
             for v in brief.get(part) or []:
@@ -1295,8 +1382,8 @@ def assemble(
                     raise ContractError(f"{v['email']} is in the brief but is not a named {kind}")
                 shown.append({**v, "name": row["name"], "replay_url": row["replay_url"]})
                 shown[-1]["work"] = row.get("work")
-        _only_new(brief, named_rows, previous, c["period"])
-        evidence["brief"] = {**brief, **out, "funnel": funnel, "period": c["period"]}
+        _only_new({**brief, **out_groups}, named_rows, previous, c["period"])
+        evidence["brief"] = {**brief, **out, **out_groups, "funnel": funnel, "period": c["period"]}
     return evidence
 
 
@@ -1323,8 +1410,11 @@ def _only_new(b, named_rows, previous, period):
     if not last or end is None or last.get("period", "day") != period:
         return
     were = (last.get("visitors") or []) + (last.get("new") or [])
+    for k in ("stuck", "returning"):
+        were += [x for g in last.get(k) or [] if isinstance(g, dict) for x in g.get("people") or []]
     shown = {v.get("email") for v in were if isinstance(v, dict)}
-    for v in b["visitors"] + b.get("new", []):
+    now = [x for k in ("stuck", "returning") for g in b.get(k) or [] for x in g["people"]]
+    for v in b["visitors"] + b.get("new", []) + now:
         seen = _moment(named_rows[v["email"]].get("last_seen"))
         if v["email"] in shown and seen is not None and seen <= end:
             raise ContractError(
@@ -1481,8 +1571,16 @@ def _check_brief(e, head):
     for part in ("new", "visitors", "observations"):
         if len(b.get(part) or []) > limit[part]:
             raise ContractError(f"keep the brief to {limit[part]} {part}")
+    week = b.get("period") == "week"
+    groups = [g for k in GROUPS for g in (b.get(k) or [])]
+    if any(len(b.get(k) or []) > (MAX_GROUPS if week else 0) for k in GROUPS):
+        raise ContractError(f"a weekly brief keeps to {MAX_GROUPS} groups of each kind")
     named_emails = {row["email"] for row in e["people"]}
-    for v in (b.get("visitors") or []) + (b.get("new") or []):
+    for v in (
+        (b.get("visitors") or [])
+        + (b.get("new") or [])
+        + [x for g in groups for x in g.get("people") or []]
+    ):
         if v.get("email") not in named_emails:
             raise ContractError(f"{v.get('email')} is in the brief but is not a named person")
     observations = b.get("observations") or []
@@ -1498,7 +1596,7 @@ def _check_brief(e, head):
                 "as its friction, or say 'there may be a bug'"
             )
     lines = [v["line"] for v in (b.get("visitors") or []) + (b.get("new") or [])]
-    lines += [o["text"] for o in observations]
+    lines += [o["text"] for o in observations] + [g["label"] + " " + g["note"] for g in groups]
     text = " ".join(lines)
     found = INTERNAL_WORDS.search(text)
     if found:

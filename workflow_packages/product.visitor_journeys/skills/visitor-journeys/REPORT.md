@@ -26,6 +26,27 @@ Status: <complete | incomplete | nothing to report | invalid configuration>
 
 - <What happened, to how many, since when; "there may be a bug in ..." for anything without a recorded failure; no advice>
 
+<a weekly brief, after the table, instead of the three parts above:>
+**New users: <n>, by how far they got**
+
+- <stage> (<n>): <Name> (<role>, <company>), <Name>, ...; <note>
+
+**Worth knowing**
+
+- **<Name>** (<email>): <role> at <company>; <what the company does>. <what they did, in one sentence>. [LinkedIn](<profile>) · [<Company>](<site>)
+
+**Where people got stuck**
+
+- <problem, how often> (<n>): <Name>, <Name>; <how it ended>
+
+**Returning users (<n>)**
+
+- <what they did> (<n>): <Name>, <Name>; <note>
+
+**Also this week**
+
+- <sources, pages people left from, tracking gaps; nothing the table or groups say>
+
 ## People to act on today
 ### <Name or email> · <lead | new user | user>
 - **Who:** <email>, <what their own data says about them; for a new person, their role and company, with [LinkedIn](<profile>) when found>.

@@ -60,9 +60,14 @@ SUMMARY_LIMIT = 300
 ACTION_LIMIT = 300
 # What a brief may show for each period (JOURNEYS.md's PERIODS): a weekly brief is longer.
 BRIEF_LIMITS = {
-    "day": {"new": 10, "visitors": 5, "observations": 5, "line": 240},
-    "week": {"new": 20, "visitors": 12, "observations": 10, "line": 400},
+    "day": {"new": 10, "visitors": 5, "observations": 5, "line": 240, "groups": 0},
+    "week": {"new": 6, "visitors": 0, "observations": 5, "line": 300, "groups": 6},
 }
+# A weekly brief's groups (JOURNEYS.md's GROUPS): new users by how far they got, where people
+# got stuck, and what returning users did.
+GROUPS = ("stages", "stuck", "returning")
+GROUP_LABEL = 80
+GROUP_NOTE = 160
 # The brief's table rows and the summary's opening word, for each period.
 PERIOD_ROWS = {
     "day": ("Yesterday", "Last 7 days, daily average"),
@@ -122,12 +127,23 @@ class Visitor:
 
 
 @dataclass(frozen=True)
+class Group:
+    label: str
+    note: str
+    # Each person as the brief names them: "Fathin Dosunmu (Co-founder, Byro)".
+    people: tuple[str, ...]
+
+
+@dataclass(frozen=True)
 class Brief:
     steps: tuple[Step, ...]
     visitors: tuple[Visitor, ...]
     observations: tuple[str, ...]
     new: tuple[Visitor, ...] = ()
     period: str = "day"
+    stages: tuple[Group, ...] = ()
+    stuck: tuple[Group, ...] = ()
+    returning: tuple[Group, ...] = ()
 
 
 @dataclass(frozen=True)
@@ -348,9 +364,40 @@ def _brief(value, people: tuple[Person, ...]) -> Brief | None:
         for row in notes[: limit["observations"]]
         if isinstance(row, dict) and (text := _text(row.get("text"), limit["line"]))
     )
-    if not (steps or new or visitors or observations):
+
+    def grouped(key):
+        rows = value.get(key) if isinstance(value.get(key), list) else []
+        found = []
+        for row in rows[: limit["groups"]]:
+            people = row.get("people") if isinstance(row, dict) else None
+            names = tuple(
+                _named(named[email])
+                for x in (people if isinstance(people, list) else [])
+                if isinstance(x, dict) and (email := _text(x.get("email"), 320).lower()) in named
+            )
+            if names and (label := _text(row.get("label"), GROUP_LABEL)):
+                found.append(Group(label, _text(row.get("note"), GROUP_NOTE), names))
+        return tuple(found)
+
+    groups = {key: grouped(key) for key in GROUPS}
+    if not (steps or new or visitors or observations or any(groups.values())):
         return None
-    return Brief(steps=steps, visitors=visitors, observations=observations, new=new, period=period)
+    return Brief(
+        steps=steps,
+        visitors=visitors,
+        observations=observations,
+        new=new,
+        period=period,
+        **groups,
+    )
+
+
+def _named(person: Person) -> str:
+    """A person as a group names them, with their work when it is known."""
+    who = person.name or person.email
+    work = person.work
+    short = ", ".join(x for x in (work.role, work.company) if x) if work else ""
+    return f"{who} ({short})" if short else who
 
 
 def _measured_nothing(status: str, requests: list[dict]) -> str | None:

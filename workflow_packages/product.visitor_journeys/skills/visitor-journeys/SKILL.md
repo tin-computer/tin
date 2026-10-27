@@ -265,7 +265,8 @@ Keep tracking problems apart, each with its exact fix:
 ## 11. The brief
 
 The brief opens the report and is also read on its own, in the founder's report and in Slack,
-by someone who has not read the rest. It has four parts.
+by someone who has not read the rest. A daily brief has the four parts below; a weekly one
+groups people instead ("A weekly brief", at the end of this section).
 
 The founder reads a daily brief every morning and a weekly one carefully once a week. Either
 way it says only what is new since the last brief:
@@ -283,7 +284,7 @@ last 7 days against the weekly average of the 4 weeks before. Pass it to `assemb
 numbers are the resource's; never write or adjust them. If the funnel call is refused, pass
 `funnel=None`: the table then says visitors were not measured.
 
-**New users.** Every new person, at most 10 (20 for a week), most valuable first, one line each: how they
+**New users.** Every new person, at most 10, most valuable first, one line each: how they
 came and how far they got, such as "came from a Google search, connected GitHub and ran the first
 audit". Their role, company and links come from their `work`; don't repeat them in the line.
 Pass `(email, line)` as `new`. When nobody is new the brief says so.
@@ -292,7 +293,7 @@ Every brief line says what happened and nothing else. No advice or next step ("c
 "review the replay", "worth asking about") and no verdict on what it means ("treat this as",
 "not evidence of"): the founder draws those. Suggested actions belong in People to act on.
 
-**Some visitors.** Up to 5 other named people (12 for a week), most valuable first: anyone who paid or
+**Some visitors.** Up to 5 other named people, most valuable first: anyone who paid or
 started a trial, then anyone stuck on the way in, then returning users who reached value. One
 line each: who they are, from their own data, and what they did. For example "started a trial, registered
 a phone, then clicked Ask about Enterprise". Pass `(email, line)`; the name and replay link come
@@ -303,17 +304,13 @@ refuses them. Someone in it who came back is listed again only for what they did
 line says so: "came back and upgraded to Plus". Fewer visitors, or none, is the right brief on
 a quiet day.
 
-**Some observations.** Up to 5 lines (10 for a week), the most useful first: possible bugs, failures the
+**Some observations.** Up to 5 lines, the most useful first: possible bugs, failures the
 product recorded, where visitors come from and where they leave, a tracking gap that changes
 how to read the table. Pass `(text, friction_id or None)`. Something without a recorded failure
 or error behind it is "there may be a bug in ...", never "X is broken"; `check()` refuses
 otherwise. Clicks that changed nothing are a "may".
 
-A line holds 240 characters, or 400 for a week. A weekly brief is the one the founder reads
-closely, so use the room: each person's line covers what they did across the week and how far
-they got, and the observations cover how the week went against the weeks before (the table),
-where visitors came from and left, and the frictions that held people back, still as what
-happened rather than what to do.
+A line holds 240 characters, or 300 for a week.
 
 Say each thing once:
 - leave out an observation the last brief made, unless it changed, and then say what changed:
@@ -326,8 +323,30 @@ Say each thing once:
 `assemble()` refuses an observation the last brief made word for word. When nothing is new,
 leave the observations empty: the brief then says "Nothing stood out".
 
+**A weekly brief.** Read once a week, closely, so it gives the shape of the week rather than a
+line per person. Twenty journeys that each say "started a trial, regenerated a key" bury the
+one CEO who asked about Enterprise. Group people, each group `(label, [emails], note)` with an
+optional short note:
+- `stages`: every new person in exactly one group, by how far they got, furthest first, such as
+  "Set up a number", "Confirmed a trial, no number yet", "Reached checkout, no trial confirmed",
+  "Didn't reach checkout". Use the product's own steps. The note says what a few in the group
+  did beyond it: "Fathin and Elie then upgraded to Growth". `assemble()` refuses a week that
+  leaves a new person out.
+- `new`, as `(email, line)`: at most 6 new people worth knowing on their own: a known company
+  or role, or something no group says, such as asking about Enterprise. Their work and links
+  come with them; the line is what they did, in one sentence.
+- `stuck`: one group per problem people hit, with how often in the label: "Email already in
+  use, 5 times". The note says how it ended when it did: "both picked another number".
+- `returning`: returning users by what they did: "Changed plan", "Looked for help", "Came back
+  to set up". There are no per-person visitor lines in a week.
+- `observations`: at most 5, only what no group above says: where visitors came from and which
+  pages they left from, and tracking gaps. Never restate the table or a group.
+
+A group names people; Tin adds their role and company. Build it with
+`brief([], observations, new, stages=..., stuck=..., returning=...)`.
+
 Write for the founder: plain words, no internal terms such as census, ledger, timeline, tier or
-query. Build it with `brief(visitors, observations, new)`, pass it to `assemble()` with
+query. Build it with `brief(visitors, observations, new)` (a week also passes its groups), pass it to `assemble()` with
 `brief=b, funnel=fn, previous=prev`, and put `render_brief(evidence["brief"])` directly under
 the Status line.
 

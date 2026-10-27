@@ -799,13 +799,21 @@ def test_the_brief_says_only_what_is_new_since_the_last_one(j, c, m, people):
     # A weekly brief is compared with last week's, never cut by a daily one.
     week = j.settings({"period": "week"}, now=NOW)
     weekly = j.funnel(FUNNEL_RESULT, m, period="week")
+    named = [j.named(p, "Came in.", replay_url=None) for p in people if p["tier"] in j.NAMED_TIERS]
+    staged = [n["email"] for n in named if n["new"]]
     j.check(
         report(
             j,
             week,
             m,
             people,
-            brief=j.brief([(ben, "Clicked pricing.")], [(gap, None)]),
+            named=named,
+            brief=j.brief(
+                [],
+                [(gap, None)],
+                stages=[("Came in", staged)],
+                returning=[("Clicked pricing", [ben])] if ben not in staged else [],
+            ),
             funnel=weekly,
             previous=later,
         )
@@ -1247,7 +1255,7 @@ WEEK_FUNNEL = {
 }
 
 
-def test_a_week_reads_seven_days_against_the_four_before_and_keeps_a_longer_brief(j, c, m, people):
+def test_a_week_reads_seven_days_against_the_four_before_and_groups_people(j, c, m, people):
     from tin_lite import run_summaries
 
     week = j.settings(
@@ -1270,23 +1278,56 @@ def test_a_week_reads_seven_days_against_the_four_before_and_keeps_a_longer_brie
         40,
         15.0,
     )
-    long = "Signed up, connected GitHub and ran three audits across the week. " * 5
-    b = j.brief([("ben@quanta.io", long)], [("Most visitors left after the homepage.", None)])
-    text = report(j, week, m, people, brief=b, funnel=fn)
+    named = with_work(j, m, people)
+    new = [n["email"] for n in named if n["new"]]
+    old = [n["email"] for n in named if not n["new"]]
+    b = j.brief(
+        [],
+        [("The pricing page brought 30 landings; 20 left after one page.", None)],
+        [(new[0], "Clicked Ask about Enterprise twice.")],
+        stages=[
+            ("Created an account", new[:1], "came from the hackathon"),
+            ("Left an email", new[1:]),
+        ],
+        stuck=[("Checkout failed, 2 times", [old[0]])],
+        returning=[("Upgraded", old)],
+    )
+    text = report(j, week, m, people, named=named, brief=b, funnel=fn)
     j.check(text)
     head = text.split(j.EVIDENCE_MARKER)[0]
     assert "| This week | 40 | 9 | 3 |" in head
     assert "| The 4 weeks before, weekly average | 15 | 3 | 1 |" in head
+    assert f"**New users: {len(new)}, by how far they got**" in head
+    assert (
+        "- Created an account (1): Ana Souza (Founder, Fieldnotes); came from the hackathon" in head
+    )
+    assert head.index("**Worth knowing**") < head.index("**Where people got stuck**")
+    assert head.index("**Returning users") < head.index("**Also this week**")
     brief = visitor_journal.read(text).brief
-    assert brief.period == "week" and len(brief.visitors[0].line) > 300
+    assert brief.period == "week" and brief.stages[0].people == ("Ana Souza (Founder, Fieldnotes)",)
     summary = run_summaries.from_output("visitor-journal.v1", text)
     assert summary["headline"].startswith("This week: 40 unique visitors")
     assert [row[0] for row in summary["table"]["rows"]] == [
         "This week",
         "The 4 weeks before, weekly average",
     ]
-    # A day keeps its shorter lines, and a week's table never goes in a day's brief.
-    day = visitor_journal.read(report(j, c, m, people, brief=b)).brief
-    assert len(day.visitors[0].line) <= 240
+    assert [s["heading"] for s in summary["sections"]] == [
+        f"New users: {len(new)}, by how far they got",
+        "Worth knowing",
+        "Where people got stuck",
+        f"Returning users ({len(old)})",
+        "Also this week",
+    ]
+    # Every new person is in one stage; a week names returning users in groups, not lines.
+    for wrong, match in (
+        (j.brief([], [], stages=[("Created an account", new[:1])]), "every new person"),
+        (j.brief([(old[0], "Came back.")], [], stages=[("All", new)]), "groups returning"),
+        (j.brief([], [], stages=[("All", new + old[:1])]), "is not new"),
+    ):
+        with pytest.raises(j.ContractError, match=match):
+            report(j, week, m, people, named=named, brief=wrong, funnel=fn)
+    # A day keeps its lines, and a week's table never goes in a day's brief.
+    with pytest.raises(j.ContractError, match="weekly brief"):
+        report(j, c, m, people, named=named, brief=b)
     with pytest.raises(j.ContractError, match="period"):
-        report(j, week, m, people, brief=b, funnel=j.funnel(FUNNEL_RESULT, m))
+        report(j, week, m, people, named=named, brief=b, funnel=j.funnel(FUNNEL_RESULT, m))

@@ -35,9 +35,9 @@ HEADLINE = 300
 TABLE_COLUMNS = 6
 TABLE_ROWS = 10
 CELL = 60
-SECTIONS = 4
+SECTIONS = 6
 ITEMS = 20
-ITEM = 500
+ITEM = 800
 HEADING = 60
 LABEL = 24
 URL = re.compile(r"^https://[^\s<>|]{1,500}$")
@@ -106,6 +106,29 @@ def _new_user(v) -> dict[str, Any]:
     return {"text": f"{who}: {v.line}", "url": v.replay_url, "label": "Replay"}
 
 
+def _groups(groups) -> list[dict[str, Any]]:
+    def line(g):
+        return f"{g.label} ({len(g.people)}): {', '.join(g.people)}" + (
+            f"; {g.note}" if g.note else ""
+        )
+
+    return [{"text": line(g)} for g in groups]
+
+
+def _week_sections(brief) -> list[dict[str, Any]]:
+    """A weekly brief: people grouped by how far they got and what held them back."""
+    new = sum(len(g.people) for g in brief.stages)
+    returning = sum(len(g.people) for g in brief.returning)
+    sections = [
+        (f"New users: {new}, by how far they got", _groups(brief.stages)),
+        ("Worth knowing", [_new_user(v) for v in brief.new]),
+        ("Where people got stuck", _groups(brief.stuck)),
+        (f"Returning users ({returning})", _groups(brief.returning)),
+        ("Also this week", [{"text": o} for o in brief.observations]),
+    ]
+    return [{"heading": heading, "items": items} for heading, items in sections if items]
+
+
 def _visitor_journal(content: bytes | str, inputs: Any = None) -> dict[str, Any] | None:
     from tin_lite import visitor_journal
 
@@ -129,7 +152,9 @@ def _visitor_journal(content: bytes | str, inputs: Any = None) -> dict[str, Any]
                     [average, *(cell(step.average) for step in brief.steps)],
                 ],
             }
-        if brief.new:
+        if brief.period == "week":
+            sections = _week_sections(brief)
+        elif brief.new:
             sections.append(
                 {
                     "heading": "New users",
@@ -152,7 +177,7 @@ def _visitor_journal(content: bytes | str, inputs: Any = None) -> dict[str, Any]
                     ],
                 }
             )
-        if brief.observations:
+        if brief.observations and brief.period != "week":
             sections.append(
                 {"heading": "Some observations", "items": [{"text": o} for o in brief.observations]}
             )
