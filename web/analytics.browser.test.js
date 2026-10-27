@@ -241,7 +241,8 @@ test("page: today so far, each number against the day before, every page request
   });
 });
 
-// A busy site's columns are drawn to the same scale as a quiet one's: the busiest fills the chart.
+// A busy site's columns are drawn to the same scale as a quiet one's: the busiest fills the chart,
+// and every column is as tall as its total, its gaps included.
 test("page: a busy site's bars fill the chart, and today's label wraps rather than cuts", {timeout: 120000}, async () => {
   const live = card("live", {reporter_connected: true});
   const today = fixture("report_day.json");
@@ -249,19 +250,29 @@ test("page: a busy site's bars fill the chart, and today's label wraps rather th
   const week = fixture("report_week.json");
   Object.assign(week, {complete: false});
   for (const row of week.days) for (const key of ["visits", "page_views", "automated_browser", "declared_crawler"]) row[key] *= 30;
+  // A crawler that came once still shows; the 2px it is drawn at comes out of the visits beneath it.
+  week.days[0].visits -= week.days[0].declared_crawler - 1;
+  week.days[0].declared_crawler = 1;
   const pages = {today: pageOf("today", today, live), week: pageOf("week", week, live)};
-  const columns = locator => locator.evaluateAll(bars => bars.map(bar => [...bar.querySelectorAll("i")].reduce((sum, part) => sum + part.getBoundingClientRect().height, 0)));
+  const columns = locator => locator.evaluateAll(bars => bars.map(bar => {
+    const parts = [...bar.querySelectorAll("i")].map(part => part.getBoundingClientRect());
+    return parts.length ? Math.round(parts.at(-1).bottom - parts[0].top) : 0;
+  }));
   await open({integrations: [live], analytics: {pages, answer: () => ({})}}, "/analytics", async page => {
     await page.locator(".analytics-bars").waitFor();
     const hours = await columns(page.locator(".analytics-bars .analytics-bar"));
-    assert.ok(Math.max(...hours) >= 116 && Math.max(...hours) <= 122, `busiest hour is ${Math.max(...hours)}px`);
+    const busiest = Math.max(...Array.from({length: 24}, (_, hour) => Object.values(today.hours).reduce((sum, kind) => sum + (kind[hour] || 0), 0)));
+    assert.deepEqual(hours, Array.from({length: 24}, (_, hour) => {
+      const total = Object.values(today.hours).reduce((sum, kind) => sum + (kind[hour] || 0), 0);
+      return total ? Math.round(total * 118 / busiest) : 0;
+    }));
     await page.getByRole("tab", {name: "Last 7 days"}).click();
     await page.locator(".analytics-days").waitFor();
-    const days = await columns(page.locator(".analytics-day-bar .analytics-bar"));
-    assert.ok(days.at(-1) >= 116 && days.at(-1) <= 122, `busiest day is ${days.at(-1)}px`);
+    assert.deepEqual(await columns(page.locator(".analytics-day-bar .analytics-bar")), week.days.map(row => Math.round(row.visits * 118 / 1440)));
+    assert.equal(await page.locator(".analytics-day-bar").first().locator(".is-declared").evaluate(part => part.getBoundingClientRect().height), 2);
     // Visits with no automation seen keep their share of the column: 36 visits a day of 1,440 on Saturday.
     const none = await page.locator(".analytics-day-bar .is-none").evaluateAll(parts => parts.map(part => part.getBoundingClientRect().height));
-    week.days.forEach((row, index) => assert.ok(Math.abs(none[index] - (row.visits - row.automated_browser - row.declared_crawler) * 118 / 1440) <= 1, `${row.date} is ${none[index]}px`));
+    week.days.slice(1).forEach((row, index) => assert.ok(Math.abs(none[index + 1] - (row.visits - row.automated_browser - row.declared_crawler) * 118 / 1440) <= 4, `${row.date} is ${none[index + 1]}px`));
     const labels = page.locator(".analytics-day-label");
     assert.deepEqual(await labels.evaluateAll(items => items.map(item => item.innerText.replace("\n", " "))).then(items => items.slice(-2)), ["mon 19 990", "tue 20 so far 1,440"]);
     assert.equal(await labels.evaluateAll(items => items.every(item => [...item.children].every(child => child.scrollWidth <= child.clientWidth))), true);

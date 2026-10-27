@@ -293,15 +293,21 @@ window.TinAnalytics = (() => {
   }
 
   // Each column stacks declared crawlers on automated browsers on visits with no automation seen.
-  // The busiest column fills the chart at any count; a quiet one keeps at most 17px a visit.
+  // A column is as tall as its total: the busiest fills the chart at any count, a quiet one keeps
+  // at most 17px a visit. The 2px gaps come out of that height, and a part drawn up to the 2px
+  // minimum takes the difference from the largest part, so the column stays true to its total.
   function column(parts, total, max) {
     if (!total) return `<span class="analytics-bar is-empty${parts.future ? " is-future" : ""}"></span>`;
     const unit = Math.min(17, 118 / Math.max(max, 1));
-    const height = (value) => Math.max(2, Math.round(value * unit));
+    const shown = [["is-declared", parts.declared], ["is-automated", parts.automated], ["is-none", parts.none]].filter(([, value]) => value > 0);
+    const sum = shown.reduce((all, [, value]) => all + value, 0);
+    const gaps = (shown.length - 1) * 2;
+    const room = Math.max(Math.round(total * unit), shown.length * 4 - 2) - gaps;
+    const heights = shown.map(([, value]) => Math.max(2, Math.round((value / sum) * room)));
+    const largest = heights.indexOf(Math.max(...heights));
+    heights[largest] += room - heights.reduce((all, height) => all + height, 0);
     return `<span class="analytics-bar">
-      ${parts.declared ? `<i class="is-declared" style="height:${height(parts.declared)}px"></i>` : ""}
-      ${parts.automated ? `<i class="is-automated" style="height:${height(parts.automated)}px"></i>` : ""}
-      ${parts.none ? `<i class="is-none" style="height:${height(parts.none)}px"></i>` : ""}
+      ${shown.map(([kind], index) => `<i class="${kind}" style="height:${heights[index]}px"></i>`).join("")}
     </span>`;
   }
 
