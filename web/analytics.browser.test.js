@@ -266,10 +266,11 @@ test("page: a busy site's bars fill the chart, and today's label wraps rather th
       const total = Object.values(today.hours).reduce((sum, kind) => sum + (kind[hour] || 0), 0);
       return total ? Math.round(total * 118 / busiest) : 0;
     }));
-    // Hour by hour keeps automation on top of the visits with no automation seen.
+    // Hour by hour puts automation on the floor too, as day by day does.
+    const order = ["is-none", "is-declared", "is-automated"];
     const hourKinds = await page.locator(".analytics-bars .analytics-bar:not(.is-empty)").evaluateAll(bars => bars.map(bar => [...bar.querySelectorAll("i")].map(part => part.className)));
     assert.ok(hourKinds.some(kinds => kinds.length > 1), JSON.stringify(hourKinds));
-    assert.ok(hourKinds.every(kinds => !kinds.includes("is-none") || kinds.at(-1) === "is-none"), JSON.stringify(hourKinds));
+    assert.ok(hourKinds.every(kinds => kinds.join() === order.filter(kind => kinds.includes(kind)).join()), JSON.stringify(hourKinds));
     await page.getByRole("tab", {name: "Last 7 days"}).click();
     await page.locator(".analytics-days").waitFor();
     assert.deepEqual(await columns(page.locator(".analytics-day-bar .analytics-bar")), week.days.map(row => Math.round(row.visits * 118 / 1440)));
