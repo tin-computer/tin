@@ -663,3 +663,15 @@ async def test_a_new_run_pins_where_its_summary_goes(publication_db):
         definition_commit_sha=configured.definition_commit_sha,
     )
     assert other.summary_destinations == ()  # a run started outside a saved workflow
+
+
+def test_a_long_section_continues_in_the_next_slack_block():
+    items = [{"text": f"Person {n}: " + "did a lot this week " * 20} for n in range(20)]
+    summary = run_summaries.parse(
+        {"headline": "This week", "sections": [{"heading": "New users", "items": items}]}
+    )
+    blocks = slack_connection.message(summary, title="T", link=None)["blocks"][2:]
+    assert len(blocks) > 1 and blocks[0]["text"]["text"].startswith("*New users*\n")
+    texts = [block["text"]["text"] for block in blocks]
+    assert all(len(text) <= slack_connection.BLOCK_TEXT for text in texts)
+    assert sum(text.count("• Person ") for text in texts) == 20

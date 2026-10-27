@@ -11,8 +11,8 @@ Status: <complete | incomplete | nothing to report | invalid configuration>
 <render_brief(evidence["brief"]), exactly as it returns:>
 | | Unique visitors | <middle step, if the map has one> | <main conversion> |
 |---|---:|---:|---:|
-| Yesterday | <n> | <n> | <n> |
-| Last 7 days, daily average | <n> | <n> | <n> |
+| Yesterday (This week) | <n> | <n> | <n> |
+| Last 7 days, daily average (The 4 weeks before, weekly average) | <n> | <n> | <n> |
 
 **New users**
 

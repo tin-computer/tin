@@ -25,7 +25,7 @@ paths            -> site_paths(path_rows(result), has_more)  # how visitors move
 timelines (1-3)  -> timelines(result)     # for choose(p, c["max_people_detailed"])
 recordings       -> rec = recordings(result)  # which of their sessions PostHog recorded
                     journey(rows, m, rec); replay(m, session_id, rec)
-funnel           -> fn = funnel(result, m, inventory_rows)  # the brief's table
+funnel           -> fn = funnel(result, m, inventory_rows, c["period"])  # the brief's table
 f = frictions(friction_rows, loop_rows, stalls(p, m), p)
 web search       -> w = profile(...)      # each new person's work, when look_up_new_people
                     named(person, ..., work=w)
@@ -72,12 +72,17 @@ TIMELINE_LAST_EVENTS = 30
 MAX_RECORDING_SESSIONS = 120  # one query, well under Tin's 8000-byte bound
 SUMMARY_LIMIT = 300
 # The brief at the top of the report is read on its own, in the founder's daily report.
-FUNNEL_DAYS = 7
 FUNNEL_STEPS = 3
-BRIEF_VISITORS = 5
-BRIEF_NEW = 10
-BRIEF_OBSERVATIONS = 5
-BRIEF_LINE = 240
+# A day compares yesterday with the last 7 days; a week, read carefully once a week, reads 7
+# days against the 4 weeks before and keeps a longer brief.
+PERIODS = {
+    "day": {"bucket": 1, "buckets": 7, "new": 10, "visitors": 5, "observations": 5, "line": 240},
+    "week": {"bucket": 7, "buckets": 5, "new": 20, "visitors": 12, "observations": 10, "line": 400},
+}
+ROWS = {
+    "day": ("Yesterday", "Last 7 days, daily average"),
+    "week": ("This week", "The 4 weeks before, weekly average"),
+}
 # Words from inside this resource that mean nothing to a founder.
 INTERNAL_WORDS = re.compile(
     r"\b(census|ledger|timelines?|tiers?|quer(?:y|ies)|server-only|hogql)\b", re.IGNORECASE
@@ -154,6 +159,11 @@ def settings(inputs, now=None):
     hours = inputs.get("lookback_hours", 24)
     if type(hours) is not int or not 1 <= hours <= MAX_LOOKBACK_HOURS:
         raise ContractError(f"lookback_hours must be 1-{MAX_LOOKBACK_HOURS}")
+    period = inputs.get("period", "day")
+    if period not in PERIODS:
+        raise ContractError("period must be day or week")
+    if period == "week":
+        hours = 168
     detailed = inputs.get("max_people_detailed", 12)
     if type(detailed) is not int or not 1 <= detailed <= 30:
         raise ContractError("max_people_detailed must be 1-30")
@@ -171,6 +181,7 @@ def settings(inputs, now=None):
         "prior_start": _iso(end - timedelta(hours=hours) - timedelta(days=PRIOR_DAYS)),
         "inventory_start": _iso(end - timedelta(days=INVENTORY_DAYS)),
         "lookback_hours": hours,
+        "period": period,
         "max_people_detailed": detailed,
         "website_hosts": hosts["website_hosts"],
         "product_hosts": hosts["product_hosts"],
@@ -529,7 +540,9 @@ def request(c, m, step, person_ids=None, session_ids=None):
         if not m["funnel"]:
             raise ContractError("choose the map's funnel before asking for it")
         end = datetime.strptime(c["end"], "%Y-%m-%d %H:%M:%S")
-        start = (end - timedelta(days=FUNNEL_DAYS)).strftime("%Y-%m-%d %H:%M:%S")
+        span = PERIODS[c["period"]]
+        start = end - timedelta(days=span["bucket"] * span["buckets"])
+        start = start.strftime("%Y-%m-%d %H:%M:%S")
         team = m["internal"]["people"]
         others = f" AND toString(person_id) NOT IN {_list(team)}" if team else ""
         counted = [
@@ -542,9 +555,9 @@ def request(c, m, step, person_ids=None, session_ids=None):
         return _query(
             "funnel",
             f"""SELECT intDiv(dateDiff('second', timestamp, toDateTime({_literal(c["end"])})),
-            86400) AS ago, {counted[0]} AS step1, {counted[1]} AS step2, {counted[2]} AS step3
+            {86400 * span["bucket"]}) AS ago, {counted[0]} AS step1, {counted[1]} AS step2, {counted[2]} AS step3
             FROM events WHERE {_window(start, c["end"])} AND {scope} AND {keep}{others}
-            GROUP BY ago ORDER BY ago LIMIT {FUNNEL_DAYS}""",
+            GROUP BY ago ORDER BY ago LIMIT {span["buckets"]}""",
         )
     if step.startswith("timelines"):
         ids = [str(p) for p in (person_ids or [])]
@@ -624,24 +637,27 @@ TIMELINE = "person timestamp event session host path element message scroll n to
 FUNNEL = "ago step1 step2 step3".split()
 
 
-def funnel(result, m, inventory_rows=None):
-    """The brief's table: people per step yesterday and the 7-day daily average. A step whose
-    events never fired in the 30-day inventory is not tracked, not zero."""
-    days = {int(row["ago"]): row for row in table(result, FUNNEL) if 0 <= int(row["ago"]) < 7}
+def funnel(result, m, inventory_rows=None, period="day"):
+    """The brief's table: people per step yesterday against the 7-day daily average, or this
+    week (`yesterday`) against the weekly average of the 4 weeks before. A step whose events
+    never fired in the 30-day inventory is not tracked, not zero."""
+    n = PERIODS[period]["buckets"]
+    rows = {int(row["ago"]): row for row in table(result, FUNNEL) if 0 <= int(row["ago"]) < n}
     seen = {row["event"] for row in inventory_rows} if inventory_rows is not None else None
     steps = []
     for i, step in enumerate(m["funnel"]):
         key = f"step{i + 1}"
         tracked = seen is None or any(e in seen for e in step["events"])
-        daily = [int((days.get(ago) or {}).get(key) or 0) for ago in range(FUNNEL_DAYS)]
+        each = [int((rows.get(ago) or {}).get(key) or 0) for ago in range(n)]
+        before = each if period == "day" else each[1:]
         steps.append(
             {
                 "label": step["label"],
-                "yesterday": daily[0] if tracked else None,
-                "average": round(sum(daily) / FUNNEL_DAYS, 1) if tracked else None,
+                "yesterday": each[0] if tracked else None,
+                "average": round(sum(before) / len(before), 1) if tracked else None,
             }
         )
-    return {"days": FUNNEL_DAYS, "steps": steps}
+    return {"period": period, "days": 7 if period == "day" else 28, "steps": steps}
 
 
 def project_info(result):
@@ -1178,22 +1194,22 @@ def named(person, summary, action="", stopped_at="", replay_url=None, work=None)
     }
 
 
-def _line(value, limit=BRIEF_LINE):
+def _line(value, limit=PERIODS["week"]["line"]):
     return " ".join(str(value or "").split())[:limit]
 
 
 def brief(visitors, observations, new=()):
     """The founder's brief under the Status line. `new` and `visitors`: [(email, line)], the
-    new people and up to five others. `observations`: [(text, friction_id or None)].
-    assemble() adds the table, names, work and replay links."""
+    new people and the others worth naming. `observations`: [(text, friction_id or None)].
+    assemble() keeps it to the period's limits and adds the table, names, work and links."""
     return {
-        "new": [{"email": str(e).strip().lower(), "line": _line(x)} for e, x in new][:BRIEF_NEW],
+        "new": [{"email": str(e).strip().lower(), "line": _line(x)} for e, x in new],
         "visitors": [
             {"email": str(email).strip().lower(), "line": _line(line)} for email, line in visitors
-        ][:BRIEF_VISITORS],
+        ],
         "observations": [
             {"text": _line(text), "friction": friction or None} for text, friction in observations
-        ][:BRIEF_OBSERVATIONS],
+        ],
     }
 
 
@@ -1221,19 +1237,14 @@ def _brief_person(v):
 
 def render_brief(b):
     """The brief as Markdown, exactly as it goes under the Status line."""
-    fn = b["funnel"]
+    fn, period = b["funnel"], b.get("period", "day")
     if fn is None:
-        lines = ["Visitors were not measured today."]
+        lines = [f"Visitors were not measured {'this week' if period == 'week' else 'today'}."]
     else:
         labels = [x["label"] for x in fn["steps"]]
-        lines = [
-            "| | " + " | ".join(labels) + " |",
-            "|---|" + "---:|" * len(labels),
-            "| Yesterday | " + " | ".join(_number(x["yesterday"]) for x in fn["steps"]) + " |",
-            f"| Last {fn['days']} days, daily average | "
-            + " | ".join(_number(x["average"]) for x in fn["steps"])
-            + " |",
-        ]
+        lines = ["| | " + " | ".join(labels) + " |", "|---|" + "---:|" * len(labels)]
+        for row, key in zip(ROWS[period], ("yesterday", "average"), strict=True):
+            lines.append(f"| {row} | " + " | ".join(_number(x[key]) for x in fn["steps"]) + " |")
     lines += ["", "**New users**", ""]
     lines += [_brief_person(v) for v in b.get("new") or []] or [
         "- Nobody new signed up or left an email."
@@ -1267,6 +1278,13 @@ def assemble(
     if not c["look_up_new_people"] and any(row.get("work") for row in named_people):
         raise ContractError("the founder turned off looking up new people; leave out work")
     if brief is not None:
+        if funnel is not None and funnel.get("period", "day") != c["period"]:
+            raise ContractError('pass c["period"] to funnel()')
+        limit = PERIODS[c["period"]]
+        brief = {
+            k: [{**x, f: _line(x[f], limit["line"])} for x in brief.get(k) or []][: limit[k]]
+            for k, f in (("new", "line"), ("visitors", "line"), ("observations", "text"))
+        }
         named_rows = {row["email"]: row for row in named_people}
         out = {"new": [], "visitors": []}
         for part, shown in out.items():
@@ -1278,7 +1296,7 @@ def assemble(
                 shown.append({**v, "name": row["name"], "replay_url": row["replay_url"]})
                 shown[-1]["work"] = row.get("work")
         _only_new(brief, named_rows, previous)
-        evidence["brief"] = {**brief, **out, "funnel": funnel}
+        evidence["brief"] = {**brief, **out, "funnel": funnel, "period": c["period"]}
     return evidence
 
 
@@ -1456,15 +1474,17 @@ def _check_brief(e, head):
             x["label"] for x in e["map"].get("funnel") or []
         ]:
             raise ContractError("the table's steps must be the map's funnel")
-    if len(b.get("visitors") or []) > BRIEF_VISITORS:
-        raise ContractError(f"show at most {BRIEF_VISITORS} visitors")
+    limit = PERIODS.get(b.get("period", "day"))
+    if limit is None or (fn is not None and fn.get("period", "day") != b.get("period", "day")):
+        raise ContractError("the brief and its table need the run's period")
+    for part in ("new", "visitors", "observations"):
+        if len(b.get(part) or []) > limit[part]:
+            raise ContractError(f"keep the brief to {limit[part]} {part}")
     named_emails = {row["email"] for row in e["people"]}
     for v in (b.get("visitors") or []) + (b.get("new") or []):
         if v.get("email") not in named_emails:
             raise ContractError(f"{v.get('email')} is in the brief but is not a named person")
     observations = b.get("observations") or []
-    if len(observations) > BRIEF_OBSERVATIONS:
-        raise ContractError(f"keep to {BRIEF_OBSERVATIONS} observations")
     recorded = {x["id"] for x in e["frictions"] if x["kind"] in ("failure", "error")}
     for o in observations:
         if (

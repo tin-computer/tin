@@ -31,6 +31,10 @@ is recorded with `outcome()`.
 Call `settings(context.inputs)` once and keep its window for every request. Invalid inputs
 produce a short report with Status: invalid configuration and no PostHog calls.
 
+`c["period"]` is `day` or `week`. A week reads the last 7 days, is read carefully once a week,
+and gets a longer brief (section 11). It also has more people worth reading in full, so expect
+two timeline batches.
+
 Look in the project files for earlier reports under `reports/visitors/`. Open the one whose
 evidence has the newest `generated_at` and pass its text to `previous()`. It returns the map and
 ledger that run left. The map is your past judgement about this project's tracking; trust it
@@ -198,7 +202,7 @@ with the highest scores and count the rest.
 A named person is new when `named()` sets `new`: they signed up, or gave an email for the first
 time, in the window. The founder wants to know who they are and where they work, whoever they
 are: a developer, a shop owner or a marketer. When `c["look_up_new_people"]` is on, look up each
-new person before you write about them: at most 10 people, most valuable first, and about 8
+new person before you write about them: at most 10 people (16 for a week), most valuable first, and about 8
 steps each, where a step is a search, a page you open or a GitHub lookup. Work through these in
 order and stop once you know their role and company:
 
@@ -260,20 +264,22 @@ Keep tracking problems apart, each with its exact fix:
 
 ## 11. The brief
 
-The brief opens the report and is also read on its own, in the founder's daily report, by
-someone who has not read the rest. It has four parts.
+The brief opens the report and is also read on its own, in the founder's report and in Slack,
+by someone who has not read the rest. It has four parts.
 
-The founder reads it every morning, so it says only what is new since the last brief:
+The founder reads a daily brief every morning and a weekly one carefully once a week. Either
+way it says only what is new since the last brief:
 `previous()` returns that brief and its window. Its window may overlap this one, for example
 after a run started by hand.
 
 **The table.** After the timelines, call `request(c, m, "funnel")` and pass the result to
-`funnel(result, m, inventory_rows)`. It counts unique people for each funnel step over the last
-24 hours and the daily average over the last 7 days. Pass it to `assemble()` as `funnel=`. The
+`funnel(result, m, inventory_rows, c["period"])`. It counts unique people for each funnel step
+over the last 24 hours against the daily average over the last 7 days, or for a week over the
+last 7 days against the weekly average of the 4 weeks before. Pass it to `assemble()` as `funnel=`. The
 numbers are the resource's; never write or adjust them. If the funnel call is refused, pass
 `funnel=None`: the table then says visitors were not measured.
 
-**New users.** Every new person, at most ten, most valuable first, one line each: how they
+**New users.** Every new person, at most 10 (20 for a week), most valuable first, one line each: how they
 came and how far they got, such as "came from a Google search, connected GitHub and ran the first
 audit". Their role, company and links come from their `work`; don't repeat them in the line.
 Pass `(email, line)` as `new`. When nobody is new the brief says so.
@@ -282,7 +288,7 @@ Every brief line says what happened and nothing else. No advice or next step ("c
 "review the replay", "worth asking about") and no verdict on what it means ("treat this as",
 "not evidence of"): the founder draws those. Suggested actions belong in People to act on.
 
-**Some visitors.** Up to five other named people, most valuable first: anyone who paid or
+**Some visitors.** Up to 5 other named people (12 for a week), most valuable first: anyone who paid or
 started a trial, then anyone stuck on the way in, then returning users who reached value. One
 line each: who they are, from their own data, and what they did. For example "started a trial, registered
 a phone, then clicked Ask about Enterprise". Pass `(email, line)`; the name and replay link come
@@ -293,11 +299,17 @@ refuses them. Someone in it who came back is listed again only for what they did
 line says so: "came back and upgraded to Plus". Fewer visitors, or none, is the right brief on
 a quiet day.
 
-**Some observations.** Up to five lines, the most useful first: possible bugs, failures the
+**Some observations.** Up to 5 lines (10 for a week), the most useful first: possible bugs, failures the
 product recorded, where visitors come from and where they leave, a tracking gap that changes
 how to read the table. Pass `(text, friction_id or None)`. Something without a recorded failure
 or error behind it is "there may be a bug in ...", never "X is broken"; `check()` refuses
 otherwise. Clicks that changed nothing are a "may".
+
+A line holds 240 characters, or 400 for a week. A weekly brief is the one the founder reads
+closely, so use the room: each person's line covers what they did across the week and how far
+they got, and the observations cover how the week went against the weeks before (the table),
+where visitors came from and left, and the frictions that held people back, still as what
+happened rather than what to do.
 
 Say each thing once:
 - leave out an observation the last brief made, unless it changed, and then say what changed:

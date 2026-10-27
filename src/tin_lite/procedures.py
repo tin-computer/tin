@@ -45,7 +45,7 @@ from tin_lite.workflow_services import ServiceBinding, service_bindings
 
 MAX_PROCEDURE_PROMPT_BYTES = 32_000
 MAX_PROCEDURE_RESOURCE_BYTES = 128_000
-MAX_PROCEDURE_RESOURCE_FILE_BYTES = 64_000
+MAX_PROCEDURE_RESOURCE_FILE_BYTES = 80_000
 MAX_PROCEDURE_ARTIFACT_BYTES = 1_000_000
 # Only declared binary media may exceed the text cap; today that is the demo video.
 MAX_PROCEDURE_BINARY_ARTIFACT_BYTES = MAX_DEMO_VIDEO_BYTES

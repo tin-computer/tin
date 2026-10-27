@@ -36,8 +36,8 @@ TABLE_COLUMNS = 6
 TABLE_ROWS = 10
 CELL = 60
 SECTIONS = 4
-ITEMS = 8
-ITEM = 300
+ITEMS = 20
+ITEM = 500
 HEADING = 60
 LABEL = 24
 URL = re.compile(r"^https://[^\s<>|]{1,500}$")
@@ -121,11 +121,12 @@ def _visitor_journal(content: bytes | str, inputs: Any = None) -> dict[str, Any]
             def cell(value):
                 return "not tracked" if value is None else f"{value:g}"
 
+            current, average = visitor_journal.PERIOD_ROWS[brief.period]
             table = {
                 "columns": ["", *(step.label for step in brief.steps)],
                 "rows": [
-                    ["Yesterday", *(cell(step.yesterday) for step in brief.steps)],
-                    ["Last 7 days, daily average", *(cell(step.average) for step in brief.steps)],
+                    [current, *(cell(step.yesterday) for step in brief.steps)],
+                    [average, *(cell(step.average) for step in brief.steps)],
                 ],
             }
         if brief.new:

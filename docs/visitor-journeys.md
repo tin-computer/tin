@@ -1,7 +1,7 @@
 # Visitor journeys
 
-`product.visitor_journeys` reads one connected PostHog project each day and writes a journal
-of the people who used the site and product in the window. It covers:
+`product.visitor_journeys` reads one connected PostHog project each day, or each week, and
+writes a journal of the people who used the site and product in the window. It covers:
 
 - who to act on today, each with their journey, where they stopped and one suggested next step;
 - new users and how far they got, with where they work: employer, role, what the company does
@@ -86,7 +86,8 @@ optional:
 
 | Input | Default | What it does |
 |---|---|---|
-| `lookback_hours` | 24 | The window, ending when the run starts (1–168). A daily schedule reads the last day. |
+| `period` | day | `day` or `week`. A saved daily schedule sets `day` and a weekly one `week`, whatever was chosen; on demand keeps the choice. |
+| `lookback_hours` | 24 | A day's window, ending when the run starts (1–168). A week always reads 168 hours. |
 | `website_hosts`, `product_hosts` | none | Pageviews to count. Empty: every host except those the map ignores (previews, staging). Server events always count. |
 | `exclude_email_domains` | none | Team domains, left out in the queries themselves. |
 | `internal_people` | none | Team emails or PostHog person IDs on personal accounts. |
@@ -94,7 +95,16 @@ optional:
 | `look_up_new_people` | on | Look up where new users work and their LinkedIn profile on the public web. |
 | `notes` | none | What your events mean, or what to watch. Outranks project files. |
 
-Schedule it daily. The first run maps the events and takes longer.
+Schedule it daily, or weekly for a report read carefully once a week. The first run maps the
+events and takes longer.
+
+A weekly run reads the last 7 days. Its table compares the week with the weekly average of the 4
+weeks before, where a daily one compares yesterday with the last 7 days. Its brief is longer: up
+to 20 new users, 12 other visitors and 10 observations, with lines of up to 400 characters
+instead of 10, 5, 5 and 240. It looks up as many as 16 new people instead of 10. Slack carries a
+long section on in the next block rather than cutting it. The period follows the schedule when
+the config is saved (`visitor_journal.follow_schedule`), so Start here pacing a daily pick to
+weekly also reads the week.
 
 ## Memory between runs
 
@@ -176,4 +186,5 @@ LinkedIn invitations, which need a LinkedIn member ID.
   another host, such as the app, shows as none there; the report says so.
 - Element text exists only where PostHog captures it. Many sites mask it, so rage clicks often
   name only the page.
-- The cost ceiling is $5 per run; the estimate ($1.00) is judged, not measured.
+- The cost ceiling is $8 per run, for a weekly read of up to 30 people; the estimate ($1.00, a
+  daily run) is judged, not measured. A daily run on 12 people cost $0.65.

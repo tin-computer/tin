@@ -3,12 +3,13 @@
   "definition": {
     "key": "product.visitor_journeys",
     "title": "Visitor journeys",
-    "description": "A daily read of who used your site and product: each signed-up person's journey, where people struggled, what worked for them, who to follow up with and what to fix. Looks up where new users work and their LinkedIn profile, and writes people who told you who they are to People.",
-    "version": "1.5.0",
+    "description": "A daily or weekly read of who used your site and product: each signed-up person's journey, where people struggled, what worked for them, who to follow up with and what to fix. Looks up where new users work and their LinkedIn profile, and writes people who told you who they are to People.",
+    "version": "1.6.0",
     "executor": "codex.procedure",
     "schedule_modes": [
       "on_demand",
-      "daily"
+      "daily",
+      "weekly"
     ],
     "input_schema": {
       "type": "object",
@@ -17,6 +18,16 @@
         "project_id": {
           "type": "string",
           "format": "uuid"
+        },
+        "period": {
+          "type": "string",
+          "enum": [
+            "day",
+            "week"
+          ],
+          "default": "day",
+          "title": "Report period",
+          "description": "A week reads the last 7 days in place of the hours to look back, compares them with the 4 weeks before and writes a longer brief. Pair it with a weekly schedule."
         },
         "lookback_hours": {
           "type": "integer",
@@ -131,11 +142,11 @@
         "analytics": {
           "provider_key": "analytics.posthog",
           "max_calls": 16,
-          "max_response_bytes": 400000
+          "max_response_bytes": 1000000
         },
         "github": {
           "provider_key": "managed.github",
-          "max_calls": 10,
+          "max_calls": 16,
           "max_response_bytes": 20000
         }
       },

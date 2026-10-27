@@ -1061,7 +1061,7 @@ async def test_the_catalog_pins_the_reviewed_package():
     db, storage = catalog_database(), PublishedSnapshots()
     await catalog.sync_builtin_workflows(database=db, storage=storage, system_wiki=WIKI)
     row = db.rows[entry.id]
-    assert row.definition["schedule_modes"] == ["on_demand", "daily"]
+    assert row.definition["schedule_modes"] == ["on_demand", "daily", "weekly"]
     procedure = await load_pinned_codex_procedure(
         storage=storage,
         repo_id=row.definition_repo_id,
@@ -1225,3 +1225,54 @@ def test_an_interrupted_journal_is_kept_as_partial_text_and_never_published():
     with pytest.raises(ValueError):
         validate_procedure_artifact(partial, spec=spec)
     validate_procedure_artifact(partial, spec=interrupted_procedure._partial(spec))
+
+
+WEEK_FUNNEL = {
+    "columns": ["ago", "step1", "step2", "step3"],
+    "rows": [[0, 40, 9, 3], [1, 30, 6, 2], [2, 20, 4, 1], [4, 10, 2, 1], [5, 99, 9, 9]],
+}
+
+
+def test_a_week_reads_seven_days_against_the_four_before_and_keeps_a_longer_brief(j, c, m, people):
+    from tin_lite import run_summaries
+
+    week = j.settings(
+        {"period": "week", "lookback_hours": 24, "website_hosts": ["example.com"]}, now=NOW
+    )
+    assert (week["period"], week["start"], week["lookback_hours"]) == (
+        "week",
+        "2026-10-09 14:00:00",
+        168,
+    )
+    with pytest.raises(j.ContractError, match="period"):
+        j.settings({"period": "month"}, now=NOW)
+    query = j.request(week, m, "funnel")["arguments"]["query"]
+    assert check_hogql(query) == query and "604800) AS ago" in query and "LIMIT 5" in query
+    assert "toDateTime('2026-09-11 14:00:00')" in query  # five weeks before the window's end
+    fn = j.funnel(WEEK_FUNNEL, m, period="week")
+    # This week against the 4 weeks before; the row past them is ignored.
+    assert (fn["period"], fn["steps"][0]["yesterday"], fn["steps"][0]["average"]) == (
+        "week",
+        40,
+        15.0,
+    )
+    long = "Signed up, connected GitHub and ran three audits across the week. " * 5
+    b = j.brief([("ben@quanta.io", long)], [("Most visitors left after the homepage.", None)])
+    text = report(j, week, m, people, brief=b, funnel=fn)
+    j.check(text)
+    head = text.split(j.EVIDENCE_MARKER)[0]
+    assert "| This week | 40 | 9 | 3 |" in head
+    assert "| The 4 weeks before, weekly average | 15 | 3 | 1 |" in head
+    brief = visitor_journal.read(text).brief
+    assert brief.period == "week" and len(brief.visitors[0].line) > 300
+    summary = run_summaries.from_output("visitor-journal.v1", text)
+    assert summary["headline"].startswith("This week: 40 unique visitors")
+    assert [row[0] for row in summary["table"]["rows"]] == [
+        "This week",
+        "The 4 weeks before, weekly average",
+    ]
+    # A day keeps its shorter lines, and a week's table never goes in a day's brief.
+    day = visitor_journal.read(report(j, c, m, people, brief=b)).brief
+    assert len(day.visitors[0].line) <= 240
+    with pytest.raises(j.ContractError, match="period"):
+        report(j, week, m, people, brief=b, funnel=j.funnel(FUNNEL_RESULT, m))
