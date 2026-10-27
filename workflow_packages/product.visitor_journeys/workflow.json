@@ -3,8 +3,8 @@
   "definition": {
     "key": "product.visitor_journeys",
     "title": "Visitor journeys",
-    "description": "A daily read of who used your site and product: each signed-up person's journey, where people struggled, what worked for them, who to follow up with and what to fix. Writes people who told you who they are to People.",
-    "version": "1.3.0",
+    "description": "A daily read of who used your site and product: each signed-up person's journey, where people struggled, what worked for them, who to follow up with and what to fix. Looks up where new users work and their LinkedIn profile, and writes people who told you who they are to People.",
+    "version": "1.4.0",
     "executor": "codex.procedure",
     "schedule_modes": [
       "on_demand",
@@ -76,6 +76,12 @@
           "default": 12,
           "title": "People to read in full"
         },
+        "look_up_new_people": {
+          "type": "boolean",
+          "default": true,
+          "title": "Look up where new users work",
+          "description": "Search the public web for each new user's employer, role and LinkedIn profile. Turn off for a consumer product."
+        },
         "notes": {
           "type": "string",
           "maxLength": 2000,
@@ -139,9 +145,9 @@
           {"id": "map", "kind": "step", "label": "Check the map against the events", "fact": "re-maps renamed or silent key events"},
           {"id": "census", "kind": "step", "label": "Everyone active in the window", "fact": "team and bots left out, one tier each"},
           {"id": "nothing", "kind": "ghost", "label": "PostHog answered nothing", "fact": "run fails, the diagnostic stays readable"},
-          {"id": "read", "kind": "step", "label": "Journeys, site paths, frictions", "fact": "up to 30 people, repositories name the file"},
-          {"id": "report", "kind": "receipt", "label": "Visitor journal in Files", "fact": "a daily brief, people to act on, fixes"},
-          {"id": "people", "kind": "receipt", "label": "People", "fact": "only people who signed up or gave an email"}
+          {"id": "web", "kind": "surface", "label": "Public web search", "fact": "new users only, 3 searches each"},
+          {"id": "read", "kind": "step", "label": "Journeys, frictions, new users", "fact": "work and LinkedIn only when they tie"},
+          {"id": "report", "kind": "receipt", "label": "Visitor journal and People", "fact": "brief and fixes, People for those with email"}
         ],
         "edges": [
           {"from": "memory", "to": "map", "kind": "call"},
@@ -149,8 +155,8 @@
           {"from": "map", "to": "census", "kind": "call"},
           {"from": "census", "to": "nothing", "kind": "call", "label": "every query refused"},
           {"from": "census", "to": "read", "kind": "call"},
-          {"from": "read", "to": "report", "kind": "call"},
-          {"from": "report", "to": "people", "kind": "call", "label": "after publishing"}
+          {"from": "web", "to": "read", "kind": "call"},
+          {"from": "read", "to": "report", "kind": "call"}
         ]
       }
     }

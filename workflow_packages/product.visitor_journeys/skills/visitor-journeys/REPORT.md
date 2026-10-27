@@ -14,6 +14,10 @@ Status: <complete | incomplete | nothing to report | invalid configuration>
 | Yesterday | <n> | <n> | <n> |
 | Last 7 days, daily average | <n> | <n> | <n> |
 
+**New users**
+
+- **<Name>** (<email>): <role> at <company>; <what the company does>. <how they came and how far they got>. [LinkedIn](<profile>) · [<Company>](<site>) · [Replay](<link>)
+
 **Some visitors**
 
 - **<Name>** (<email>): <who they are and what they did, in one line>. [Replay](<link>)
@@ -24,7 +28,7 @@ Status: <complete | incomplete | nothing to report | invalid configuration>
 
 ## People to act on today
 ### <Name or email> · <lead | new user | user>
-- **Who:** <email>, <what their own data says about them>.
+- **Who:** <email>, <what their own data says about them; for a new person, their role and company, with [LinkedIn](<profile>) when found>.
 - **Journey:** <3 to 6 steps, ending where they stopped>.
 - **Stopped at:** <page or step, and the likely reason>.
 - **Suggested:** <one action, with a short draft if it is a message>.
