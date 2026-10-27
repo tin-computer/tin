@@ -1086,7 +1086,7 @@ async def test_the_qualification_contract_covers_the_package():
     checked = await check_package(
         files, "workflow_packages/product.visitor_journeys/workflow.json", contract
     )
-    assert checked["cost"]["configured_ceiling_usd"] == "5"
+    assert checked["cost"]["configured_ceiling_usd"] == "8"
 
 
 async def test_the_resource_drives_the_offline_posthog_gateway(j, c, m):

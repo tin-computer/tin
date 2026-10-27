@@ -2,16 +2,17 @@
   "version": 1,
   "assumptions": [
     "One PostHog project, the one selected in the analytics.posthog connection, with web capture (pageviews, autocapture, exceptions) and at least one event that identifies a signed-up person by email.",
-    "A window of 1 to 168 hours ending when the run starts, with a 90-day lookback for earlier visits and a 30-day inventory. The first run maps the events; later runs reuse the map and ledger from the newest report under reports/visitors/.",
+    "A window of 1 to 168 hours ending when the run starts (a weekly period always 168), with a 90-day lookback for earlier visits and a 30-day inventory. The first run maps the events; later runs reuse the map and ledger from the newest report under reports/visitors/.",
     "Run success establishes delivery. A useful report also needs a reviewer to compare the journeys and frictions with the PostHog data."
   ],
   "cost_drivers": [
-    "One bounded Codex session at the pinned model pricing, under a $5 ceiling. No managed-model routes.",
+    "One bounded Codex session at the pinned model pricing, under an $8 ceiling, for a weekly read. No managed-model routes.",
     "Agent work grows with the number of people read in full (max_people_detailed, at most 30), the size of the map on a first run, and the repositories read to find the code behind a friction.",
-    "At most 16 PostHog calls, each one SELECT of at most 8000 bytes, LIMIT <= 1000, 400000-byte responses. PostHog's own query cost is separate and unknown."
+    "At most 16 PostHog calls, each one SELECT of at most 8000 bytes, LIMIT <= 1000, 1000000-byte responses. At most 16 free GitHub lookups on Tin's managed.github service. PostHog's own query cost is separate and unknown."
   ],
   "effects": [
     "Read-only analytics.posthog calls through Tin's gateway: project.read and query.hogql against the project selected in Integrations.",
+    "When look_up_new_people is on, read-only GitHub lookups on Tin's managed.github service, each sending one new person's email (and the name they gave) to GitHub's search, and public web search and page reads.",
     "One run-owned reports/visitors/<run_id>.md in project state.",
     "After publication, each person the report names by an email they gave the product becomes or joins a People record with a visited event. Anonymous visitors are never written; forgotten people are skipped.",
     "No messages, no PostHog changes, no pull requests and no other workflows. Suggested actions are for the founder."
