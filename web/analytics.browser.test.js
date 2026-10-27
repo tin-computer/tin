@@ -266,10 +266,18 @@ test("page: a busy site's bars fill the chart, and today's label wraps rather th
       const total = Object.values(today.hours).reduce((sum, kind) => sum + (kind[hour] || 0), 0);
       return total ? Math.round(total * 118 / busiest) : 0;
     }));
+    // Hour by hour keeps automation on top of the visits with no automation seen.
+    const hourKinds = await page.locator(".analytics-bars .analytics-bar:not(.is-empty)").evaluateAll(bars => bars.map(bar => [...bar.querySelectorAll("i")].map(part => part.className)));
+    assert.ok(hourKinds.some(kinds => kinds.length > 1), JSON.stringify(hourKinds));
+    assert.ok(hourKinds.every(kinds => !kinds.includes("is-none") || kinds.at(-1) === "is-none"), JSON.stringify(hourKinds));
     await page.getByRole("tab", {name: "Last 7 days"}).click();
     await page.locator(".analytics-days").waitFor();
     assert.deepEqual(await columns(page.locator(".analytics-day-bar .analytics-bar")), week.days.map(row => Math.round(row.visits * 118 / 1440)));
     assert.equal(await page.locator(".analytics-day-bar").first().locator(".is-declared").evaluate(part => part.getBoundingClientRect().height), 2);
+    // Day by day puts automation on the floor (Paper AN-B, B1): automated browsers at the bottom,
+    // declared crawlers on them, visits with no automation seen on top.
+    const kinds = locator => locator.evaluateAll(bars => bars.map(bar => [...bar.querySelectorAll("i")].map(part => part.className)));
+    assert.deepEqual(await kinds(page.locator(".analytics-day-bar .analytics-bar")), week.days.map(row => [["is-none", 1], ["is-declared", row.declared_crawler], ["is-automated", row.automated_browser]].filter(([, value]) => value).map(([kind]) => kind)));
     // Visits with no automation seen keep their share of the column: 36 visits a day of 1,440 on Saturday.
     const none = await page.locator(".analytics-day-bar .is-none").evaluateAll(parts => parts.map(part => part.getBoundingClientRect().height));
     week.days.slice(1).forEach((row, index) => assert.ok(Math.abs(none[index + 1] - (row.visits - row.automated_browser - row.declared_crawler) * 118 / 1440) <= 4, `${row.date} is ${none[index + 1]}px`));
