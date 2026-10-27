@@ -1295,7 +1295,7 @@ def assemble(
                     raise ContractError(f"{v['email']} is in the brief but is not a named {kind}")
                 shown.append({**v, "name": row["name"], "replay_url": row["replay_url"]})
                 shown[-1]["work"] = row.get("work")
-        _only_new(brief, named_rows, previous)
+        _only_new(brief, named_rows, previous, c["period"])
         evidence["brief"] = {**brief, **out, "funnel": funnel, "period": c["period"]}
     return evidence
 
@@ -1314,12 +1314,13 @@ def _said(text):
     return re.sub(r"[^a-z0-9]+", " ", str(text or "").lower()).strip()
 
 
-def _only_new(b, named_rows, previous):
-    """Only what is new since the last brief: not someone it showed who has done nothing since
-    its window, nor an observation it already made."""
+def _only_new(b, named_rows, previous, period):
+    """Only what is new since the last brief of the same period: not someone it showed who has
+    done nothing since its window, nor an observation it already made. A week is never cut
+    by a daily brief."""
     last = (previous or {}).get("brief") or {}
     end = _moment(((previous or {}).get("window") or {}).get("end"))
-    if not last or end is None:
+    if not last or end is None or last.get("period", "day") != period:
         return
     were = (last.get("visitors") or []) + (last.get("new") or [])
     shown = {v.get("email") for v in were if isinstance(v, dict)}

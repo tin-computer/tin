@@ -796,6 +796,20 @@ def test_the_brief_says_only_what_is_new_since_the_last_one(j, c, m, people):
             previous=earlier,
         )
     )
+    # A weekly brief is compared with last week's, never cut by a daily one.
+    week = j.settings({"period": "week"}, now=NOW)
+    weekly = j.funnel(FUNNEL_RESULT, m, period="week")
+    j.check(
+        report(
+            j,
+            week,
+            m,
+            people,
+            brief=j.brief([(ben, "Clicked pricing.")], [(gap, None)]),
+            funnel=weekly,
+            previous=later,
+        )
+    )
     # The first run, or a report from before 1.3.0, has no brief to compare with.
     assert j.previous(None)["brief"] is None
     j.check(report(j, c, m, people, previous=j.previous(None)))

@@ -270,7 +270,11 @@ by someone who has not read the rest. It has four parts.
 The founder reads a daily brief every morning and a weekly one carefully once a week. Either
 way it says only what is new since the last brief:
 `previous()` returns that brief and its window. Its window may overlap this one, for example
-after a run started by hand.
+after a run started by hand. The last brief is the newest one of this run's period: a weekly
+brief is compared with last week's, never with a daily one. When the newest report is of the
+other period (its brief's `period`; none means `day`), also open the newest report of this
+period and pass `previous()` of it to `assemble()` as `previous=`, or `previous(None)` when there
+is none. The map, ledger and site still come from the newest report.
 
 **The table.** After the timelines, call `request(c, m, "funnel")` and pass the result to
 `funnel(result, m, inventory_rows, c["period"])`. It counts unique people for each funnel step
