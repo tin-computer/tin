@@ -235,9 +235,40 @@ test("page: today so far, each number against the day before, every page request
     await page.getByRole("tab", {name: "Last 7 days"}).click();
     await page.locator(".analytics-days").waitFor();
     assert.equal(await page.locator(".analytics-day").count(), 7);
-    assert.equal(await page.locator(".analytics-day-label span").last().innerText(), "tue 20 so far");
+    assert.equal(await page.locator(".analytics-day-label > span").last().innerText(), "tue 20 so far");
     assert.equal(await page.locator(".analytics-tile").first().locator("code").innerText(), "+9% on the week before");
     assert.match(page.url(), /tab=week/);
+  });
+});
+
+// A busy site's columns are drawn to the same scale as a quiet one's: the busiest fills the chart.
+test("page: a busy site's bars fill the chart, and today's label wraps rather than cuts", {timeout: 120000}, async () => {
+  const live = card("live", {reporter_connected: true});
+  const today = fixture("report_day.json");
+  for (const kind of Object.keys(today.hours)) today.hours[kind] = today.hours[kind].map(value => value * 30);
+  const week = fixture("report_week.json");
+  Object.assign(week, {complete: false});
+  for (const row of week.days) for (const key of ["visits", "page_views", "automated_browser", "declared_crawler"]) row[key] *= 30;
+  const pages = {today: pageOf("today", today, live), week: pageOf("week", week, live)};
+  const columns = locator => locator.evaluateAll(bars => bars.map(bar => [...bar.querySelectorAll("i")].reduce((sum, part) => sum + part.getBoundingClientRect().height, 0)));
+  await open({integrations: [live], analytics: {pages, answer: () => ({})}}, "/analytics", async page => {
+    await page.locator(".analytics-bars").waitFor();
+    const hours = await columns(page.locator(".analytics-bars .analytics-bar"));
+    assert.ok(Math.max(...hours) >= 116 && Math.max(...hours) <= 122, `busiest hour is ${Math.max(...hours)}px`);
+    await page.getByRole("tab", {name: "Last 7 days"}).click();
+    await page.locator(".analytics-days").waitFor();
+    const days = await columns(page.locator(".analytics-day-bar .analytics-bar"));
+    assert.ok(days.at(-1) >= 116 && days.at(-1) <= 122, `busiest day is ${days.at(-1)}px`);
+    // Visits with no automation seen keep their share of the column: 36 visits a day of 1,440 on Saturday.
+    const none = await page.locator(".analytics-day-bar .is-none").evaluateAll(parts => parts.map(part => part.getBoundingClientRect().height));
+    week.days.forEach((row, index) => assert.ok(Math.abs(none[index] - (row.visits - row.automated_browser - row.declared_crawler) * 118 / 1440) <= 1, `${row.date} is ${none[index]}px`));
+    const labels = page.locator(".analytics-day-label");
+    assert.deepEqual(await labels.evaluateAll(items => items.map(item => item.innerText.replace("\n", " "))).then(items => items.slice(-2)), ["mon 19 990", "tue 20 so far 1,440"]);
+    assert.equal(await labels.evaluateAll(items => items.every(item => [...item.children].every(child => child.scrollWidth <= child.clientWidth))), true);
+    // On a phone the count gives way and so does "so far"; the heading still says today so far.
+    await page.setViewportSize({width: 390, height: 844});
+    assert.equal(await labels.last().innerText(), "tue 20");
+    assert.equal(await labels.evaluateAll(items => items.every(item => item.firstElementChild.scrollWidth <= item.firstElementChild.clientWidth)), true);
   });
 });
 
