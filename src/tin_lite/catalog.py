@@ -2207,7 +2207,8 @@ BUILTIN_WORKFLOWS = (
         # Search Console searches, and no longer reads organic.prompt_panel.
         # 0.12.0: organic-audit-v16 adds the other address (www or bare), missing structured
         # data, complete link previews and links to a privacy policy and terms.
-        version_label="0.12.0",
+        # 0.12.1: v17 respects crawler policy and states actual engine report coverage.
+        version_label="0.12.1",
         model_route=ModelRoute(
             key="organic.audit.visibility.v1",
             provider=ProviderName.OPENAI,

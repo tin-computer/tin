@@ -225,7 +225,7 @@ V15_AUDIT_POLICY = {
 # site, structured data the key pages lack, complete link previews whose image loads, and links
 # to a privacy policy and terms. v15 may be deployed, so a run pinned to it or earlier reads
 # none of the new evidence and makes none of the new findings.
-AUDIT_POLICY = {
+V16_AUDIT_POLICY = {
     **V15_AUDIT_POLICY,
     "version": "organic-audit-v16",
     # One read of the other host's homepage, the page facts below (V16_PAGE_FACTS) and the
@@ -241,6 +241,14 @@ AUDIT_POLICY = {
     # The profile and parent candidates read once each, as evidence for the founder; a site
     # that turns readers away (LinkedIn, X) is "couldn't check", never a verdict.
     "max_entity_checks": 12,
+}
+
+# New report interpretation is pinned so saved runs keep their original findings and text.
+AUDIT_POLICY = {
+    **V16_AUDIT_POLICY,
+    "version": "organic-audit-v17",
+    "crawler_access_policy": True,
+    "report_engine_coverage": True,
 }
 
 # Crawl, site-file and Search Console settings. They never change how an AI answer is
@@ -283,6 +291,8 @@ SITE_EVIDENCE_POLICY_KEYS = frozenset(
         "entity_backlinks_limit",
         "entity_backlinks_reservation_usd",
         "max_entity_checks",
+        "crawler_access_policy",
+        "report_engine_coverage",
     }
 )
 
@@ -361,6 +371,7 @@ def audit_policy(version: str = AUDIT_POLICY["version"]) -> dict:
         V13_AUDIT_POLICY,
         V14_AUDIT_POLICY,
         V15_AUDIT_POLICY,
+        V16_AUDIT_POLICY,
         AUDIT_POLICY,
     ):
         if version == policy["version"]:
@@ -383,6 +394,7 @@ def grounded_preparation(policy_version: str) -> bool:
         V13_AUDIT_POLICY,
         V14_AUDIT_POLICY,
         V15_AUDIT_POLICY,
+        V16_AUDIT_POLICY,
         AUDIT_POLICY,
     )
 
@@ -1727,6 +1739,7 @@ def site_check_documents(
             complete=complete,
             ai_details=ai_report_details(ai) + engine_lines,
             evidence_limit=evidence_limit,
+            report_engine_coverage=bool(policy.get("report_engine_coverage")),
         )
         lines.extend(
             [
