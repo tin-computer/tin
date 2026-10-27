@@ -1216,7 +1216,7 @@ def _brief_person(v):
         ("Replay", v["replay_url"]),
     )
     links = " · ".join(f"[{k}]({u})" for k, u in links if u)
-    return f"- {who}: " + " ".join(filter(None, (job and job + ".", v["line"], links)))
+    return f"- {who}: " + " ".join(filter(None, (job and job.rstrip(".") + ".", v["line"], links)))
 
 
 def render_brief(b):

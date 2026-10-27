@@ -806,7 +806,7 @@ def with_work(j, m, people):
     work = j.profile(
         company="Fieldnotes",
         role="Founder",
-        about="a research notebook for UX teams",
+        about="a research notebook for UX teams.",  # its own period is not doubled
         linkedin_url="https://www.linkedin.com/in/anasouza",
         company_url="https://fieldnotes.dev",
         basis="name and fieldnotes.dev email",
