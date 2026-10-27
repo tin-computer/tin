@@ -292,14 +292,19 @@ window.TinAnalytics = (() => {
     </div>`;
   }
 
-  // Each column stacks declared crawlers on automated browsers on visits with no automation seen.
+  // A column stacks its kinds of visit top to bottom in `order`. Day by day puts automation on the
+  // floor (Paper AN-B, B1), so each day's automated browsers and declared crawlers start from zero;
+  // hour by hour keeps declared crawlers on automated browsers on visits with no automation seen.
+  const AUTOMATION_ON_TOP = ["declared", "automated", "none"];
+  const AUTOMATION_ON_FLOOR = ["none", "declared", "automated"];
+
   // A column is as tall as its total: the busiest fills the chart at any count, a quiet one keeps
   // at most 17px a visit. The 2px gaps come out of that height, and a part drawn up to the 2px
   // minimum takes the difference from the largest part, so the column stays true to its total.
-  function column(parts, total, max) {
+  function column(parts, total, max, order = AUTOMATION_ON_TOP) {
     if (!total) return `<span class="analytics-bar is-empty${parts.future ? " is-future" : ""}"></span>`;
     const unit = Math.min(17, 118 / Math.max(max, 1));
-    const shown = [["is-declared", parts.declared], ["is-automated", parts.automated], ["is-none", parts.none]].filter(([, value]) => value > 0);
+    const shown = order.map((kind) => [`is-${kind}`, parts[kind]]).filter(([, value]) => value > 0);
     const sum = shown.reduce((all, [, value]) => all + value, 0);
     const gaps = (shown.length - 1) * 2;
     const room = Math.max(Math.round(total * unit), shown.length * 4 - 2) - gaps;
@@ -343,7 +348,7 @@ window.TinAnalytics = (() => {
       const max = Math.max(0, ...rows.map((row) => row.visits || 0));
       const last = rows.length - 1;
       bars = `<div class="analytics-days">${rows.map((row, index) => `<div class="analytics-day">
-          <div class="analytics-day-bar">${column(row, row.visits, max)}</div>
+          <div class="analytics-day-bar">${column(row, row.visits, max, AUTOMATION_ON_FLOOR)}</div>
           <div class="analytics-day-label"><span>${escape(`${weekday(row.date).slice(0, 3)} ${day(row.date)?.getUTCDate() ?? ""}`)}${index === last && !report.complete ? ' <span class="analytics-day-so-far">so far</span>' : ""}</span><strong>${count(row.visits)}</strong></div>
         </div>`).join("")}</div>`;
       axis = "";
