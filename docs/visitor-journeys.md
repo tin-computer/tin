@@ -21,7 +21,8 @@ owns every query, tier, count and ledger entry. The agent writes the map of the 
 events and does the judgment: journeys in words, causes, actions and changes.
 
 The brief at the top of each report is also the run's [summary](run-summaries.md), which a saved
-schedule can post to a Slack channel.
+schedule can post to a Slack channel. Its lines say what happened, never what to do about it or
+what it means; suggested actions stay in the report's People to act on.
 
 It differs from the [product analytics brief](product-analytics-brief.md), which reports
 aggregate funnels and trends with no people and no recommendations. This workflow is per

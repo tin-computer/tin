@@ -4,7 +4,7 @@
     "key": "product.visitor_journeys",
     "title": "Visitor journeys",
     "description": "A daily read of who used your site and product: each signed-up person's journey, where people struggled, what worked for them, who to follow up with and what to fix. Looks up where new users work and their LinkedIn profile, and writes people who told you who they are to People.",
-    "version": "1.4.1",
+    "version": "1.4.2",
     "executor": "codex.procedure",
     "schedule_modes": [
       "on_demand",

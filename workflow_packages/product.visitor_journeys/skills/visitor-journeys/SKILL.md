@@ -255,6 +255,10 @@ came and how far they got, such as "came from a Google search, connected GitHub 
 audit". Their role, company and links come from their `work`; don't repeat them in the line.
 Pass `(email, line)` as `new`. When nobody is new the brief says so.
 
+Every brief line says what happened and nothing else. No advice or next step ("check whether",
+"review the replay", "worth asking about") and no verdict on what it means ("treat this as",
+"not evidence of"): the founder draws those. Suggested actions belong in People to act on.
+
 **Some visitors.** Up to five other named people, most valuable first: anyone who paid or
 started a trial, then anyone stuck on the way in, then returning users who reached value. One
 line each: who they are, from their own data, and what they did. For example "started a trial, registered
@@ -270,7 +274,7 @@ a quiet day.
 product recorded, where visitors come from and where they leave, a tracking gap that changes
 how to read the table. Pass `(text, friction_id or None)`. Something without a recorded failure
 or error behind it is "there may be a bug in ...", never "X is broken"; `check()` refuses
-otherwise. Clicks that changed nothing are a "may", and the line says to watch the replay.
+otherwise. Clicks that changed nothing are a "may".
 
 Say each thing once:
 - leave out an observation the last brief made, unless it changed, and then say what changed:

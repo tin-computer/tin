@@ -20,11 +20,11 @@ Status: <complete | incomplete | nothing to report | invalid configuration>
 
 **Some visitors**
 
-- **<Name>** (<email>): <who they are and what they did, in one line>. [Replay](<link>)
+- **<Name>** (<email>): <who they are and what they did, in one line; no advice>. [Replay](<link>)
 
 **Some observations**
 
-- <What stood out: "there may be a bug in ..." for anything without a recorded failure>
+- <What happened, to how many, since when; "there may be a bug in ..." for anything without a recorded failure; no advice>
 
 ## People to act on today
 ### <Name or email> · <lead | new user | user>
