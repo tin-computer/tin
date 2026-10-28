@@ -1,7 +1,7 @@
 # Visitor journeys
 
-`product.visitor_journeys` reads one connected PostHog project each day and writes a journal
-of the people who used the site and product in the window. It covers:
+`product.visitor_journeys` reads one connected PostHog project each day, or each week, and
+writes a journal of the people who used the site and product in the window. It covers:
 
 - who to act on today, each with their journey, where they stopped and one suggested next step;
 - new users and how far they got, with where they work: employer, role, what the company does
@@ -21,7 +21,13 @@ owns every query, tier, count and ledger entry. The agent writes the map of the 
 events and does the judgment: journeys in words, causes, actions and changes.
 
 The brief at the top of each report is also the run's [summary](run-summaries.md), which a saved
-schedule can post to a Slack channel.
+schedule can post to a Slack channel. It groups people rather than giving each a line: new users
+by how far they got (every new person in one group, with role and company), up to 5 worth knowing
+on their own (a known company, or something no group says), where people got stuck (each problem
+with who hit it and how often), returning users by what they did, and up to 5 observations that
+say nothing the table or groups already say. Its lines say what happened, never what to do about
+it or what it means; suggested actions stay in the report's People to act on. Daily briefs from
+before 1.6.0 gave each person a line and still read that way.
 
 It differs from the [product analytics brief](product-analytics-brief.md), which reports
 aggregate funnels and trends with no people and no recommendations. This workflow is per
@@ -41,27 +47,43 @@ quotes what a person typed.
 
 A named person is new when they signed up in the window, or gave an email for the first time
 (a lead with no earlier sessions). When `look_up_new_people` is on, the agent looks up each new
-person with web search before writing about them: at most 10 people and 3 searches each.
+person before writing about them: at most 10 people and about 8 steps each (a search, a page it
+opens or a GitHub lookup), in this order, stopping once it knows their role and company:
 
-- A work email domain names the company; the agent reads its site for what it does and its size.
-  A free mail domain (gmail.com and the like) names nothing.
-- A LinkedIn profile or role is kept only when the result shows the person's full name and
-  something from their own data, usually the company behind their email domain. `profile()`
-  refuses a role or profile without that `basis`. With a free mail address and nothing else that
-  ties, the report says nothing: a namesake is worse than no profile.
+1. What they gave the product: name, email, company, role, website.
+2. Their email domain. A work domain names the company, and the agent opens its site (home,
+   about or team page) for what it does, its size, and their role and profile when the team page
+   names them. A free mail domain (gmail.com and the like) names nothing; a shared inbox such
+   as info@ is the company, not a person.
+3. GitHub, through Tin's `managed.github` lookup: the account whose commits carry their exact
+   email, the owner of the repositories those commits went to when it carries the same name,
+   or, with no commits, an account whose username is their email's local part and whose profile
+   has their full name. It returns the company, site, bio and LinkedIn profile they published.
+   It only knows people who write code; for everyone else the other steps do the work.
+4. Their own links: the site they gave or GitHub names, and the employer and LinkedIn it links.
+5. Web search with what the steps above found (name with company, domain, site or username),
+   never the name alone.
+
+A LinkedIn profile or role is kept only when it ties to their own data, strongest first: exact
+email, a link they published, username and full name, full name and their email's company.
+`profile()` refuses a role or profile without that `basis`. With a free mail address and nothing
+else that ties, the report says nothing: a namesake is worse than no profile.
 - Work only: employer, role, the company, its size and a public professional profile. Never a
   home address, family, age, personal social accounts or private life. Anonymous visitors, team
   members and people who are not new are never looked up.
 
-The brief lists the new people under **New users**, above **Some visitors**:
+The brief names new people with their role and company in the stage they reached, and gives
+the few worth knowing on their own a line under **Worth knowing**:
 
 ```text
+- Created an account (2): Ana Souza (Founder, Fieldnotes), Ben Ode
 - **Ana Souza** (ana@fieldnotes.dev): Founder at Fieldnotes; a research notebook for UX teams.
   Came from the hackathon and created an account. [LinkedIn](…) · [Fieldnotes](…) · [Replay](…)
 ```
 
-Web search runs on the model provider's side and is billed per search, about $0.01 each, so a
-day with ten new people adds about $0.30. Turn it off for a consumer product, where a user's
+Web search runs on the model provider's side and is billed per search, about $0.01 each; opening
+a page is not billed per call. A day with ten new people adds about $0.50. The GitHub lookup is
+free; it sends the email being looked up to GitHub's search. Turn it off for a consumer product, where a user's
 employer is none of the founder's business.
 
 ## Set it up
@@ -71,7 +93,8 @@ optional:
 
 | Input | Default | What it does |
 |---|---|---|
-| `lookback_hours` | 24 | The window, ending when the run starts (1–168). A daily schedule reads the last day. |
+| `period` | day | `day` or `week`. A saved daily schedule sets `day` and a weekly one `week`, whatever was chosen; on demand keeps the choice. |
+| `lookback_hours` | 24 | A day's window, ending when the run starts (1–168). A week always reads 168 hours. |
 | `website_hosts`, `product_hosts` | none | Pageviews to count. Empty: every host except those the map ignores (previews, staging). Server events always count. |
 | `exclude_email_domains` | none | Team domains, left out in the queries themselves. |
 | `internal_people` | none | Team emails or PostHog person IDs on personal accounts. |
@@ -79,7 +102,17 @@ optional:
 | `look_up_new_people` | on | Look up where new users work and their LinkedIn profile on the public web. |
 | `notes` | none | What your events mean, or what to watch. Outranks project files. |
 
-Schedule it daily. The first run maps the events and takes longer.
+Schedule it daily, or weekly for a report read carefully once a week. The first run maps the
+events and takes longer.
+
+A weekly run reads the last 7 days. Its table compares the week with the weekly average of the 4
+weeks before, where a daily one compares yesterday with the last 7 days. Its brief has longer
+lines and up to 6 people worth knowing, and it looks up as many as 16 new people instead of 10.
+"Only what is new" is measured against the last weekly brief, so a project with a daily run as
+well still gets a full weekly brief. Slack carries a long section on in the next block rather than
+cutting it. The period follows the schedule when the config is saved
+(`visitor_journal.follow_schedule`), so Start here pacing a daily pick to weekly also reads the
+week.
 
 ## Memory between runs
 
@@ -161,4 +194,5 @@ LinkedIn invitations, which need a LinkedIn member ID.
   another host, such as the app, shows as none there; the report says so.
 - Element text exists only where PostHog captures it. Many sites mask it, so rage clicks often
   name only the page.
-- The cost ceiling is $5 per run; the estimate ($1.00) is judged, not measured.
+- The cost ceiling is $8 per run, for a weekly read of up to 30 people; the estimate ($1.00, a
+  daily run) is judged, not measured. A daily run on 12 people cost $0.65.

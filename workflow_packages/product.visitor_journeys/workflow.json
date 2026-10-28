@@ -3,12 +3,13 @@
   "definition": {
     "key": "product.visitor_journeys",
     "title": "Visitor journeys",
-    "description": "A daily read of who used your site and product: each signed-up person's journey, where people struggled, what worked for them, who to follow up with and what to fix. Looks up where new users work and their LinkedIn profile, and writes people who told you who they are to People.",
-    "version": "1.4.1",
+    "description": "A daily or weekly read of who used your site and product: each signed-up person's journey, where people struggled, what worked for them, who to follow up with and what to fix. Looks up where new users work and their LinkedIn profile, and writes people who told you who they are to People.",
+    "version": "1.6.0",
     "executor": "codex.procedure",
     "schedule_modes": [
       "on_demand",
-      "daily"
+      "daily",
+      "weekly"
     ],
     "input_schema": {
       "type": "object",
@@ -17,6 +18,16 @@
         "project_id": {
           "type": "string",
           "format": "uuid"
+        },
+        "period": {
+          "type": "string",
+          "enum": [
+            "day",
+            "week"
+          ],
+          "default": "day",
+          "title": "Report period",
+          "description": "A week reads the last 7 days in place of the hours to look back, compares them with the 4 weeks before and writes a longer brief. Pair it with a weekly schedule."
         },
         "lookback_hours": {
           "type": "integer",
@@ -101,6 +112,13 @@
           "definitions.read"
         ],
         "required": true
+      },
+      {
+        "provider_key": "managed.github",
+        "capabilities": [
+          "people.read"
+        ],
+        "required": true
       }
     ],
     "procedure": {
@@ -124,7 +142,12 @@
         "analytics": {
           "provider_key": "analytics.posthog",
           "max_calls": 16,
-          "max_response_bytes": 400000
+          "max_response_bytes": 1000000
+        },
+        "github": {
+          "provider_key": "managed.github",
+          "max_calls": 16,
+          "max_response_bytes": 20000
         }
       },
       "output": {
@@ -145,7 +168,7 @@
           {"id": "map", "kind": "step", "label": "Check the map against the events", "fact": "re-maps renamed or silent key events"},
           {"id": "census", "kind": "step", "label": "Everyone active in the window", "fact": "team and bots left out, one tier each"},
           {"id": "nothing", "kind": "ghost", "label": "PostHog answered nothing", "fact": "run fails, the diagnostic stays readable"},
-          {"id": "web", "kind": "surface", "label": "Public web search", "fact": "new users only, 3 searches each"},
+          {"id": "web", "kind": "surface", "label": "GitHub and the public web", "fact": "new users only, by email, username and own links"},
           {"id": "read", "kind": "step", "label": "Journeys, frictions, new users", "fact": "work and LinkedIn only when they tie"},
           {"id": "report", "kind": "receipt", "label": "Visitor journal and People", "fact": "brief and fixes, People for those with email"}
         ],

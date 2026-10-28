@@ -153,9 +153,11 @@ def message(summary: dict[str, Any], *, title: str, link: str | None) -> dict[st
             + (f" <{item['url']}|{_escape(item['label'])}>" if item.get("url") else "")
             for item in section["items"]
         ]
-        text = _fit(items, head=f"*{_escape(section['heading'])}*\n", tail="")
-        if text:
+        # A long section (a weekly brief) continues in the next block rather than losing items.
+        head = f"*{_escape(section['heading'])}*\n"
+        while items and (text := _fit(items, head=head, tail="")):
             blocks.append({"type": "section", "text": {"type": "mrkdwn", "text": text}})
+            items, head = items[len(text[len(head) :].split("\n")) :], ""
     if link:
         blocks.append(
             {

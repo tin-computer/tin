@@ -88,20 +88,40 @@ def test_a_visitor_journal_brief_becomes_the_runs_summary(j, c, m, people):
         m,
         people,
         brief=j.brief(
-            [("ben@quanta.io", "Clicked pricing twice.")],
             [("Most visitors left after the homepage.", None)],
+            stages=[("Signed up", ["ana@fieldnotes.dev"]), ("Left an email", ["ben@quanta.io"])],
+            stuck=[("Checkout failed, 2 times", ["cara@studio.design"], "she retried")],
         ),
     )
     summary = run_summaries.from_output("visitor-journal.v1", text)
     assert summary["headline"] == "Yesterday: 4 unique visitors, 1 clicked pricing, 1 signed up."
     assert summary["table"]["columns"] == ["", "Unique visitors", "Clicked pricing", "Signed up"]
     assert summary["table"]["rows"][0] == ["Yesterday", "4", "1", "1"]
-    visitors, observations = summary["sections"]
-    assert visitors["items"][0]["text"].endswith("(ben@quanta.io): Clicked pricing twice.")
-    assert visitors["items"][0]["label"] == "Replay" and visitors["items"][0]["url"]
+    new, stuck, observations = summary["sections"]
+    assert new["heading"] == "New users: 2, by how far they got"
+    assert [x["text"] for x in new["items"]] == [
+        "Signed up (1): Ana Souza",
+        "Left an email (1): Ben Ode",
+    ]
+    assert stuck["items"][0]["text"].endswith(". She retried")
+    assert observations["heading"] == "Also yesterday"
     assert observations["items"] == [
         {"text": "Most visitors left after the homepage.", "url": None, "label": None}
     ]
+    # A daily brief from before 1.6.0 still reads a line a person.
+    head, _ = text.split(j.EVIDENCE_MARKER)
+    e = j.read_evidence(text)
+    e["brief"] = {
+        "funnel": e["brief"]["funnel"],
+        "new": [],
+        "visitors": [{"email": "ben@quanta.io", "line": "Clicked pricing twice."}],
+        "observations": e["brief"]["observations"],
+    }
+    legacy = run_summaries.from_output("visitor-journal.v1", head + j.render_evidence(e))
+    visitors, observations = legacy["sections"]
+    assert (visitors["heading"], observations["heading"]) == ("Some visitors", "Some observations")
+    assert visitors["items"][0]["text"].endswith("(ben@quanta.io): Clicked pricing twice.")
+    assert visitors["items"][0]["label"] == "Replay" and visitors["items"][0]["url"]
     # Unsupported validators and unreadable content have no summary; nothing raises.
     assert run_summaries.from_output("analytics-brief.v1", text) is None
     assert run_summaries.from_output("visitor-journal.v1", "not a journal") is None
@@ -118,19 +138,26 @@ def test_new_users_lead_the_summary_with_where_they_work(j, c, m, people):
         named=with_work(j, m, people),
         brief=j.brief(
             [],
-            [],
             [("ana@fieldnotes.dev", "Created an account."), ("ben@quanta.io", "Booked a call.")],
+            stages=[("Came in", ["ana@fieldnotes.dev", "ben@quanta.io"])],
         ),
     )
-    [new] = run_summaries.from_output("visitor-journal.v1", text)["sections"]
-    assert new["heading"] == "New users"
+    stages, new = run_summaries.from_output("visitor-journal.v1", text)["sections"]
+    assert stages["items"] == [
+        {
+            "text": "Came in (2): Ana Souza (Founder, Fieldnotes), Ben Ode",
+            "url": None,
+            "label": None,
+        }
+    ]
+    assert new["heading"] == "Worth knowing"
     assert new["items"][0] == {
         "text": "Ana Souza (ana@fieldnotes.dev), Founder at Fieldnotes: Created an account.",
         "url": "https://www.linkedin.com/in/anasouza",
         "label": "LinkedIn",
     }
     # A run with lookups off posts no work, whatever the report says.
-    [off] = run_summaries.from_output("visitor-journal.v1", text, {"look_up_new_people": False})[
+    _, off = run_summaries.from_output("visitor-journal.v1", text, {"look_up_new_people": False})[
         "sections"
     ]
     assert off["items"][0]["text"] == "Ana Souza (ana@fieldnotes.dev): Created an account."
@@ -663,3 +690,15 @@ async def test_a_new_run_pins_where_its_summary_goes(publication_db):
         definition_commit_sha=configured.definition_commit_sha,
     )
     assert other.summary_destinations == ()  # a run started outside a saved workflow
+
+
+def test_a_long_section_continues_in_the_next_slack_block():
+    items = [{"text": f"Person {n}: " + "did a lot this week " * 20} for n in range(20)]
+    summary = run_summaries.parse(
+        {"headline": "This week", "sections": [{"heading": "New users", "items": items}]}
+    )
+    blocks = slack_connection.message(summary, title="T", link=None)["blocks"][2:]
+    assert len(blocks) > 1 and blocks[0]["text"]["text"].startswith("*New users*\n")
+    texts = [block["text"]["text"] for block in blocks]
+    assert all(len(text) <= slack_connection.BLOCK_TEXT for text in texts)
+    assert sum(text.count("• Person ") for text in texts) == 20

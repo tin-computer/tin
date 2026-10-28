@@ -2134,6 +2134,10 @@ class Database:
                 from tin_lite.content_plan import bound_schedule
 
                 schedule = bound_schedule(inputs, schedule)
+            if workflow["key"] == "product.visitor_journeys":
+                from tin_lite.visitor_journal import follow_schedule
+
+                inputs = follow_schedule(inputs, schedule)
             from tin_lite.connection_collection import ALREADY_SAVED, ONE_PER_MEMBER
 
             if workflow["executor"] in ONE_PER_MEMBER:
@@ -2273,6 +2277,10 @@ class Database:
             from tin_lite.content_plan import bound_schedule
 
             schedule = bound_schedule(inputs, schedule)
+        if workflow_key == "product.visitor_journeys":
+            from tin_lite.visitor_journal import follow_schedule
+
+            inputs = follow_schedule(inputs, schedule)
         async with self.pool.acquire() as conn, conn.transaction():
             if workflow_key == "content.plan":
                 current = await conn.fetchrow(

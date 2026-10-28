@@ -29,6 +29,7 @@ from __future__ import annotations
 import json
 import re
 from dataclasses import dataclass, field
+from typing import Any
 
 VALIDATOR = "visitor-journal.v1"
 MEASURED_NOTHING = "VisitorJournalMeasuredNothing"
@@ -57,7 +58,23 @@ MAX_REASON = 180
 MAX_PEOPLE = 60
 SUMMARY_LIMIT = 300
 ACTION_LIMIT = 300
-BRIEF_LINE = 240
+# What a brief may show for each period (JOURNEYS.md's PERIODS): a weekly brief is longer.
+# `visitors` is only in daily briefs from before 1.6.0, which listed people one per line.
+BRIEF_LIMITS = {
+    "day": {"new": 10, "visitors": 5, "observations": 5, "line": 240, "groups": 6},
+    "week": {"new": 6, "visitors": 0, "observations": 5, "line": 300, "groups": 6},
+}
+# The brief's groups (JOURNEYS.md's GROUPS): new users by how far they got, where people got
+# stuck, and what returning users did.
+GROUPS = ("stages", "stuck", "returning")
+GROUP_LABEL = 80
+GROUP_NOTE = 160
+# The brief's table rows and the summary's opening word, for each period.
+PERIOD_ROWS = {
+    "day": ("Yesterday", "Last 7 days, daily average"),
+    "week": ("This week", "The 4 weeks before, weekly average"),
+}
+ALSO = {"day": "Also yesterday", "week": "Also this week"}
 EMAIL = re.compile(r"[^@\s]{1,64}@[a-z0-9.-]{1,253}\.[a-z]{2,63}")
 LINKEDIN = re.compile(r"https://(?:www\.)?linkedin\.com/in/[^/?#\s()<>]{1,100}/?")
 SITE = re.compile(r"https://[a-z0-9.-]{1,253}\.[a-z]{2,63}(?:/[^\s()<>]{0,200})?")
@@ -112,11 +129,25 @@ class Visitor:
 
 
 @dataclass(frozen=True)
+class Group:
+    label: str
+    note: str
+    # Each person as the brief names them: "Fathin Dosunmu (Co-founder, Byro)".
+    people: tuple[str, ...]
+
+
+@dataclass(frozen=True)
 class Brief:
     steps: tuple[Step, ...]
     visitors: tuple[Visitor, ...]
     observations: tuple[str, ...]
     new: tuple[Visitor, ...] = ()
+    period: str = "day"
+    stages: tuple[Group, ...] = ()
+    stuck: tuple[Group, ...] = ()
+    returning: tuple[Group, ...] = ()
+    # False for a daily brief from before 1.6.0: new users and visitors a line each.
+    grouped: bool = True
 
 
 @dataclass(frozen=True)
@@ -278,6 +309,14 @@ def _people(rows, head: str, replay_base, work: bool = True) -> tuple[Person, ..
     return tuple(found.values())
 
 
+def follow_schedule(inputs: dict[str, Any], schedule: dict[str, Any] | None) -> dict[str, Any]:
+    """A saved weekly schedule reads the week and a daily one the day, however the config was
+    saved (Start here paces a daily pick to weekly). On demand keeps the founder's choice; a
+    config pinned before 1.6.0 has no `period` and is left as it is."""
+    period = {"daily": "day", "weekly": "week"}.get((schedule or {}).get("cadence"))
+    return {**inputs, "period": period} if period and "period" in inputs else inputs
+
+
 def _count(value, kind):
     if value is None or type(value) is bool:
         return None
@@ -289,6 +328,8 @@ def _brief(value, people: tuple[Person, ...]) -> Brief | None:
     the report names, so the brief never introduces anyone People would not."""
     if not isinstance(value, dict):
         return None
+    period = value.get("period") if value.get("period") in BRIEF_LIMITS else "day"
+    limit = BRIEF_LIMITS[period]
     funnel = value.get("funnel")
     steps: tuple[Step, ...] = ()
     if isinstance(funnel, dict) and isinstance(funnel.get("steps"), list):
@@ -303,33 +344,65 @@ def _brief(value, people: tuple[Person, ...]) -> Brief | None:
         )
     named = {p.email: p for p in people}
 
-    def listed(key, limit):
+    def listed(key, cap):
         rows = value.get(key) if isinstance(value.get(key), list) else []
         return tuple(
             Visitor(
                 email=email,
                 name=named[email].name,
-                line=_text(row.get("line"), BRIEF_LINE),
+                line=_text(row.get("line"), limit["line"]),
                 replay_url=named[email].replay_url,
                 work=named[email].work,
             )
-            for row in rows[:limit]
+            for row in rows[:cap]
             if isinstance(row, dict)
             and (email := _text(row.get("email"), 320).lower()) in named
-            and _text(row.get("line"), BRIEF_LINE)
+            and _text(row.get("line"), limit["line"])
         )
 
-    new = listed("new", 10)
-    visitors = listed("visitors", 5)
+    new = listed("new", limit["new"])
+    visitors = listed("visitors", limit["visitors"])
     notes = value.get("observations") if isinstance(value.get("observations"), list) else []
     observations = tuple(
         text
-        for row in notes[:5]
-        if isinstance(row, dict) and (text := _text(row.get("text"), BRIEF_LINE))
+        for row in notes[: limit["observations"]]
+        if isinstance(row, dict) and (text := _text(row.get("text"), limit["line"]))
     )
-    if not (steps or new or visitors or observations):
+
+    def grouped(key):
+        rows = value.get(key) if isinstance(value.get(key), list) else []
+        found = []
+        for row in rows[: limit["groups"]]:
+            people = row.get("people") if isinstance(row, dict) else None
+            names = tuple(
+                _named(named[email])
+                for x in (people if isinstance(people, list) else [])
+                if isinstance(x, dict) and (email := _text(x.get("email"), 320).lower()) in named
+            )
+            if names and (label := _text(row.get("label"), GROUP_LABEL)):
+                found.append(Group(label, _text(row.get("note"), GROUP_NOTE), names))
+        return tuple(found)
+
+    groups = {key: grouped(key) for key in GROUPS}
+    if not (steps or new or visitors or observations or any(groups.values())):
         return None
-    return Brief(steps=steps, visitors=visitors, observations=observations, new=new)
+    return Brief(
+        steps=steps,
+        visitors=visitors,
+        observations=observations,
+        new=new,
+        period=period,
+        **groups,
+        grouped="visitors" not in value,
+    )
+
+
+def _named(person: Person) -> str:
+    """A person as a group names them, with their work when it is known."""
+    who = person.name or person.email
+    work = person.work
+    short = ", ".join(x for x in (work.role, work.company) if x) if work else ""
+    return f"{who} ({short})" if short else who
 
 
 def _measured_nothing(status: str, requests: list[dict]) -> str | None:
@@ -349,7 +422,8 @@ def summary(outcome: Outcome) -> str:
         return "Nobody outside the team came in the window."
     if outcome.brief is not None and outcome.brief.steps:
         line = (
-            "Yesterday: "
+            PERIOD_ROWS[outcome.brief.period][0]
+            + ": "
             + ", ".join(
                 f"{step.label.lower()} not tracked"
                 if step.yesterday is None

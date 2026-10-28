@@ -22,6 +22,7 @@ SERVICE_CAPABILITIES = {
     "managed.pagespeed": frozenset({"pagespeed.read", "crux.read"}),
     "managed.dataforseo": frozenset({"serp.read", "keywords.read", "backlinks.read"}),
     "managed.podscan": frozenset({"podcasts.read"}),
+    "managed.github": frozenset({"people.read"}),
 }
 
 

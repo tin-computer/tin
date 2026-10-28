@@ -737,6 +737,51 @@ async def test_pacing_keeps_a_daily_only_workflow_in_a_mode_it_declares():
     assert (entry["mode"], entry["weekdays"]) == ("weekly", ["monday"])
 
 
+async def test_pacing_visitor_journeys_to_weekly_passes_the_final_check():
+    # Visitor journeys failed Start here when pacing made it weekly before it declared weekly
+    # (10-23). It declares weekly since 1.6.0, and a weekly save reads the week.
+    import json
+    from pathlib import Path
+
+    from tin_lite.visitor_journal import follow_schedule
+
+    manifest = (
+        Path(__file__).parents[1] / "workflow_packages/product.visitor_journeys/workflow.json"
+    )
+    definition = json.loads(manifest.read_text())["definition"]
+
+    def daily(value, user):
+        return {
+            **value,
+            "workflows": [
+                {
+                    "key": "competitor.watch",
+                    "mode": "daily",
+                    "weekdays": [],
+                    "local_time": "07:00",
+                    "inputs": [],
+                }
+            ],
+        }
+
+    state = with_research_run(tin_state())
+    watch = next(w for w in state["workflows"] if w["key"] == "competitor.watch")
+    watch["schedule_modes"] = definition["schedule_modes"]
+    model = FakeModel(overrides={f"system:{plan.DEFAULT_SYSTEM}": daily})
+    result = await plan.build_plan(inputs(tin_state=state), SITE, SITE_TEXT, TODAY, model)
+    plan.validate_plan(result["plan"], state)
+    [entry] = [
+        w for w in block_of(result["plan"])[0]["workflows"] if w["key"] == "competitor.watch"
+    ]
+    assert entry["mode"] == "weekly"
+    saved = {"period": definition["input_schema"]["properties"]["period"]["default"]}
+    assert follow_schedule(saved, {"cadence": "weekly"}) == {"period": "week"}
+    assert follow_schedule({"period": "week"}, {"cadence": "daily"}) == {"period": "day"}
+    assert follow_schedule({"period": "week"}, None) == {"period": "week"}
+    # A config pinned before 1.6.0 has no period input, so nothing is added to it.
+    assert follow_schedule({"lookback_hours": 24}, {"cadence": "weekly"}) == {"lookback_hours": 24}
+
+
 async def test_the_default_needs_a_live_site_a_supported_market_and_no_earlier_run():
     def elsewhere(value, user):
         return {**value, "search_market": "other"}
