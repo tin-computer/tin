@@ -222,7 +222,7 @@ export async function serveApp({decisionCount = 4, people = syntheticPeople(), e
       const workflow = catalog.find(item => item.id === projectWorkflows.find(saved => saved.id === startPath[1])?.workflow_id);
       return send({id: "run-started", workflow_id: workflow.id, workflow_name: workflow.key, status: "running", created_at: "2026-10-15T10:00:00Z"});
     }
-    // Connection requests (#450): the member's sending and their waiting batch.
+    // Connection requests (#450): the member's sending and the people they choose.
     const requestsPath = url.pathname.match(/^\/api\/projects\/[^/]+\/linkedin-requests(\/.*)?$/);
     if (requestsPath && requests) {
       const rest = requestsPath[1] || "";
@@ -252,11 +252,6 @@ export async function serveApp({decisionCount = 4, people = syntheticPeople(), e
         if (found?.request !== "queued") return refuse(404, "No request to them is waiting to go out.");
         Object.assign(found, {requestable: true, request: null, queued: null});
         return send({cancelled: 1});
-      }
-      const decided = rest.match(/^\/batches\/([^/]+)\/(approve|discard)$/);
-      if (decided) {
-        requests.batches = requests.batches.filter(batch => batch.id !== decided[1]);
-        return send({status: decided[2] === "approve" ? "approved" : "discarded", queued: body.people?.length || 0});
       }
     }
     const analyticsAction = url.pathname.match(/^\/api\/projects\/[^/]+\/integrations\/analytics\.agent_traffic\/(setup|address|reporter-token|builder|install)$/);

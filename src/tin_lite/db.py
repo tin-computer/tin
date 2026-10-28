@@ -7383,7 +7383,7 @@ class Database:
             ),
             "social.linkedin_requests": (
                 "linkedin_requests_ready",
-                "Tin finished your approved connection requests.",
+                "Tin finished sending your connection requests.",
             ),
             "social.linkedin_results": (
                 "linkedin_results_ready",

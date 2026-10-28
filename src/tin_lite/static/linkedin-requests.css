@@ -1,78 +1,5 @@
-/* Connection requests (#450, Paper INVITE-A to INVITE-C): the batch in Decisions and the
-   Sending row on the LinkedIn card. */
-
-.requests-card .request-rows {
-  display: flex;
-  flex-direction: column;
-}
-
-.requests-card .request-row {
-  display: flex;
-  align-items: center;
-  gap: 14px;
-  padding: 10px 0;
-  border-top: 1px solid rgb(var(--ink-rgb) / 8%);
-  cursor: pointer;
-}
-
-.requests-card .request-row input {
-  width: 16px;
-  height: 16px;
-  flex: 0 0 auto;
-  margin: 0;
-  accent-color: var(--accent-deep);
-}
-
-.requests-card .request-person {
-  display: flex;
-  min-width: 0;
-  flex: 1 1 0;
-  flex-direction: column;
-  gap: 1px;
-}
-
-.requests-card .request-person strong {
-  color: var(--ink);
-  font: 400 14px/19px var(--sans);
-}
-
-.requests-card .request-person span {
-  overflow: hidden;
-  color: var(--ink-secondary);
-  font: 13px/17px var(--sans);
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
-.requests-card .request-icp {
-  width: 48px;
-  flex: 0 0 auto;
-  overflow: hidden;
-  color: var(--ink);
-  font: 13px/17px var(--sans);
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
-.requests-card .request-fit {
-  width: 36px;
-  flex: 0 0 auto;
-  color: var(--ink);
-  font: 12.5px/16px var(--mono);
-  text-align: right;
-}
-
-.requests-card .request-engaged {
-  width: 128px;
-  flex: 0 0 auto;
-  color: var(--ink-muted);
-  font: 11.5px/14px var(--mono);
-  text-align: right;
-}
-
-.requests-card .request-row.is-skipped :is(strong, span, code) { color: var(--ink-muted); }
-
-.requests-card .decision-approval:disabled { cursor: not-allowed; }
+/* Connection requests (#450, Paper INVITE-A to INVITE-C): the Sending row on the LinkedIn
+   card. */
 
 .requests-settings-link {
   align-self: flex-start;
@@ -85,8 +12,6 @@
 }
 
 .requests-settings-link:hover { text-decoration: underline; }
-
-.requests-off .requests-settings-link { font-size: inherit; }
 
 /* The Sending row on the LinkedIn card. */
 
@@ -165,14 +90,6 @@
   accent-color: var(--accent-deep);
 }
 
-.requests-risk {
-  max-width: 640px;
-  margin: 0;
-  padding-left: 26px;
-  color: var(--ink-secondary);
-  font: 12.5px/18px var(--sans);
-}
-
 .requests-actions {
   display: flex;
   align-items: center;
@@ -234,11 +151,4 @@
   background: var(--paper-card);
   color: var(--ink);
   font: 13px/18px var(--sans);
-}
-
-@media (max-width: 640px) {
-  .requests-card .request-engaged,
-  .requests-card .request-icp {
-    display: none;
-  }
 }

@@ -1,7 +1,7 @@
 // Packaged dashboard with synthetic APIs. No live credentials, projects or LinkedIn.
-// Connection requests (Paper INVITE-A to INVITE-C, REQ-A): a batch waits in Decisions, approving
-// queues the ticked people for Tin to send one at a time, people ticked in People are queued the
-// same way, and sending is turned on, paused and resumed on the LinkedIn card.
+// Connection requests (Paper INVITE-A to INVITE-C, REQ-A): Tin asks the people who fit on its own,
+// so nothing waits in Decisions; people ticked in People are queued at once, and sending is
+// turned on, paused and resumed on the LinkedIn card.
 import assert from "node:assert/strict";
 import test from "node:test";
 import { chromium } from "playwright";
@@ -15,12 +15,7 @@ const reading = {
     session_state: "available", session_expires_at: soon(), session_verified_at: new Date(Date.now() - 3600000).toISOString()},
   connected_at: "2026-10-14T09:00:00Z",
 };
-const person = (n, name, fit) => ({
-  request_id: `q-${n}`, record_id: `p-${n}`, name, headline: `Founder, Company ${n}`,
-  icp: "ICP 1: founders who need growth done", fit, engaged: {kind: "reacted", at: "2026-10-13T08:00:00Z"},
-});
-
-function requests({on = false, held = false, people = null} = {}) {
+function requests({on = false, held = false} = {}) {
   const inAnHour = new Date(Date.now() + 3600000).toISOString();
   return {
     offered: true,
@@ -28,14 +23,9 @@ function requests({on = false, held = false, people = null} = {}) {
     sending: {on, paused: held, held, paused_reason: held ? "challenge" : null, paused_until: null,
       daily_cap: 15, weekly_cap: 60, start_minute: 540, end_minute: 1020, timezone: "Europe/Berlin"},
     pause_text: held ? "LinkedIn asked to verify your account" : null,
-    consent: {version: 1, text: "Send the connection requests I approve from Tin’s servers, with my LinkedIn session: one at a time, a few each weekday.", risk: "LinkedIn’s terms don’t allow automated requests."},
+    consent: {version: 1, text: "Send connection requests from my LinkedIn to people who fit my ICP and engaged with my posts or viewed my profile, and to anyone I choose. A few each weekday, stopping at LinkedIn’s first warning. I can turn it off anytime."},
     week: {sent: 9, accepted: 3, queued: 5, pending: 6, next_send: inAnHour},
     next_open: on ? inAnHour : null,
-    batches: [{
-      id: "batch-1", created_at: new Date(Date.now() - 7200000).toISOString(),
-      first_send: inAnHour, last_send: new Date(Date.now() + 3 * 86400000).toISOString(),
-      people: people || [person(1, "Maya Lindqvist", 0.84), person(2, "Daniel Okafor", 0.78), person(3, "Amara Osei", 0.66)],
-    }],
   };
 }
 
@@ -53,65 +43,11 @@ async function open({url, state, integrations = [reading], people}, run) {
   }
 }
 
-test("a batch says what brought its people: their posts, the profile, or both", {timeout: 120000}, async () => {
-  const viewed = (n, name) => ({...person(n, name, 0.8), engaged: {kind: "viewed", at: "2026-10-18T12:00:00Z"}});
-  await open({url: "/decisions", state: requests({people: [viewed(1, "Maya Lindqvist"), viewed(2, "Daniel Okafor")]})}, async (page) => {
-    const card = page.locator(".requests-card");
-    await card.waitFor();
-    assert.match(await card.locator("header").innerText(), /People who viewed your LinkedIn profile/);
-    assert.match(await card.innerText(), /2 people who viewed your profile fit your ICP and aren’t connected to you yet\./);
-    assert.equal(await card.locator(".request-engaged").first().innerText(), "oct 18 · viewed");
-  });
-  await open({url: "/decisions", state: requests({people: [viewed(1, "Maya Lindqvist"), person(2, "Daniel Okafor", 0.7)]})}, async (page) => {
-    const card = page.locator(".requests-card");
-    await card.waitFor();
-    assert.match(await card.locator("header").innerText(), /People who engaged with your posts or viewed your profile/);
-    assert.match(await card.innerText(), /2 people who reacted to your posts or viewed your profile fit your ICP/);
-  });
-});
-
-test("a batch waits first in Decisions, and approving sends only the ticked people", {timeout: 120000}, async () => {
-  await open({url: "/decisions", state: requests({on: true})}, async (page, served) => {
-    const card = page.locator(".requests-card");
-    await card.waitFor();
-    assert.deepEqual(await page.locator(".decision-group-title").allInnerTexts(), ["Connection requests\n1", "Reviews\n1"]);
-    assert.match(await page.locator(".decision-list-item.is-active").innerText(), /Send requests to 3 people/);
-    assert.match(await card.locator("header").innerText(), /People who engaged with your LinkedIn posts/);
-    assert.match(await card.innerText(), /3 people who reacted to your posts fit your ICP and aren’t connected to you yet\./);
-    assert.match(await card.innerText(), /one at a time on its own schedule, never together/);
-    // The window is the project's time zone, named when it isn't the viewer's.
-    assert.match(await card.innerText(), /weekdays 9:00–17:00 Europe\/Berlin, at most 15 a day/);
-    // An hour from now is tomorrow late in the day.
-    assert.match(await card.innerText(), /The first goes out around \d+:\d\d (today|tomorrow), the last on/);
-    assert.equal(await card.locator(".request-row").count(), 3);
-    await card.getByRole("checkbox").nth(2).uncheck();
-    const approve = card.getByRole("button", {name: "Approve 2 requests"});
-    await approve.click();
-    await page.locator(".toast", {hasText: "Approved. Tin sends the 2 one at a time"}).waitFor();
-    const write = served.requestWrites.find(item => item.path.endsWith("/approve"));
-    assert.deepEqual(write.body.people, ["p-1", "p-2"]);
-    assert.match(write.body.request_id, /^[0-9a-f-]{36}$/);
-    await page.locator(".requests-card").waitFor({state: "detached"});
-  });
-});
-
-test("with sending off, the batch asks you to turn it on first", {timeout: 120000}, async () => {
-  await open({url: "/decisions", state: requests({on: false})}, async page => {
-    const card = page.locator(".requests-card");
-    await card.waitFor();
-    assert.equal(await card.getByRole("button", {name: "Approve 3 requests"}).isDisabled(), true);
-    assert.match(await card.innerText(), /Turn on sending on the LinkedIn card first\./);
-    await card.getByRole("button", {name: "Open the LinkedIn card"}).click();
-    await page.locator(".linkedin-card.is-expanded .requests-sending").waitFor();
-    assert.equal(new URL(page.url()).pathname, "/integrations");
-  });
-});
-
-test("reading in this browser only asks for cloud reading, not the switch", {timeout: 120000}, async () => {
-  await open({url: "/decisions", state: {...requests({on: false}), reading: false, browser_only: true}}, async page => {
-    const card = page.locator(".requests-card");
-    await card.waitFor();
-    assert.match(await card.innerText(), /Turn on cloud reading on the LinkedIn card first\./);
+test("connection requests don't wait in Decisions", {timeout: 120000}, async () => {
+  await open({url: "/decisions", state: requests({on: true})}, async page => {
+    await page.locator(".decision-list-item").first().waitFor();
+    assert.deepEqual(await page.locator(".decision-group-title").allInnerTexts(), ["Reviews\n1"]);
+    assert.equal(await page.locator(".requests-card").count(), 0);
   });
 });
 
@@ -120,14 +56,15 @@ test("turning sending back on starts with the consent box ticked, then shows the
     await page.locator(".linkedin-card").getByRole("button", {name: "Configure"}).click();
     const row = page.locator(".requests-sending");
     await row.waitFor();
-    assert.match(await row.innerText(), /Sending\s*Send connection requests you approve, one at a time/);
+    assert.match(await row.innerText(), /Sending\s*Send connection requests, one at a time/);
     await row.getByRole("switch").click();
     // Members agreed to sending when they joined Tin: the box starts ticked, and unticking it
     // still holds the button.
     const turnOn = row.getByRole("button", {name: "Turn on sending"});
     assert.equal(await row.getByRole("checkbox").isChecked(), true);
     assert.equal(await turnOn.isDisabled(), false);
-    assert.match(await row.innerText(), /LinkedIn’s terms don’t allow automated requests\./);
+    assert.match(await row.innerText(), /to people who fit my ICP and engaged with my posts or viewed my profile, and to anyone I choose/);
+    assert.doesNotMatch(await row.innerText(), /LinkedIn’s terms/);
     await row.getByRole("checkbox").uncheck();
     assert.equal(await turnOn.isDisabled(), true);
     await row.getByRole("checkbox").check();

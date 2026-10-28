@@ -67,12 +67,13 @@ your own accounts before use; ordinary contributor tests need no production cred
   candidate cloud runtime and fenced local backup.
 - [People records](people-records.md): one lasting record per person, identifiers, values with
   lineage, the event timeline and forgetting.
-- [Connection requests](linkedin-requests.md): approved LinkedIn requests sent one at a time
-  from the member's session; the member's LinkedIn reads then read who accepted.
+- [Connection requests](linkedin-requests.md): LinkedIn requests to the people who fit and the
+  people a member chooses, sent one at a time from the member's session; the member's LinkedIn
+  reads then read who accepted.
 - [People who engaged with your LinkedIn posts](linkedin-engagers.md): the founder's posts,
   who reacted, ICP scores and the list in Files.
 - [People who viewed your LinkedIn profile](linkedin-profile-viewers.md): the profile-views
-  list read daily, each viewer in People, scored, and proposed for connection requests.
+  list read daily, each viewer in People, scored, and asked to connect when they fit.
 - [Project API connections](project-api-connections.md): secure credentials and external requests.
 - [Stripe and PostHog connections](stripe-and-posthog-connections.md): the first-party read-only
   connections, their operations, projected records and offline test fakes.

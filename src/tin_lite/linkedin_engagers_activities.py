@@ -13,6 +13,7 @@ import hashlib
 import json
 import logging
 from datetime import UTC, datetime
+from types import SimpleNamespace
 from uuid import UUID
 
 from temporalio import activity
@@ -216,9 +217,22 @@ class LinkedInEngagersActivities:
     score_step = (2, 4)
     fallback = FALLBACK
 
-    def __init__(self, *, database, storage, settings, cipher, cloud, router):
+    def __init__(
+        self,
+        *,
+        database,
+        storage,
+        settings,
+        cipher,
+        cloud,
+        router,
+        integrations=None,
+        temporal=None,
+    ):
         self.db, self.storage, self.settings = database, storage, settings
         self.cipher, self.cloud, self.router = cipher, cloud, router
+        # Connection requests to the people a read finds start the member's sending run.
+        self.integrations, self.temporal = integrations, temporal
 
     async def _active(self, run_id, *, conn=None):
         run = await self.db.get_run(UUID(str(run_id)), conn=conn)
@@ -231,6 +245,25 @@ class LinkedInEngagersActivities:
             run_id=run_id, mode="steps", step=step, current=current, total=total, summary=summary
         )
         _heartbeat({"step": step})
+
+    async def _queue(self, run, notes: dict) -> None:
+        """Queue a request from the starter to everyone who fits and isn't connected, and say
+        how many in the run's line."""
+
+        from tin_lite.linkedin_requests_service import ConnectionRequests
+
+        runtime = SimpleNamespace(
+            database=self.db,
+            storage=self.storage,
+            integrations=self.integrations,
+            temporal=self.temporal,
+        )
+        queued = await ConnectionRequests(runtime, self.settings).queue(
+            run.project_id, run.started_by_clerk_user_id, run_id=run.id
+        )
+        notes["queued"] = queued["queued"]
+        if queued.get("refused"):
+            notes["queue_refused"] = queued["refused"]
 
     async def _session(self, run) -> tuple[dict, dict]:
         return await saved_session(
@@ -537,19 +570,7 @@ class LinkedInEngagersActivities:
             run.project_id,
             run.id,
         )
-        # The people who fit and engaged with the starter's posts wait for their approval.
-        async with self.db.pool.acquire() as conn, conn.transaction():
-            await requests.propose(
-                conn, run.project_id, run.started_by_clerk_user_id, run_id=run.id
-            )
-        notes["proposed"] = await self.db.pool.fetchval(
-            """SELECT count(*) FROM linkedin_requests q
-               JOIN linkedin_request_batches b ON b.id = q.batch_id
-               WHERE b.project_id = $1 AND b.member = $2 AND b.status = 'open'
-                 AND q.status = 'proposed'""",
-            run.project_id,
-            run.started_by_clerk_user_id,
-        )
+        await self._queue(run, notes)
         await self._progress(run.id, "publish", 3, 4, "Writing the list")
         project = await self.db.get_project(run.project_id)
         key = f"{run.id}:engagers:files"

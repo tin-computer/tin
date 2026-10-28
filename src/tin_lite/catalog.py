@@ -1552,11 +1552,11 @@ BUILTIN_WORKFLOWS = (
             "Read your own LinkedIn posts from the last 90 days and everyone who reacted to "
             "them, keep each person in People with whether you're already connected, score "
             "them against strategy/ICP.md, and list them best fit first in "
-            "people/linkedin-engagers.csv. Reads with your saved LinkedIn session; sends "
-            "nothing."
+            "people/linkedin-engagers.csv. People who fit and aren't connected get a connection "
+            "request from you, a few each weekday. Reads with your saved LinkedIn session."
         ),
         executor=linkedin_engagers.KEY,
-        version_label="1.3.0",
+        version_label="1.4.0",
         presentation=WorkflowDiagram(
             direction="TD",
             nodes=(
@@ -1597,6 +1597,12 @@ BUILTIN_WORKFLOWS = (
                     "your connection requests, about once a day",
                 ),
                 DiagramNode(
+                    "ask",
+                    "step",
+                    "Queue connection requests",
+                    "to people who fit and aren't connected",
+                ),
+                DiagramNode(
                     "files",
                     "receipt",
                     "The list in project Files",
@@ -1610,7 +1616,8 @@ BUILTIN_WORKFLOWS = (
                 DiagramEdge("people", "reactions", label="next page or post"),
                 DiagramEdge("people", "score"),
                 DiagramEdge("score", "accepted"),
-                DiagramEdge("accepted", "files"),
+                DiagramEdge("accepted", "ask"),
+                DiagramEdge("ask", "files"),
             ),
         ),
         schedule_modes=("on_demand",),
@@ -1632,11 +1639,11 @@ BUILTIN_WORKFLOWS = (
             "Read who viewed your LinkedIn profile, newest first, keep each person in People "
             "with whether you're already connected, score them against strategy/ICP.md, and "
             "list them best fit first in people/linkedin-profile-viewers.csv. People who fit "
-            "and aren't connected wait in Decisions for your connection requests. Reads with "
-            "your saved LinkedIn session; sends nothing."
+            "and aren't connected get a connection request from you, a few each weekday. Reads "
+            "with your saved LinkedIn session."
         ),
         executor=linkedin_profile_viewers.KEY,
-        version_label="1.1.0",
+        version_label="1.2.0",
         presentation=WorkflowDiagram(
             direction="TD",
             nodes=(
@@ -1677,6 +1684,12 @@ BUILTIN_WORKFLOWS = (
                     "your connection requests, about once a day",
                 ),
                 DiagramNode(
+                    "ask",
+                    "step",
+                    "Queue connection requests",
+                    "to people who fit and aren't connected",
+                ),
+                DiagramNode(
                     "files",
                     "receipt",
                     "The list in project Files",
@@ -1690,7 +1703,8 @@ BUILTIN_WORKFLOWS = (
                 DiagramEdge("people", "score"),
                 DiagramEdge("score", "ids"),
                 DiagramEdge("ids", "accepted"),
-                DiagramEdge("accepted", "files"),
+                DiagramEdge("accepted", "ask"),
+                DiagramEdge("ask", "files"),
             ),
         ),
         schedule_modes=("on_demand", "daily"),
@@ -1708,22 +1722,23 @@ BUILTIN_WORKFLOWS = (
     BuiltinWorkflow(
         id=linkedin_requests.WORKFLOW_ID,
         key=linkedin_requests.KEY,
-        title="Send the connection requests you approve",
+        title="Send your connection requests",
         description=(
-            "Send the LinkedIn connection requests you approved in Decisions, one at a time "
+            "Send LinkedIn connection requests to the people who fit and engaged with your "
+            "posts or viewed your profile, and to anyone you choose in People, one at a time "
             "from your saved session: weekdays in your hours, at least 15 minutes apart, under "
             "a daily and weekly cap, each only after a fresh check that you aren't connected "
             "or already invited. It finishes once the last one is sent; your LinkedIn reads "
-            "then see who accepted, about once a day for three weeks. Tin starts it when you "
-            "approve."
+            "then see who accepted, about once a day for three weeks. Tin starts it after a "
+            "LinkedIn read queues people, or when you choose them."
         ),
         executor=linkedin_requests.KEY,
-        version_label="1.1.0",
+        version_label="1.2.0",
         presentation=WorkflowDiagram(
             direction="TD",
             nodes=(
                 DiagramNode(
-                    "approval", "gate", "Your approval in Decisions", "only the people you ticked"
+                    "queued", "store", "People to ask", "who fit and engaged, or you chose"
                 ),
                 DiagramNode(
                     "wait",
@@ -1747,7 +1762,7 @@ BUILTIN_WORKFLOWS = (
                 ),
             ),
             edges=(
-                DiagramEdge("approval", "wait", "signal", "approved"),
+                DiagramEdge("queued", "wait", "signal", "queued"),
                 DiagramEdge("wait", "check"),
                 DiagramEdge("check", "send"),
                 DiagramEdge("send", "people"),

@@ -1586,12 +1586,9 @@ def create_mcp_app(
         are pending change rows (approve_website_change or decline_website_change).
         `judgment_calls` are open questions the coding agent answers with the next website
         change run; there is nothing to approve. `paid_ads_proposals` are pending Google Ads
-        changes. `connection_requests` are people the caller's own LinkedIn would send
-        requests to (approve_connection_requests or discard_connection_requests). Show each to
-        the founder and ask; never decide for them.
+        changes. Show each to the founder and ask; never decide for them.
         """
         from tin_lite import website_change, website_change_audit
-        from tin_lite.linkedin_requests_service import ConnectionRequests
 
         token = await caller()
         project = _mcp_uuid(project_id, field="project_id")
@@ -1601,7 +1598,6 @@ def create_mcp_app(
         changes = await website_change.list_changes(database, project_id=project, status="pending")
         calls = await website_change_audit.judgment_calls(database, project)
         proposals = await database.list_paid_ads_proposals(project_id=project, status="pending")
-        state = await ConnectionRequests(runtime(), settings).state(project, token.subject)
         return {
             "reviews": [
                 {
@@ -1627,79 +1623,7 @@ def create_mcp_app(
             "website_changes": changes,
             "judgment_calls": calls,
             "paid_ads_proposals": [_mcp_proposal_view(row) for row in proposals],
-            "connection_requests": [
-                _requests_batch_view(batch, state) for batch in state["batches"]
-            ],
         }
-
-    def _requests_batch_view(batch: dict, state: dict) -> dict[str, Any]:
-        return {
-            "batch_id": str(batch["id"]),
-            "people": [
-                {
-                    "person_id": str(person["record_id"]),
-                    "name": person["name"],
-                    "headline": person["headline"],
-                    "icp": person["icp"],
-                    "icp_fit": person["fit"],
-                }
-                for person in batch["people"]
-            ],
-            "sending_on": state["sending"]["on"],
-            "first_send": batch["first_send"].isoformat() if batch["first_send"] else None,
-            "last_send": batch["last_send"].isoformat() if batch["last_send"] else None,
-        }
-
-    async def _decide_requests(
-        tool: str,
-        project_id: str,
-        batch_id: str,
-        request_id: str,
-        *,
-        approve: bool,
-        person_ids: list[str] | None = None,
-    ) -> dict[str, Any]:
-        from tin_lite.linkedin_requests_service import ConnectionRequests, RequestsRefused
-
-        token = await caller()
-        project = _mcp_uuid(project_id, field="project_id")
-        await require_project(project, token, tool_name=tool)
-        try:
-            return jsonable_encoder(
-                await ConnectionRequests(runtime(), settings).decide(
-                    project,
-                    _mcp_uuid(batch_id, field="batch_id"),
-                    token.subject,
-                    request_id=_mcp_uuid(request_id, field="request_id"),
-                    approve=approve,
-                    people=[_mcp_uuid(item, field="person_ids") for item in person_ids or []],
-                    trigger_source="mcp",
-                    oauth_client_id=token.client_id,
-                )
-            )
-        except RequestsRefused as error:
-            code = {404: "not_found", 409: "conflict"}.get(error.status, "invalid")
-            raise ToolError(f"{code}: {error.message}") from None
-
-    @server.tool()
-    async def approve_connection_requests(
-        project_id: str, batch_id: str, person_ids: list[str], request_id: str
-    ) -> dict[str, Any]:
-        """Approve LinkedIn connection requests the founder chose, only as they said in their
-        words: list_open_decisions shows the batch. Approving queues them; Tin sends them one
-        at a time on its own schedule from the founder's own LinkedIn session and stops at
-        LinkedIn's first warning. Only the member whose LinkedIn sends them can approve.
-        Sending is on by default once their LinkedIn reading runs in the cloud; only a founder
-        who turned it off turns it back on, on the LinkedIn card. `request_id` is a fresh UUID;
-        the same one repeats the same approval."""
-        return await _decide_requests(
-            "approve_connection_requests",
-            project_id,
-            batch_id,
-            request_id,
-            approve=True,
-            person_ids=person_ids,
-        )
 
     @server.tool()
     async def send_connection_requests(
@@ -1707,11 +1631,13 @@ def create_mcp_app(
     ) -> dict[str, Any]:
         """Send LinkedIn connection requests to people the founder chose, only as they said in
         their words. list_people shows who `can_request` (someone Tin can name on LinkedIn, not
-        a customer, not already connected to or asked by the caller). Choosing them is the
-        approval: Tin queues them and sends them one at a time on its own schedule from the
-        caller's own LinkedIn session, and stops at LinkedIn's first warning. Sending is on by
-        default once their LinkedIn reading runs in the cloud; only a founder who turned it off
-        turns it back on, on the LinkedIn card. Up to 1,000 people at a time; each request
+        a customer, not already connected to the caller or asked by anyone on the project).
+        Tin queues them and sends them one at a time on its own schedule from the caller's own
+        LinkedIn session, and stops at LinkedIn's first warning. People who fit and engaged with
+        the caller's posts or viewed their profile are queued on their own after each LinkedIn
+        read. Sending is on by default once their LinkedIn reading runs in the cloud; only a
+        founder who turned it off turns it back on, on the LinkedIn card. Up to 1,000 people at
+        a time; each request
         waits in the caller's line until it is sent, cancelled (cancel_connection_request) or the
         person can't be asked any more, however long that takes at the sending limits.
         `request_id` is a fresh UUID; the same one repeats the same choice."""
@@ -1752,16 +1678,6 @@ def create_mcp_app(
         except RequestsRefused as error:
             code = {404: "not_found", 409: "conflict"}.get(error.status, "invalid")
             raise ToolError(f"{code}: {error.message}") from None
-
-    @server.tool()
-    async def discard_connection_requests(
-        project_id: str, batch_id: str, request_id: str
-    ) -> dict[str, Any]:
-        """Discard a batch of proposed connection requests, as the founder asked. Nobody in it
-        is proposed again."""
-        return await _decide_requests(
-            "discard_connection_requests", project_id, batch_id, request_id, approve=False
-        )
 
     async def _decide_website_change(
         tool: str, action: str, project_id: str, change_id: str, content_sha256: str, request_id
