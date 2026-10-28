@@ -1,8 +1,8 @@
-"""HTTP routes for connection requests (#450): the member's sending, their waiting batch, and
-the people they choose in People.
+"""HTTP routes for connection requests (#450): the member's sending, the people they choose in
+People, and cancelling one before it goes.
 
 They share `linkedin_requests_service.ConnectionRequests` with MCP. Only project members reach
-them, and each member sees and decides only what their own LinkedIn would send.
+them, and each member sees only what their own LinkedIn would send.
 """
 
 from uuid import UUID
@@ -33,13 +33,6 @@ class SendingChange(BaseModel):
     enabled: bool
     consent_version: int | None = None
     limits: Limits | None = None
-
-
-class Decision(BaseModel):
-    model_config = ConfigDict(extra="forbid")
-
-    request_id: UUID
-    people: list[UUID] = Field(default_factory=list, max_length=500)
 
 
 class Choice(BaseModel):
@@ -84,37 +77,6 @@ async def change_sending(
 @router.post("/sending/resume")
 async def resume_sending(project_id: UUID, request: Request, user: AuthContext = USER):
     return await _answer(_service(request).resume(project_id, user.clerk_user_id))
-
-
-@router.post("/batches/{batch_id}/approve")
-async def approve(
-    project_id: UUID, batch_id: UUID, decision: Decision, request: Request, user: AuthContext = USER
-):
-    return await _answer(
-        _service(request).decide(
-            project_id,
-            batch_id,
-            user.clerk_user_id,
-            request_id=decision.request_id,
-            approve=True,
-            people=decision.people,
-        )
-    )
-
-
-@router.post("/batches/{batch_id}/discard")
-async def discard(
-    project_id: UUID, batch_id: UUID, decision: Decision, request: Request, user: AuthContext = USER
-):
-    return await _answer(
-        _service(request).decide(
-            project_id,
-            batch_id,
-            user.clerk_user_id,
-            request_id=decision.request_id,
-            approve=False,
-        )
-    )
 
 
 @router.post("/send")

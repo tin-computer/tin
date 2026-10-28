@@ -465,6 +465,19 @@ def summary_markdown(people: list[dict], notes: dict, *, now: datetime) -> str:
     return "\n".join(lines)
 
 
+def queued_text(notes: dict) -> str:
+    """The connection requests a read queued, for its line."""
+
+    if notes.get("queue_refused"):
+        return " " + notes["queue_refused"]
+    count = notes.get("queued", 0)
+    if not count:
+        return ""
+    if count == 1:
+        return " 1 connection request queued for someone who fits."
+    return f" {count} connection requests queued for people who fit."
+
+
 def accepted_text(count: int) -> str:
     """Who accepted the member's connection requests since the last read, for a run's line."""
 
@@ -487,11 +500,4 @@ def sentence(notes: dict) -> str:
         text += f"; {notes['unread']} post{'s' if notes['unread'] != 1 else ''} couldn't be read"
     if notes.get("capped"):
         text += "; very large posts were read to their first 1,000 reactions"
-    text += "." + accepted_text(notes.get("accepted", 0))
-    if notes.get("proposed"):
-        count = notes["proposed"]
-        text += (
-            f" {count} {'people' if count != 1 else 'person'} who fit and aren't connected "
-            "wait in Decisions for your connection requests."
-        )
-    return text
+    return text + "." + accepted_text(notes.get("accepted", 0)) + queued_text(notes)

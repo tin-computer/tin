@@ -3,10 +3,10 @@
 `social.linkedin_profile_viewers` reads who viewed the member's LinkedIn profile, newest first,
 with their saved session. It keeps each named viewer as a [People record](people-records.md)
 and scores them against the project's ICP file with the [engagers](linkedin-engagers.md) scorer.
-Viewers who fit and aren't connected join the member's
-[connection requests](linkedin-requests.md) in Decisions. The list goes to project Files. The
-workflow reads only and sends nothing. It runs daily by default (08:00 in the founder's time
-zone), or on demand.
+Viewers who fit and aren't connected get a
+[connection request](linkedin-requests.md) from the member, sent a few each weekday. The list
+goes to project Files. It runs daily by default (08:00 in the founder's time zone), or on
+demand.
 
 ## Who can run it
 
@@ -89,7 +89,7 @@ The same as engagers:
    whose [connection requests](linkedin-requests.md#who-accepted) wait for an answer. The
    summary says how many accepted. This daily run is what reads it, so the sending run can
    finish once its requests are out. It doesn't run after LinkedIn objected.
-7. **Propose and publish.** Newly eligible viewers join the member's open batch in Decisions,
+7. **Queue and publish.** Viewers who newly fit get a connection request from the member, queued
    under the same rules as people who reacted. Then it rewrites:
    - `people/linkedin-profile-viewers.csv`: everyone who viewed the member, best fit first, with
      when they last looked and how many times;

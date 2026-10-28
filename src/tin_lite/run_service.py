@@ -225,9 +225,12 @@ async def start_workflow_run(
         from tin_lite.connection_collection import enabled
 
         if not _linkedin_requests:
-            # Approving requests in Decisions, or choosing people in People, starts it when no
-            # run of the member's still has requests waiting.
-            raise WorkflowInputError("Approve connection requests in Decisions to send them.")
+            # A LinkedIn read that finds people who fit, or choosing people in People, starts it
+            # when no run of the member's still has requests waiting.
+            raise WorkflowInputError(
+                "Tin sends connection requests on its own, after a LinkedIn read or when you "
+                "choose people in People."
+            )
         if not enabled(settings, project_id):
             raise WorkflowExecutorUnavailableError(
                 "Reading LinkedIn isn't turned on for this project yet."

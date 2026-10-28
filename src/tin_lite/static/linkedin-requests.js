@@ -1,15 +1,14 @@
 "use strict";
 
-// Connection requests (#450, Paper INVITE-A to INVITE-C, REQ-A): the batch waiting in
-// Decisions, the Sending row on the LinkedIn card, and what People says when people are ticked.
-// Approving queues people; Tin sends them one at a time on its own schedule from the member's
-// own session. Sending is on by default once reading runs in the cloud; off stays off.
+// Connection requests (#450, Paper INVITE-A to INVITE-C, REQ-A): the Sending row on the LinkedIn
+// card, and what People says when people are ticked. Tin queues the people a LinkedIn read finds
+// who fit, and those the member chooses, and sends them one at a time on its own schedule from
+// the member's own session. Sending is on by default once reading runs in the cloud; off stays
+// off.
 window.TinRequests = (() => {
   const MONTHS = ["jan", "feb", "mar", "apr", "may", "jun", "jul", "aug", "sep", "oct", "nov", "dec"];
   const DAYS = ["Sunday", "Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday"];
   const escape = (value) => String(value ?? "").replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
-  // What the member has unticked in the open batch, by person; kept while they look around.
-  const skipped = new Set();
   const ui = { consenting: false, consentTicked: true, editingLimits: false, saving: false };
 
   function day(value) {
@@ -34,12 +33,6 @@ window.TinRequests = (() => {
     return `on ${day(date)}`;
   }
 
-  function icpShort(text) {
-    if (!text || text === "none") return "";
-    const numbered = String(text).match(/^(ICP\s*\d+)\s*[:–—-]/i);
-    return numbered ? numbered[1] : text;
-  }
-
   // The window is in the project's time zone; it reads "your time" when that is the viewer's.
   function zone(sending) {
     let own = "";
@@ -49,107 +42,6 @@ window.TinRequests = (() => {
 
   function limitsLine(sending) {
     return `${sending.daily_cap} a day · ${sending.weekly_cap} a week · weekdays ${clock(sending.start_minute)}–${clock(sending.end_minute)} ${sending.timezone} · 15+ min apart`;
-  }
-
-  // Decisions.
-
-  function items(data) {
-    return (data?.batches || []).map((batch) => ({
-      id: `requests:${batch.id}`,
-      kind: "connection_requests",
-      title: `Send requests to ${batch.people.length} ${batch.people.length === 1 ? "person" : "people"}`,
-      created_at: batch.created_at,
-      batch,
-    }));
-  }
-
-  function chosen(batch) {
-    return batch.people.filter((person) => !skipped.has(person.record_id));
-  }
-
-  // What brought the batch's people, in the words of the workflow that found them: reactions to
-  // the member's posts (engagers), views of their profile (profile viewers), or both.
-  function broughtBy(batch) {
-    const kinds = new Set(batch.people.map((person) => person.engaged?.kind).filter(Boolean));
-    const viewed = kinds.has("viewed");
-    const reacted = kinds.has("reacted") || kinds.has("commented");
-    if (viewed && !reacted) return { title: "People who viewed your LinkedIn profile", who: "viewed your profile" };
-    if (viewed) return { title: "People who engaged with your posts or viewed your profile", who: "reacted to your posts or viewed your profile" };
-    return { title: "People who engaged with your LinkedIn posts", who: "reacted to your posts" };
-  }
-
-  function detail(item, data, { waiting = "" } = {}) {
-    const { batch } = item;
-    const sending = data?.sending || {};
-    const count = chosen(batch).length;
-    const brought = broughtBy(batch);
-    const rows = batch.people.map((person) => {
-      const on = !skipped.has(person.record_id);
-      const engaged = person.engaged ? `${day(person.engaged.at)} · ${person.engaged.kind}` : "";
-      return `<label class="request-row ${on ? "" : "is-skipped"}">
-        <input type="checkbox" data-request-person="${escape(person.record_id)}" ${on ? "checked" : ""} />
-        <span class="request-person"><strong>${escape(person.name || "Someone")}</strong><span>${escape(person.headline || "")}</span></span>
-        <span class="request-icp" title="${escape(person.icp || "")}">${escape(icpShort(person.icp))}</span>
-        <code class="request-fit">${typeof person.fit === "number" ? person.fit.toFixed(2) : ""}</code>
-        <code class="request-engaged">${escape(engaged)}</code>
-      </label>`;
-    }).join("");
-    const schedule = batch.first_send && batch.last_send
-      ? batch.first_send === batch.last_send
-        ? ` It goes out ${when(batch.first_send, { at: true })}.`
-        : ` The first goes out ${when(batch.first_send, { at: true })}, the last ${when(batch.last_send)}.`
-      : "";
-    const terms = `Tin sends them one at a time on its own schedule, never together: at least 15 minutes apart plus a random wait, weekdays ${clock(sending.start_minute ?? 540)}–${clock(sending.end_minute ?? 1020)} ${escape(zone(sending))}, at most ${sending.daily_cap ?? 15} a day.${sending.on ? schedule : ""} It stops at the first warning from LinkedIn.`;
-    return `<article class="decision-detail-card requests-card" data-requests-batch="${escape(batch.id)}">
-      <header>
-        <span class="decision-workflow-mark">P</span>
-        <span><strong>${escape(brought.title)}</strong><code>${escape(waiting)}</code></span>
-        <button class="open-button" type="button" data-requests-open-people>Open People</button>
-      </header>
-      <div class="decision-detail-body">
-        <p class="decision-summary">${batch.people.length} ${batch.people.length === 1 ? "person" : "people"} who ${brought.who} ${batch.people.length === 1 ? "fits" : "fit"} your ICP and ${batch.people.length === 1 ? "isn’t" : "aren’t"} connected to you yet.</p>
-        <div class="request-rows">${rows}</div>
-        <p class="decision-note">${escape(terms)}</p>
-        ${sending.on
-          ? '<button class="requests-settings-link" type="button" data-requests-open-settings>Sending settings</button>'
-          : `<p class="decision-note requests-off">${escape(offLine(data))} <button class="requests-settings-link" type="button" data-requests-open-settings>Open the LinkedIn card</button></p>`}
-      </div>
-      <footer>
-        <button class="decision-discard" type="button" data-requests-action="discard">Discard</button>
-        <button class="decision-approval" type="button" data-requests-action="approve" ${!sending.on || !count ? "disabled" : ""}>Approve ${count} ${count === 1 ? "request" : "requests"}</button>
-      </footer>
-    </article>`;
-  }
-
-  function bindDecision(root, item, ctx) {
-    const card = root.querySelector("[data-requests-batch]");
-    if (!card || !item) return;
-    card.querySelectorAll("[data-request-person]").forEach((box) => box.addEventListener("change", () => {
-      if (box.checked) skipped.delete(box.dataset.requestPerson);
-      else skipped.add(box.dataset.requestPerson);
-      ctx.render();
-    }));
-    card.querySelector("[data-requests-open-people]")?.addEventListener("click", () => ctx.navigate("people"));
-    card.querySelectorAll("[data-requests-open-settings]").forEach((button) => button.addEventListener("click", () => ctx.openLinkedInCard()));
-    card.querySelectorAll("[data-requests-action]").forEach((button) => button.addEventListener("click", async () => {
-      const approve = button.dataset.requestsAction === "approve";
-      const people = chosen(item.batch).map((person) => person.record_id);
-      card.querySelectorAll("button").forEach((each) => { each.disabled = true; });
-      try {
-        await ctx.api(`/api/projects/${encodeURIComponent(ctx.projectId)}/linkedin-requests/batches/${encodeURIComponent(item.batch.id)}/${approve ? "approve" : "discard"}`, {
-          method: "POST",
-          body: JSON.stringify({ request_id: window.crypto.randomUUID(), people }),
-        });
-        item.batch.people.forEach((person) => skipped.delete(person.record_id));
-        ctx.toast(approve
-          ? `Approved. Tin sends ${people.length === 1 ? "it" : `the ${people.length}`} one at a time, starting at its next turn.`
-          : "Discarded. Tin won’t propose these people again.");
-        await ctx.refresh();
-      } catch (error) {
-        ctx.toast(`Could not record your decision: ${error.message}`);
-        ctx.render();
-      }
-    }));
   }
 
   // The Sending row on the LinkedIn card.
@@ -165,26 +57,25 @@ window.TinRequests = (() => {
     let body;
     if (!data.reading) {
       const after = data.browser_only ? "turns on with cloud reading" : "turns on after Reading";
-      body = head(toggle(false, { disabled: true }), `Send connection requests you approve, one at a time · ${after}`, true);
+      body = head(toggle(false, { disabled: true }), `Send connection requests, one at a time · ${after}`, true);
     } else if (sending.held) {
-      body = `${head(toggle(true), "Connection requests you approve")}
-        <p class="linkedin-part-needs" role="status">Sending paused: ${escape(data.pause_text || "LinkedIn refused a request")}. Open LinkedIn in Chrome and sort it out there, then resume. Approved requests not sent yet wait.</p>
+      body = `${head(toggle(true), "Connection requests")}
+        <p class="linkedin-part-needs" role="status">Sending paused: ${escape(data.pause_text || "LinkedIn refused a request")}. Open LinkedIn in Chrome and sort it out there, then resume. Requests not sent yet wait.</p>
         <div class="requests-actions"><button class="requests-resume" type="button" data-requests-resume ${ui.saving ? "disabled" : ""}>Resume sending</button><button class="requests-quiet" type="button" data-requests-off>Turn off sending</button></div>`;
     } else if (sending.on) {
       const held = sending.paused && sending.paused_until
         ? `<p class="linkedin-part-needs" role="status">LinkedIn’s weekly limit for invitations was reached. Tin waits until ${escape(when(sending.paused_until, { at: true }).replace(/^around /, ""))}.</p>` : "";
-      body = `${head(toggle(true), "Connection requests you approve")}
+      body = `${head(toggle(true), "Connection requests")}
         <span class="requests-line">${escape(limitsLine(sending))}</span>
         <span class="requests-line">stops at LinkedIn’s first warning</span>
         ${held}
         ${ui.editingLimits ? limitsForm(sending) : '<button class="requests-settings-link" type="button" data-requests-limits>Change limits</button>'}`;
     } else if (ui.consenting) {
-      body = `${head(toggle(false), "Connection requests you approve")}
+      body = `${head(toggle(false), "Connection requests")}
         <label class="requests-consent"><input type="checkbox" data-requests-consent ${ui.consentTicked ? "checked" : ""} /><span>${escape(data.consent.text)}</span></label>
-        <p class="requests-risk">${escape(data.consent.risk)}</p>
         <div class="requests-actions"><button class="button requests-turn-on" type="button" data-requests-on ${ui.consentTicked && !ui.saving ? "" : "disabled"}>Turn on sending</button><button class="requests-quiet" type="button" data-requests-cancel>Cancel</button></div>`;
     } else {
-      body = head(toggle(false), "Send connection requests you approve, one at a time");
+      body = head(toggle(false), "Send connection requests, one at a time");
     }
     const week = data.week || {};
     const weekRow = sending.on && data.reading
@@ -251,7 +142,7 @@ window.TinRequests = (() => {
     row.querySelector("[data-requests-switch]")?.addEventListener("click", () => {
       const data = ctx.data();
       if (data?.sending?.on) {
-        save(`${base}/sending`, { method: "PUT", body: JSON.stringify({ enabled: false }) }, "Sending is off. Approved requests not sent yet wait until you turn it on.");
+        save(`${base}/sending`, { method: "PUT", body: JSON.stringify({ enabled: false }) }, "Sending is off. Requests not sent yet wait until you turn it on.");
       } else {
         ui.consenting = !ui.consenting;
         // Members agreed to sending when they joined Tin; the box starts ticked.
@@ -269,7 +160,7 @@ window.TinRequests = (() => {
     });
     row.querySelector("[data-requests-on]")?.addEventListener("click", () => {
       ui.consenting = false;
-      save(`${base}/sending`, { method: "PUT", body: JSON.stringify({ enabled: true, consent_version: ctx.data().consent.version }) }, "Sending is on. Tin sends the requests you approve, one at a time.");
+      save(`${base}/sending`, { method: "PUT", body: JSON.stringify({ enabled: true, consent_version: ctx.data().consent.version }) }, "Sending is on. Tin sends your connection requests one at a time.");
     });
     row.querySelector("[data-requests-off]")?.addEventListener("click", () => {
       save(`${base}/sending`, { method: "PUT", body: JSON.stringify({ enabled: false }) }, "Sending is off.");
@@ -331,5 +222,5 @@ window.TinRequests = (() => {
     return `Tin sends it from your LinkedIn${at}, one at a time with your other requests. No note.`;
   }
 
-  return { items, detail, bindDecision, sendingRow, summary, needsYou, bindSending, picked, queuedText, waitingText };
+  return { sendingRow, summary, needsYou, bindSending, picked, queuedText, waitingText };
 })();

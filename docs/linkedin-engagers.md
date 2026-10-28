@@ -2,8 +2,9 @@
 
 `social.linkedin_engagers` (#435) reads the founder's own LinkedIn posts from the last 90 days
 and everyone who reacted to them. It keeps each person as a [People record](people-records.md),
-scores them against the project's ICP file, and lists them in project Files. It reads only and
-sends nothing.
+scores them against the project's ICP file, and lists them in project Files. People who fit and
+aren't connected get a [connection request](linkedin-requests.md) from the founder, sent a few
+each weekday.
 
 ## Who can run it
 
@@ -96,5 +97,4 @@ usage is still recorded per call.
   [connection collection](connection-collection.md#engagement-reads).
 - **Teammates aren't left out automatically.** Tin doesn't know their LinkedIn profile IDs.
   Forgetting a person once keeps them out of every later run.
-- **Weekly schedules, `/people`, sending connection requests and the Decisions card** each
-  come in a later issue.
+- **Weekly schedules** come in a later issue.

@@ -360,6 +360,8 @@ async def build_runtime(settings: Settings) -> RuntimeServices:
         cloud=LinkedInCloud(database, settings),
         cipher=integrations._cipher,
         router=model_router if settings.luna_api_key is not None else None,
+        integrations=integrations,
+        temporal=temporal,
     )
     viewers_activities = LinkedInProfileViewersActivities(
         database=database,
@@ -368,6 +370,8 @@ async def build_runtime(settings: Settings) -> RuntimeServices:
         cloud=LinkedInCloud(database, settings),
         cipher=integrations._cipher,
         router=model_router if settings.luna_api_key is not None else None,
+        integrations=integrations,
+        temporal=temporal,
     )
     requests_activities = LinkedInRequestsActivities(
         database=database,

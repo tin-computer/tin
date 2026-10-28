@@ -19,16 +19,25 @@ from temporalio.worker import Replayer, Worker
 from test_connection_collection import USER
 from test_connection_collection import collection_db as collection_db
 from test_linkedin_engagers import NOW, Router, fixture, member
+from test_linkedin_requests_flow import STARTED, recorded_start
 
 from tin_lite import linkedin_profile_viewers as viewers
-from tin_lite import linkedin_requests as requests
 from tin_lite import people_records as records
 from tin_lite.connection_collection import CollectionError
 from tin_lite.integrations import IntegrationAuthorizationError
 from tin_lite.linkedin_cloud import ENGAGEMENT_OPERATION
 from tin_lite.linkedin_profile_viewers_activities import LinkedInProfileViewersActivities
+from tin_lite.linkedin_requests_service import ConnectionRequests
 from tin_lite.linkedin_viewers import PAGER, PAGINATION
 from tin_lite.workflows import LinkedInProfileViewersWorkflow
+
+
+@pytest.fixture(autouse=True)
+def sending_runs(monkeypatch):
+    """A read that asks people starts their sending run; here a pending run is recorded."""
+
+    STARTED.clear()
+    monkeypatch.setattr(ConnectionRequests, "_start", recorded_start)
 
 
 def request(start: int) -> dict:
@@ -196,7 +205,7 @@ def sample():
     )
 
 
-async def test_a_run_keeps_who_viewed_scores_them_finds_their_ids_and_proposes_them(
+async def test_a_run_keeps_who_viewed_scores_them_finds_their_ids_and_asks_them(
     collection_db, monkeypatch
 ):
     f = await fixture(collection_db)
@@ -231,12 +240,15 @@ async def test_a_run_keeps_who_viewed_scores_them_finds_their_ids_and_proposes_t
     )
     assert abs(when - (NOW - timedelta(weeks=2))) < timedelta(minutes=1)
 
-    # Those who fit, aren't connected and have a profile ID wait in Decisions.
-    async with f.db.pool.acquire() as conn:
-        batches = await requests.open_batches(conn, f.project.id, USER, NOW)
-    proposed = {p["name"]: p for p in batches[0]["people"]}
-    assert set(proposed) == {"Ada Lovelace", "Person One"}
-    assert proposed["Ada Lovelace"]["engaged"]["kind"] == "viewed"
+    # Those who fit, aren't connected and have a profile ID are asked.
+    asked = await f.db.pool.fetch(
+        """SELECT v.value_text AS name FROM linkedin_requests q
+           JOIN record_values v ON v.record_id = q.record_id AND v.field = 'name'
+           WHERE q.member = $1 AND q.status = 'queued'""",
+        USER,
+    )
+    assert {row["name"] for row in asked} == {"Ada Lovelace", "Person One"}
+    assert [started[2] for started in STARTED] == [USER]
 
     rows, summary = listed(f.storage)
     assert [r["Name"] for r in rows][:3] == ["Ada Lovelace", "Person One", "Carol Shannon"]
@@ -251,8 +263,7 @@ async def test_a_run_keeps_who_viewed_scores_them_finds_their_ids_and_proposes_t
     )
     assert state["status"] == "succeeded" and state["artifact_path"] == viewers.SUMMARY_PATH
     assert state["result_summary"] == (
-        "4 new profile views, 4 people new to Tin. 2 people who fit and aren't connected wait "
-        "in Decisions for your connection requests."
+        "4 new profile views, 4 people new to Tin. 2 connection requests queued for people who fit."
     )
     assert "LinkedIn counts 455 views in the last 90 days. 2 of the views" in summary
     # No receipt keeps anyone's name once their page is written.
@@ -309,7 +320,9 @@ async def test_a_list_tin_cant_read_keeps_the_overview_and_says_so(collection_db
     summary = await f.db.pool.fetchval(
         "SELECT result_summary FROM workflow_runs WHERE id=$1", UUID(run_id)
     )
-    assert summary.startswith("1 new profile view, 1 person new to Tin. 1 person who fits")
+    assert summary.startswith(
+        "1 new profile view, 1 person new to Tin. 1 connection request queued for someone who fits."
+    )
     # Tin's own problem to fix: said in the list, not put to the founder as a step.
     assert (
         "LinkedIn changed its profile-views list, so Tin read only its overview"

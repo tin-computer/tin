@@ -1,5 +1,5 @@
-"""Activities for `social.linkedin_requests` (#450): send a member's approved requests, one at a
-time. The run sends every batch it holds: the one that started it and those approved while it
+"""Activities for `social.linkedin_requests` (#450): send a member's queued requests, one at a
+time. The run sends every batch it holds: the one that started it and those queued while it
 still had requests waiting.
 
 The workflow asks what to do next and follows: send, wait, or finish once nothing is left to
@@ -97,7 +97,7 @@ class LinkedInRequestsActivities:
             run.id,
         )
         await self.db.mark_run_running(run.id)
-        await self._progress(run, "Sending your approved connection requests, one at a time")
+        await self._progress(run, "Sending your connection requests, one at a time")
 
     @activity.defn(name="linkedin_requests_next")
     async def next(self, run_id: str) -> dict:

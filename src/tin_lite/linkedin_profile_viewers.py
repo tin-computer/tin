@@ -5,8 +5,8 @@ their profile-views page, newest first, and LinkedIn's overview of the last 90 d
 named viewer becomes a People record (matched on their profile ID or public slug) with their
 name, headline and whether they're already a connection, and a `viewed` event. The same model
 step as `social.linkedin_engagers` scores them against the project's ICP file; viewers who fit
-and aren't connected join the member's connection requests in Decisions. The list is rendered
-to project Files as a CSV and a short summary.
+and aren't connected get a connection request from the member, queued at the end of the read.
+The list is rendered to project Files as a CSV and a short summary.
 
 LinkedIn says when someone looked as "3d ago" or "2w ago", so a view's date is as exact as
 that: one view per person within that span counts once, however many runs see it.
@@ -374,18 +374,12 @@ def summary_markdown(people: list[dict], notes: dict, *, now: datetime) -> str:
 
 
 def sentence(notes: dict) -> str:
-    """The run's one line: what it found, then what waits for the founder."""
+    """The run's one line: what it found, then the requests it queued."""
 
     new, people = notes.get("new", 0), notes.get("new_people", 0)
     text = f"{new} new profile view{'s' if new != 1 else ''}"
     if people:
         text += f", {people} {'people' if people != 1 else 'person'} new to Tin"
-    text += "." + engagers.accepted_text(notes.get("accepted", 0))
-    if notes.get("proposed"):
-        count = notes["proposed"]
-        text += (
-            f" {count} people who fit and aren't connected wait"
-            if count != 1
-            else " 1 person who fits and isn't connected waits"
-        ) + " in Decisions for your connection requests."
-    return text
+    return (
+        text + "." + engagers.accepted_text(notes.get("accepted", 0)) + engagers.queued_text(notes)
+    )

@@ -243,7 +243,7 @@ const state = {
   // Proposed website changes and open judgment calls wait in Decisions beside run reviews.
   websiteChanges: [],
   judgmentCalls: [],
-  // The member's connection requests: sending on the LinkedIn card, the batch in Decisions.
+  // The member's connection requests: sending on the LinkedIn card, and what People says.
   linkedInRequests: null,
   view: viewFromLocation(),
   documentRoute: documentRouteFromLocation(),
@@ -5058,14 +5058,13 @@ function decisionItems() {
   const calls = state.judgmentCalls.map((call) => ({
     id: `question:${call.id}`, kind: "judgment_call", title: call.question, created_at: call.recorded_at, call,
   }));
-  return [...window.TinRequests.items(state.linkedInRequests), ...state.decisions, ...changes, ...calls];
+  return [...state.decisions, ...changes, ...calls];
 }
 
 // The list shows each kind under its own heading, in decisionItems' order: what to approve
 // first, then what changes the site, then what the coding agent will answer.
 const DECISION_GROUPS = [
-  { title: "Connection requests", has: (item) => item.kind === "connection_requests" },
-  { title: "Reviews", has: (item) => !["website_change", "judgment_call", "connection_requests"].includes(item.kind) },
+  { title: "Reviews", has: (item) => !["website_change", "judgment_call"].includes(item.kind) },
   { title: "Website changes", has: (item) => item.kind === "website_change" },
   { title: "Questions", has: (item) => item.kind === "judgment_call" },
 ];
@@ -5479,10 +5478,8 @@ function renderDecisions() {
   const decision = selectedDecision();
   if (decision && state.decisionId !== decision.id) state.decisionId = decision.id;
   const items = decisionItems();
-  const detail = decision?.kind === "connection_requests"
-    ? window.TinRequests.detail(decision, state.linkedInRequests, { waiting: `Waiting ${waitingLabel(decision.created_at)}` })
-    : decision?.kind === "website_change" ? websiteChangeDetailHtml(decision)
-      : decision?.kind === "judgment_call" ? judgmentCallDetailHtml(decision) : decisionDetailHtml(decision);
+  const detail = decision?.kind === "website_change" ? websiteChangeDetailHtml(decision)
+    : decision?.kind === "judgment_call" ? judgmentCallDetailHtml(decision) : decisionDetailHtml(decision);
   main.innerHTML = `<section class="product-view decisions-view">
     <header class="decisions-header"><h1>Decisions</h1>${decisionsPace() ? `<code>${escapeHtml(decisionsPace())}</code>` : ""}</header>
     ${items.length ? `<div class="decisions-layout">
@@ -5504,7 +5501,6 @@ function renderDecisions() {
     });
   });
   main.querySelector("[data-open-system]")?.addEventListener("click", () => navigate("workflows"));
-  if (decision?.kind === "connection_requests") window.TinRequests.bindDecision(main, decision, requestsContext());
   main.querySelectorAll("[data-decision-read]").forEach((button) => {
     button.addEventListener("click", () => openDecisionReview(decision));
   });

@@ -1898,9 +1898,9 @@ class LinkedInProfileViewersWorkflow:
 
 @workflow.defn(name=LINKEDIN_REQUESTS_WORKFLOW_NAME)
 class LinkedInRequestsWorkflow:
-    """Send a member's approved connection requests one at a time, and finish once nothing is
+    """Send a member's queued connection requests one at a time, and finish once nothing is
     left to send; the member's LinkedIn reads then read who accepted. The run sends every batch
-    approved while it still has requests waiting. Each step asks an activity what comes next,
+    queued while it still has requests waiting. Each step asks an activity what comes next,
     so every decision about time is made from Postgres; history holds request IDs, waits and
     outcomes. Runs from before still follow a "check" step."""
 

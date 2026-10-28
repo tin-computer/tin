@@ -1,8 +1,8 @@
-"""What a member reads and decides about connection requests, for HTTP and MCP alike (#450).
+"""A member's connection requests, for HTTP, MCP and their LinkedIn reads alike (#450).
 
-A member sees and decides only requests their own LinkedIn would send; turning sending on takes
-their own tick of the consent box, so it happens on the LinkedIn card, never over MCP.
-Approving a batch, or choosing people in People, hands it to the member's
+A member sees only requests their own LinkedIn would send; turning sending on takes their own
+tick of the consent box, so it happens on the LinkedIn card, never over MCP. The people a
+member's LinkedIn read finds who fit, and the people they choose in People, go to the member's
 `social.linkedin_requests` run on the project, which sends their requests in one line; a new
 run starts when none still has requests waiting.
 """
@@ -21,13 +21,9 @@ from tin_lite.connection_collection_connection import permission
 logger = logging.getLogger(__name__)
 
 CONSENT_TEXT = (
-    "Send the connection requests I approve from Tin's servers, with my LinkedIn session: one "
-    "at a time, a few each weekday. This works while my computer is off. Tin stops at the "
-    "first warning from LinkedIn, and I can turn it off here anytime."
-)
-RISK_TEXT = (
-    "LinkedIn's terms don't allow automated requests. Few, paced requests that stop at the "
-    "first warning lower the risk to your account; they don't remove it."
+    "Send connection requests from my LinkedIn to people who fit my ICP and engaged with my "
+    "posts or viewed my profile, and to anyone I choose. A few each weekday, stopping at "
+    "LinkedIn's first warning. I can turn it off anytime."
 )
 
 
@@ -86,14 +82,13 @@ class ConnectionRequests:
         )
 
     async def state(self, project_id: UUID, member: str) -> dict[str, Any]:
-        """The member's sending, this week's numbers, and the batch waiting for them."""
+        """The member's sending and this week's numbers."""
 
         await self._project(project_id, member)
         now = datetime.now(UTC)
         async with self.db.pool.acquire() as conn:
             sending = await requests.sending(conn, project_id, member)
             week = await requests.week(conn, project_id, member, now)
-            batches = await requests.open_batches(conn, project_id, member, now)
             # When one more request, chosen now in People, would go.
             next_open = (await requests.plan(conn, project_id, member, ["next"], now) or [None])[0]
         offered = enabled(self.settings, project_id)
@@ -123,14 +118,9 @@ class ConnectionRequests:
             "pause_text": requests.PAUSES.get(sending["paused_reason"] or "")
             if sending["paused_reason"] != "limit"
             else "LinkedIn's weekly limit for invitations",
-            "consent": {
-                "version": requests.CONSENT_VERSION,
-                "text": CONSENT_TEXT,
-                "risk": RISK_TEXT,
-            },
+            "consent": {"version": requests.CONSENT_VERSION, "text": CONSENT_TEXT},
             "week": week,
             "next_open": next_open if on else None,
-            "batches": batches,
         }
 
     async def set_sending(
@@ -169,7 +159,7 @@ class ConnectionRequests:
 
     async def _on_by_default(self, project_id: UUID, member: str) -> None:
         """Sending is on for a member who never set it, once their LinkedIn reading runs in the
-        cloud. Their first approval records it, so a pause at LinkedIn's first warning has a
+        cloud. Their first requests record it, so a pause at LinkedIn's first warning has a
         setting to hold; a member who turned sending off stays off."""
 
         async with self.db.pool.acquire() as conn:
@@ -188,53 +178,37 @@ class ConnectionRequests:
             await requests.resume(conn, project_id, member)
         return await self.state(project_id, member)
 
-    async def decide(
-        self,
-        project_id: UUID,
-        batch_id: UUID,
-        member: str,
-        *,
-        request_id: UUID,
-        approve: bool,
-        people: list[UUID] | None = None,
-        trigger_source: str = "manual",
-        oauth_client_id: str | None = None,
-    ) -> dict[str, Any]:
-        """Approve the chosen people, who join the member's line to be sent, or discard the
-        batch."""
+    async def queue(self, project_id: UUID, member: str, *, run_id: UUID) -> dict[str, Any]:
+        """Queue requests from the member to the people their LinkedIn read found who fit, and
+        hand them to the member's sending run. Nothing is queued while sending is off; if the run
+        can't start, nobody stays queued and the next read tries again. A sending run is never a
+        schedule's occurrence, so it starts as the member's own, whatever started the read."""
 
-        await self._project(project_id, member)
-        if approve:
-            await self._on_by_default(project_id, member)
+        async with self.db.pool.acquire() as conn:
+            sending = await requests.sending(conn, project_id, member)
+        if not sending["on"] and (
+            sending["set"] or await self._reading(project_id, member) != "cloud"
+        ):
+            return {"queued": 0}
+        async with self.db.pool.acquire() as conn:
+            queued = await requests.queue(conn, project_id, member, run_id=run_id)
+        if queued is None:
+            return {"queued": 0}
+        await self._on_by_default(project_id, member)
+        batch_id = queued["batch_id"]
         try:
-            async with self.db.pool.acquire() as conn:
-                decided = await requests.decide(
-                    conn,
-                    project_id,
-                    batch_id,
-                    member,
-                    request_id=request_id,
-                    approve=approve,
-                    people=people,
-                )
-        except requests.RequestError as error:
-            raise await self._refusal(error, project_id, member) from None
-        if decided["status"] == "approved":
-            try:
-                run_id = await self._sending(
-                    project_id, batch_id, member, trigger_source, oauth_client_id
-                )
-            except RequestsRefused:
-                await self._reopen(project_id, batch_id)
-                raise
-            except Exception:
-                logger.exception("connection requests: the sending run did not start")
-                await self._reopen(project_id, batch_id)
-                raise RequestsRefused(
-                    503, "Tin couldn't start sending, so nothing was approved. Try again shortly."
-                ) from None
-            decided["run_id"] = str(run_id)
-        return decided
+            await self._sending(project_id, batch_id, member, "manual", None)
+        except RequestsRefused as refused:
+            await self._unpick(project_id, batch_id)
+            return {"queued": 0, "refused": refused.message}
+        except Exception:
+            logger.exception("connection requests: the sending run did not start")
+            await self._unpick(project_id, batch_id)
+            return {
+                "queued": 0,
+                "refused": "Tin couldn't start sending; the next read tries again.",
+            }
+        return {"queued": queued["queued"]}
 
     async def send(
         self,
@@ -247,7 +221,7 @@ class ConnectionRequests:
         oauth_client_id: str | None = None,
     ) -> dict[str, Any]:
         """Queue requests to the people the member chose in People and start sending them.
-        Choosing is the approval; if sending can't start, nothing stays approved."""
+        If sending can't start, nothing stays queued."""
 
         await self._project(project_id, member)
         await self._on_by_default(project_id, member)
@@ -304,17 +278,6 @@ class ConnectionRequests:
         async with self.db.pool.acquire() as conn, conn.transaction():
             await requests.unpick(conn, batch_id)
 
-    async def _reopen(self, project_id: UUID, batch_id: UUID) -> None:
-        """The sending run never started: the batch goes back to Decisions as it was, so the
-        member sees why and approves again. A run that did start keeps the approval."""
-
-        if await self.db.get_run_by_start_key(
-            project_id=project_id, start_idempotency_key=f"linkedin-requests:{batch_id}"
-        ):
-            return
-        async with self.db.pool.acquire() as conn, conn.transaction():
-            await requests.reopen(conn, batch_id)
-
     async def _sending(self, project_id, batch_id, member, trigger_source, oauth_client_id):
         """The run that sends the batch: the member's run on the project that still has
         requests waiting, or a new one, recorded on the batch before the member's line is
@@ -365,6 +328,6 @@ class ConnectionRequests:
             WorkflowInputError,
         ) as exc:
             raise RequestsRefused(
-                409, public_error_text(exc, "Tin couldn't start sending. Approve again shortly.")
+                409, public_error_text(exc, "Tin couldn't start sending. Try again shortly.")
             ) from None
         return run.id

@@ -14,7 +14,6 @@ from datetime import UTC, datetime
 from temporalio import activity
 
 from tin_lite import linkedin_profile_viewers as viewers
-from tin_lite import linkedin_requests as requests
 from tin_lite.linkedin_cloud import ENGAGEMENT_OPERATION
 from tin_lite.linkedin_engagers_activities import (
     SAYS,
@@ -191,19 +190,7 @@ class LinkedInProfileViewersActivities(LinkedInEngagersActivities):
             run.project_id,
             run.id,
         )
-        # The people who fit and viewed the starter's profile wait for their approval.
-        async with self.db.pool.acquire() as conn, conn.transaction():
-            await requests.propose(
-                conn, run.project_id, run.started_by_clerk_user_id, run_id=run.id
-            )
-        notes["proposed"] = await self.db.pool.fetchval(
-            """SELECT count(*) FROM linkedin_requests q
-               JOIN linkedin_request_batches b ON b.id = q.batch_id
-               WHERE b.project_id = $1 AND b.member = $2 AND b.status = 'open'
-                 AND q.status = 'proposed'""",
-            run.project_id,
-            run.started_by_clerk_user_id,
-        )
+        await self._queue(run, notes)
         await self._progress(run.id, "publish", 4, STEPS, "Writing the list")
         project = await self.db.get_project(run.project_id)
         key = f"{run.id}:viewers:files"

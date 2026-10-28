@@ -1,4 +1,4 @@
-"""Connection requests a member approved, sent with their saved session (#450).
+"""Connection requests from a member's LinkedIn, sent with their saved session (#450).
 
 Two calls on www.linkedin.com, each after the same /me check the readers make:
 - a relationship read for a few people at a time: connected, invited (pending), or neither;
