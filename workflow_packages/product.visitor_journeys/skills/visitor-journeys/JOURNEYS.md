@@ -693,6 +693,7 @@ def _tracking_began(inventory_rows, end):
         return None
     return first
 
+
 def project_info(result):
     """What project.read says about capture: the replay link and what is switched on."""
     if not isinstance(result, dict) or "replay_url" not in result:
