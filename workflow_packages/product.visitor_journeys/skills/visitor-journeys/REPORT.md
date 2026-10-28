@@ -6,7 +6,7 @@ Leave out a section with nothing in it, except Status and Numbers.
 ```text
 # Visitors, <start> to <end> UTC
 
-Status: <complete | incomplete | nothing to report | invalid configuration>
+Status: <complete | nothing to report | invalid configuration>
 
 <render_brief(evidence["brief"]), exactly as it returns:>
 | | Unique visitors | <middle step, if the map has one> | <main conversion> |

@@ -657,7 +657,8 @@ def report(
 
 def test_the_resource_and_tin_agree_on_the_contract(j):
     assert j.VERSION == visitor_journal.VALIDATOR and j.EVIDENCE_MARKER == visitor_journal.MARKER
-    assert set(j.STATUSES) == visitor_journal.STATUSES
+    # Tin still reads reports from before 1.7.0 that say incomplete.
+    assert set(j.STATUSES) | {"incomplete"} == visitor_journal.STATUSES
     assert set(j.NAMED_TIERS) == visitor_journal.NAMED_TIERS == set(records.WEB_TIERS)
     assert (
         j.SUMMARY_LIMIT == visitor_journal.SUMMARY_LIMIT
@@ -953,19 +954,20 @@ def test_the_check_refuses_what_tin_would_not_publish_or_trust(j, c, m, people):
             "truncated": True,
         }
     ]
-    with pytest.raises(j.ContractError, match="incomplete"):
-        j.check(report(j, c, m, people, requests=truncated))
-    j.check(
-        report(
-            j,
-            c,
-            m,
-            people,
-            status="incomplete",
-            reason="The census hit 1000 people.",
-            requests=truncated,
+    # A truncated read is a limitation of the report, not a lesser status.
+    j.check(report(j, c, m, people, requests=truncated))
+    with pytest.raises(j.ContractError, match="Status"):
+        j.check(
+            report(
+                j,
+                c,
+                m,
+                people,
+                status="incomplete",
+                reason="The census hit 1000 people.",
+                requests=truncated,
+            )
         )
-    )
     forged = [
         {
             **j.named(people[0], "x"),
@@ -1022,8 +1024,6 @@ def test_every_query_refused_measured_nothing_and_bad_envelopes_raise(j, c, m, p
             c,
             m,
             people,
-            status="incomplete",
-            reason="PostHog refused every query.",
             requests=refused,
             named=[],
         )
@@ -1354,3 +1354,51 @@ def test_a_week_reads_seven_days_against_the_four_before_and_groups_people(j, c,
     assert "**Also yesterday**" in daily and "**Also this week**" not in daily
     with pytest.raises(j.ContractError, match="period"):
         report(j, week, m, people, named=named, brief=b, funnel=j.funnel(FUNNEL_RESULT, m))
+
+
+def test_a_site_with_only_visits_reads_visitors_since_tracking_began(j, c, m, people):
+    from tin_lite import run_summaries
+
+    week = j.settings(
+        {"period": "week", "lookback_hours": 24, "website_hosts": ["example.com"]}, now=NOW
+    )
+    only = j.check_map({**m, "funnel": m["funnel"][:1]})
+    query = j.request(week, only, "funnel")["arguments"]["query"]
+    assert check_hogql(query) == query
+    # Tracking began 15 days before the window's end: one whole week before this one.
+    pageviews = {"event": "$pageview", "n": 900, "people": 300, "last_at": ""}
+    began = [{**pageviews, "first_at": "2026-10-01 09:00:00.000000"}]
+    fn = j.funnel(WEEK_FUNNEL, only, began, "week", week["end"])
+    assert (fn["days"], fn["steps"]) == (
+        7,
+        [{"label": "Unique visitors", "yesterday": 40, "average": 30.0}],
+    )
+    text = report(j, week, only, people, funnel=fn)
+    j.check(text)
+    head = text.split(j.EVIDENCE_MARKER)[0]
+    assert "| | Unique visitors |\n|---|---:|\n| This week | 40 |\n| The week before | 30 |" in head
+    summary = run_summaries.from_output("visitor-journal.v1", text)
+    assert summary["table"]["rows"] == [["This week", "40"], ["The week before", "30"]]
+    # Tracking began this week: there is nothing earlier to compare with, which is not zero.
+    fn = j.funnel(
+        WEEK_FUNNEL, only, [{**pageviews, "first_at": "2026-10-12 09:00:00"}], "week", week["end"]
+    )
+    assert (fn["days"], fn["steps"][0]["average"]) == (0, None)
+    empty = {"new": [], "observations": [], **{k: [] for k in j.GROUPS}}
+    assert "| The 4 weeks before, weekly average | no earlier data |" in j.render_brief(
+        {**empty, "funnel": fn, "period": "week"}
+    )
+    # A first visit on the inventory's first day means tracking began before it.
+    early = [{**pageviews, "first_at": "2026-09-16 15:00:00"}]
+    assert j.funnel(WEEK_FUNNEL, only, early, "week", week["end"])["days"] == 28
+    fn = j.funnel(
+        FUNNEL_RESULT, m, [{**pageviews, "first_at": "2026-10-13 10:00:00"}], "day", c["end"]
+    )
+    assert (fn["days"], fn["steps"][0]["average"]) == (3, 2.3)
+    assert j.average_row("day", 3) == visitor_journal.average_row("day", 3)
+    assert "| Last 3 days, daily average | 2.3 |" in j.render_brief({**empty, "funnel": fn})
+    # A report from before 1.7.0 that says incomplete reads like any other.
+    legacy = visitor_journal.read(
+        report(j, c, m, people, status="incomplete", reason="The census hit 1000 people.")
+    )
+    assert legacy.status == "incomplete" and "ncomplete" not in visitor_journal.summary(legacy)

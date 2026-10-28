@@ -71,7 +71,9 @@ likely rename, run `inventory` and `hosts` and write the map:
 - `funnel`: the brief's table, two or three steps, each a short `label` and its `events`. The
   first is always `{"label": "Unique visitors", "events": ["$pageview"]}`. The last is the main
   conversion the product exists to get: a started trial or payment, a booked call, a signup, or
-  activation when there is nothing to pay. Add a middle step only when one clearly leads to it,
+  activation when there is nothing to pay. When nothing past a visit fires, as on a site that
+  records only pageviews and clicks, the funnel is visitors alone; add the conversion once its
+  event arrives. Add a middle step only when one clearly leads to it,
   such as clicking a trial or sign-up button. Use only events that fire. Labels are plain
   phrases a founder reads in a table, such as "Started a trial" or "Clicked Book a call".
   Choose it once and keep it: change it only when its events go silent or are renamed, and
@@ -113,7 +115,7 @@ For example: "picked the Growth plan, opened Connect GitHub three times, left af
 without connecting". Note the time between steps when it matters.
 A timeline holds a person's first 30 and last 30 events, so it always reaches where they
 stopped. When they did more, `journey()` shows the events in between as one step. That is not
-missing evidence and does not make the report incomplete; say "a long session" if it matters.
+missing evidence; say "a long session" if it matters.
 
 `choose()` also reads the three most engaged anonymous browsers. Write each of them in one line
 under "How visitors use the site", without a name, a city or a company.
@@ -279,11 +281,13 @@ period and pass `previous()` of it to `assemble()` as `previous=`, or `previous(
 is none. The map, ledger and site still come from the newest report.
 
 **The table.** After the timelines, call `request(c, m, "funnel")` and pass the result to
-`funnel(result, m, inventory_rows, c["period"])`. It counts unique people for each funnel step
+`funnel(result, m, inventory_rows, c["period"], c["end"])`. It counts unique people for each funnel step
 over the last 24 hours against the daily average over the last 7 days, or for a week over the
 last 7 days against the weekly average of the 4 weeks before. Pass it to `assemble()` as
-`funnel=`. The numbers are the resource's; never write or adjust them. If the funnel call is
-refused, pass `funnel=None`: the table then says visitors were not measured.
+`funnel=`. The average leaves out the days or weeks before tracking began, and the row says
+how many it covers; with none, it reads "no earlier data". The numbers are the resource's;
+never write or adjust them. If the funnel call is refused, pass `funnel=None`: the table then
+says visitors were not measured.
 
 **The groups.** Each group is `(label, [emails])` or `(label, [emails], note)`. A group names
 people; Tin adds their role and company.
@@ -345,10 +349,11 @@ Write the report in REPORT.md's order, append `render_evidence(evidence)`, and r
 the whole text. Fix what it raises, then save the report to context.output.path.
 
 Status:
-- **complete**: the census and the friction queries answered.
-- **incomplete**: some evidence is missing; `status_reason` says what, in one line.
+- **complete**: the report, with whatever the queries returned. A refused or missing read, an
+  untracked conversion or a short history is a limitation and a line under Tracking, never a
+  lesser status. Leave `status_reason` empty.
 - **nothing to report**: the queries answered and nobody outside the team and bots came.
 - **invalid configuration**: the inputs were refused.
 
-If every PostHog call was refused, write the diagnostic with Status: incomplete. Tin fails the
-run and keeps the diagnostic readable.
+If every PostHog call was refused, still write the report with Status: complete and what each
+call returned. Tin fails the run and keeps that diagnostic readable.

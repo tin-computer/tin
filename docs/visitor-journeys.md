@@ -106,7 +106,9 @@ Schedule it daily, or weekly for a report read carefully once a week. The first 
 events and takes longer.
 
 A weekly run reads the last 7 days. Its table compares the week with the weekly average of the 4
-weeks before, where a daily one compares yesterday with the last 7 days. Its brief has longer
+weeks before, where a daily one compares yesterday with the last 7 days. The average leaves out
+days or weeks before tracking began and says how many it covers. A site that records only visits
+gets a table of visitors alone. A weekly brief has longer
 lines and up to 6 people worth knowing, and it looks up as many as 16 new people instead of 10.
 "Only what is new" is measured against the last weekly brief, so a project with a daily run as
 well still gets a full weekly brief. Slack carries a long section on in the next block rather than
@@ -158,9 +160,11 @@ while a site's SDK turns recording off or samples it; such a session opens to "R
 found", so its person gets no link, and the report says once under Tracking that recording is
 off or sampled on that host. A refused `recordings` call means no links, not a failed run.
 
-A refused or truncated census or friction query makes the report `incomplete`, never zero. If
-every query is refused, the report measured nothing: the run fails with that reason and the
-report stays a saved diagnostic, as for the analytics brief.
+A report has no lesser status for missing evidence: a refused or truncated read, an untracked
+conversion or a short history is a limitation named under Tracking, and the report keeps
+everything else. Reports from before 1.7.0 that say `incomplete` still read as reports. If every
+query is refused, the report measured nothing: the run fails with that reason and the report
+stays a saved diagnostic, as for the analytics brief.
 
 ## Output and People
 

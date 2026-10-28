@@ -34,6 +34,7 @@ from typing import Any
 VALIDATOR = "visitor-journal.v1"
 MEASURED_NOTHING = "VisitorJournalMeasuredNothing"
 MARKER = "<!-- tin-visitor-journal-v1 -->"
+# "incomplete" is only in reports from before 1.7.0; they read like complete ones.
 STATUSES = frozenset({"complete", "incomplete", "nothing to report", "invalid configuration"})
 NAMED_TIERS = frozenset({"lead", "new_user", "user"})
 TIER_WORDS = {"lead": "lead", "new_user": "new user", "user": "user"}
@@ -82,6 +83,16 @@ REPLAY = re.compile(r"https://(?:us|eu)\.posthog\.com/project/\d{1,12}/replay/[0
 WINDOW = re.compile(r"\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}")
 _STATUS = re.compile(r"^Status: (.*?)[ \t]*$", re.MULTILINE)
 _EVIDENCE = re.compile(r"\A\s*```json\n(.+?)\n```\s*\Z", re.DOTALL)
+
+
+def average_row(period: str, days: int | None) -> str:
+    """The table's second row, as JOURNEYS.md's average_row(): only the days or weeks the
+    average covers, fewer when tracking began within them."""
+    if not days or days >= (7 if period == "day" else 28):
+        return PERIOD_ROWS[period][1]
+    if period == "day":
+        return "Yesterday only" if days == 1 else f"Last {days} days, daily average"
+    return "The week before" if days == 7 else f"The {days // 7} weeks before, weekly average"
 
 
 @dataclass(frozen=True)
@@ -148,6 +159,8 @@ class Brief:
     returning: tuple[Group, ...] = ()
     # False for a daily brief from before 1.6.0: new users and visitors a line each.
     grouped: bool = True
+    # The days the average covers, fewer when tracking began within them; None before 1.7.0.
+    days: int | None = None
 
 
 @dataclass(frozen=True)
@@ -202,7 +215,7 @@ def read(content: bytes | str, *, work: bool = True) -> Outcome:
         or "\n" in reason
         or (status == "complete") == bool(reason.strip())
     ):
-        raise ValueError("an incomplete visitor journal needs a short status_reason")
+        raise ValueError("a visitor journal that is not complete needs a short status_reason")
     window = evidence["window"]
     if not isinstance(window, dict) or not all(
         isinstance(window.get(k), str) and WINDOW.fullmatch(window[k]) for k in ("start", "end")
@@ -394,6 +407,9 @@ def _brief(value, people: tuple[Person, ...]) -> Brief | None:
         period=period,
         **groups,
         grouped="visitors" not in value,
+        days=funnel["days"]
+        if isinstance(funnel, dict) and type(funnel.get("days")) is int
+        else None,
     )
 
 
@@ -432,8 +448,6 @@ def summary(outcome: Outcome) -> str:
             )
             + "."
         )
-        if outcome.status == "incomplete":
-            line += f" Incomplete: {outcome.reason.rstrip('.')}."
         return line
     tiers = {tier: sum(1 for p in outcome.people if p.tier == tier) for tier in TIER_WORDS}
     parts = [
@@ -453,10 +467,7 @@ def summary(outcome: Outcome) -> str:
         line += f"; {outcome.frictions} friction{'s' if outcome.frictions != 1 else ''}"
         if outcome.new_frictions:
             line += f" ({outcome.new_frictions} new)"
-    line += "."
-    if outcome.status == "incomplete":
-        line = f"Incomplete ({outcome.reason.rstrip('.')}). {line}"
-    return line
+    return line + "."
 
 
 def failure(outcome: Outcome) -> str:
