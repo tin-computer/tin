@@ -25,7 +25,7 @@ paths            -> site_paths(path_rows(result), has_more)  # how visitors move
 timelines (1-3)  -> timelines(result)     # for choose(p, c["max_people_detailed"])
 recordings       -> rec = recordings(result)  # which of their sessions PostHog recorded
                     journey(rows, m, rec); replay(m, session_id, rec)
-funnel           -> fn = funnel(result, m, inventory_rows, c["period"])  # the brief's table
+funnel           -> fn = funnel(result, m, inventory_rows, c["period"], c["end"])
 f = frictions(friction_rows, loop_rows, stalls(p, m), p)
 web search       -> w = profile(...)      # each new person's work, when look_up_new_people
                     named(person, ..., work=w)
@@ -44,7 +44,8 @@ from datetime import UTC, datetime, timedelta
 
 VERSION = "visitor-journal.v1"
 EVIDENCE_MARKER = "<!-- tin-visitor-journal-v1 -->"
-STATUSES = ("complete", "incomplete", "nothing to report", "invalid configuration")
+# A report says what it has; a missing read is a limitation, not a lesser status.
+STATUSES = ("complete", "nothing to report", "invalid configuration")
 # Every person lands in exactly one tier. Only the first three are named in the report and
 # written to People: they told the product who they are.
 TIERS = ("lead", "new_user", "user", "browser", "passer_by", "account", "team", "bot")
@@ -303,7 +304,8 @@ def check_map(m):
 
 def _funnel_steps(steps, every):
     """The brief's table: visitors, then an optional middle step, then the main conversion.
-    Chosen once and kept, so each day reads against the same steps."""
+    A site that records nothing past a visit has visitors alone. Chosen once and kept, so
+    each day reads against the same steps."""
     if not isinstance(steps, list):
         raise ContractError("funnel must be a list")
     if not steps:
@@ -317,9 +319,9 @@ def _funnel_steps(steps, every):
         if not events or any(e not in every and e != "$pageview" for e in events):
             raise ContractError("each funnel step needs events from key_events")
         out.append({"label": label.strip(), "events": events})
-    if not 2 <= len(out) <= FUNNEL_STEPS or out[0]["events"] != ["$pageview"]:
+    if len(out) > FUNNEL_STEPS or out[0]["events"] != ["$pageview"]:
         raise ContractError(
-            "the funnel starts with visitors ($pageview) and has two or three steps"
+            "the funnel starts with visitors ($pageview) and has at most three steps"
         )
     return out
 
@@ -644,27 +646,52 @@ TIMELINE = "person timestamp event session host path element message scroll n to
 FUNNEL = "ago step1 step2 step3".split()
 
 
-def funnel(result, m, inventory_rows=None, period="day"):
+def funnel(result, m, inventory_rows=None, period="day", end=None):
     """The brief's table: people per step yesterday against the 7-day daily average, or this
     week (`yesterday`) against the weekly average of the 4 weeks before. A step whose events
-    never fired in the 30-day inventory is not tracked, not zero."""
-    n = PERIODS[period]["buckets"]
+    never fired in the 30-day inventory is not tracked, not zero. When the inventory's first
+    visit comes after its first day, tracking began then: the average leaves out the days or
+    weeks before it, and with none left there is no earlier data (`average` None)."""
+    span = PERIODS[period]
+    n = span["buckets"]
     rows = {int(row["ago"]): row for row in table(result, FUNNEL) if 0 <= int(row["ago"]) < n}
     seen = {row["event"] for row in inventory_rows} if inventory_rows is not None else None
+    began, stop = _tracking_began(inventory_rows, end), _moment(end)
+    # A day or week counts only when tracking was on for all of it.
+    before = [
+        ago
+        for ago in range(0 if period == "day" else 1, n)
+        if began is None or stop - timedelta(days=span["bucket"] * (ago + 1)) >= began
+    ]
     steps = []
     for i, step in enumerate(m["funnel"]):
         key = f"step{i + 1}"
         tracked = seen is None or any(e in seen for e in step["events"])
         each = [int((rows.get(ago) or {}).get(key) or 0) for ago in range(n)]
-        before = each if period == "day" else each[1:]
+        average = round(sum(each[a] for a in before) / len(before), 1) if before else None
         steps.append(
             {
                 "label": step["label"],
                 "yesterday": each[0] if tracked else None,
-                "average": round(sum(before) / len(before), 1) if tracked else None,
+                "average": average if tracked else None,
             }
         )
-    return {"period": period, "days": 7 if period == "day" else 28, "steps": steps}
+    return {"period": period, "days": len(before) * span["bucket"], "steps": steps}
+
+
+def _tracking_began(inventory_rows, end):
+    """When the first visit in the inventory came, if tracking began within it; None when it
+    began before the inventory's first day or cannot be read."""
+    stop = _moment(end)
+    if not inventory_rows or stop is None:
+        return None
+    firsts = [
+        _moment(row.get("first_at")) for row in inventory_rows if row.get("event") == "$pageview"
+    ]
+    first = min((x for x in firsts if x is not None), default=None)
+    if first is None or first < stop - timedelta(days=INVENTORY_DAYS - 1):
+        return None
+    return first
 
 
 def project_info(result):
@@ -1232,9 +1259,9 @@ def brief(observations, new=(), stages=(), stuck=(), returning=()):
     }
 
 
-def _number(value):
+def _number(value, tracked=True):
     if value is None:
-        return "not tracked"
+        return "not tracked" if not tracked else "no earlier data"
     return f"{value:.1f}".rstrip("0").rstrip(".") if isinstance(value, float) else str(value)
 
 
@@ -1271,6 +1298,16 @@ def _group_line(g, count=False):
     return f"- {g['label']}" + (f" ({len(g['people'])})" if count else "") + f": {names}{note}"
 
 
+def average_row(period, days=None):
+    """The table's second row. It names only the days or weeks the average covers, fewer
+    when tracking began within them."""
+    if not days or days >= (7 if period == "day" else 28):
+        return ROWS[period][1]
+    if period == "day":
+        return "Yesterday only" if days == 1 else f"Last {days} days, daily average"
+    return "The week before" if days == 7 else f"The {days // 7} weeks before, weekly average"
+
+
 def render_brief(b):
     """The brief as Markdown, exactly as it goes under the Status line."""
     fn, period = b["funnel"], b.get("period", "day")
@@ -1279,8 +1316,17 @@ def render_brief(b):
     else:
         labels = [x["label"] for x in fn["steps"]]
         lines = ["| | " + " | ".join(labels) + " |", "|---|" + "---:|" * len(labels)]
-        for row, key in zip(ROWS[period], ("yesterday", "average"), strict=True):
-            lines.append(f"| {row} | " + " | ".join(_number(x[key]) for x in fn["steps"]) + " |")
+        current, average = ROWS[period][0], average_row(period, fn.get("days"))
+        lines.append(
+            f"| {current} | "
+            + " | ".join(_number(x["yesterday"], False) for x in fn["steps"])
+            + " |"
+        )
+        lines.append(
+            f"| {average} | "
+            + " | ".join(_number(x["average"], x["yesterday"] is not None) for x in fn["steps"])
+            + " |"
+        )
     new = sum(len(g["people"]) for g in b["stages"])
     if new:
         lines += ["", f"**New users: {new}, by how far they got**", ""]
@@ -1500,18 +1546,10 @@ def check(text):
     for item in e["requests"]:
         if item.get("outcome") not in REQUEST_OUTCOMES or item.get("operation") not in OPERATIONS:
             raise ContractError("each request needs a known operation and outcome")
-    if e["status"] in ("complete", "nothing to report") and not any(
+    if e["status"] == "nothing to report" and not any(
         r["outcome"] == "ok" and r["operation"] == "query.hogql" for r in e["requests"]
     ):
-        raise ContractError("a complete report needs at least one answered query")
-    if e["status"] == "complete" and any(
-        r["outcome"] != "ok" or r.get("truncated")
-        for r in e["requests"]
-        if r.get("step") in ("census", "frictions")
-    ):
-        raise ContractError(
-            "a refused or truncated census or friction query makes the report incomplete"
-        )
+        raise ContractError("nothing to report needs at least one answered query")
     if len(e["people"]) > MAX_NAMED:
         raise ContractError(f"name at most {MAX_NAMED} people")
     for row in e["people"]:

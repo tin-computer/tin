@@ -144,15 +144,21 @@ def _visitor_journal(content: bytes | str, inputs: Any = None) -> dict[str, Any]
     if brief is not None:
         if brief.steps:
 
-            def cell(value):
-                return "not tracked" if value is None else f"{value:g}"
+            def cell(value, tracked=False):
+                if value is None:
+                    return "no earlier data" if tracked else "not tracked"
+                return f"{value:g}"
 
-            current, average = visitor_journal.PERIOD_ROWS[brief.period]
+            current = visitor_journal.PERIOD_ROWS[brief.period][0]
+            average = visitor_journal.average_row(brief.period, brief.days)
             table = {
                 "columns": ["", *(step.label for step in brief.steps)],
                 "rows": [
                     [current, *(cell(step.yesterday) for step in brief.steps)],
-                    [average, *(cell(step.average) for step in brief.steps)],
+                    [
+                        average,
+                        *(cell(s.average, s.yesterday is not None) for s in brief.steps),
+                    ],
                 ],
             }
         if brief.grouped:
