@@ -265,8 +265,9 @@ Keep tracking problems apart, each with its exact fix:
 ## 11. The brief
 
 The brief opens the report and is also read on its own, in the founder's report and in Slack,
-by someone who has not read the rest. A daily brief has the four parts below; a weekly one
-groups people instead ("A weekly brief", at the end of this section).
+by someone who has not read the rest. It gives the shape of the day or week rather than a line
+per person: twenty journeys that each say "started a trial, regenerated a key" bury the one CEO
+who asked about Enterprise. So people are grouped, and only the few worth knowing get a line.
 
 The founder reads a daily brief every morning and a weekly one carefully once a week. Either
 way it says only what is new since the last brief:
@@ -280,39 +281,47 @@ is none. The map, ledger and site still come from the newest report.
 **The table.** After the timelines, call `request(c, m, "funnel")` and pass the result to
 `funnel(result, m, inventory_rows, c["period"])`. It counts unique people for each funnel step
 over the last 24 hours against the daily average over the last 7 days, or for a week over the
-last 7 days against the weekly average of the 4 weeks before. Pass it to `assemble()` as `funnel=`. The
-numbers are the resource's; never write or adjust them. If the funnel call is refused, pass
-`funnel=None`: the table then says visitors were not measured.
+last 7 days against the weekly average of the 4 weeks before. Pass it to `assemble()` as
+`funnel=`. The numbers are the resource's; never write or adjust them. If the funnel call is
+refused, pass `funnel=None`: the table then says visitors were not measured.
 
-**New users.** Every new person, at most 10, most valuable first, one line each: how they
-came and how far they got, such as "came from a Google search, connected GitHub and ran the first
-audit". Their role, company and links come from their `work`; don't repeat them in the line.
-Pass `(email, line)` as `new`. When nobody is new the brief says so.
+**The groups.** Each group is `(label, [emails])` or `(label, [emails], note)`. A group names
+people; Tin adds their role and company.
+- `stages`: every new person in exactly one group, by how far they got, furthest first, such as
+  "Set up a number", "Confirmed a trial, no number yet", "Reached checkout, no trial confirmed",
+  "Didn't reach checkout". Use the product's own steps. When one stage would hold most of the
+  new people, split it by the next step some of them took ("Set up a number and changed plan"),
+  so each group still tells the founder something. `assemble()` refuses a brief that leaves a
+  new person out; with nobody new, the brief says so.
+- `stuck`: one group per problem people hit, with how often in the label: "Email already in
+  use, 5 times". The note says how it ended when it did: "both picked another number".
+- `returning`: returning users by what they did, most valuable first: "Upgraded to Plus",
+  "Looked for help", "Came back to set up".
 
-Every brief line says what happened and nothing else. No advice or next step ("check whether",
-"review the replay", "worth asking about") and no verdict on what it means ("treat this as",
-"not evidence of"): the founder draws those. Suggested actions belong in People to act on.
+A note is optional and says what a few people in the group did beyond its label, in a short
+sentence: "Fathin and Elie then upgraded to Growth". It never says what the data did not show.
 
-**Some visitors.** Up to 5 other named people, most valuable first: anyone who paid or
-started a trial, then anyone stuck on the way in, then returning users who reached value. One
-line each: who they are, from their own data, and what they did. For example "started a trial, registered
-a phone, then clicked Ask about Enterprise". Pass `(email, line)`; the name and replay link come
-from the named people. When nobody can be named, leave it empty.
+**Worth knowing.** `new`, as `(email, line)`: at most 5 new people (6 for a week) worth knowing
+on their own: a known company or role, or something no group says, such as asking about
+Enterprise. Their role, company and links come from their `work`; the line is what they did, in
+one sentence. Leave it empty when nobody stands out.
 
-Leave out anyone in the last brief who has done nothing since its window ended; `assemble()`
-refuses them. Someone in it who came back is listed again only for what they did since, and the
-line says so: "came back and upgraded to Plus". Fewer visitors, or none, is the right brief on
-a quiet day.
+**Observations.** At most 5, the most useful first, and only what no group says: possible bugs,
+failures the product recorded, where visitors come from and which pages they leave from, a
+tracking gap that changes how to read the table. Never restate the table or a group. Pass
+`(text, friction_id or None)`. Something without a recorded failure or error behind it is
+"there may be a bug in ...", never "X is broken"; `check()` refuses otherwise. Clicks that
+changed nothing are a "may".
 
-**Some observations.** Up to 5 lines, the most useful first: possible bugs, failures the
-product recorded, where visitors come from and where they leave, a tracking gap that changes
-how to read the table. Pass `(text, friction_id or None)`. Something without a recorded failure
-or error behind it is "there may be a bug in ...", never "X is broken"; `check()` refuses
-otherwise. Clicks that changed nothing are a "may".
-
-A line holds 240 characters, or 300 for a week.
+Every label, note and line says what happened and nothing else. No advice or next step ("check
+whether", "review the replay", "worth asking about") and no verdict on what it means ("treat
+this as", "not evidence of"): the founder draws those. Suggested actions belong in People to act
+on. A line holds 240 characters, or 300 for a week.
 
 Say each thing once:
+- leave out anyone in the last brief who has done nothing since its window ended;
+  `assemble()` refuses them. Someone in it who came back is grouped again only by what they
+  did since: "came back and upgraded to Plus". A short brief is the right brief on a quiet day;
 - leave out an observation the last brief made, unless it changed, and then say what changed:
   "the checkout error hit 3 more people", "signups are tracked now";
 - a tracking gap goes in the brief when it first shows and again when it changes or is fixed,
@@ -321,34 +330,12 @@ Say each thing once:
   since when, unless more people hit it.
 
 `assemble()` refuses an observation the last brief made word for word. When nothing is new,
-leave the observations empty: the brief then says "Nothing stood out".
-
-**A weekly brief.** Read once a week, closely, so it gives the shape of the week rather than a
-line per person. Twenty journeys that each say "started a trial, regenerated a key" bury the
-one CEO who asked about Enterprise. Group people, each group `(label, [emails], note)` with an
-optional short note:
-- `stages`: every new person in exactly one group, by how far they got, furthest first, such as
-  "Set up a number", "Confirmed a trial, no number yet", "Reached checkout, no trial confirmed",
-  "Didn't reach checkout". Use the product's own steps. The note says what a few in the group
-  did beyond it: "Fathin and Elie then upgraded to Growth". `assemble()` refuses a week that
-  leaves a new person out.
-- `new`, as `(email, line)`: at most 6 new people worth knowing on their own: a known company
-  or role, or something no group says, such as asking about Enterprise. Their work and links
-  come with them; the line is what they did, in one sentence.
-- `stuck`: one group per problem people hit, with how often in the label: "Email already in
-  use, 5 times". The note says how it ended when it did: "both picked another number".
-- `returning`: returning users by what they did: "Changed plan", "Looked for help", "Came back
-  to set up". There are no per-person visitor lines in a week.
-- `observations`: at most 5, only what no group above says: where visitors came from and which
-  pages they left from, and tracking gaps. Never restate the table or a group.
-
-A group names people; Tin adds their role and company. Build it with
-`brief([], observations, new, stages=..., stuck=..., returning=...)`.
+leave the observations empty: the brief then says "Nothing else stood out".
 
 Write for the founder: plain words, no internal terms such as census, ledger, timeline, tier or
-query. Build it with `brief(visitors, observations, new)` (a week also passes its groups), pass it to `assemble()` with
-`brief=b, funnel=fn, previous=prev`, and put `render_brief(evidence["brief"])` directly under
-the Status line.
+query. Build it with `brief(observations, new, stages=..., stuck=..., returning=...)`, pass it to
+`assemble()` with `brief=b, funnel=fn, previous=prev`, and put `render_brief(evidence["brief"])`
+directly under the Status line.
 
 ## 12. Write
 

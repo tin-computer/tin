@@ -106,25 +106,28 @@ def _new_user(v) -> dict[str, Any]:
     return {"text": f"{who}: {v.line}", "url": v.replay_url, "label": "Replay"}
 
 
-def _groups(groups) -> list[dict[str, Any]]:
+def _groups(groups, count: bool = False) -> list[dict[str, Any]]:
+    """A group a line. Only a stage counts its people; a problem's label says how often."""
+
     def line(g):
-        return f"{g.label} ({len(g.people)}): {', '.join(g.people)}" + (
-            f"; {g.note}" if g.note else ""
-        )
+        note = f". {g.note[0].upper()}{g.note[1:]}" if g.note else ""
+        return f"{g.label}{f' ({len(g.people)})' if count else ''}: {', '.join(g.people)}{note}"
 
     return [{"text": line(g)} for g in groups]
 
 
-def _week_sections(brief) -> list[dict[str, Any]]:
-    """A weekly brief: people grouped by how far they got and what held them back."""
+def _grouped_sections(brief) -> list[dict[str, Any]]:
+    """People grouped by how far they got and what held them back."""
+    from tin_lite.visitor_journal import ALSO
+
     new = sum(len(g.people) for g in brief.stages)
     returning = sum(len(g.people) for g in brief.returning)
     sections = [
-        (f"New users: {new}, by how far they got", _groups(brief.stages)),
+        (f"New users: {new}, by how far they got", _groups(brief.stages, count=True)),
         ("Worth knowing", [_new_user(v) for v in brief.new]),
         ("Where people got stuck", _groups(brief.stuck)),
         (f"Returning users ({returning})", _groups(brief.returning)),
-        ("Also this week", [{"text": o} for o in brief.observations]),
+        (ALSO[brief.period], [{"text": o} for o in brief.observations]),
     ]
     return [{"heading": heading, "items": items} for heading, items in sections if items]
 
@@ -152,8 +155,8 @@ def _visitor_journal(content: bytes | str, inputs: Any = None) -> dict[str, Any]
                     [average, *(cell(step.average) for step in brief.steps)],
                 ],
             }
-        if brief.period == "week":
-            sections = _week_sections(brief)
+        if brief.grouped:
+            sections = _grouped_sections(brief)
         elif brief.new:
             sections.append(
                 {
@@ -177,7 +180,7 @@ def _visitor_journal(content: bytes | str, inputs: Any = None) -> dict[str, Any]
                     ],
                 }
             )
-        if brief.observations and brief.period != "week":
+        if brief.observations and not brief.grouped:
             sections.append(
                 {"heading": "Some observations", "items": [{"text": o} for o in brief.observations]}
             )

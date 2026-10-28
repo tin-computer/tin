@@ -547,6 +547,17 @@ FUNNEL_RESULT = {
 }
 
 
+# The default named people who are new: Ana signed up, Ben gave an email for the first time.
+NEW = ["ana@fieldnotes.dev", "ben@quanta.io"]
+
+
+def day(j, observations=(), new=(), stages=None, **groups):
+    """A brief with every default new person in one stage."""
+    return j.brief(
+        observations, new, stages=[("Came in", NEW)] if stages is None else stages, **groups
+    )
+
+
 def report(
     j,
     c,
@@ -611,9 +622,10 @@ def report(
     ledger = j.carry({"frictions": [], "people": []}, people, [], c)
     site = j.site_paths([path_row("/", "/", "/", 4, bounced=4)])
     if brief is DEFAULT:
+        staged = list(dict.fromkeys(n["email"] for n in named if n["new"]))
         brief = j.brief(
-            [(named[0]["email"], "Signed up from the hackathon page.")] if named else [],
             [("Most visitors left after the homepage.", None)],
+            stages=[("Signed up from the hackathon page", staged)] if staged else [],
         )
     evidence = j.assemble(
         c,
@@ -689,16 +701,16 @@ FAILURE = {
 UNLABELED = {**FAILURE, "id": "bbbbbbbbbbbb", "kind": "dead_click", "page": "/c", "detail": ""}
 
 
-def test_the_brief_opens_with_the_funnel_then_visitors_then_observations(j, c, m, people):
-    b = j.brief(
-        [
-            ("ben@quanta.io", "Clicked pricing twice and left."),
-            ("cara@studio.design", "Back again."),
-        ],
+def test_the_brief_opens_with_the_funnel_then_groups_then_observations(j, c, m, people):
+    b = day(
+        j,
         [
             ("There may be a bug in the pricing calculator: Ben clicked it twice.", None),
             ("Checkout failed for 2 people.", FAILURE["id"]),
         ],
+        stages=[("Created an account", NEW[:1]), ("Left an email", NEW[1:], "clicked pricing")],
+        stuck=[("Checkout failed, 2 times", ["cara@studio.design"])],
+        returning=[("Came back", ["cara@studio.design"])],
     )
     text = report(j, c, m, people, brief=b, frictions=[FAILURE, UNLABELED])
     j.check(text)
@@ -707,13 +719,20 @@ def test_the_brief_opens_with_the_funnel_then_visitors_then_observations(j, c, m
     assert "| Yesterday | 4 | 1 | 1 |" in head
     assert "| Last 7 days, daily average | 2 | 0.6 | 0.3 |" in head
     assert (
-        head.index("Status: complete") < head.index("**Some visitors**") < head.index("## People")
+        head.index("Status: complete")
+        < head.index("**New users: 2, by how far they got**")
+        < head.index("**Where people got stuck**")
+        < head.index("**Returning users (1)**")
+        < head.index("**Also yesterday**")
+        < head.index("## People")
     )
-    assert "(ben@quanta.io): Clicked pricing twice and left. [Replay](" + REPLAY in head
+    # Only a stage counts its people; a note reads as its own sentence.
+    assert "- Left an email (1): Ben Ode. Clicked pricing" in head
+    assert "- Checkout failed, 2 times: cara@studio.design\n" in head
     brief = visitor_journal.read(text).brief
     assert brief.steps[0] == visitor_journal.Step("Unique visitors", 4, 2.0)
-    assert [v.email for v in brief.visitors] == ["ben@quanta.io", "cara@studio.design"]
-    assert brief.visitors[0].replay_url.startswith(REPLAY) and len(brief.observations) == 2
+    assert brief.grouped and brief.stages[1].people == ("Ben Ode",)
+    assert len(brief.returning) == 1 and len(brief.observations) == 2
     # A step the product never fires is not tracked, which is not zero.
     fn = j.funnel(FUNNEL_RESULT, m, [{"event": "$pageview"}])
     assert [(x["yesterday"], x["average"]) for x in fn["steps"]] == [
@@ -722,7 +741,7 @@ def test_the_brief_opens_with_the_funnel_then_visitors_then_observations(j, c, m
         (None, None),
     ]
     assert "| Yesterday | 4 | not tracked | not tracked |" in j.render_brief(
-        {"funnel": fn, "visitors": [], "observations": []}
+        {"funnel": fn, "new": [], "observations": [], **{k: [] for k in j.GROUPS}}
     )
     query = j.request(c, m, "funnel")["arguments"]["query"]
     assert check_hogql(query) == query and "uniqIf(person_id, event = '$pageview')" in query
@@ -733,15 +752,16 @@ def test_the_check_refuses_a_brief_tin_could_not_stand_behind(j, c, m, people):
     frictions = [FAILURE, UNLABELED]
     cases = [
         (None, "needs a brief"),
-        (j.brief([], [("Checkout is broken.", None)]), "may be a bug"),
-        (j.brief([], [("The candidate list fails.", UNLABELED["id"])]), "may be a bug"),
-        (j.brief([], [("The census shows Ben.", None)]), "founder's words"),
+        (day(j, [("Checkout is broken.", None)]), "may be a bug"),
+        (day(j, [("The candidate list fails.", UNLABELED["id"])]), "may be a bug"),
+        (day(j, [("The census shows Ben.", None)]), "founder's words"),
+        (day(j, returning=[("Read the ledger", ["cara@studio.design"])]), "founder's words"),
     ]
     for b, message in cases:
         with pytest.raises(j.ContractError, match=message):
             j.check(report(j, c, m, people, brief=b, frictions=frictions))
     with pytest.raises(j.ContractError, match="not a named person"):
-        report(j, c, m, people, brief=j.brief([("zed@nowhere.dev", "Hi.")], []))
+        report(j, c, m, people, brief=day(j, returning=[("Came back", ["zed@nowhere.dev"])]))
     other = j.check_map({**m, "funnel": m["funnel"][:2]})
     with pytest.raises(j.ContractError, match="map's funnel"):
         j.check(report(j, c, m, people, funnel=j.funnel(FUNNEL_RESULT, other)))
@@ -764,26 +784,30 @@ def test_the_brief_says_only_what_is_new_since_the_last_one(j, c, m, people):
     ben, cara = "ben@quanta.io", "cara@studio.design"
     gap = "Signups are not tracked, so the table cannot count them."
     last = j.previous(
-        report(j, c, m, people, brief=j.brief([(ben, "Clicked pricing.")], [(gap, None)]))
+        report(j, c, m, people, brief=day(j, [(gap, None)], [(ben, "Clicked pricing.")]))
     )
-    assert last["brief"]["visitors"][0]["email"] == ben and last["window"]["end"] == c["end"]
+    assert last["brief"]["new"][0]["email"] == ben and last["window"]["end"] == c["end"]
     # The next morning's run: its window overlaps the last one, as after a run started by hand.
     later = {**last, "window": {"start": "2026-10-15 09:00:00", "end": "2026-10-16 10:00:00"}}
     with pytest.raises(j.ContractError, match="ben@quanta.io was in the last brief"):
-        report(j, c, m, people, brief=j.brief([(ben, "Clicked pricing.")], []), previous=later)
+        report(j, c, m, people, brief=day(j, new=[(ben, "Clicked pricing.")]), previous=later)
     with pytest.raises(j.ContractError, match="already said"):
-        report(j, c, m, people, brief=j.brief([], [(gap.upper(), None)]), previous=later)
-    # Someone new, and an observation that says what changed, are fine.
+        report(j, c, m, people, brief=day(j, [(gap.upper(), None)]), previous=later)
+    # Someone not in it, and an observation that says what changed, are fine.
     j.check(
         report(
             j,
             c,
             m,
             people,
-            brief=j.brief([(cara, "Back again.")], [("Signups are tracked now.", None)]),
+            brief=day(j, [("Signups are tracked now.", None)], returning=[("Came back", [cara])]),
             previous=later,
         )
     )
+    # A brief from before 1.6.0 listed Cara as a visitor; she has done nothing since.
+    legacy = {**later, "brief": {**later["brief"], "visitors": [{"email": cara, "line": "Hi."}]}}
+    with pytest.raises(j.ContractError, match="cara@studio.design was in the last brief"):
+        report(j, c, m, people, brief=day(j, returning=[("Came back", [cara])]), previous=legacy)
     # Ben came back after the last brief's window ended (his last activity is 09:30).
     earlier = {**later, "window": {"start": "2026-10-15 08:00:00", "end": "2026-10-16 09:00:00"}}
     j.check(
@@ -792,7 +816,7 @@ def test_the_brief_says_only_what_is_new_since_the_last_one(j, c, m, people):
             c,
             m,
             people,
-            brief=j.brief([(ben, "Came back and booked a call.")], []),
+            brief=day(j, new=[(ben, "Came back and booked a call.")]),
             previous=earlier,
         )
     )
@@ -809,7 +833,6 @@ def test_the_brief_says_only_what_is_new_since_the_last_one(j, c, m, people):
             people,
             named=named,
             brief=j.brief(
-                [],
                 [(gap, None)],
                 stages=[("Came in", staged)],
                 returning=[("Clicked pricing", [ben])] if ben not in staged else [],
@@ -852,15 +875,17 @@ def test_new_users_open_the_brief_with_where_they_work(j, c, m, people):
     named = with_work(j, m, people)
     # New: Ana signed up, Ben gave an email for the first time; Cara has been here before.
     assert [(n["email"], n["new"]) for n in named] == [(ana, True), (ben, True), (cara, False)]
-    b = j.brief(
-        [(cara, "Back again.")],
-        [],
-        [(ana, "Came from the hackathon and created an account."), (ben, "Booked a call.")],
+    b = day(
+        j,
+        new=[(ana, "Came from the hackathon and created an account."), (ben, "Booked a call.")],
+        returning=[("Came back", [cara])],
     )
     text = report(j, c, m, people, named=named, brief=b)
     j.check(text)
     head = text.split(j.EVIDENCE_MARKER)[0]
-    assert head.index("**New users**") < head.index("**Some visitors**")
+    assert "- Came in (2): Ana Souza (Founder, Fieldnotes), Ben Ode" in head
+    assert head.index("**New users: 2,") < head.index("**Worth knowing**")
+    assert head.index("**Worth knowing**") < head.index("**Returning users (1)**")
     assert (
         "- **Ana Souza** (ana@fieldnotes.dev): Founder at Fieldnotes; a research notebook for UX "
         "teams. Came from the hackathon and created an account. "
@@ -869,18 +894,19 @@ def test_new_users_open_the_brief_with_where_they_work(j, c, m, people):
     ) in head
     assert "- **Ben Ode** (ben@quanta.io): Booked a call. [Replay](" in head
     brief = visitor_journal.read(text).brief
-    assert [v.email for v in brief.new] == [ana, ben] and [v.email for v in brief.visitors] == [
-        cara
-    ]
+    assert [v.email for v in brief.new] == [ana, ben] and not brief.visitors
     assert brief.new[0].work.headline == "Founder at Fieldnotes"
     assert brief.new[0].work.linkedin_url == "https://www.linkedin.com/in/anasouza"
     assert brief.new[1].work is None
     # Nobody new is said plainly.
-    quiet = report(j, c, m, people, named=named, brief=j.brief([(cara, "Back again.")], []))
+    old = [{**n, "new": False, "work": None} for n in named]
+    quiet = report(j, c, m, people, named=old, brief=day(j, stages=[]))
     assert "**New users**\n\n- Nobody new signed up or left an email." in quiet
     # Someone who is not new, a link that is not a profile, a role nothing ties to them.
     with pytest.raises(j.ContractError, match="not a named new person"):
-        report(j, c, m, people, named=named, brief=j.brief([], [], [(cara, "Back again.")]))
+        report(j, c, m, people, named=named, brief=day(j, new=[(cara, "Back again.")]))
+    with pytest.raises(j.ContractError, match="is new; put them in a stage"):
+        report(j, c, m, people, named=named, brief=day(j, returning=[("Came back", [ana])]))
     with pytest.raises(j.ContractError, match="not a LinkedIn profile"):
         j.profile(linkedin_url="https://evil.example/in/anasouza", basis="name")
     with pytest.raises(j.ContractError, match="basis"):
@@ -910,9 +936,7 @@ def test_new_users_open_the_brief_with_where_they_work(j, c, m, people):
     # A new person the last brief listed, with nothing since, is left out like any visitor.
     last = j.previous(text)
     with pytest.raises(j.ContractError, match="ana@fieldnotes.dev was in the last brief"):
-        report(
-            j, c, m, people, named=named, brief=j.brief([], [], [(ana, "Again.")]), previous=last
-        )
+        report(j, c, m, people, named=named, brief=day(j, new=[(ana, "Again.")]), previous=last)
 
 
 def test_the_check_refuses_what_tin_would_not_publish_or_trust(j, c, m, people):
@@ -1282,7 +1306,6 @@ def test_a_week_reads_seven_days_against_the_four_before_and_groups_people(j, c,
     new = [n["email"] for n in named if n["new"]]
     old = [n["email"] for n in named if not n["new"]]
     b = j.brief(
-        [],
         [("The pricing page brought 30 landings; 20 left after one page.", None)],
         [(new[0], "Clicked Ask about Enterprise twice.")],
         stages=[
@@ -1299,7 +1322,7 @@ def test_a_week_reads_seven_days_against_the_four_before_and_groups_people(j, c,
     assert "| The 4 weeks before, weekly average | 15 | 3 | 1 |" in head
     assert f"**New users: {len(new)}, by how far they got**" in head
     assert (
-        "- Created an account (1): Ana Souza (Founder, Fieldnotes); came from the hackathon" in head
+        "- Created an account (1): Ana Souza (Founder, Fieldnotes). Came from the hackathon" in head
     )
     assert head.index("**Worth knowing**") < head.index("**Where people got stuck**")
     assert head.index("**Returning users") < head.index("**Also this week**")
@@ -1320,14 +1343,14 @@ def test_a_week_reads_seven_days_against_the_four_before_and_groups_people(j, c,
     ]
     # Every new person is in one stage; a week names returning users in groups, not lines.
     for wrong, match in (
-        (j.brief([], [], stages=[("Created an account", new[:1])]), "every new person"),
-        (j.brief([(old[0], "Came back.")], [], stages=[("All", new)]), "groups returning"),
-        (j.brief([], [], stages=[("All", new + old[:1])]), "is not new"),
+        (j.brief([], stages=[("Created an account", new[:1])]), "every new person"),
+        (j.brief([], stages=[("All", new + old[:1])]), "is not new"),
     ):
         with pytest.raises(j.ContractError, match=match):
             report(j, week, m, people, named=named, brief=wrong, funnel=fn)
-    # A day keeps its lines, and a week's table never goes in a day's brief.
-    with pytest.raises(j.ContractError, match="weekly brief"):
-        report(j, c, m, people, named=named, brief=b)
+    # A day groups people the same way, and a week's table never goes in a day's brief.
+    daily = report(j, c, m, people, named=named, brief=b)
+    j.check(daily)
+    assert "**Also yesterday**" in daily and "**Also this week**" not in daily
     with pytest.raises(j.ContractError, match="period"):
         report(j, week, m, people, named=named, brief=b, funnel=j.funnel(FUNNEL_RESULT, m))

@@ -21,8 +21,13 @@ owns every query, tier, count and ledger entry. The agent writes the map of the 
 events and does the judgment: journeys in words, causes, actions and changes.
 
 The brief at the top of each report is also the run's [summary](run-summaries.md), which a saved
-schedule can post to a Slack channel. Its lines say what happened, never what to do about it or
-what it means; suggested actions stay in the report's People to act on.
+schedule can post to a Slack channel. It groups people rather than giving each a line: new users
+by how far they got (every new person in one group, with role and company), up to 5 worth knowing
+on their own (a known company, or something no group says), where people got stuck (each problem
+with who hit it and how often), returning users by what they did, and up to 5 observations that
+say nothing the table or groups already say. Its lines say what happened, never what to do about
+it or what it means; suggested actions stay in the report's People to act on. Daily briefs from
+before 1.6.0 gave each person a line and still read that way.
 
 It differs from the [product analytics brief](product-analytics-brief.md), which reports
 aggregate funnels and trends with no people and no recommendations. This workflow is per
@@ -67,9 +72,11 @@ else that ties, the report says nothing: a namesake is worse than no profile.
   home address, family, age, personal social accounts or private life. Anonymous visitors, team
   members and people who are not new are never looked up.
 
-The brief lists the new people under **New users**, above **Some visitors**:
+The brief names new people with their role and company in the stage they reached, and gives
+the few worth knowing on their own a line under **Worth knowing**:
 
 ```text
+- Created an account (2): Ana Souza (Founder, Fieldnotes), Ben Ode
 - **Ana Souza** (ana@fieldnotes.dev): Founder at Fieldnotes; a research notebook for UX teams.
   Came from the hackathon and created an account. [LinkedIn](…) · [Fieldnotes](…) · [Replay](…)
 ```
@@ -99,14 +106,10 @@ Schedule it daily, or weekly for a report read carefully once a week. The first 
 events and takes longer.
 
 A weekly run reads the last 7 days. Its table compares the week with the weekly average of the 4
-weeks before, where a daily one compares yesterday with the last 7 days. Its brief groups people
-rather than giving each a line: new users by how far they got (every new person in one group,
-with role and company), up to 6 worth knowing on their own (a known company, or something no
-group says), where people got stuck (each problem with who hit it and how often), returning
-users by what they did, and up to 5 observations that say nothing the table or groups already
-say. It looks up as many as 16 new people instead of 10. "Only what is
-new" is measured against the last weekly brief, so a project with a daily run as well still
-gets a full weekly brief. Slack carries a long section on in the next block rather than
+weeks before, where a daily one compares yesterday with the last 7 days. Its brief has longer
+lines and up to 6 people worth knowing, and it looks up as many as 16 new people instead of 10.
+"Only what is new" is measured against the last weekly brief, so a project with a daily run as
+well still gets a full weekly brief. Slack carries a long section on in the next block rather than
 cutting it. The period follows the schedule when the config is saved
 (`visitor_journal.follow_schedule`), so Start here pacing a daily pick to weekly also reads the
 week.

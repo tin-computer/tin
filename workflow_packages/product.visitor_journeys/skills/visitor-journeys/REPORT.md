@@ -14,38 +14,25 @@ Status: <complete | incomplete | nothing to report | invalid configuration>
 | Yesterday (This week) | <n> | <n> | <n> |
 | Last 7 days, daily average (The 4 weeks before, weekly average) | <n> | <n> | <n> |
 
-**New users**
-
-- **<Name>** (<email>): <role> at <company>; <what the company does>. <how they came and how far they got>. [LinkedIn](<profile>) · [<Company>](<site>) · [Replay](<link>)
-
-**Some visitors**
-
-- **<Name>** (<email>): <who they are and what they did, in one line; no advice>. [Replay](<link>)
-
-**Some observations**
-
-- <What happened, to how many, since when; "there may be a bug in ..." for anything without a recorded failure; no advice>
-
-<a weekly brief, after the table, instead of the three parts above:>
 **New users: <n>, by how far they got**
 
-- <stage> (<n>): <Name> (<role>, <company>), <Name>, ...; <note>
+- <stage> (<n>): <Name> (<role>, <company>), <Name>, ...<. Note>
 
 **Worth knowing**
 
-- **<Name>** (<email>): <role> at <company>; <what the company does>. <what they did, in one sentence>. [LinkedIn](<profile>) · [<Company>](<site>)
+- **<Name>** (<email>): <role> at <company>; <what the company does>. <what they did, in one sentence>. [LinkedIn](<profile>) · [<Company>](<site>) · [Replay](<link>)
 
 **Where people got stuck**
 
-- <problem, how often> (<n>): <Name>, <Name>; <how it ended>
+- <problem, how often>: <Name>, <Name><. How it ended>
 
 **Returning users (<n>)**
 
-- <what they did> (<n>): <Name>, <Name>; <note>
+- <what they did>: <Name>, <Name><. Note>
 
-**Also this week**
+**Also yesterday (Also this week)**
 
-- <sources, pages people left from, tracking gaps; nothing the table or groups say>
+- <possible bugs, sources, pages people left from, tracking gaps; nothing the table or groups say; no advice>
 
 ## People to act on today
 ### <Name or email> · <lead | new user | user>

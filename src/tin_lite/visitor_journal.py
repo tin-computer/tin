@@ -59,12 +59,13 @@ MAX_PEOPLE = 60
 SUMMARY_LIMIT = 300
 ACTION_LIMIT = 300
 # What a brief may show for each period (JOURNEYS.md's PERIODS): a weekly brief is longer.
+# `visitors` is only in daily briefs from before 1.6.0, which listed people one per line.
 BRIEF_LIMITS = {
-    "day": {"new": 10, "visitors": 5, "observations": 5, "line": 240, "groups": 0},
+    "day": {"new": 10, "visitors": 5, "observations": 5, "line": 240, "groups": 6},
     "week": {"new": 6, "visitors": 0, "observations": 5, "line": 300, "groups": 6},
 }
-# A weekly brief's groups (JOURNEYS.md's GROUPS): new users by how far they got, where people
-# got stuck, and what returning users did.
+# The brief's groups (JOURNEYS.md's GROUPS): new users by how far they got, where people got
+# stuck, and what returning users did.
 GROUPS = ("stages", "stuck", "returning")
 GROUP_LABEL = 80
 GROUP_NOTE = 160
@@ -73,6 +74,7 @@ PERIOD_ROWS = {
     "day": ("Yesterday", "Last 7 days, daily average"),
     "week": ("This week", "The 4 weeks before, weekly average"),
 }
+ALSO = {"day": "Also yesterday", "week": "Also this week"}
 EMAIL = re.compile(r"[^@\s]{1,64}@[a-z0-9.-]{1,253}\.[a-z]{2,63}")
 LINKEDIN = re.compile(r"https://(?:www\.)?linkedin\.com/in/[^/?#\s()<>]{1,100}/?")
 SITE = re.compile(r"https://[a-z0-9.-]{1,253}\.[a-z]{2,63}(?:/[^\s()<>]{0,200})?")
@@ -144,6 +146,8 @@ class Brief:
     stages: tuple[Group, ...] = ()
     stuck: tuple[Group, ...] = ()
     returning: tuple[Group, ...] = ()
+    # False for a daily brief from before 1.6.0: new users and visitors a line each.
+    grouped: bool = True
 
 
 @dataclass(frozen=True)
@@ -389,6 +393,7 @@ def _brief(value, people: tuple[Person, ...]) -> Brief | None:
         new=new,
         period=period,
         **groups,
+        grouped="visitors" not in value,
     )
 
 
