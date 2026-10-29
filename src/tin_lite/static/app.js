@@ -7184,7 +7184,9 @@ function analyticsReporterPart(view) {
   const open = step.connected ? state.analyticsStepOpen : !state.analyticsStepHidden;
   const meta = step.connected
     ? `${reporter} · ${step.env_name}${step.host ? ` on ${step.host}` : ""} · last request ${ledgerTime(view.requests_last_at)}`
-    : step.via === "tin"
+    : step.via === "tin" && !step.added_at
+      ? `${reporter} in pull request #${step.number} · set the value whenever; it sends nothing until both are live`
+      : step.via === "tin"
       ? `${reporter} added ${analyticsDay(step.added_at)}${step.number ? ` · pull request #${step.number}` : ""} · it sends nothing until the value is set`
       : "added by your coding agent · it sends nothing until the value is set";
   const value = state.analyticsReporter?.value;

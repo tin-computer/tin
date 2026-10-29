@@ -192,8 +192,11 @@ no reporter.
 
 ## The reporter's one paste
 
-Once the reporter is on the site (Tin's merged change added it, or a coding agent asked for it
-over MCP), Configure shows the reporter step (Paper INST-4): the name `TIN_REPORTER_TOKEN`, the
+Once the reporter is on its way to the site (Tin's change has opened its pull request or merged
+it, or a coding agent asked for it over MCP), Configure shows the reporter step (Paper INST-4).
+It opens with the pull request because the founder may merge it on GitHub, for example when the
+repository needs a review, and Tin doesn't watch for that merge; the reporter sends nothing until
+the value is set, so setting it first is harmless. The step shows the name `TIN_REPORTER_TOKEN`, the
 value hidden until **Show** or **Copy**, and where it goes on the host (Vercel, Netlify,
 Cloudflare, or the server's environment). The card's second line says "reporter: one paste left
 on Vercel" until the first record arrives; then the row says the reporter is on, and the step

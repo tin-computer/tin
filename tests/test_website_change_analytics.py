@@ -20,6 +20,7 @@ import httpx
 import pytest
 from agent_traffic_fake import REPORTER_FILES, FakeAgentTraffic, reporter_sha256
 from test_agent_traffic_connection import analytics, card
+from test_integrations import settings
 from test_procedure_publication import publication_db as publication_db
 from test_website_change_audit import ACTOR, merge_outcome, mergeable
 from test_website_change_audit import fixture as audit_fixture
@@ -28,7 +29,7 @@ from tin_lite import content_repository_delivery as delivery
 from tin_lite import website_change
 from tin_lite import website_change_analytics as analytics_change
 from tin_lite.agent_traffic_connection import PROVIDER, site_from
-from tin_lite.integrations import ServiceCallRefused, site_folder
+from tin_lite.integrations import IntegrationService, ServiceCallRefused, site_folder
 from tin_lite.organic_audit import canonical_json
 from tin_lite.procedures import procedure_checkpoint_path
 
@@ -539,6 +540,15 @@ async def site_fixture(db, monkeypatch, repo=None):
     return f
 
 
+async def reporter_step(f):
+    """The card's reporter step for the fixture's site, from Tin's view of its change."""
+    service = IntegrationService(database=f.db, settings=settings(), client=httpx.AsyncClient())
+    view = await analytics_change.install_view(f.db, f.project.id, f.configuration["site_id"])
+    return await service.agent_traffic._reporter_step(
+        f.project.id, f.configuration, None, view, None
+    )
+
+
 async def approve_and_start(f, row):
     decided = await website_change.decide(
         f.db,
@@ -616,6 +626,10 @@ async def test_an_approved_install_opens_one_pull_request_and_merges(publication
     files = {item.path: item.content for item in sent["files"]}
     assert files["tin-reporter.js"] == REPORTER_FILES["nextjs"]
     assert files["app/layout.tsx"] == LAYOUT_WITH_LINE
+    # The paste opens with the pull request, before any merge: the founder may merge it.
+    step = await reporter_step(f)
+    assert (step["via"], step["variant"], step["number"]) == ("tin", "nextjs", 42)
+    assert step["added_at"] is None and step["env_name"] == "TIN_REPORTER_TOKEN"
     mergeable(f)
     result = await merge_outcome(f, run)
     assert result["status"] == "merged" and result["merge_rule"] == "approved_changes"
@@ -690,6 +704,10 @@ async def test_an_install_with_another_edit_waits_for_the_founder(publication_db
     f.runtime.integrations.github_merge_pull_request.assert_not_awaited()
     view = await analytics_change.install_view(f.db, f.project.id, f.configuration["site_id"])
     assert view["state"] == "left_open" and view["pull_request"]["number"] == 42
+    # GitHub may need a review, and Tin never hears of the founder's own merge: the reporter's
+    # paste stays open on the card for the pull request Tin left.
+    step = await reporter_step(f)
+    assert (step["via"], step["number"]) == ("tin", 42)
 
 
 async def test_a_reporter_that_doesnt_match_its_sha256_stops_before_the_session(
