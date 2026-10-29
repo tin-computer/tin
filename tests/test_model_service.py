@@ -118,6 +118,8 @@ async def test_openrouter_wire_contract_and_server_only_key():
             "cached_input_tokens": 3,
             "reasoning_tokens": 4,
             "cache_write_input_tokens": 2,
+            "cache_write_5m_input_tokens": None,
+            "cache_write_1h_input_tokens": None,
         }
     finally:
         await provider.close()

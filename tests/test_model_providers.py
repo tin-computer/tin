@@ -105,6 +105,10 @@ async def test_anthropic_adapter_preserves_native_messages_contract() -> None:
                     output_tokens=5,
                     cache_creation_input_tokens=1,
                     cache_read_input_tokens=2,
+                    service_tier="standard",
+                    cache_creation=SimpleNamespace(
+                        ephemeral_5m_input_tokens=1, ephemeral_1h_input_tokens=0
+                    ),
                 ),
             )
 
@@ -120,6 +124,10 @@ async def test_anthropic_adapter_preserves_native_messages_contract() -> None:
     assert result.usage.cache_write_input_tokens == 1
     assert result.usage.input_tokens == 11
     assert result.usage.total_tokens == 16
+    assert result.service_tier == "standard"
+    assert result.usage.cache_write_5m_input_tokens == 1
+    assert result.usage.cache_write_1h_input_tokens == 0
+    assert client.messages.parameters["service_tier"] == "standard_only"
     assert client.messages.parameters["output_config"] == {
         "effort": "high",
         "format": {

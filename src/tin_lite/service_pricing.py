@@ -39,9 +39,34 @@ CARD = {
     },
 }
 
+# Anthropic's standard API tier, not priority, batch or an OpenRouter alias.
+LAUNCH_CARD = {
+    "id": "tin-anthropic-launch-2026-10-30-v1",
+    "source": "https://platform.claude.com/docs/en/models/opus-5-5/overview",
+    "provider": "anthropic",
+    "service_tier": "standard",
+    "long_context_above_input_tokens": 1_000_000,
+    "models": {
+        "claude-opus-5-5": {
+            band: {
+                "input": 4_000,
+                "cached_input": 200,
+                "cache_write": 8_000,
+                "cache_write_5m": 5_000,
+                "cache_write_1h": 8_000,
+                "output": 20_000,
+            }
+            for band in ("standard", "long_context")
+        }
+    },
+    "web_search_call_nanos": 0,
+    "tools": {},
+}
+
 NATIVE_EXECUTORS = {
     "content.plan",
     "creative.character",
+    "creative.launch_video",
     "style.capture",
     "social.x_style",
     "social.x_revise",
@@ -111,6 +136,8 @@ def agent_planner(definition) -> bool:
 NATIVE_MAXIMUMS_USD = {
     "content.plan": "0.25",
     "creative.character": "1.50",
+    # Three bounded 120 KB / 24,000-token calls plus optional receipted voice.
+    "creative.launch_video": "6",
     "style.capture": "2.50",
     "social.x_style": "1",
     "social.x_revise": "1",
@@ -238,9 +265,10 @@ def service_terms(definition, *, inputs=None):
         maximum, kinds = 2 * NANOS_PER_DOLLAR, ["native_model", "tool"]
     if type(maximum) is not int or maximum <= 0:
         raise BillingError("invalid_budget", "The workflow spending maximum is invalid.")
-    return {
-        "rate_card": CARD["id"],
-        "service_pricing": deepcopy(CARD),
+    card = LAUNCH_CARD if executor == "creative.launch_video" else CARD
+    result = {
+        "rate_card": card["id"],
+        "service_pricing": deepcopy(card),
         "currency": "USD",
         "definition_sha256": digest(definition),
         "kind": "parent"
@@ -253,6 +281,11 @@ def service_terms(definition, *, inputs=None):
         "failure_policy": "verified_usage; platform_duplicates_and_overages_absorbed",
         "unknown_policy": "pending_up_to_24h_then_unresolved_cost_absorbed",
     }
+    if executor == "creative.launch_video" and inputs.get("sound_mode") == "voice_and_music":
+        from tin_lite.studio_billing import CARD as STUDIO_CARD
+
+        result.update(studio_pricing=deepcopy(STUDIO_CARD), operations=["native_model", "tool"])
+    return result
 
 
 def model_card(terms, provider, model):
@@ -275,6 +308,8 @@ def model_maximum(terms, *, provider, model, input_tokens, output_tokens, search
             },
         )
     card, rates = model_card(terms, provider, model)
+    if card["provider"] == "anthropic" and searches:
+        raise BillingError("unpriced_tool", "This workflow has no priced search tool.")
     band = "long_context" if input_tokens > card["long_context_above_input_tokens"] else "standard"
     rate = rates[band]
     return (
@@ -338,7 +373,28 @@ def price_receipt(terms, kind, record):
     ):
         return None
     band = "long_context" if inputs > card["long_context_above_input_tokens"] else "standard"
-    amount = token_charge({"native_model": rates[band]}, "native_model", usage)
+    if card["provider"] == "anthropic":
+        if searches != 0:
+            return None
+        writes = usage.get("cache_write_input_tokens")
+        short, long = (
+            usage.get("cache_write_5m_input_tokens"),
+            usage.get("cache_write_1h_input_tokens"),
+        )
+        if writes == 0 and short is None and long is None:
+            short, long = 0, 0
+        if (
+            type(writes) is not int
+            or any(type(n) is not int or n < 0 for n in (short, long))
+            or short + long != writes
+        ):
+            return None
+        # The shared token contract validates totals/cache overlap. Price each observed TTL.
+        amount = token_charge({"native_model": rates[band]}, "native_model", usage)
+        if amount is not None:
+            amount += short * (rates[band]["cache_write_5m"] - rates[band]["cache_write"])
+    else:
+        amount = token_charge({"native_model": rates[band]}, "native_model", usage)
     if amount is None:
         return None
     return amount + searches * card["web_search_call_nanos"], {

@@ -13,9 +13,11 @@ from tin_lite.activity_lanes import CODEX_ACTIVITIES, COLLECTION_ACTIVITIES, TRU
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize("billing_enabled", [False, True])
+@pytest.mark.parametrize("anthropic_enabled", [False, True])
 async def test_build_runtime_wires_services_without_unknown_activity_arguments(
     monkeypatch: pytest.MonkeyPatch,
     billing_enabled: bool,
+    anthropic_enabled: bool,
 ) -> None:
     database = SimpleNamespace(
         connect=AsyncMock(),
@@ -35,7 +37,13 @@ async def test_build_runtime_wires_services_without_unknown_activity_arguments(
     monkeypatch.setattr(runtime, "sync_system_wiki", AsyncMock(return_value=object()))
     monkeypatch.setattr(runtime, "sync_builtin_workflows", AsyncMock())
     monkeypatch.setattr(runtime, "E2BRuntime", lambda **_kwargs: sandboxes)
-    monkeypatch.setattr(runtime, "configured_model_router", lambda *_args, **_kwargs: model_router)
+    router_configurations = []
+
+    def configure_model_router(settings, **kwargs):
+        router_configurations.append(kwargs)
+        return model_router
+
+    monkeypatch.setattr(runtime, "configured_model_router", configure_model_router)
     monkeypatch.setattr(runtime, "IntegrationService", lambda **_kwargs: integrations)
     monkeypatch.setattr(runtime, "ProjectFileService", lambda **_kwargs: project_files)
     monkeypatch.setattr(runtime.Client, "connect", AsyncMock(return_value=temporal))
@@ -68,6 +76,7 @@ async def test_build_runtime_wires_services_without_unknown_activity_arguments(
         egress_allow_hosts=(),
         proxy_grant_dir=None,
         luna_api_key=None,
+        anthropic_api_key=secret if anthropic_enabled else None,
         temporal_endpoint="temporal.example",
         temporal_namespace="tin-lite-dev",
         temporal_api_key=secret,
@@ -110,3 +119,17 @@ async def test_build_runtime_wires_services_without_unknown_activity_arguments(
     assert trusted_names == TRUSTED_ACTIVITIES
     assert not trusted_names & CODEX_ACTIVITIES
     assert (services.database.billing is not None) is billing_enabled
+    assert router_configurations[0]["routes"] == (
+        (runtime.LAUNCH_MODEL_ROUTE,) if anthropic_enabled else ()
+    )
+    launches = next(
+        fn.__self__
+        for fn in original["activities"]
+        if activity._Definition.must_from_callable(fn).name == "launch_build"
+    )
+    assert launches.studio is services.studio
+    assert (launches.generator is not None) is anthropic_enabled
+    if anthropic_enabled:
+        assert isinstance(launches.generator, runtime.LaunchVideoGenerator)
+        assert launches.generator.router is model_router
+    await services.studio.close()
