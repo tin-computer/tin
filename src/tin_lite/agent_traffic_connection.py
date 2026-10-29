@@ -1241,30 +1241,50 @@ class AgentTrafficConnections:
         return await website_change_analytics.install_view(self.db, project_id, site_id)
 
     async def _reporter_step(self, project_id, configuration, site, install, status):
-        """The reporter's one paste, once the reporter is on the site: added by Tin's change, or
-        given to a coding agent over MCP. Never the value itself; the browser asks for it."""
+        """The reporter's one paste, once the reporter is on its way to the site: in Tin's open
+        pull request, added by Tin's change, or given to a coding agent over MCP. Never the value
+        itself; the browser asks for it."""
         from tin_lite import website_change_analytics as analytics
 
-        added = ((install or {}).get("added") or {}).get("reporter")
+        install = install or {}
+        added = (install.get("added") or {}).get("reporter")
+        # Tin's pull request carries the reporter. When GitHub needs a review the founder merges
+        # it, and Tin never hears of that merge, so the paste opens with the pull request. The
+        # reporter sends nothing until the value is set, so setting it early is harmless.
+        in_pull_request = (
+            install.get("state") in {"adding", "left_open"}
+            and (install.get("change") or {}).get("kind") == "install"
+            and install.get("reporter")
+            and install.get("pull_request")
+        )
         offered = (site or {}).get("reporter_offered_at")
         # While Tin's own change is putting the line on the site, it adds the reporter too; a
         # coding agent reading the guide meanwhile doesn't mean the reporter is there.
-        tin_owns = (install or {}).get("state") in TIN_INSTALLING
-        if not added and (not offered or tin_owns):
+        tin_owns = install.get("state") in TIN_INSTALLING
+        if not added and not in_pull_request and (not offered or tin_owns):
             return None
-        key = (install or {}).get("reporter_host") or analytics.detect_host(
+        key = install.get("reporter_host") or analytics.detect_host(
             set(), await analytics.setup_hosting(self.db, project_id)
         )
         host = analytics.HOSTS.get(key or "")
-        variant = (added or {}).get("variant")
+        if added:
+            merged = install.get("added") or {}
+            variant, number = added.get("variant"), merged.get("number")
+            pull_request, added_at = merged.get("pull_request"), merged.get("at")
+        elif in_pull_request:
+            opened = install.get("pull_request") or {}
+            variant, number = install["reporter"].get("variant"), opened.get("number")
+            pull_request, added_at = opened.get("url"), None
+        else:
+            variant = number = pull_request = added_at = None
         return {
-            "via": "tin" if added else "agent",
+            "via": "tin" if added or in_pull_request else "agent",
             "variant": variant,
             "label": analytics.VARIANTS.get(variant or "", {}).get("label"),
             "path": (added or {}).get("path"),
-            "added_at": (install.get("added") or {}).get("at") if added else None,
-            "number": (install.get("added") or {}).get("number") if added else None,
-            "pull_request": (install.get("added") or {}).get("pull_request") if added else None,
+            "added_at": added_at,
+            "number": number,
+            "pull_request": pull_request,
             "env_name": (configuration.get("reporter") or {}).get("env_name")
             or "TIN_REPORTER_TOKEN",
             "host": host["label"] if host else None,
