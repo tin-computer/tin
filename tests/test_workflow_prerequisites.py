@@ -156,7 +156,10 @@ def test_builtin_tree_is_acyclic_and_names_only_known_workflows():
         )
     validate_prerequisite_graph(graph)
     edges = {
-        key: sorted((item.kind, item.level, item.upstream) for item in items)
+        key: sorted(
+            ((item.kind, item.level, item.upstream) for item in items),
+            key=lambda edge: (edge[0], edge[1], edge[2] or ""),
+        )
         for key, items in graph.items()
         if items
     }
@@ -269,6 +272,7 @@ async def project_fixture(db, *, files=None, extra=()):
         clerk_frontend_api_url="https://clerk.tin.test",
         private_workflow_projects=set(),
         fal_key="test-fal-key",
+        e2b_studio_api_template="fixture-studio-api",
     )
     runtime = SimpleNamespace(
         database=db,
@@ -459,6 +463,60 @@ async def test_studio_without_voice_configuration_stops_before_start(publication
         f, "creative.product_demo", inputs, start_idempotency_key="video-request"
     )
     assert replayed.id == admitted.id
+
+
+@pytest.mark.parametrize("sound_mode", ["music", "silent"])
+async def test_launch_without_narration_does_not_require_voice_configuration(
+    publication_db, sound_mode
+):
+    f = await project_fixture(publication_db, extra=("creative.launch_video",))
+    f.settings.anthropic_api_key = "fixture-only-key"
+    f.settings.fal_key = None
+    admitted = await start(
+        f,
+        "creative.launch_video",
+        {
+            "slug": "launch",
+            "feature_moment": "Show one supported product action and its result",
+            "platform": "X",
+            "format": "landscape",
+            "duration_seconds": 20,
+            "sound_mode": sound_mode,
+            **(
+                {"music_path": "music/approved.wav", "music_license": "Original"}
+                if sound_mode == "music"
+                else {}
+            ),
+        },
+    )
+    assert admitted.workflow_id == next(
+        item.id for item in BUILTIN_WORKFLOWS if item.key == "creative.launch_video"
+    )
+    f.runtime.temporal.start_workflow.assert_awaited_once()
+
+
+async def test_narrated_launch_requires_voice_before_any_purchase(publication_db):
+    f = await project_fixture(publication_db, extra=("creative.launch_video",))
+    f.settings.anthropic_api_key = "fixture-only-key"
+    f.settings.fal_key = None
+    with pytest.raises(WorkflowExecutorUnavailableError, match="Studio voice provider"):
+        await start(
+            f,
+            "creative.launch_video",
+            {
+                "slug": "launch",
+                "feature_moment": "Show one supported product action and its result",
+                "platform": "X",
+                "format": "landscape",
+                "duration_seconds": 20,
+                "sound_mode": "voice_and_music",
+                "captions": True,
+                "music_path": "music/approved.wav",
+                "music_license": "Original",
+            },
+        )
+    f.runtime.temporal.start_workflow.assert_not_awaited()
+    assert await f.db.pool.fetchval("SELECT count(*) FROM workflow_runs") == 0
 
 
 async def test_recommended_prerequisites_advise_and_placeholders_only_gate_when_given(

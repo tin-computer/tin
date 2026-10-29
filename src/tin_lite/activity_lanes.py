@@ -23,6 +23,7 @@ CODEX_ACTIVITIES = frozenset(
         "execute_code_workflow",
         "create_codex_procedure_sandbox",
         "persist_codex_procedure_artifact",
+        "launch_build",
         "run_project_task_turn",
     }
 )
@@ -108,6 +109,10 @@ TRUSTED_ACTIVITIES = frozenset(
         "character_failure",
         "character_project",
         "character_review",
+        "launch_review",
+        "launch_approval",
+        "launch_project",
+        "launch_failure",
         "check_email_campaign_reply",
         "publish_code_workflow",
         "review_code_workflow",

@@ -26,7 +26,13 @@ from tin_lite.model_providers import (
     ProviderName,
 )
 from tin_lite.model_usage import ModelUsageRecorder, model_usage_scope
-from tin_lite.service_pricing import CARD, NATIVE_EXECUTORS, model_maximum, service_terms
+from tin_lite.service_pricing import (
+    CARD,
+    LAUNCH_CARD,
+    NATIVE_EXECUTORS,
+    model_maximum,
+    service_terms,
+)
 from tin_lite.usage_capture import (
     begin_observation,
     external_usage_scope,
@@ -144,7 +150,8 @@ def response(*, model="gpt-6-luna", searches=2):
 @pytest.mark.parametrize("key", sorted(NATIVE_EXECUTORS))
 def test_native_catalog_prices_are_not_illustrative(key):
     terms = service_terms(SPECS[key].definition)
-    assert terms["service_pricing"] == CARD and terms["execution_fee_nanos"] == 0
+    card = LAUNCH_CARD if key == "creative.launch_video" else CARD
+    assert terms["service_pricing"] == card and terms["execution_fee_nanos"] == 0
 
 
 def test_supplier_rates_caching_search_and_unknowns():

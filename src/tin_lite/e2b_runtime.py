@@ -4,6 +4,7 @@ import asyncio
 import base64
 import json
 import logging
+import math
 import re
 import shlex
 from collections.abc import Awaitable, Callable
@@ -199,6 +200,50 @@ class SandboxProcedureResult:
     summary: str
     message: str
     diagram_review: dict | None = None
+
+
+def _launch_duration(value: int) -> None:
+    if type(value) is not int or not 8 <= value <= 90:
+        raise ValueError("launch duration must be an integer from 8 to 90 seconds")
+
+
+def _launch_audio(content: bytes, limit: int) -> None:
+    if not isinstance(content, bytes) or not 0 < len(content) <= limit:
+        raise ValueError("launch audio exceeds its byte bound")
+
+
+def _launch_caption_overlay(words: list[dict], duration: int) -> str:
+    if not isinstance(words, list) or not 0 < len(words) <= 400:
+        raise ValueError("launch captions exceed their word bound")
+    end = 0.0
+    lines = []
+    for word in words:
+        if not isinstance(word, dict):
+            raise ValueError("launch captions need timed words")
+        text, start, stop = word.get("word"), word.get("start"), word.get("end")
+        if (
+            not isinstance(text, str)
+            or not text.strip()
+            or len(text) > 100
+            or type(start) not in {int, float}
+            or type(stop) not in {int, float}
+            or not math.isfinite(start)
+            or not math.isfinite(stop)
+            or not end <= start < stop <= duration
+        ):
+            raise ValueError("launch captions need ordered words inside the film")
+        lines.append({"text": text, "t0": start, "t1": stop})
+        end = stop
+    encoded = json.dumps(lines).replace("<", "\\u003c")
+    return (
+        '<script src="runtime/captions.js"></script><script>'
+        'addEventListener("load",()=>{const el=document.createElement("div");'
+        'el.style.cssText="position:fixed;left:10%;right:10%;bottom:12%;text-align:center;'
+        'font-size:3vw;line-height:1.2;color:white;background:#000b;padding:.2em;z-index:2147483647";'
+        "document.body.append(el);"
+        f"const paint=FilmCaptions.create(el,{encoded}),seek=window.seek;"
+        "window.seek=async t=>{await seek(t);paint(t)};});</script>"
+    )
 
 
 class E2BRuntime:
@@ -836,6 +881,203 @@ class E2BRuntime:
         if any(secret.encode() in content for secret in _run_secrets(run_input) if secret):
             return
         await run_input.interrupted_output_sink(content)
+
+    @asynccontextmanager
+    async def _launch_sandbox(self, *, run_id: str, step: str):
+        # Authored HTML receives no checkout, credentials, or network access.
+        UUID(run_id)
+        sandbox = await AsyncSandbox.create(
+            self._studio_api_template,
+            timeout=900,
+            metadata={"run_id": run_id, "execution_key": f"{run_id}:launch:{step}"},
+            network={"deny_out": lambda context: [context.all_traffic]},
+            api_key=self._api_key,
+        )
+        try:
+            await self._observe_sandbox(sandbox)
+            await sandbox.commands.run("tin-launch --help", timeout=30)
+            await sandbox.commands.run("mkdir -p /home/user/launch/film/assets", timeout=10)
+            yield sandbox
+        finally:
+            await self._delete_sandbox(sandbox)
+
+    @staticmethod
+    async def _launch_file(sandbox, path: str, limit: int) -> bytes:
+        info = await sandbox.files.get_info(path, request_timeout=20)
+        if info.type != FileType.FILE or info.symlink_target or not 0 < info.size <= limit:
+            raise ValueError("launch output exceeds its file bound")
+        raw = bytes(await sandbox.files.read(path, format="bytes", request_timeout=30))
+        if len(raw) != info.size or len(raw) > limit:
+            raise ValueError("launch output changed while reading")
+        return raw
+
+    async def analyse_launch_music(
+        self, *, run_id: str, music: bytes | None, duration_seconds: int
+    ) -> dict:
+        _launch_duration(duration_seconds)
+        if music is not None:
+            _launch_audio(music, 20_000_000)
+        async with self._launch_sandbox(run_id=run_id, step="music") as sandbox:
+            if music is None:
+                return {}
+            await sandbox.files.write("/home/user/launch/music.input", music)
+            await sandbox.commands.run(
+                "tin-launch analyse --music /home/user/launch/music.input "
+                f"--duration {duration_seconds} --outdir /home/user/launch/music-cut",
+                timeout=150,
+            )
+            raw = await self._launch_file(sandbox, "/home/user/launch/music-cut/cues.json", 100_000)
+            cues = json.loads(raw)
+            if not isinstance(cues, dict) or cues.get("duration") != duration_seconds:
+                raise ValueError("music analysis returned an invalid duration")
+            return cues
+
+    async def render_launch_video(
+        self,
+        *,
+        run_id: str,
+        attempt: int,
+        html: str,
+        assets: dict[str, bytes],
+        duration_seconds: int,
+        format: str,
+        music: bytes | None,
+        voice: bytes | None,
+        captions: list[dict] | None = None,
+    ) -> dict:
+        from tin_lite.studio_contracts import MAX_LAUNCH_VIDEO_BYTES, validate_launch_video
+
+        _launch_duration(duration_seconds)
+        if type(attempt) is not int or not 0 <= attempt < 3:
+            raise ValueError("launch render attempt must be 0, 1, or 2")
+        dimensions = {"landscape": (1920, 1080), "portrait": (1080, 1920), "square": (1080, 1080)}
+        if format not in dimensions:
+            raise ValueError("launch format is not supported")
+        if not isinstance(html, str) or not 0 < len(html.encode("utf-8")) <= 120_000:
+            raise ValueError("launch HTML exceeds its source bound")
+        if not isinstance(assets, dict) or len(assets) > 40:
+            raise ValueError("launch assets exceed their count bound")
+        allowed = {
+            ".svg",
+            ".png",
+            ".jpg",
+            ".jpeg",
+            ".webp",
+            ".gif",
+            ".avif",
+            ".woff",
+            ".woff2",
+            ".ttf",
+            ".otf",
+        }
+        size = 0
+        for name, content in assets.items():
+            if (
+                not isinstance(name, str)
+                or not re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9_.-]{0,119}", name)
+                or Path(name).suffix.lower() not in allowed
+                or not isinstance(content, bytes)
+                or not content
+            ):
+                raise ValueError("launch assets must be named image or font files")
+            size += len(content)
+        if size > 20_000_000:
+            raise ValueError("launch assets exceed their byte bound")
+        if music is not None:
+            _launch_audio(music, 20_000_000)
+        if voice is not None:
+            _launch_audio(voice, 8_000_000)
+            if music is None:
+                raise ValueError("launch narration requires its selected music")
+        if captions is not None:
+            if voice is None:
+                raise ValueError("launch captions require narration")
+            html += _launch_caption_overlay(captions, duration_seconds)
+        width, height = dimensions[format]
+        root = "/home/user/launch"
+        page = f"{root}/film/index.html"
+        report = {"passed": False, "issues": [], "warnings": []}
+        async with self._launch_sandbox(run_id=run_id, step=f"render-{attempt}") as sandbox:
+            await sandbox.files.write(page, html)
+            for name, content in assets.items():
+                await sandbox.files.write(f"{root}/film/assets/{name}", content)
+            await sandbox.commands.run(
+                f"cp -r /opt/tin-lite/studio/launch/lib {root}/film/runtime", timeout=10
+            )
+            if music is not None:
+                await sandbox.files.write(f"{root}/music.input", music)
+            if voice is not None:
+                await sandbox.files.write(f"{root}/voice.input", voice)
+            source_failed = False
+            try:
+                await sandbox.commands.run(
+                    f"tin-launch review --page {page} --w {width} --h {height} "
+                    f"--fps 30 --outdir {root}/review",
+                    timeout=600,
+                )
+            except CommandExitException:
+                source_failed = True
+            source = json.loads(
+                await self._launch_file(sandbox, f"{root}/review/report.json", 500_000)
+            )
+            report["source_review"] = source
+            report["warnings"] = source.get("warnings", [])
+            if source_failed or source.get("errors"):
+                report["issues"] = [
+                    str(issue.get("code", "source_check_failed"))[:120]
+                    for issue in source.get("errors", [])[:20]
+                ] or ["Film source review did not pass."]
+                return {"content": b"", "report": report}
+            if (
+                source.get("duration") != duration_seconds
+                or source.get("source_width") != width
+                or source.get("source_height") != height
+            ):
+                report["issues"] = ["FILM duration or dimensions differ from the agreed brief."]
+                return {"content": b"", "report": report}
+            try:
+                await sandbox.commands.run(
+                    f"tin-launch render --page {page} --out {root}/silent.mp4 "
+                    f"--w {width} --h {height} --fps 30 --sub 1 --workers 4",
+                    timeout=600,
+                )
+                sound = "--silent"
+                if music is not None:
+                    await sandbox.commands.run(
+                        f"tin-launch analyse --music {root}/music.input "
+                        f"--duration {duration_seconds} --outdir {root}/music-cut",
+                        timeout=150,
+                    )
+                    sound = f"--music {root}/music-cut/music.wav"
+                if voice is not None:
+                    sound += f" --voice {root}/voice.input"
+                await sandbox.commands.run(
+                    f"tin-launch mix --video {root}/silent.mp4 {sound} --out {root}/final.mp4",
+                    timeout=240,
+                )
+                checked = await sandbox.commands.run(
+                    f"tin-launch check {root}/final.mp4 --format {format} "
+                    f"--duration {duration_seconds}",
+                    timeout=210,
+                )
+            except CommandExitException:
+                report["issues"] = ["Film rendering, sound mixing or the final media check failed."]
+                return {"content": b"", "report": report}
+            try:
+                content = await self._launch_file(
+                    sandbox, f"{root}/final.mp4", MAX_LAUNCH_VIDEO_BYTES
+                )
+                validated = validate_launch_video(content)
+                if (validated.width, validated.height) != dimensions[format] or abs(
+                    validated.duration_seconds - duration_seconds
+                ) > 0.05:
+                    raise ValueError("launch output differs from the agreed brief")
+                report["media_check"] = json.loads(checked.stdout)
+            except (ValueError, TypeError):
+                report["issues"] = ["The rendered MP4 does not meet the delivery contract."]
+                return {"content": b"", "report": report}
+            report["passed"] = True
+            return {"content": content, "report": report}
 
     async def prepare_diagram(self, *, sandbox_id: str, brand_validator: str | None = None) -> None:
         # Read-only startup checks precede the paid-attempt receipt. A transient
