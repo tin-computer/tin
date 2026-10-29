@@ -5908,6 +5908,24 @@ def connection_readiness(
             "reason": "selection_required",
             "next_action": f"Choose the {noun} on Tin's Integrations page.",
         }
+    # Google Ads reads nothing until the account accepts Tin's manager request.
+    link = connection.configuration.get("link_status")
+    if connection.provider_key == ADS_PROVIDER and link != "active":
+        if link == "pending":
+            return {
+                "ready": False,
+                "reason": "manager_link_pending",
+                "next_action": (
+                    "In Google Ads open Admin, then Access and security, then Managers, and "
+                    "accept the request from Tin Computer. Only an admin on the ad account "
+                    "can accept it."
+                ),
+            }
+        return {
+            "ready": False,
+            "reason": "manager_link_inactive",
+            "next_action": "Reconnect Google Ads on Tin's Integrations page.",
+        }
     if connection.provider_key == GSC_PROVIDER and site_url:
         from tin_lite.keyword_plan import gsc_property_matches
 

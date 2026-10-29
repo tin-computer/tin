@@ -4120,6 +4120,9 @@ async def test_disconnect_google_ads_is_authoritative_when_google_is_down() -> N
         ("infra.github", {"selected_repository": "acme/site"}, None, True, None),
         ("analytics.posthog", {}, None, False, "selection_required"),
         ("workspace.google", {}, "https://acme.example", True, None),
+        ("ads.google", {"link_status": "pending"}, None, False, "manager_link_pending"),
+        ("ads.google", {}, None, False, "manager_link_inactive"),
+        ("ads.google", {"link_status": "active"}, None, True, None),
     ],
 )
 def test_connection_readiness_needs_the_chosen_resource(
