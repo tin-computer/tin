@@ -174,6 +174,30 @@ def test_dependencies_ci_and_secrets_are_refused_outright():
             )
 
 
+def test_a_static_site_takes_the_line_on_each_of_its_pages():
+    # ZeroTB's static site has eleven HTML pages, each with its own head.
+    page = (
+        "<!doctype html>\n<html>\n<head>\n<title>ZeroTB</title>\n</head>\n<body></body>\n</html>\n"
+    )
+    with_line = page.replace("</head>", f"{SCRIPT}\n</head>")
+    paths = ["index.html", "404.html", *(f"page-{n}/index.html" for n in range(9))]
+    files, problems = analytics_change.check_patch(
+        manifest(*((path, with_line) for path in paths)),
+        dict.fromkeys(paths, page),
+        source(reporter=False),
+        None,
+    )
+    assert problems == [] and len(files) == 11
+    paths += [f"more-{n}/index.html" for n in range(analytics_change.MAX_FILES)]
+    with pytest.raises(analytics_change.PatchRefused, match="at most"):
+        analytics_change.check_patch(
+            manifest(*((path, with_line) for path in paths)),
+            dict.fromkeys(paths, page),
+            source(reporter=False),
+            None,
+        )
+
+
 def test_a_patch_without_the_line_or_over_an_existing_file_waits():
     _files, problems = analytics_change.check_patch(
         manifest(("middleware.ts", MIDDLEWARE), ("tin-reporter.js", REPORTER_FILES["nextjs"])),

@@ -41,6 +41,7 @@ from uuid import UUID
 
 from tin_lite import content_repository_delivery as delivery
 from tin_lite import website_change
+from tin_lite.integrations import PULL_REQUEST_MAX_FILES
 from tin_lite.organic_audit import canonical_json
 from tin_lite.website_change import (
     ChangeRow,
@@ -57,8 +58,9 @@ SOURCE = delivery.ANALYTICS_SOURCE
 KINDS = ("install", "replace", "remove")
 PREFIX = "an"
 ACTIVE = ("pending", "running", "needs_input")
-# A runaway guard: the line goes in a layout or two, the reporter adds one file and its wiring.
-MAX_FILES = 8
+# A runaway guard: the line goes in a shared layout, or in each HTML page of a static site, and
+# the reporter adds one file and its wiring. A pull request can't hold more than this anyway.
+MAX_FILES = PULL_REQUEST_MAX_FILES
 # A file Tin can't read whole can't be checked line by line.
 MAX_FILE_BYTES = 400_000
 REPORTER_MAX_BYTES = 200_000
