@@ -251,8 +251,12 @@ test("page: a busy site's bars fill the chart, and today's label wraps rather th
   Object.assign(week, {complete: false});
   for (const row of week.days) for (const key of ["visits", "page_views", "automated_browser", "declared_crawler"]) row[key] *= 30;
   // A crawler that came once still shows; the 2px it is drawn at comes out of the visits beneath it.
-  week.days[0].visits -= week.days[0].declared_crawler - 1;
   week.days[0].declared_crawler = 1;
+  // A day's visits leave automation out: a burst of automated browsers bigger than the day's
+  // visits still leaves the visits drawn on top of it.
+  week.days[5].automated_browser = 1200;
+  const totals = week.days.map(row => row.visits + row.automated_browser + row.declared_crawler);
+  const busiestDay = Math.max(...totals);
   const pages = {today: pageOf("today", today, live), week: pageOf("week", week, live)};
   const columns = locator => locator.evaluateAll(bars => bars.map(bar => {
     const parts = [...bar.querySelectorAll("i")].map(part => part.getBoundingClientRect());
@@ -273,15 +277,19 @@ test("page: a busy site's bars fill the chart, and today's label wraps rather th
     assert.ok(hourKinds.every(kinds => kinds.join() === order.filter(kind => kinds.includes(kind)).join()), JSON.stringify(hourKinds));
     await page.getByRole("tab", {name: "Last 7 days"}).click();
     await page.locator(".analytics-days").waitFor();
-    assert.deepEqual(await columns(page.locator(".analytics-day-bar .analytics-bar")), week.days.map(row => Math.round(row.visits * 118 / 1440)));
+    assert.deepEqual(await columns(page.locator(".analytics-day-bar .analytics-bar")), totals.map(total => Math.round(total * 118 / busiestDay)));
     assert.equal(await page.locator(".analytics-day-bar").first().locator(".is-declared").evaluate(part => part.getBoundingClientRect().height), 2);
     // Day by day puts automation on the floor (Paper AN-B, B1): automated browsers at the bottom,
     // declared crawlers on them, visits with no automation seen on top.
     const kinds = locator => locator.evaluateAll(bars => bars.map(bar => [...bar.querySelectorAll("i")].map(part => part.className)));
     assert.deepEqual(await kinds(page.locator(".analytics-day-bar .analytics-bar")), week.days.map(row => [["is-none", 1], ["is-declared", row.declared_crawler], ["is-automated", row.automated_browser]].filter(([, value]) => value).map(([kind]) => kind)));
-    // Visits with no automation seen keep their share of the column: 36 visits a day of 1,440 on Saturday.
+    // The visits keep their share of the column, the burst day's 990 under 1,200 automated too.
     const none = await page.locator(".analytics-day-bar .is-none").evaluateAll(parts => parts.map(part => part.getBoundingClientRect().height));
-    week.days.slice(1).forEach((row, index) => assert.ok(Math.abs(none[index + 1] - (row.visits - row.automated_browser - row.declared_crawler) * 118 / 1440) <= 4, `${row.date} is ${none[index + 1]}px`));
+    week.days.slice(1).forEach((row, index) => {
+      const parts = [row.visits, row.automated_browser, row.declared_crawler].filter(Boolean).length;
+      const room = Math.round(totals[index + 1] * 118 / busiestDay) - (parts - 1) * 2;
+      assert.ok(Math.abs(none[index + 1] - row.visits / totals[index + 1] * room) <= 2, `${row.date} is ${none[index + 1]}px`);
+    });
     const labels = page.locator(".analytics-day-label");
     assert.deepEqual(await labels.evaluateAll(items => items.map(item => item.innerText.replace("\n", " "))).then(items => items.slice(-2)), ["mon 19 990", "tue 20 so far 1,440"]);
     assert.equal(await labels.evaluateAll(items => items.every(item => [...item.children].every(child => child.scrollWidth <= child.clientWidth))), true);
