@@ -334,17 +334,19 @@ window.TinAnalytics = (() => {
       bars = `<div class="analytics-bars">${rows.map((row, hour) => column({ ...row, future: hour > now }, totals[hour], max)).join("")}</div>`;
       axis = `<div class="analytics-axis">${["00:00", "06:00", "12:00", "18:00", "24:00"].map((label) => `<span>${label}</span>`).join("")}</div>`;
     } else {
-      const rows = (report.days || []).map((row) => ({
-        date: row.date,
-        visits: row.visits,
-        automated: row.automated_browser || 0,
-        declared: row.declared_crawler || 0,
-        none: Math.max(0, (row.visits || 0) - (row.automated_browser || 0) - (row.declared_crawler || 0)),
-      }));
-      const max = Math.max(0, ...rows.map((row) => row.visits || 0));
+      // A day's `visits` are the visits with no sign of automation, as on the Visits card;
+      // automated browsers and declared crawlers are counted apart. The column draws all three,
+      // and the count under it is the visits.
+      const rows = (report.days || []).map((row) => {
+        const none = row.visits || 0;
+        const automated = row.automated_browser || 0;
+        const declared = row.declared_crawler || 0;
+        return { date: row.date, visits: row.visits, none, automated, declared, total: none + automated + declared };
+      });
+      const max = Math.max(0, ...rows.map((row) => row.total));
       const last = rows.length - 1;
       bars = `<div class="analytics-days">${rows.map((row, index) => `<div class="analytics-day">
-          <div class="analytics-day-bar">${column(row, row.visits, max)}</div>
+          <div class="analytics-day-bar">${column(row, row.total, max)}</div>
           <div class="analytics-day-label"><span>${escape(`${weekday(row.date).slice(0, 3)} ${day(row.date)?.getUTCDate() ?? ""}`)}${index === last && !report.complete ? ' <span class="analytics-day-so-far">so far</span>' : ""}</span><strong>${count(row.visits)}</strong></div>
         </div>`).join("")}</div>`;
       axis = "";
