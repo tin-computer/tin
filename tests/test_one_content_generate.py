@@ -508,6 +508,8 @@ async def test_a_waiting_page_is_passed_over_and_both_refresh_workflows_share_th
     )
     assert (await f.refreshes.prepare(old_refresh))["page"] is None
     # Once that refresh went live ten days ago, the page waits and the next item comes first.
+    # Starting the run checks the wait against today, not the fixture's NOW, so the delivery
+    # is ten days before today (and still ahead of NOW, where the page waits too).
     await f.db.pool.execute(
         "UPDATE workflow_runs SET status='succeeded', review_decision='approved', "
         "reviewed_at=now(), lease_active=false WHERE id=$1",
@@ -517,7 +519,7 @@ async def test_a_waiting_page_is_passed_over_and_both_refresh_workflows_share_th
         f.db,
         delivery_key(page_run.id),
         "content_draft_delivery_v1",
-        {"commit": "c" * 40, "delivered_at": (NOW - timedelta(days=10)).isoformat()},
+        {"commit": "c" * 40, "delivered_at": (datetime.now(UTC) - timedelta(days=10)).isoformat()},
     )
     discovery = await f.sources.discover(project_id=f.project.id, program_id=f.configured.id)
     waiting = next(i for i in discovery["items"] if i["id"] == f.ids["refresh"])
