@@ -131,7 +131,12 @@ export async function play(f) {
   await f.scroll("#person-panel .person-panel-body", "#person-panel .person-section:last-of-type", {offset: 80});
   // Wide, Daniel's whole row (now Connected) beside the panel; tall, the panel's timeline alone.
   if (f.wide) await f.camera([row("p-daniel"), "#person-panel .person-section:last-of-type"], {pad: 28, inside: null});
-  else await f.camera("#person-panel .person-section:last-of-type", {pad: 24, inside: null});
+  else {
+    // The panel's own width around the timeline, so no sliver of the list shows beside it.
+    const panel = await f.rect("#person-panel");
+    const timeline = await f.rect("#person-panel .person-section:last-of-type");
+    await f.camera({x: panel.x, y: timeline.y - 24, width: panel.width, height: timeline.height + 48}, {pad: 0, inside: null});
+  }
   await f.hold(2.4);
   await f.mark("accepted");
 }
