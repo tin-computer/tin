@@ -370,7 +370,8 @@ export async function shoot(film, {format = "4:5", theme = film.theme || "dark",
     "-vf", `scale=${size.width}:${size.height}:flags=lanczos,format=yuv420p`, "-c:v", "libx264", "-preset", "slow", "-crf", "18",
     "-movflags", "+faststart", "-an", mp4]);
   try {
-    const deviceScale = film.deviceScale || 2;
+    // A number, or one per format: a tall film that closes in on a panel needs more pixels.
+    const deviceScale = (typeof film.deviceScale === "object" ? film.deviceScale[format] : film.deviceScale) || 2;
     const context = await browser.newContext({viewport, deviceScaleFactor: deviceScale, colorScheme: theme, timezoneId: film.timezone || "UTC", locale: "en-US"});
     await context.route("**/*", async route => {
       const url = route.request().url();
@@ -436,8 +437,17 @@ export async function shoot(film, {format = "4:5", theme = film.theme || "dark",
     }
     fs.writeFileSync(path.join(dir, "report.json"), `${JSON.stringify(report, null, 2)}\n`);
     return {dir, report};
+  } catch (error) {
+    // A film that stops part way leaves no half-written video behind. ffmpeg blocked on its input
+    // won't act on a polite signal, so its input is closed and it is killed outright.
+    if (encoder && encoder.child.exitCode === null) {
+      encoder.child.stdin.destroy();
+      encoder.child.kill("SIGKILL");
+      await encoder.done.catch(() => {});
+    }
+    fs.rmSync(mp4, {force: true});
+    throw error;
   } finally {
-    if (encoder && encoder.child.exitCode === null) encoder.child.kill();
     await browser.close();
     served.server.close();
   }
