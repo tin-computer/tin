@@ -594,6 +594,11 @@ WORKFLOW_EXPECTATIONS: dict[str, dict[str, str]] = {
         "lands": "Decisions, as a video to review",
         "watch": "post what you approve",
     },
+    "creative.launch_video": {
+        "first": "one on-demand run after the four brief questions",
+        "lands": "Decisions and Files, launches/<slug>.mp4",
+        "watch": "watch the product story, picture and sound; share the film you approve",
+    },
     "creative.character": {
         "first": "a few minutes",
         "lands": "Decisions, as a character to review",

@@ -14,8 +14,10 @@ from dataclasses import dataclass
 
 CHARACTER_SVG_MEDIA_TYPE = "image/svg+xml"
 DEMO_VIDEO_MEDIA_TYPE = "video/mp4"
+LAUNCH_VIDEO_MEDIA_TYPE = "video/mp4"
 CHARACTER_SVG_VALIDATOR = "character-svg.v1"
 DEMO_VIDEO_VALIDATOR = "demo-video.v1"
+LAUNCH_VIDEO_VALIDATOR = "launch-video.v1"
 
 SVG_NS = "http://www.w3.org/2000/svg"
 XLINK_NS = "http://www.w3.org/1999/xlink"
@@ -58,6 +60,10 @@ DEMO_VIDEO_MIN_SECONDS = 8.0
 DEMO_VIDEO_MAX_SECONDS = 90.0
 DEMO_VIDEO_WIDTH = 1080
 DEMO_VIDEO_HEIGHT = 1920
+MAX_LAUNCH_VIDEO_BYTES = 16_000_000
+LAUNCH_VIDEO_MIN_SECONDS = 8.0
+LAUNCH_VIDEO_MAX_SECONDS = 90.0
+LAUNCH_VIDEO_DIMENSIONS = ((1920, 1080), (1080, 1920), (1080, 1080))
 
 
 @dataclass(frozen=True)
@@ -180,7 +186,9 @@ def character_variant_svg(
     return ET.tostring(root, encoding="utf-8", xml_declaration=True)
 
 
-def _iter_boxes(data: bytes, start: int, end: int):
+def _iter_boxes(
+    data: bytes, start: int, end: int, *, name: str = "demo video", strict: bool = False
+):
     position = start
     while position + 8 <= end:
         size = int.from_bytes(data[position : position + 4], "big")
@@ -188,46 +196,166 @@ def _iter_boxes(data: bytes, start: int, end: int):
         header = 8
         if size == 1:
             if position + 16 > end:
-                raise ValueError("demo video has a truncated large box")
+                raise ValueError(f"{name} has a truncated large box")
             size = int.from_bytes(data[position + 8 : position + 16], "big")
             header = 16
         elif size == 0:
             size = end - position
         if size < header or position + size > end:
-            raise ValueError("demo video has an invalid box layout")
+            raise ValueError(f"{name} has an invalid box layout")
         yield kind, position + header, position + size, position
         position += size
+    if strict and position != end:
+        raise ValueError(f"{name} has a truncated box header")
 
 
-def _find_box(data: bytes, start: int, end: int, kind: bytes) -> tuple[int, int] | None:
-    for found, payload_start, payload_end, _offset in _iter_boxes(data, start, end):
+def _find_box(
+    data: bytes,
+    start: int,
+    end: int,
+    kind: bytes,
+    *,
+    name: str = "demo video",
+    strict: bool = False,
+) -> tuple[int, int] | None:
+    result = None
+    for found, payload_start, payload_end, _offset in _iter_boxes(
+        data, start, end, name=name, strict=strict
+    ):
         if found == kind:
-            return payload_start, payload_end
-    return None
+            if not strict:
+                return payload_start, payload_end
+            if result is not None:
+                raise ValueError(f"{name} has duplicate {kind.decode('ascii', 'replace')} boxes")
+            result = payload_start, payload_end
+    return result
 
 
 def validate_demo_video(content: bytes) -> DemoVideo:
     """Check an MP4 structurally: fast-start layout, one portrait video track, one audio track,
     and a duration inside the short-form window. No decoder runs on the switchboard."""
-    if not content or len(content) > MAX_DEMO_VIDEO_BYTES:
-        raise ValueError(f"demo video must contain 1-{MAX_DEMO_VIDEO_BYTES} bytes")
+    return _validate_video(
+        content,
+        name="demo video",
+        max_bytes=MAX_DEMO_VIDEO_BYTES,
+        min_seconds=DEMO_VIDEO_MIN_SECONDS,
+        max_seconds=DEMO_VIDEO_MAX_SECONDS,
+        dimensions=((DEMO_VIDEO_WIDTH, DEMO_VIDEO_HEIGHT),),
+        dimension_error=f"demo video must be {DEMO_VIDEO_WIDTH}x{DEMO_VIDEO_HEIGHT} portrait",
+    )
+
+
+def validate_launch_video(content: bytes) -> DemoVideo:
+    """Check fast-start MP4 metadata, duration, one video track and one audio track.
+
+    Accept landscape, portrait or square Full HD. Check media timing and H.264/AAC sample
+    descriptions without decoding media; the sandbox checks actual playback and encoding.
+    """
+    return _validate_video(
+        content,
+        name="launch video",
+        max_bytes=MAX_LAUNCH_VIDEO_BYTES,
+        min_seconds=LAUNCH_VIDEO_MIN_SECONDS,
+        max_seconds=LAUNCH_VIDEO_MAX_SECONDS,
+        dimensions=LAUNCH_VIDEO_DIMENSIONS,
+        dimension_error="launch video must be 1920x1080, 1080x1920 or 1080x1080",
+        strict=True,
+    )
+
+
+def _validate_launch_media(
+    content: bytes, mdia: tuple[int, int], handler: bytes, movie_seconds: float
+) -> tuple[int, int] | None:
+    mdhd = _find_box(content, *mdia, b"mdhd", name="launch video", strict=True)
+    if mdhd is None or mdhd[0] == mdhd[1]:
+        raise ValueError("launch video track has no media header")
+    version = content[mdhd[0]]
+    if version not in (0, 1) or mdhd[1] - mdhd[0] < (36 if version == 1 else 24):
+        raise ValueError("launch video track has an invalid media header")
+    base = mdhd[0] + (20 if version == 1 else 12)
+    timescale = int.from_bytes(content[base : base + 4], "big")
+    duration = int.from_bytes(content[base + 4 : base + (12 if version == 1 else 8)], "big")
+    if timescale <= 0:
+        raise ValueError("launch video track has an invalid media header timescale")
+    if abs(duration / timescale - movie_seconds) > 0.05:
+        raise ValueError("launch video track duration differs from the movie duration")
+    minf = _find_box(content, *mdia, b"minf", name="launch video", strict=True)
+    stbl = (
+        _find_box(content, *minf, b"stbl", name="launch video", strict=True)
+        if minf is not None
+        else None
+    )
+    stsd = (
+        _find_box(content, *stbl, b"stsd", name="launch video", strict=True)
+        if stbl is not None
+        else None
+    )
+    if (
+        stsd is None
+        or stsd[1] - stsd[0] < 8
+        or content[stsd[0] : stsd[0] + 4] != bytes(4)
+        or int.from_bytes(content[stsd[0] + 4 : stsd[0] + 8], "big") != 1
+    ):
+        raise ValueError("launch video track must have one sample description")
+    entries = _iter_boxes(content, stsd[0] + 8, stsd[1], name="launch video", strict=True)
+    entry = next(entries, None)
+    if entry is None or next(entries, None) is not None:
+        raise ValueError("launch video track must have one sample description")
+    kind, start, end, _offset = entry
+    if handler == b"vide":
+        if kind not in (b"avc1", b"avc3"):
+            raise ValueError("launch video requires an H.264 sample description")
+        if end - start < 78:
+            raise ValueError("launch video has a truncated video sample description")
+        return (
+            int.from_bytes(content[start + 24 : start + 26], "big"),
+            int.from_bytes(content[start + 26 : start + 28], "big"),
+        )
+    if kind != b"mp4a":
+        raise ValueError("launch video requires an AAC sample description")
+    if end - start < 28:
+        raise ValueError("launch video has a truncated audio sample description")
+    return None
+
+
+def _validate_video(
+    content: bytes,
+    *,
+    name: str,
+    max_bytes: int,
+    min_seconds: float,
+    max_seconds: float,
+    dimensions: tuple[tuple[int, int], ...],
+    dimension_error: str,
+    strict: bool = False,
+) -> DemoVideo:
+    if not content or len(content) > max_bytes:
+        raise ValueError(f"{name} must contain 1-{max_bytes} bytes")
     if len(content) < 64 or content[4:8] != b"ftyp":
-        raise ValueError("demo video must be an MP4 file starting with an ftyp box")
+        raise ValueError(f"{name} must be an MP4 file starting with an ftyp box")
     offsets: dict[bytes, int] = {}
     spans: dict[bytes, tuple[int, int]] = {}
-    for kind, payload_start, payload_end, offset in _iter_boxes(content, 0, len(content)):
+    for kind, payload_start, payload_end, offset in _iter_boxes(
+        content, 0, len(content), name=name, strict=strict
+    ):
+        if strict and kind == b"moov" and kind in offsets:
+            raise ValueError(f"{name} has duplicate moov boxes")
         if kind in {b"moov", b"mdat"} and kind not in offsets:
             offsets[kind] = offset
             spans[kind] = (payload_start, payload_end)
     if b"moov" not in offsets or b"mdat" not in offsets:
-        raise ValueError("demo video must contain moov and mdat boxes")
+        raise ValueError(f"{name} must contain moov and mdat boxes")
     if offsets[b"moov"] > offsets[b"mdat"]:
-        raise ValueError("demo video must be written with the moov box first (faststart)")
+        raise ValueError(f"{name} must be written with the moov box first (faststart)")
     moov_start, moov_end = spans[b"moov"]
-    mvhd = _find_box(content, moov_start, moov_end, b"mvhd")
+    mvhd = _find_box(content, moov_start, moov_end, b"mvhd", name=name, strict=strict)
     if mvhd is None:
-        raise ValueError("demo video has no movie header")
+        raise ValueError(f"{name} has no movie header")
+    if strict and mvhd[0] == mvhd[1]:
+        raise ValueError(f"{name} has a truncated movie header")
     version = content[mvhd[0]]
+    if strict and (version not in (0, 1) or mvhd[1] - mvhd[0] < (32 if version == 1 else 20)):
+        raise ValueError(f"{name} has an invalid movie header")
     if version == 1:
         timescale = int.from_bytes(content[mvhd[0] + 20 : mvhd[0] + 24], "big")
         duration = int.from_bytes(content[mvhd[0] + 24 : mvhd[0] + 32], "big")
@@ -235,35 +363,58 @@ def validate_demo_video(content: bytes) -> DemoVideo:
         timescale = int.from_bytes(content[mvhd[0] + 12 : mvhd[0] + 16], "big")
         duration = int.from_bytes(content[mvhd[0] + 16 : mvhd[0] + 20], "big")
     if timescale <= 0:
-        raise ValueError("demo video has an invalid timescale")
+        raise ValueError(f"{name} has an invalid timescale")
     seconds = duration / timescale
-    if not DEMO_VIDEO_MIN_SECONDS <= seconds <= DEMO_VIDEO_MAX_SECONDS:
-        raise ValueError(
-            f"demo video must run {DEMO_VIDEO_MIN_SECONDS:g}-{DEMO_VIDEO_MAX_SECONDS:g} seconds"
-        )
+    if not min_seconds <= seconds <= max_seconds:
+        raise ValueError(f"{name} must run {min_seconds:g}-{max_seconds:g} seconds")
     width = height = 0
     has_video = has_audio = False
-    for kind, trak_start, trak_end, _offset in _iter_boxes(content, moov_start, moov_end):
+    for kind, trak_start, trak_end, _offset in _iter_boxes(
+        content, moov_start, moov_end, name=name, strict=strict
+    ):
         if kind != b"trak":
             continue
-        mdia = _find_box(content, trak_start, trak_end, b"mdia")
-        hdlr = _find_box(content, *mdia, b"hdlr") if mdia is not None else None
+        mdia = _find_box(content, trak_start, trak_end, b"mdia", name=name, strict=strict)
+        hdlr = (
+            _find_box(content, *mdia, b"hdlr", name=name, strict=strict)
+            if mdia is not None
+            else None
+        )
+        if strict and (hdlr is None or hdlr[1] - hdlr[0] < 12):
+            raise ValueError(f"{name} track has an invalid handler")
         handler = content[hdlr[0] + 8 : hdlr[0] + 12] if hdlr is not None else b""
+        encoded_dimensions = (
+            _validate_launch_media(content, mdia, handler, seconds)
+            if strict and handler in (b"vide", b"soun")
+            else None
+        )
         if handler == b"soun":
+            if strict and has_audio:
+                raise ValueError(f"{name} must carry exactly one audio track")
             has_audio = True
         if handler != b"vide":
             continue
-        tkhd = _find_box(content, trak_start, trak_end, b"tkhd")
+        if strict and has_video:
+            raise ValueError(f"{name} must carry exactly one video track")
+        tkhd = _find_box(content, trak_start, trak_end, b"tkhd", name=name, strict=strict)
         if tkhd is None:
-            raise ValueError("demo video track has no header")
+            raise ValueError(f"{name} track has no header")
+        if strict and (
+            tkhd[0] == tkhd[1]
+            or content[tkhd[0]] not in (0, 1)
+            or tkhd[1] - tkhd[0] < (96 if content[tkhd[0]] == 1 else 84)
+        ):
+            raise ValueError(f"{name} has an invalid video track header")
         base = tkhd[0] + (88 if content[tkhd[0]] == 1 else 76)
         width = int.from_bytes(content[base : base + 4], "big") >> 16
         height = int.from_bytes(content[base + 4 : base + 8], "big") >> 16
+        if strict and encoded_dimensions != (width, height):
+            raise ValueError("launch video encoded dimensions differ from its track header")
         has_video = True
     if not has_video:
-        raise ValueError("demo video has no video track")
-    if (width, height) != (DEMO_VIDEO_WIDTH, DEMO_VIDEO_HEIGHT):
-        raise ValueError(f"demo video must be {DEMO_VIDEO_WIDTH}x{DEMO_VIDEO_HEIGHT} portrait")
+        raise ValueError(f"{name} has no video track")
+    if (width, height) not in dimensions:
+        raise ValueError(dimension_error)
     if not has_audio:
-        raise ValueError("demo video must carry a voice track")
+        raise ValueError(f"{name} must carry a voice track")
     return DemoVideo(duration_seconds=seconds, width=width, height=height, has_audio=has_audio)

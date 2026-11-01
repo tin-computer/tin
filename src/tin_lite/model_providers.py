@@ -105,6 +105,8 @@ class ModelUsage:
     cached_input_tokens: int | None = None
     reasoning_tokens: int | None = None
     cache_write_input_tokens: int | None = None
+    cache_write_5m_input_tokens: int | None = None
+    cache_write_1h_input_tokens: int | None = None
 
 
 @dataclass(frozen=True)
@@ -355,6 +357,7 @@ class AnthropicModelProvider:
         parameters: dict[str, Any] = {
             "model": model,
             "max_tokens": request.max_output_tokens,
+            "service_tier": "standard_only",
             "messages": [
                 {"role": message.role.value, "content": message.content}
                 for message in request.messages
@@ -389,6 +392,7 @@ class AnthropicModelProvider:
         usage = getattr(response, "usage", None)
         cache_write_tokens = _optional_int(getattr(usage, "cache_creation_input_tokens", None))
         cache_read_tokens = _optional_int(getattr(usage, "cache_read_input_tokens", None))
+        cache_creation = getattr(usage, "cache_creation", None)
         # Anthropic reports uncached input separately; the shared input total includes cache.
         input_tokens = _sum_optional_ints(
             getattr(usage, "input_tokens", None), cache_write_tokens, cache_read_tokens
@@ -402,12 +406,19 @@ class AnthropicModelProvider:
             request=request,
             stop_reason=_stop_label(getattr(response, "stop_reason", None)),
             capped=getattr(response, "stop_reason", None) == "max_tokens",
+            service_tier=_optional_string(getattr(usage, "service_tier", None)),
             usage=ModelUsage(
                 input_tokens=input_tokens,
                 output_tokens=output_tokens,
                 total_tokens=_sum_optional_ints(input_tokens, output_tokens),
                 cached_input_tokens=cache_read_tokens,
                 cache_write_input_tokens=cache_write_tokens,
+                cache_write_5m_input_tokens=_optional_int(
+                    getattr(cache_creation, "ephemeral_5m_input_tokens", None)
+                ),
+                cache_write_1h_input_tokens=_optional_int(
+                    getattr(cache_creation, "ephemeral_1h_input_tokens", None)
+                ),
             ),
         )
 

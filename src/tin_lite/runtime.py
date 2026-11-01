@@ -44,6 +44,9 @@ from tin_lite.integrations import IntegrationService
 from tin_lite.keyword_plan import POLICY as KEYWORD_POLICY
 from tin_lite.keyword_plan import ROUTE_KEY as KEYWORD_ROUTE_KEY
 from tin_lite.keyword_plan_activities import KeywordPlanActivities
+from tin_lite.launch_video import MODEL_ROUTE as LAUNCH_MODEL_ROUTE
+from tin_lite.launch_video import LaunchVideoGenerator
+from tin_lite.launch_video_activities import LaunchVideoActivities
 from tin_lite.linkedin_engagers_activities import LinkedInEngagersActivities
 from tin_lite.linkedin_listening_activities import LinkedInListeningActivities
 from tin_lite.linkedin_profile_viewers_activities import LinkedInProfileViewersActivities
@@ -176,6 +179,8 @@ async def build_runtime(settings: Settings) -> RuntimeServices:
 
     if settings.luna_api_key is not None:
         model_routes += code_model_routes()
+    if settings.anthropic_api_key is not None:
+        model_routes += (LAUNCH_MODEL_ROUTE,)
     model_router = configured_model_router(
         settings, routes=model_routes, recorder=ModelUsageRecorder(database)
     )
@@ -263,6 +268,16 @@ async def build_runtime(settings: Settings) -> RuntimeServices:
     )
     characters = CharacterDesignActivities(
         database=database, storage=storage, settings=settings, designer=character_designer
+    )
+    studio = StudioService(settings=settings, database=database)
+    launches = LaunchVideoActivities(
+        database=database,
+        storage=storage,
+        generator=LaunchVideoGenerator(router=model_router)
+        if settings.anthropic_api_key is not None
+        else None,
+        sandboxes=sandboxes,
+        studio=studio,
     )
     organic_system = OrganicSystemActivities(
         database=database,
@@ -510,6 +525,11 @@ async def build_runtime(settings: Settings) -> RuntimeServices:
         characters.character_approval,
         characters.character_project,
         characters.character_failure,
+        launches.launch_build,
+        launches.launch_review,
+        launches.launch_approval,
+        launches.launch_project,
+        launches.launch_failure,
         content_planner.content_plan_research,
         content_planner.content_plan_execute,
         content_planner.content_plan_approved,
@@ -637,7 +657,7 @@ async def build_runtime(settings: Settings) -> RuntimeServices:
         integrations=integrations,
         project_files=project_files,
         output_resolution=OutputResolutionService(database=database, storage=storage),
-        studio=StudioService(settings=settings, database=database),
+        studio=studio,
         codex_api=CodexAPIRelay(database=database, api_key=settings.luna_api_key.get_secret_value())
         if settings.luna_api_key is not None
         else None,

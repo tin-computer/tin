@@ -23,6 +23,7 @@ from tin_lite.domain import (
     AWESOME_SUBMIT_WORKFLOW_NAME,
     CODEX_PROCEDURE_EXECUTOR,
     CREATIVE_CHARACTER_WORKFLOW_NAME,
+    CREATIVE_LAUNCH_VIDEO_WORKFLOW_NAME,
     EMAIL_CAMPAIGN_WORKFLOW_NAME,
     LINKEDIN_ENGAGERS_WORKFLOW_NAME,
     LINKEDIN_LISTEN_CHECKPOINTS,
@@ -509,6 +510,57 @@ class CharacterDesignWorkflow:
         except BaseException as exc:
             await workflow.execute_activity(
                 "character_failure",
+                {"run_id": run_id, **failure_fields(exc)},
+                start_to_close_timeout=timedelta(minutes=1),
+                retry_policy=RetryPolicy(maximum_attempts=3),
+            )
+            raise
+
+
+@workflow.defn(name=CREATIVE_LAUNCH_VIDEO_WORKFLOW_NAME)
+class LaunchVideoWorkflow:
+    """Direct Anthropic model steps and bounded offline Studio rendering."""
+
+    def __init__(self) -> None:
+        self._approved = False
+
+    @workflow.signal(name="approve")
+    async def approve(self) -> None:
+        self._approved = True
+
+    @workflow.run
+    async def run(self, run_id: str) -> None:
+        try:
+            await workflow.execute_activity(
+                "launch_build",
+                run_id,
+                start_to_close_timeout=timedelta(minutes=60),
+                schedule_to_close_timeout=timedelta(minutes=120),
+                retry_policy=RetryPolicy(maximum_attempts=2),
+            )
+            review_required = await workflow.execute_activity(
+                "launch_review",
+                run_id,
+                start_to_close_timeout=timedelta(minutes=1),
+                retry_policy=RetryPolicy(maximum_attempts=5),
+            )
+            if review_required:
+                await workflow.wait_condition(lambda: self._approved)
+                await workflow.execute_activity(
+                    "launch_approval",
+                    run_id,
+                    start_to_close_timeout=timedelta(minutes=1),
+                    retry_policy=RetryPolicy(maximum_attempts=5),
+                )
+            await workflow.execute_activity(
+                "launch_project",
+                run_id,
+                start_to_close_timeout=timedelta(minutes=1),
+                retry_policy=RetryPolicy(maximum_attempts=5),
+            )
+        except BaseException as exc:
+            await workflow.execute_activity(
+                "launch_failure",
                 {"run_id": run_id, **failure_fields(exc)},
                 start_to_close_timeout=timedelta(minutes=1),
                 retry_policy=RetryPolicy(maximum_attempts=3),
@@ -2111,6 +2163,7 @@ def registered_workflows() -> list[type]:
         AwesomeSubmitWorkflow,
         PaymentRecoveryWorkflow,
         CharacterDesignWorkflow,
+        LaunchVideoWorkflow,
         CodexProcedureWorkflow,
         WeeklyBriefWorkflow,
         ProjectTaskWorkflow,
@@ -2140,6 +2193,7 @@ def registered_workflow_implementations() -> dict[str, type]:
         "growth.onboarding_plan": GrowthOnboardingPlanWorkflow,
         "content.plan": ContentPlanWorkflow,
         CREATIVE_CHARACTER_WORKFLOW_NAME: CharacterDesignWorkflow,
+        CREATIVE_LAUNCH_VIDEO_WORKFLOW_NAME: LaunchVideoWorkflow,
         WORKFLOW_NAME: DesignMdWorkflow,
         PROJECT_MEMORY_WORKFLOW_NAME: ProjectMemoryWorkflow,
         SCAN_REPORT_WORKFLOW_NAME: ScanReportWorkflow,
