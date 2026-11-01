@@ -1,0 +1,491 @@
+// Films a feature: Tin's real dashboard, served on a demo world (web/app-fixture.js), filmed one
+// frame at a time under a virtual clock with a directed camera, cursor and captions. Writes an MP4,
+// a GIF, a poster, a contact sheet of the marks and captions per format. See docs/feature-films.md.
+//
+//   npm run film -- people-requests [--format 4:5,16:9] [--theme dark|light] [--out .films] [--fonts <stylesheet url>]
+import {spawn} from "node:child_process";
+import crypto from "node:crypto";
+import fs from "node:fs";
+import path from "node:path";
+import {pathToFileURL} from "node:url";
+import {chromium} from "playwright";
+import {serveApp} from "../app-fixture.js";
+import {installVirtualClock} from "./clock.js";
+import {installOverlay} from "./overlay.js";
+
+export const FPS = 30;
+// Output sizes, the caption band under the picture, and how wide a screen the dashboard is filmed
+// on. 4:5 for LinkedIn and X feeds, 16:9 for X on desktop, the site and blog posts. The tall
+// formats use a narrower screen, so the dashboard shows its own compact layouts.
+export const FORMATS = {
+  "4:5": {width: 1080, height: 1350, band: 210, screen: 720},
+  "16:9": {width: 1920, height: 1080, band: 160, screen: 1440},
+  "1:1": {width: 1080, height: 1080, band: 180, screen: 720},
+};
+
+// The screen is exactly the picture when the camera is all the way out; the window is a band's
+// height taller, so the band never covers the dashboard.
+export function stage(size, width = size.screen) {
+  const scale = width / size.width;
+  const screen = {width, height: Math.round((size.height - size.band) * scale)};
+  return {screen, viewport: {width, height: Math.ceil(size.height * scale)}};
+}
+// The smallest text a frame may show, as a share of its short side: about 22px at 1080.
+const SMALLEST_TEXT = 0.02;
+const ease = t => (t < 0.5 ? 4 * t * t * t : 1 - (-2 * t + 2) ** 3 / 2);
+const lerp = (a, b, t) => a + (b - a) * t;
+const seconds = s => Math.max(1, Math.round(s * FPS));
+
+class Director {
+  constructor({page, format, size, screen, deviceScale, served, issues}) {
+    Object.assign(this, {page, format, size, screen, deviceScale, world: served, issues});
+    this.wide = size.width > size.height;
+    this.n = 0;
+    this.recording = true;
+    this.tracks = new Set();
+    this.captions = [];
+    this.ripples = [];
+    this.marks = {};
+    this.hashes = [];
+    this.cursor = {x: 0, y: 0, visible: false, pressed: false};
+    this.fade = 0;
+    this.inside = null;
+    this.frame = {x: 0, y: 0, width: screen.width, height: screen.width * size.height / size.width};
+    this.last = null;
+  }
+
+  // CSS px of page per output px, and the part of the frame above the caption band.
+  get scale() { return this.frame.width / this.size.width; }
+  get picture() { return {...this.frame, height: (this.size.height - this.size.band) * this.scale}; }
+
+  // ---- what a film script calls ----
+
+  async open(route, {ready} = {}) {
+    await this.page.evaluate(to => {
+      history.pushState(null, "", to);
+      dispatchEvent(new PopStateEvent("popstate"));
+    }, `${route}${route.includes("?") ? "&" : "?"}project=project`);
+    if (ready) await this.ready(ready);
+  }
+
+  // Frames go by (recorded) until something is visible.
+  async ready(selector, {within = 10} = {}) {
+    for (let i = 0; i < within * FPS; i++) {
+      if (await this.page.locator(selector).first().isVisible()) return;
+      await this.shoot();
+    }
+    throw new Error(`Nothing matched ${selector} within ${within}s.`);
+  }
+
+  // Frame a target: everything it covers (with `text`, only its words), plus `pad` CSS px, as
+  // large as the format allows. It never zooms past the device scale, where every output pixel
+  // is still a pixel the browser drew.
+  // `inside` (the director's default, or per call) keeps the frame within a region where it can,
+  // so a close-up never ends halfway across a sidebar.
+  async camera(target, {pad = 28, duration = 0.9, cut = false, wait = true, align = "center", text = false, inside = this.inside} = {}) {
+    const box = await this.rect(target, text);
+    const {width, height, band} = this.size;
+    const room = height - band;
+    let scale = Math.max((box.width + pad * 2) / width, (box.height + pad * 2) / room, 1 / this.deviceScale);
+    scale = Math.min(scale, this.screen.width / width, this.screen.height / room);
+    const frame = {width: width * scale, height: height * scale};
+    const left = align === "left" ? box.x - pad : align === "right" ? box.x + box.width + pad - frame.width : box.x + box.width / 2 - frame.width / 2;
+    frame.x = Math.min(Math.max(0, left), this.screen.width - frame.width);
+    const region = inside && (await this.page.evaluate(selector => window.__film.rect(selector), inside));
+    if (region && frame.width <= region.width) frame.x = Math.min(Math.max(region.x, frame.x), region.x + region.width - frame.width);
+    frame.y = Math.min(Math.max(0, box.y + box.height / 2 - (room * scale) / 2), this.screen.height - room * scale);
+    if ((box.width + pad * 2) / width > scale + 1e-6 || (box.height + pad * 2) / room > scale + 1e-6) {
+      this.warn(`The camera can't fit ${JSON.stringify(target)} in ${this.format}; it is cut.`);
+    }
+    if (cut || !this.n) {
+      this.frame = frame;
+      return;
+    }
+    const from = {...this.frame};
+    const frames = seconds(duration);
+    let i = 0;
+    const track = () => {
+      i++;
+      const t = ease(i / frames);
+      this.frame = {x: lerp(from.x, frame.x, t), y: lerp(from.y, frame.y, t), width: lerp(from.width, frame.width, t), height: lerp(from.height, frame.height, t)};
+      return i >= frames;
+    };
+    await this.run(track, wait);
+  }
+
+  // The cursor travels in a shallow arc, as a hand does (after Stageshow's act.move), and the real
+  // pointer follows it, so hovers happen.
+  async move(target, {to = [0.5, 0.5], duration} = {}) {
+    const box = await this.rect(target);
+    const end = {x: box.x + box.width * to[0], y: box.y + box.height * to[1]};
+    // It comes in from the right edge, level with where it's going, so it crosses nothing that
+    // would light up on the way.
+    if (!this.cursor.visible) {
+      const picture = this.picture;
+      Object.assign(this.cursor, {visible: true, x: picture.x + picture.width * 1.03, y: end.y + picture.height * 0.03});
+    }
+    const from = {x: this.cursor.x, y: this.cursor.y};
+    const distance = Math.hypot(end.x - from.x, end.y - from.y) / this.scale;
+    const frames = seconds(duration ?? Math.min(0.75, Math.max(0.35, 0.3 + distance * 0.0005)));
+    const bow = Math.min(distance * 0.08, 24) * this.scale;
+    const length = Math.hypot(end.x - from.x, end.y - from.y) || 1;
+    const normal = {x: -(end.y - from.y) / length, y: (end.x - from.x) / length};
+    let i = 0;
+    await this.run(() => {
+      i++;
+      const t = ease(i / frames);
+      const lift = Math.sin(Math.PI * t) * bow;
+      this.cursor.x = lerp(from.x, end.x, t) + normal.x * lift;
+      this.cursor.y = lerp(from.y, end.y, t) + normal.y * lift;
+      return i >= frames;
+    });
+    this.within(end, target);
+  }
+
+  // Move, rest a moment, press: the drawn cursor dips and a ring spreads, and the page gets a
+  // real click at the same point.
+  async click(target, options) {
+    await this.move(target, options);
+    await this.hold(0.12);
+    this.cursor.pressed = true;
+    await this.page.mouse.down();
+    this.ripples.push({x: this.cursor.x, y: this.cursor.y, start: this.n});
+    await this.hold(0.1);
+    await this.page.mouse.up();
+    this.cursor.pressed = false;
+  }
+
+  // Scroll a container until a target inside it sits `offset` CSS px below its top edge.
+  async scroll(container, target, {duration = 0.8, offset = 24} = {}) {
+    const [from, to] = await this.page.evaluate(([outer, inner, gap]) => {
+      const box = document.querySelector(outer);
+      const top = box.scrollTop + document.querySelector(inner).getBoundingClientRect().top - box.getBoundingClientRect().top - gap;
+      return [box.scrollTop, Math.max(0, Math.min(top, box.scrollHeight - box.clientHeight))];
+    }, [container, target, offset]);
+    const frames = seconds(duration);
+    let i = 0;
+    await this.run(async () => {
+      i++;
+      await this.page.evaluate(([outer, top]) => (document.querySelector(outer).scrollTop = top), [container, lerp(from, to, ease(i / frames))]);
+      return i >= frames;
+    });
+  }
+
+  async type(text, {interval = 0.06} = {}) {
+    for (const character of text) {
+      await this.page.keyboard.type(character);
+      await this.hold(interval);
+    }
+  }
+
+  // One caption at a time: the old one fades out, the new one fades in and rises a little.
+  caption(text) {
+    const current = this.captions.at(-1);
+    let start = this.n;
+    if (current && current.end === null) {
+      current.end = this.n + 5;
+      start = current.end;
+    }
+    if (text) this.captions.push({text, start, end: null});
+  }
+
+  async hold(duration) {
+    for (let i = 0, frames = seconds(duration); i < frames; i++) await this.shoot();
+  }
+
+  // A cut behind a fade: what `change` does (open another view, move the world on) isn't filmed.
+  async cut(change, {fade = 0.25} = {}) {
+    let i = 0;
+    const frames = seconds(fade);
+    await this.run(() => (this.fade = ++i / frames) >= 1);
+    this.recording = false;
+    await change();
+    this.recording = true;
+    i = 0;
+    await this.run(() => (this.fade = 1 - ++i / frames) <= 0);
+  }
+
+  hide() { this.cursor.visible = false; }
+
+  // Keep the frame just shot: the poster, and the stills of the contact sheet.
+  async mark(name) {
+    if (!this.last) throw new Error(`Mark ${name} before any frame was shot.`);
+    this.marks[name] = {frame: this.n - 1, png: this.last};
+    const sizes = await this.page.evaluate(([frame, scale]) => window.__film.textSizes(frame, scale), [this.picture, 1 / this.scale]);
+    const floor = SMALLEST_TEXT * Math.min(this.size.width, this.size.height);
+    const small = sizes.filter(item => item.size < floor);
+    if (small.length) this.warn(`At ${name}, ${small.length} text runs are under ${Math.round(floor)}px: ${small.slice(0, 4).map(item => `“${item.text}” ${item.size}px`).join(", ")}.`);
+  }
+
+  // ---- the machinery ----
+
+  async rect(target, text = false) {
+    if (target && typeof target === "object" && !Array.isArray(target) && "width" in target) return target;
+    const box = await this.page.evaluate(([selectors, words]) => window.__film.rect(selectors, words), [target, text]);
+    if (!box) throw new Error(`Nothing on screen matches ${JSON.stringify(target)}.`);
+    return box;
+  }
+
+  // Run a track to its end, or start it and let later frames carry it.
+  async run(track, wait = true) {
+    if (!wait) {
+      this.tracks.add(track);
+      return;
+    }
+    let done = false;
+    const mine = async () => (done = await track());
+    this.tracks.add(mine);
+    while (!done) await this.shoot();
+  }
+
+  within(point, target) {
+    const picture = this.picture;
+    if (point.x < picture.x || point.y < picture.y || point.x > picture.x + picture.width || point.y > picture.y + picture.height) {
+      this.error(`The cursor reaches ${JSON.stringify(target)} outside the ${this.format} frame.`);
+    }
+  }
+
+  warn(text) { if (!this.issues.warnings.includes(text)) this.issues.warnings.push(text); }
+  error(text) { if (!this.issues.errors.includes(text)) this.issues.errors.push(text); }
+
+  // One frame: the tracks move on, the pointer goes where the cursor is drawn, time moves 1/30 s,
+  // every request lands, the overlay is drawn and the frame is shot.
+  async shoot() {
+    for (const track of [...this.tracks]) if (await track()) this.tracks.delete(track);
+    if (this.cursor.visible) await this.page.mouse.move(this.cursor.x, this.cursor.y);
+    await this.page.evaluate(() => window.__film.clock.step(1));
+    await quiet(this.page);
+    if (!this.recording) return;
+    await this.page.evaluate(state => window.__film.render(state), this.state());
+    const clip = Object.fromEntries(Object.entries(this.frame).map(([key, value]) => [key, Math.round(value * 2) / 2]));
+    const png = await this.page.screenshot({clip, type: "png"});
+    this.hashes.push(crypto.createHash("sha1").update(png).digest("hex").slice(0, 12));
+    this.last = png;
+    await this.sink(png);
+    this.n++;
+  }
+
+  state() {
+    const n = this.n;
+    const current = this.captions.find(item => item.start <= n && (item.end === null || n < item.end));
+    let caption = {text: "", opacity: 0, rise: 0};
+    if (current) {
+      const opening = Math.min(1, (n - current.start + 1) / 8);
+      const closing = current.end === null ? 1 : Math.min(1, (current.end - n) / 5);
+      caption = {text: current.text, opacity: Math.min(opening, closing), rise: 1 - ease(opening)};
+    }
+    this.ripples = this.ripples.filter(ripple => n - ripple.start < 17);
+    return {
+      frame: this.frame, size: this.size, band: this.size.band, caption, fade: this.fade, cursor: this.cursor,
+      ripples: this.ripples.map(ripple => ({x: ripple.x, y: ripple.y, progress: ease((n - ripple.start) / 16)})),
+    };
+  }
+}
+
+// Wait until no request is in flight and the work it started has run, twice in a row.
+async function quiet(page) {
+  for (let calm = 0, i = 0; calm < 2; i++) {
+    if (i > 500) throw new Error("A request never finished.");
+    const pending = await page.evaluate(async () => {
+      await window.__film.clock.settle();
+      return window.__film.pending;
+    });
+    calm = pending ? 0 : calm + 1;
+    if (pending) await new Promise(resolve => setTimeout(resolve, 4));
+  }
+}
+
+// A licensed font stylesheet (the hosted product's), fetched here and served from the film's own
+// origin, so nothing proprietary lands in the repository and the page makes no outside request.
+async function loadFonts(stylesheet) {
+  if (!stylesheet) return null;
+  const get = async url => {
+    const response = await fetch(url, {signal: AbortSignal.timeout(20000)});
+    if (!response.ok) throw new Error(`Couldn't fetch ${url}: ${response.status}.`);
+    return response;
+  };
+  const css = await (await get(stylesheet)).text();
+  const files = new Map();
+  const local = await Promise.all([...css.matchAll(/url\("?([^")]+)"?\)/g)].map(async ([, url]) => {
+    const name = path.basename(new URL(url, stylesheet).pathname);
+    files.set(name, Buffer.from(await (await get(new URL(url, stylesheet))).arrayBuffer()));
+    return [url, `/film-fonts/${name}`];
+  }));
+  let rewritten = css;
+  for (const [from, to] of local) rewritten = rewritten.replaceAll(from, to);
+  files.set("fonts.css", Buffer.from(rewritten));
+  return files;
+}
+
+function ffmpeg(args) {
+  const child = spawn("ffmpeg", ["-loglevel", "error", "-y", ...args], {stdio: ["pipe", "ignore", "pipe"]});
+  let stderr = "";
+  child.stderr.on("data", chunk => (stderr += chunk));
+  const done = new Promise((resolve, reject) => child.on("close", code => (code ? reject(new Error(`ffmpeg: ${stderr.trim()}`)) : resolve())));
+  return {child, done};
+}
+
+async function encodeStills(pngs, args) {
+  const {child, done} = ffmpeg(["-f", "image2pipe", "-c:v", "png", "-i", "-", ...args]);
+  for (const png of pngs) child.stdin.write(png);
+  child.stdin.end();
+  await done;
+}
+
+function srt(captions, total) {
+  const time = frame => {
+    const ms = Math.round((frame / FPS) * 1000);
+    const pad = (value, size = 2) => String(value).padStart(size, "0");
+    return `${pad(Math.floor(ms / 3600000))}:${pad(Math.floor(ms / 60000) % 60)}:${pad(Math.floor(ms / 1000) % 60)},${pad(ms % 1000, 3)}`;
+  };
+  return captions.map((item, index) => `${index + 1}\n${time(item.start)} --> ${time(item.end ?? total)}\n${item.text}\n`).join("\n");
+}
+
+// Film one format: serve the world, open the dashboard under the virtual clock, play the script.
+export async function shoot(film, {format = "4:5", theme = film.theme || "dark", out, fonts = null, encode = true} = {}) {
+  const size = FORMATS[format];
+  if (!size) throw new Error(`Unknown format ${format}; use ${Object.keys(FORMATS).join(", ")}.`);
+  const world = film.world();
+  const now = Date.parse(film.now);
+  const served = await serveApp({decisionCount: 0, ...world.serve, now: () => new Date(now)});
+  const {screen, viewport} = stage(size, film.screens?.[format]);
+  const browser = await chromium.launch({headless: true});
+  const issues = {errors: [], warnings: [], blocked: []};
+  const dir = path.join(out, film.name, `${format.replace(":", "x")}${theme === "dark" ? "" : `-${theme}`}`);
+  fs.rmSync(dir, {recursive: true, force: true});
+  fs.mkdirSync(dir, {recursive: true});
+  const mp4 = path.join(dir, "film.mp4");
+  const encoder = encode && ffmpeg(["-f", "image2pipe", "-framerate", String(FPS), "-c:v", "png", "-i", "-",
+    "-vf", `scale=${size.width}:${size.height}:flags=lanczos,format=yuv420p`, "-c:v", "libx264", "-preset", "slow", "-crf", "18",
+    "-movflags", "+faststart", "-an", mp4]);
+  try {
+    const deviceScale = film.deviceScale || 2;
+    const context = await browser.newContext({viewport, deviceScaleFactor: deviceScale, colorScheme: theme, timezoneId: film.timezone || "UTC", locale: "en-US"});
+    await context.route("**/*", async route => {
+      const url = route.request().url();
+      if (!url.startsWith(served.base)) {
+        issues.blocked.push(new URL(url).origin);
+        return route.abort();
+      }
+      const {pathname} = new URL(url);
+      // Clerk is stubbed (below); the fixture leaves its script address unfilled.
+      if (decodeURIComponent(pathname).startsWith("/{{CLERK_FRONTEND_API_URL}}/")) return route.fulfill({body: "", contentType: "text/javascript"});
+      if (pathname.startsWith("/film-fonts/") && fonts?.has(path.basename(pathname))) {
+        return route.fulfill({body: fonts.get(path.basename(pathname)), contentType: pathname.endsWith(".css") ? "text/css" : "font/woff2"});
+      }
+      // As the hosted product does: the licensed stylesheet goes where index.html asks for it.
+      if (fonts && route.request().resourceType() === "document") {
+        const response = await route.fetch();
+        const html = (await response.text()).replace("<!--PRIVATE_FONTS_STYLESHEET-->", '<link rel="stylesheet" href="/film-fonts/fonts.css" />');
+        return route.fulfill({response, body: html});
+      }
+      return route.continue();
+    });
+    await context.addInitScript(`(${installVirtualClock})(${JSON.stringify({fps: FPS, epoch: now})});`);
+    await context.addInitScript(`(${installOverlay})(${JSON.stringify(screen)});`);
+    await context.addInitScript(({member, theme}) => {
+      window.Clerk = {load: async () => {}, isSignedIn: true, user: {id: "member", firstName: member}, session: {getToken: async () => "synthetic"}, mountSignIn: () => {}};
+      localStorage.setItem("tin-lite:theme", theme);
+    }, {member: world.member || "Avery", theme});
+    const page = await context.newPage();
+    page.on("pageerror", error => issues.errors.push(`The page threw: ${error.message}`));
+    page.on("console", message => {
+      if (message.type() !== "error") return;
+      const where = message.location()?.url;
+      issues.errors.push(`The page logged an error: ${message.text()}${where ? ` (${where.replace(served.base, "")})` : ""}`);
+    });
+    await page.goto(`${served.base}${world.start || "/system"}?project=project`, {waitUntil: "domcontentloaded"});
+    await page.evaluate(() => document.fonts.ready);
+
+    const director = new Director({page, format, size, screen, deviceScale, served, issues});
+    director.sink = async png => {
+      if (!encoder) return;
+      if (!encoder.child.stdin.write(png)) await new Promise(resolve => encoder.child.stdin.once("drain", resolve));
+    };
+    // The dashboard boots without being filmed.
+    director.recording = false;
+    for (let i = 0; i < 20 * FPS && !(await page.locator(world.ready || "main").count()); i++) await director.shoot();
+    await page.evaluate(() => document.fonts.ready);
+    director.recording = true;
+    await film.play(director);
+    director.caption(null);
+    await context.close();
+
+    issues.blocked = [...new Set(issues.blocked)];
+    if (!director.marks.poster) issues.errors.push("The film never marks its poster.");
+    if (director.n / FPS > 140) issues.warnings.push("Longer than X's 2 minutes 20 seconds.");
+    const report = {film: film.name, title: film.title, format, size, frames: director.n, seconds: director.n / FPS, hashes: director.hashes, issues};
+    if (encoder) {
+      encoder.child.stdin.end();
+      await encoder.done;
+      await stills(director, size, dir);
+      fs.writeFileSync(path.join(dir, "captions.srt"), srt(director.captions, director.n));
+      report.bytes = Object.fromEntries(fs.readdirSync(dir).filter(name => name.includes(".")).map(name => [name, fs.statSync(path.join(dir, name)).size]));
+      if (report.bytes["film.gif"] > 15 * 1024 * 1024) issues.warnings.push("The GIF is over X's 15 MB.");
+    }
+    fs.writeFileSync(path.join(dir, "report.json"), `${JSON.stringify(report, null, 2)}\n`);
+    return {dir, report};
+  } finally {
+    if (encoder && encoder.child.exitCode === null) encoder.child.kill();
+    await browser.close();
+    served.server.close();
+  }
+}
+
+// Each mark at full size (the poster among them), a contact sheet of them, and a GIF small
+// enough for X (15 MB).
+async function stills(director, size, dir) {
+  const scale = `scale=${size.width}:${size.height}:flags=lanczos`;
+  fs.mkdirSync(path.join(dir, "marks"));
+  const marks = Object.entries(director.marks).sort(([, a], [, b]) => a.frame - b.frame);
+  const files = [];
+  for (const [index, [name, mark]] of marks.entries()) {
+    const file = path.join(dir, "marks", `${String(index + 1).padStart(2, "0")}-${name}.png`);
+    await encodeStills([mark.png], ["-vf", scale, "-frames:v", "1", file]);
+    files.push(file);
+    if (name === "poster") fs.copyFileSync(file, path.join(dir, "poster.png"));
+  }
+  // Every still is the same size by now: ffmpeg's tile starts over whenever the size changes.
+  const columns = Math.min(3, files.length);
+  await encodeStills(files.map(file => fs.readFileSync(file)), ["-vf", `scale=${Math.round(size.width / 2.5)}:-2:flags=lanczos,tile=${columns}x${Math.ceil(files.length / columns)}:padding=24:margin=24:color=0x44403a`, "-frames:v", "1", path.join(dir, "sheet.png")]);
+  const width = Math.round(size.width * (size.width > size.height ? 0.5 : 0.6) / 2) * 2;
+  await ffmpeg(["-i", path.join(dir, "film.mp4"), "-vf", `fps=15,scale=${width}:-2:flags=lanczos,split[a][b];[a]palettegen=stats_mode=diff[p];[b][p]paletteuse=dither=bayer:bayer_scale=4`, path.join(dir, "film.gif")]).done;
+}
+
+export async function loadFilm(name) {
+  const file = path.resolve("web/film/films", `${name}.js`);
+  if (!fs.existsSync(file)) throw new Error(`No film named ${name} in web/film/films.`);
+  return {name, ...(await import(pathToFileURL(file)))};
+}
+
+async function main(argv) {
+  const options = {format: "4:5,16:9", theme: "dark", out: ".films", fonts: process.env.TIN_FILM_FONTS || null};
+  const names = [];
+  for (let i = 0; i < argv.length; i++) {
+    if (argv[i].startsWith("--")) options[argv[i].slice(2)] = argv[++i];
+    else names.push(argv[i]);
+  }
+  if (!names.length) throw new Error("Name a film, for example: npm run film -- people-requests");
+  const fonts = await loadFonts(options.fonts);
+  let failed = false;
+  for (const name of names) {
+    const film = await loadFilm(name);
+    for (const format of options.format.split(",")) {
+      const {dir, report} = await shoot(film, {format, theme: options.theme, out: options.out, fonts});
+      const {errors, warnings, blocked} = report.issues;
+      console.log(`${film.name} ${format}: ${report.frames} frames, ${report.seconds.toFixed(1)}s → ${dir}`);
+      for (const line of errors) console.log(`  error: ${line}`);
+      for (const line of warnings) console.log(`  warning: ${line}`);
+      if (blocked.length) console.log(`  blocked: ${blocked.join(", ")}`);
+      failed ||= errors.length > 0;
+    }
+  }
+  if (failed) process.exitCode = 1;
+}
+
+if (import.meta.url === pathToFileURL(process.argv[1]).href) {
+  main(process.argv.slice(2)).catch(error => {
+    console.error(error.message);
+    process.exitCode = 1;
+  });
+}
