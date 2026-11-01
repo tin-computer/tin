@@ -147,12 +147,23 @@ class Director {
   async click(target, options) {
     await this.move(target, options);
     await this.hold(0.12);
+    const before = await this.page.evaluate(selectors => window.__film.rect(selectors), target);
     this.cursor.pressed = true;
     await this.page.mouse.down();
     this.ripples.push({x: this.cursor.x, y: this.cursor.y, start: this.n});
     await this.hold(0.1);
     await this.page.mouse.up();
     this.cursor.pressed = false;
+    // The page shouldn't move what was just clicked out from under the cursor. Checked a few
+    // frames on, as the next calls go.
+    let frames = 0;
+    this.tracks.add(async () => {
+      if (++frames < 6) return false;
+      const after = before && (await this.page.evaluate(selectors => window.__film.rect(selectors), target));
+      const moved = after ? Math.round(Math.hypot(after.x - before.x, after.y - before.y)) : 0;
+      if (moved > 4) this.warn(`Clicking ${JSON.stringify(target)} moved it ${moved}px: the page shifted under the cursor.`);
+      return true;
+    });
   }
 
   // Scroll a container until a target inside it sits `offset` CSS px below its top edge.

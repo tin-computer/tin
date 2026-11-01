@@ -83,8 +83,9 @@ How a good film reads, after Stageshow's guidance:
 
 `report.json` and the command's output list what the film got wrong. Errors exit with status 1:
 the page threw or logged an error, the cursor reached a target outside the frame, or nothing was
-marked `poster`. Warnings are for review: text under about 22 px at 1080 in a marked frame, a
-target the camera couldn't fit, a GIF over 15 MB or a film over 2 minutes 20 seconds. The
+marked `poster`. Warnings are for review: a click that moved what was clicked (the page shifted
+under the cursor), text under about 22 px at 1080 in a marked frame, a target the camera couldn't
+fit, a GIF over 15 MB or a film over 2 minutes 20 seconds. The
 browser test (`web/film.browser.test.js`) films a short take twice and checks the frames match.
 
 ## Credit

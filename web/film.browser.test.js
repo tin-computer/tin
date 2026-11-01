@@ -48,6 +48,20 @@ test("the cursor can't reach outside the frame, and a film needs its poster", {t
   assert.ok(report.issues.errors.includes("The film never marks its poster."));
 });
 
+test("a click that moves the page under the cursor is reported", {timeout: 180000}, async () => {
+  const report = await take(short(async f => {
+    await f.camera([".people-view h1", ".people-table thead", ".people-table tbody tr:nth-child(-n+4)"], {cut: true});
+    // Whatever the dashboard does, this click pushes the grid down 60px.
+    await f.page.evaluate(() => document.querySelector(".people-view h1").addEventListener("click", () => {
+      document.querySelector(".people-view").style.paddingTop = "60px";
+    }, {once: true}));
+    await f.click(".people-view h1");
+    await f.hold(0.4);
+    await f.mark("poster");
+  }));
+  assert.ok(report.issues.warnings.some(line => /h1.* moved it \d+px: the page shifted under the cursor/.test(line)), report.issues.warnings);
+});
+
 test("the caption band sits below the dashboard's screen", () => {
   for (const size of Object.values(FORMATS)) {
     const {screen, viewport} = stage(size);
