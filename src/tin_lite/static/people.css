@@ -28,8 +28,14 @@
 
 .people-grid {
   min-width: 0;
-  overflow-x: auto;
+  /* Clipped rather than scrolled, so the header row can stay pinned while the page scrolls. */
+  overflow-x: clip;
   scrollbar-width: thin;
+}
+
+/* A phone scrolls the grid sideways instead, and its header scrolls with the page. */
+@container view (max-width: 560px) {
+  .people-grid { overflow-x: auto; }
 }
 
 .people-table {
@@ -63,6 +69,15 @@
   color: var(--ink);
   font: 700 12.5px/16px var(--sans);
 }
+
+/* The header row stays in view while the list scrolls, under the top menu on narrower screens. */
+.people-table thead th {
+  position: sticky;
+  top: 0;
+  z-index: 2;
+}
+
+.people-table thead th:is(.is-pick, .is-name) { z-index: 3; }
 
 .people-table th:first-child { border-top-left-radius: 3px; }
 
@@ -195,8 +210,8 @@
   font-size: 13px;
 }
 
-/* Ticking people to ask to connect (REQ-A): a lane before the name, and a bar above the grid
-   while anyone is ticked. Only people the member can ask get a box. */
+/* Ticking people to ask to connect (REQ-A): a lane before the name, and while anyone is ticked a
+   bar over the header row (PJ-A). Only people the member can ask get a box. */
 .people-table th.is-pick { width: 36px; }
 
 .people-table.has-pick th.is-name { width: 188px; }
@@ -313,9 +328,51 @@
 
 .people-picked-send:disabled { cursor: not-allowed; }
 
+/* The bar lies over the header row, beside the select-all box: pinned with it, at its 34px, and
+   taking no room of its own, so the grid never moves when someone is ticked. One line at every
+   width; the pacing line gives way first (it says the same after sending). */
+.people-grid > .people-selection {
+  position: sticky;
+  top: 0;
+  z-index: 4;
+  height: 34px;
+  min-height: 0;
+  margin: 0 0 -34px 36px;
+  padding: 0 4px 0 12px;
+  flex-wrap: nowrap;
+  gap: 12px;
+  border-top-right-radius: 3px;
+  background: var(--table-sticky);
+}
+
+.people-selection > :not(p, .people-picked-space) { flex-shrink: 0; }
+
+.people-selection p {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.people-selection .people-picked-send {
+  height: 26px;
+  min-height: 0;
+  padding: 0 12px;
+  font-size: 12.5px;
+}
+
+@media (max-width: 1100px) {
+  .people-table thead th,
+  .people-grid > .people-selection {
+    top: var(--top-menu-height);
+  }
+}
+
 /* Beside the person panel, or on a narrow screen: Name, ICP, fit and LinkedIn (PEOPLE-C1). */
 @container view (max-width: 860px) {
   .people-table th.is-icp { width: auto; }
+
+  .people-selection p { display: none; }
 
   .people-table .is-headline,
   .people-table .is-notes,
