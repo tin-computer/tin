@@ -220,12 +220,13 @@ window.TinPeople = (() => {
     return Boolean(data?.offered && (data.reading || data.browser_only));
   }
 
-  // The bar above the grid while people are ticked (REQ-A, REQ-A3).
+  // While people are ticked, the bar lies over the grid's header row (REQ-A, REQ-A3, Paper PJ-A):
+  // pinned with it at its height, so nothing under it moves, and the select-all box stays beside it.
   function pickedBar() {
     const count = view.picked.size;
     if (!count || !picking()) return "";
     const { ready, line } = window.TinRequests.picked(view.requests());
-    return `<div class="people-picked" role="region" aria-label="Ticked people">
+    return `<div class="people-picked people-selection" role="region" aria-label="Ticked people">
       <strong>${count} selected</strong>
       <button class="people-picked-clear" type="button" data-people-clear-picked>Clear</button>
       <span class="people-picked-space"></span>
@@ -280,8 +281,9 @@ window.TinPeople = (() => {
       <div class="workflow-sections system-sections people-sections" role="tablist" aria-label="People segments">
         ${SEGMENTS.filter((segment) => !["invited", "site"].includes(segment.key) || view.segment === segment.key || segmentPeople(segment.key).length).map((segment) => `<button class="workflow-section ${view.segment === segment.key ? "is-active" : ""}" type="button" role="tab" aria-selected="${view.segment === segment.key}" data-people-segment="${segment.key}">${segment.label} <span>${segmentPeople(segment.key).length}</span></button>`).join("")}
       </div>
-      ${pickedBar() || nobodyLine(people)}
+      ${nobodyLine(people)}
       <div class="people-grid">
+        ${pickedBar()}
         <table class="tin-table people-table ${pick ? "has-pick" : ""}">
           <thead><tr>
             ${pick ? `<th class="is-pick" scope="col"><input type="checkbox" data-people-pick-all aria-label="Tick everyone on this page you can ask to connect" ${pickable.length ? "" : "disabled"} ${pickable.length && ticked === pickable.length ? "checked" : ""} /></th>` : ""}

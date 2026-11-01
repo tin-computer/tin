@@ -147,6 +147,46 @@ test("people ticked in People are queued at once, best fit first", {timeout: 120
   });
 });
 
+// Paper PJ-A: the bar lies over the header row, beside the select-all box, at the row's height, so
+// ticking someone moves nothing under the cursor; header and bar stay pinned on a long list.
+test("ticking someone turns the header row into the bar, and nothing under it moves", {timeout: 120000}, async () => {
+  const people = syntheticPeople();
+  for (let index = 0; index < 30; index++) people.push({...structuredClone(people[3]), id: `p-more-${index}`, name: `Person ${index}`});
+  await open({url: "/people", state: requests({on: true}), people}, async page => {
+    await page.locator(".people-table").waitFor();
+    const grid = () => page.evaluate(() => {
+      const box = element => element && (({top, left, right, height}) => ({top, left, right, height}))(element.getBoundingClientRect());
+      return {
+        // The header cells are what pin; the row itself stays where it is in the table.
+        head: (cells => ({top: cells[0].top, height: cells[0].height, left: cells[0].left, right: cells.at(-1).right}))([...document.querySelectorAll(".people-table thead th")].map(cell => cell.getBoundingClientRect()).filter(cell => cell.width)),
+        bar: box(document.querySelector(".people-selection")),
+        row: box(document.querySelector(".people-table tbody tr")),
+        columns: [...document.querySelectorAll(".people-table tbody tr:first-child td")].map(cell => cell.getBoundingClientRect().width),
+      };
+    });
+    for (const width of [1440, 720]) {
+      await page.setViewportSize({width, height: 900});
+      await page.evaluate(() => window.scrollTo(0, 0));
+      const before = await grid();
+      await page.locator('tr[data-person="p-daniel"] td.is-pick input').check();
+      const after = await grid();
+      assert.equal(before.bar, null);
+      assert.deepEqual(after.row, before.row);
+      assert.deepEqual(after.columns, before.columns);
+      assert.equal(after.head.height, 34);
+      assert.deepEqual([after.bar.top, after.bar.height, after.bar.left - after.head.left, after.bar.right], [after.head.top, 34, 36, after.head.right]);
+      // The pacing line has room on a wide grid and steps aside on a narrow one.
+      assert.equal(await page.locator(".people-selection p").isVisible(), width === 1440);
+      await page.evaluate(() => window.scrollTo(0, 1200));
+      const pinned = await grid();
+      const top = width === 1440 ? 0 : 105;
+      assert.equal(pinned.head.top, top);
+      assert.equal(pinned.bar.top, top);
+      await page.locator(".people-selection").getByRole("button", {name: "Clear"}).click();
+    }
+  });
+});
+
 test("the box above the grid ticks everyone you can ask on the page", {timeout: 120000}, async () => {
   await open({url: "/people", state: requests({on: true}), people: syntheticPeople()}, async page => {
     const all = page.locator("[data-people-pick-all]");
