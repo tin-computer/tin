@@ -510,6 +510,17 @@ body.has-person-panel .main {
   margin-right: var(--spine-panel-width);
 }
 
+/* The list narrows beside the panel (Layout B) where it keeps room for its compact grid; on a
+   narrower screen the panel floats over it instead, casting its own shadow, so nothing reflows or
+   moves under the cursor and the names stay in view to the left. */
+@media (max-width: 1239px) {
+  body.has-person-panel .main { margin-right: 0; }
+
+  .person-panel { box-shadow: -24px 0 48px rgb(0 0 0 / 24%); }
+
+  .person-panel::after { display: none; }
+}
+
 .person-panel > header {
   display: flex;
   flex-direction: column;

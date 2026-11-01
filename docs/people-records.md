@@ -129,6 +129,8 @@ tools share `people_service.People`.
     it replaced.
 - **Person panel:** `GET …/people/{person_id}` adds the timeline. The address keeps the person
   (`?person=`), so a reload opens them again.
+  - From 1240px wide the grid narrows beside the panel; below that the panel floats over the grid,
+    so opening someone moves nothing, and on a phone it fills the screen.
   - Each field says who set it: the workflow's short name ("engagers"), or "you" and
     "a teammate" for a member's value.
   - A reaction says whose post it was: the run read the LinkedIn of the member who started it.
