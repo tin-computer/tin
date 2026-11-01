@@ -64,7 +64,7 @@
 .analytics-meta {
   padding-bottom: 10px;
   color: var(--ink-muted);
-  font: 12px/16px var(--mono);
+  font: 13px/16px var(--sans);
   text-align: right;
 }
 
@@ -97,7 +97,7 @@
 
 .analytics-heading > span {
   color: var(--ink-muted);
-  font: 12px/16px var(--mono);
+  font: 13px/16px var(--sans);
 }
 
 .analytics-heading.is-section { padding-top: 10px; }
@@ -150,9 +150,9 @@
 
 .analytics-needs-row p.is-quiet { color: var(--ink-secondary); }
 
-.analytics-needs-row code {
+.analytics-needs-row small {
   color: var(--ink-muted);
-  font: 12px/16px var(--mono);
+  font: 13px/16px var(--sans);
 }
 
 /* Four numbers, each with its change from the period before or its own detail. */
@@ -188,10 +188,10 @@
   letter-spacing: -0.03em;
 }
 
-.analytics-tile code {
-  min-height: 16px;
+.analytics-tile small {
+  min-height: 18px;
   color: var(--ink-muted);
-  font: 12px/16px var(--mono);
+  font: 13px/18px var(--sans);
 }
 
 .analytics-class {
@@ -236,9 +236,9 @@
   font: 700 15px/20px var(--sans);
 }
 
-.analytics-card-head > code {
+.analytics-card-head > small {
   color: var(--ink-muted);
-  font: 12px/16px var(--mono);
+  font: 13px/16px var(--sans);
 }
 
 .analytics-legend {
@@ -301,7 +301,7 @@
   display: flex;
   justify-content: space-between;
   color: var(--ink-muted);
-  font: 12px/16px var(--mono);
+  font: 12px/16px var(--sans);
 }
 
 .analytics-days {
@@ -327,7 +327,7 @@
   align-items: baseline;
   justify-content: space-between;
   gap: 8px;
-  font: 12px/16px var(--mono);
+  font: 12px/16px var(--sans);
 }
 
 /* A day that runs out of room wraps ("tue 20 / so far") rather than cutting its words. */
@@ -356,14 +356,9 @@
   font: 13px/16px var(--sans);
 }
 
-.analytics-detector code {
-  color: var(--ink);
-  font: 12px/16px var(--mono);
-}
-
 .analytics-detector i { flex: 1 1 0; }
 
-.analytics-detector code.is-muted { color: var(--ink-muted); }
+.analytics-detector .is-muted { color: var(--ink-muted); }
 
 /* Two tables side by side: pages and where visits came from; companies and their pages. */
 .analytics-pair {
@@ -444,16 +439,17 @@
 /* On a narrow row the tags give way, and a name with tags (a company, a site) keeps its width. */
 .analytics-name > span:not(:only-child) { flex-shrink: 0; }
 
-.analytics-name code {
+.analytics-name small {
   min-width: 0;
   flex: 0 100 auto;
   overflow: hidden;
   color: var(--ink-muted);
-  font: 12px/16px var(--mono);
+  font: 13px/16px var(--sans);
   text-overflow: ellipsis;
 }
 
-.analytics-name code.analytics-tag { color: var(--accent-text); }
+/* The AI tag stays whole; a company's role is what gives way on a narrow row. */
+.analytics-name small.analytics-tag { flex-shrink: 0; color: var(--accent-text); }
 
 .analytics-num {
   flex: 0 0 auto;
@@ -464,33 +460,69 @@
 
 .analytics-row.is-head .analytics-num { font: 700 13px/16px var(--sans); }
 
-/* The regions line keeps its label whole and wraps its numbers under it when they don't fit. */
-.analytics-row.is-regions {
-  height: auto;
-  min-height: 44px;
-  flex-wrap: wrap;
-  row-gap: 2px;
-  padding-top: 12px;
-  padding-bottom: 12px;
-}
-
-.analytics-row.is-regions .analytics-name { flex: 1 0 auto; }
-
-/* Many regions wrap within the row rather than run past the table's edge. */
+/* Regions (Paper p-Y-0, R2): one strip split by share, and a legend that wraps under it. The
+   shades step down the ink, so they hold in both themes; the rest is the faintest. */
 .analytics-regions {
-  max-width: 100%;
-  margin-left: auto;
-  color: var(--ink);
-  font: 12.5px/16px var(--mono);
-  text-align: right;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  padding: 12px 16px 16px;
+  border-top: 1px solid var(--card-border);
+  color: var(--ink-secondary);
+  font: 13px/16px var(--sans);
 }
+
+.analytics-regions-strip {
+  display: flex;
+  height: 8px;
+  gap: 2px;
+}
+
+.analytics-regions-strip i {
+  min-width: 2px;
+  flex-basis: 0;
+  border-radius: 2px;
+}
+
+.analytics-regions-legend {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px 18px;
+  color: var(--ink);
+}
+
+.analytics-regions-legend > span {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  white-space: nowrap;
+}
+
+.analytics-regions-legend > span.is-rest { color: var(--ink-secondary); }
+
+.analytics-regions-legend i {
+  width: 8px;
+  height: 8px;
+  flex: 0 0 auto;
+  border-radius: 2px;
+}
+
+.analytics-regions-legend b {
+  color: var(--ink-secondary);
+  font-weight: 400;
+}
+
+.analytics-regions .is-shade-0 { background: rgb(var(--ink-rgb) / 82%); }
+.analytics-regions .is-shade-1 { background: rgb(var(--ink-rgb) / 62%); }
+.analytics-regions .is-shade-2 { background: rgb(var(--ink-rgb) / 42%); }
+.analytics-regions .is-shade-rest { background: rgb(var(--ink-rgb) / 22%); }
 
 .analytics-num.is-withheld { color: var(--ink-muted); }
 
 .analytics-notes {
   margin: 0;
   color: var(--ink-muted);
-  font: 12px/16px var(--mono);
+  font: 13px/19px var(--sans);
 }
 
 /* REP-V2c: the line, where it goes, a CSP and what's counted. */

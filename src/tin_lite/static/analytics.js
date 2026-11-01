@@ -59,9 +59,11 @@ window.TinAnalytics = (() => {
     }
   }
   function zoneLabel(tz) {
-    if (!tz || tz === "UTC") return "utc";
-    return `${tz.split("/").pop().replace(/_/g, " ").toLowerCase()} time`;
+    if (!tz || tz === "UTC") return "UTC";
+    return `${tz.split("/").pop().replace(/_/g, " ")} time`;
   }
+  // Words set in sans read in sentence case (Paper p-Z-0, MONO-1): "Friday", "Oct 31".
+  const capital = (text) => (text ? `${text.charAt(0).toUpperCase()}${text.slice(1)}` : "");
 
   function mount(main, options) {
     const fresh = !view || view.projectId !== options.projectId;
@@ -147,7 +149,7 @@ window.TinAnalytics = (() => {
     const csp = Object.entries(card.csp || {}).map(([directive, sources]) => `${directive} ${sources.join(" ")}`).join(" · ");
     const wildcard = (card.counted_hosts || []).some((item) => item.startsWith("*."));
     return `<div class="analytics-tabs is-bare">
-        <span class="analytics-meta">no visit yet · ${escape(zoneLabel(data.tz))}${card.checked_at ? ` · checked ${escape(clock(card.checked_at))}` : ""}</span>
+        <span class="analytics-meta">No visit yet · ${escape(zoneLabel(data.tz))}${card.checked_at ? ` · checked ${escape(clock(card.checked_at))}` : ""}</span>
       </div>
       <div class="analytics-summary">
         <div class="analytics-heading"><span class="analytics-ring" aria-hidden="true"></span><h2>Waiting for the first visit</h2></div>
@@ -188,7 +190,7 @@ window.TinAnalytics = (() => {
     </div>`;
   }
 
-  // The change from the period before, as REP-V2 writes it: "+17% on tuesday", "up from 1".
+  // The change from the period before, as REP-V2 writes it: "+17% on Tuesday", "up from 1".
   function change(item, against) {
     if (!item) return "";
     if (typeof item.percent === "number") {
@@ -202,9 +204,9 @@ window.TinAnalytics = (() => {
   function report(data) {
     const card = data.card;
     const report = data.report;
+    const quiet = card.state === "quiet";
     const meta = [
-      card.state === "quiet" ? "script quiet" : "script on",
-      card.reporter_connected ? "reporter on" : "",
+      card.reporter_connected ? (quiet ? "Script quiet, reporter on" : "Script and reporter on") : quiet ? "Script quiet" : "Script on",
       zoneLabel(data.tz),
       report?.built_at ? `updated ${clock(report.built_at)}` : "",
     ].filter(Boolean).join(" · ");
@@ -214,7 +216,7 @@ window.TinAnalytics = (() => {
         <p class="analytics-empty">${data.error ? "Tin couldn't read this report just now. It asks again the next time you open this page." : "No report for this period yet."}</p>`;
     }
     const comparison = data.comparison;
-    const against = !comparison ? "" : report.period === "week" ? "the week before" : weekday(comparison.start);
+    const against = !comparison ? "" : report.period === "week" ? "the week before" : capital(weekday(comparison.start));
     const changes = comparison?.changes || {};
     return `${tabs(data, meta)}
       ${summary(report, comparison)}
@@ -223,7 +225,7 @@ window.TinAnalytics = (() => {
       ${chart(report)}
       <div class="analytics-pair">${pages(report)}${cameFrom(report)}</div>
       ${requests(report, card)}
-      ${(report.notes || []).length ? `<p class="analytics-notes">${escape(report.notes.join(" · "))}</p>` : ""}`;
+      ${(report.notes || []).length ? `<p class="analytics-notes">${escape(report.notes.join(" "))}</p>` : ""}`;
   }
 
   function summary(report, comparison) {
@@ -233,21 +235,21 @@ window.TinAnalytics = (() => {
     if (report.period === "week") {
       title = "Last 7 days";
       detail = [
-        `${dayLabel(report.start)} – ${dayLabel(report.end)}`,
+        `${capital(dayLabel(report.start))} – ${capital(dayLabel(report.end))}`,
         finished ? "" : "today so far",
-        comparison ? `against ${dayLabel(comparison.start)} – ${dayLabel(comparison.end)}` : "",
+        comparison ? `against ${capital(dayLabel(comparison.start))} – ${capital(dayLabel(comparison.end))}` : "",
       ];
     } else {
       const name = weekday(report.start);
       title = `${name.charAt(0).toUpperCase()}${name.slice(1)}${finished ? "" : " so far"}`;
       detail = [
-        dayLabel(report.start),
+        capital(dayLabel(report.start)),
         finished ? "" : `00:00–${clock(report.built_at)}`,
-        comparison ? `against ${weekday(comparison.start)}${comparison.until ? " at the same hour" : ""}` : "",
+        comparison ? `against ${capital(weekday(comparison.start))}${comparison.until ? " at the same hour" : ""}` : "",
       ];
     }
     return `<div class="analytics-summary">
-      <div class="analytics-heading"><h2>${escape(title)}</h2><span>${escape(detail.filter(Boolean).join(" · "))}</span></div>
+      <div class="analytics-heading"><h2>${escape(title)}</h2><span>${escape(detail.filter(Boolean).join(", "))}</span></div>
       <p>${escape(report.summary)}</p>
     </div>`;
   }
@@ -269,7 +271,7 @@ window.TinAnalytics = (() => {
       });
     }
     if (view.counted) {
-      return `<div class="analytics-needs"><div class="analytics-needs-row is-done"><span aria-hidden="true"></span><p>Now counting ${escape(view.counted)} and its subdomains. The script line on your site stays the same.</p><code>from the next visit</code></div></div>`;
+      return `<div class="analytics-needs"><div class="analytics-needs-row is-done"><span aria-hidden="true"></span><p>Now counting ${escape(view.counted)} and its subdomains. The script line on your site stays the same.</p><small>From the next visit</small></div></div>`;
     }
     if (!items.length) {
       const when = view.tab === "week" ? " this week" : view.tab === "today" ? " today" : "";
@@ -278,17 +280,33 @@ window.TinAnalytics = (() => {
     return `<div class="analytics-needs">${items.map((item) => `<div class="analytics-needs-row"><span aria-hidden="true"></span><p>${escape(item.text)}</p>${item.action}</div>`).join("")}</div>`;
   }
 
+  // The two biggest named automated browsers, as a sentence: "Microsoft 37 and OpenAI 4, confirmed
+  // from their networks", or each with its own evidence when they differ.
+  function namedBrowsers(named) {
+    const items = (named || []).slice(0, 2);
+    if (!items.length) return "";
+    const and = (parts) => parts.length > 1 ? `${parts.slice(0, -1).join(", ")} and ${parts.at(-1)}` : parts[0];
+    const evidence = (item) => item.evidence === "signature" ? "signed" : "from its network";
+    if (new Set(items.map((item) => item.evidence === "signature")).size > 1) {
+      return and(items.map((item) => `${company(item.operator)} ${count(item.visits)} (${evidence(item)})`));
+    }
+    const names = and(items.map((item) => `${company(item.operator)} ${count(item.visits)}`));
+    const one = items.length === 1;
+    return items[0].evidence === "signature"
+      ? `${names}, confirmed by ${one ? "its signature" : "their signatures"}`
+      : `${names}, confirmed from ${one ? "its network" : "their networks"}`;
+  }
+
   function tiles(report, changes, against) {
     const totals = report.totals || {};
     const browsers = report.kinds?.automated_browser || {};
-    const named = (browsers.named || []).slice(0, 2)
-      .map((item) => `${company(item.operator)} ${count(item.visits)} · ${item.evidence === "signature" ? "signed" : "from its network"}`).join(" · ");
-    const tile = (label, value, detail) => `<div class="analytics-tile"><span>${escape(label)}</span><strong>${count(value)}</strong><code>${escape(detail || "")}</code></div>`;
+    const tile = (label, value, detail) => `<div class="analytics-tile"><span>${escape(label)}</span><strong>${count(value)}</strong><small>${escape(detail || "")}</small></div>`;
+    const perVisit = totals.pages_per_visit;
     return `<div class="analytics-tiles">
       ${tile("Visits", totals.visits, change(changes.visits, against))}
-      ${tile("Page views", totals.page_views, typeof totals.pages_per_visit === "number" ? `${totals.pages_per_visit} a visit` : "")}
+      ${tile("Page views", totals.page_views, typeof perVisit === "number" ? `${perVisit} ${perVisit === 1 ? "page" : "pages"} a visit` : "")}
       ${tile("Arrived from AI assistants", totals.assistant_visits, change(changes.assistant_visits, against))}
-      ${tile("Automated browsers", browsers.visits, named || (browsers.visits ? "none named" : ""))}
+      ${tile("Automated browsers", browsers.visits, namedBrowsers(browsers.named) || (browsers.visits ? "None named" : ""))}
     </div>`;
   }
 
@@ -347,7 +365,7 @@ window.TinAnalytics = (() => {
       const last = rows.length - 1;
       bars = `<div class="analytics-days">${rows.map((row, index) => `<div class="analytics-day">
           <div class="analytics-day-bar">${column(row, row.total, max)}</div>
-          <div class="analytics-day-label"><span>${escape(`${weekday(row.date).slice(0, 3)} ${day(row.date)?.getUTCDate() ?? ""}`)}${index === last && !report.complete ? ' <span class="analytics-day-so-far">so far</span>' : ""}</span><strong>${count(row.visits)}</strong></div>
+          <div class="analytics-day-label"><span>${escape(`${capital(weekday(row.date).slice(0, 3))} ${day(row.date)?.getUTCDate() ?? ""}`)}${index === last && !report.complete ? ' <span class="analytics-day-so-far">so far</span>' : ""}</span><strong>${count(row.visits)}</strong></div>
         </div>`).join("")}</div>`;
       axis = "";
     }
@@ -357,17 +375,27 @@ window.TinAnalytics = (() => {
       <div class="analytics-card-head"><h3>${report.hours ? "Hour by hour" : "Day by day"}</h3><div class="analytics-legend">${legend}</div></div>
       ${bars}${axis}
       ${detector ? `<div class="analytics-detector">
-        <span>Of the ${count(kinds.no_automation_seen?.visits)} with no automation seen, the detector says</span>
-        <code>human ${count(verdicts.human)} · not human ${count(verdicts.nonhuman)} · unknown ${count(verdicts.unknown)} · not scored yet ${count(verdicts.unscored)}</code>
+        <span>${escape(detectorSays(kinds.no_automation_seen?.visits, verdicts))}</span>
         <i></i>
-        ${detector.provisional ? "<code class=\"is-muted\">provisional · still being measured</code>" : ""}
+        ${detector.provisional ? "<span class=\"is-muted\">Provisional, still measured</span>" : ""}
       </div>` : ""}
     </div>`;
   }
 
+  // The detector's verdicts as one sentence, without the ones it found none of: "Of the 603 with no
+  // automation seen, the detector says 348 are human and 255 unknown."
+  function detectorSays(seen, verdicts) {
+    const parts = [["human", verdicts.human], ["not human", verdicts.nonhuman], ["unknown", verdicts.unknown], ["not scored yet", verdicts.unscored]]
+      .filter(([, value]) => value > 0)
+      .map(([label, value], index) => (index ? `${count(value)} ${label}` : `${count(value)} ${value === 1 ? "is" : "are"} ${label}`));
+    const said = parts.length > 1 ? `${parts.slice(0, -1).join(", ")} and ${parts.at(-1)}` : parts[0];
+    const of = `Of the ${count(seen)} with no automation seen,`;
+    return said ? `${of} the detector says ${said}.` : `${of} the detector hasn't scored any yet.`;
+  }
+
   function table(title, meta, columns, rows) {
     return `<div class="analytics-table">
-      <div class="analytics-card-head"><h3>${escape(title)}</h3><code>${escape(meta)}</code></div>
+      <div class="analytics-card-head"><h3>${escape(title)}</h3><small>${escape(capital(meta))}</small></div>
       <div class="analytics-row is-head"><span>${escape(columns[0].label)}</span>${columns.slice(1).map((column) => `<span class="analytics-num" style="width:${column.width}px">${escape(column.label)}</span>`).join("")}</div>
       ${rows.join("")}
     </div>`;
@@ -387,14 +415,37 @@ window.TinAnalytics = (() => {
 
   function cameFrom(report) {
     const rows = (report.came_from || []).map((item) => row(item.host, [item.visits], [56], {
-      tags: item.assistant ? "<code class=\"analytics-tag\">AI assistant</code>" : "",
+      tags: item.assistant ? "<small class=\"analytics-tag\">AI assistant</small>" : "",
     }));
     if (!rows.length) rows.push(row("No visits followed a link from another site", [""], [56], { muted: true }));
-    const regions = report.regions || [];
-    if (regions.length) {
-      rows.push(`<div class="analytics-row is-regions"><span class="analytics-name"><span class="is-label">Regions, from browser time zones</span></span><code class="analytics-regions">${escape(regions.map((item) => `${item.name} ${count(item.visits)}`).join(" · "))}</code></div>`);
-    }
+    rows.push(regions(report.regions || []));
     return table("Came from", "the site that linked here", [{ label: "Site" }, { label: "Visits", width: 56 }], rows);
+  }
+
+  // Regions (Paper p-Y-0, R2): one strip split by share, the three biggest and the rest, with a legend
+  // under it. Time zone areas read as places: America is the Americas, and Etc and UTC are no place,
+  // so they always go to the rest.
+  const REGION_NAMES = { America: "Americas", Atlantic: "Atlantic islands", Pacific: "Pacific islands", Indian: "Indian Ocean" };
+  const NO_REGION = new Set(["Etc", "UTC"]);
+
+  function regions(items) {
+    const places = items.filter((item) => !NO_REGION.has(item.name) && item.visits > 0)
+      .map((item) => ({ name: REGION_NAMES[item.name] || item.name, visits: item.visits }))
+      .sort((a, b) => b.visits - a.visits);
+    const offset = items.filter((item) => NO_REGION.has(item.name)).reduce((total, item) => total + (item.visits || 0), 0);
+    const rest = places.slice(3);
+    const parts = places.slice(0, 3).map((part, index) => ({ ...part, shade: index }));
+    const restVisits = rest.reduce((total, item) => total + item.visits, 0) + offset;
+    if (restVisits) {
+      const more = rest.length + (offset ? 1 : 0);
+      parts.push({ name: rest.length ? `${more} more` : "UTC or a fixed offset", visits: restVisits, shade: "rest" });
+    }
+    if (!parts.length) return "";
+    return `<div class="analytics-regions">
+      <span>Regions, from browser time zones</span>
+      <div class="analytics-regions-strip">${parts.map((part) => `<i class="is-shade-${part.shade}" style="flex-grow:${part.visits}"></i>`).join("")}</div>
+      <div class="analytics-regions-legend">${parts.map((part) => `<span${part.shade === "rest" ? " class=\"is-rest\"" : ""}><i class="is-shade-${part.shade}" aria-hidden="true"></i><span>${escape(part.name)} <b>${count(part.visits)}</b></span></span>`).join("")}</div>
+    </div>`;
   }
 
   // Only with the request reporter: every page request the site's own server code answered.
@@ -410,7 +461,7 @@ window.TinAnalytics = (() => {
     const shown = view.companiesOpen ? operators : operators.slice(0, 3);
     const rest = operators.slice(shown.length);
     const companyRows = shown.map((item) => row(company(item.operator), [item.verified, item.declared], [64, 64], {
-      tags: `${ROLES[item.role] ? `<code>${escape(ROLES[item.role])}</code>` : ""}${item.ai ? "<code class=\"analytics-tag\">AI</code>" : ""}`,
+      tags: `${ROLES[item.role] ? `<small>${escape(ROLES[item.role])}</small>` : ""}${item.ai ? "<small class=\"analytics-tag\">AI</small>" : ""}`,
     }));
     if (rest.length) companyRows.push(row(`${rest.length} more`, [sum(rest, "verified"), sum(rest, "declared")], [64, 64], { open: "companies" }));
     const aiPages = [...(requests.ai_pages || [])].sort((a, b) => (b.loads || 0) - (a.loads || 0));
@@ -430,7 +481,7 @@ window.TinAnalytics = (() => {
     });
     if (others.some((value) => value > 0)) pageRows.push(row("Other pages", others, columns.map(() => 72), { muted: true }));
     const loads = [...listed.flatMap(cells), ...others].reduce((a, b) => a + b, 0);
-    return `<div class="analytics-heading is-section"><h2>Every page request</h2><span>from the reporter on your server${card.requests_last_at ? ` · last record ${escape(clock(card.requests_last_at))}` : ""}</span></div>
+    return `<div class="analytics-heading is-section"><h2>Every page request</h2><span>From the reporter on your server${card.requests_last_at ? `, last record ${escape(clock(card.requests_last_at))}` : ""}</span></div>
       <div class="analytics-classes">
         ${tile(requests.page_loads, "page loads")}
         ${tile(classes.verified_bot, "verified bots")}
