@@ -33,7 +33,9 @@ queued by the member's next read, from the same row.
 
 ## Chosen in People
 
-A member can tick people in People and press "Send N requests"
+A member can tick people in People and press "Send N requests" in the bar that lies over the
+grid's header row while anyone is ticked (Paper "People · asking without the jump", PJ-A: same
+height, pinned with the header, so nothing under the cursor moves)
 (`POST /api/projects/{project_id}/linkedin-requests/send`, or `send_connection_requests`).
 `linkedin_requests.pick` queues them, in the order sent, in a batch of their own that is
 approved at once, and hands it to the member's sending run. Anyone chosen must be someone the
