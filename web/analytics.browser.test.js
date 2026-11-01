@@ -190,22 +190,23 @@ test("page: today so far, each number against the day before, every page request
     await page.locator(".analytics-tiles").waitFor();
     assert.equal(await page.locator('.nav-item[data-view="analytics"]').getAttribute("class"), "nav-item is-active");
     assert.deepEqual(await page.locator(".analytics-sections .workflow-section").allInnerTexts(), ["Today", "Yesterday", "Last 7 days"]);
-    assert.equal(await page.locator(".analytics-meta").innerText(), "script on · reporter on · istanbul time · updated 11:02");
+    assert.equal(await page.locator(".analytics-meta").innerText(), "Script and reporter on · Istanbul time · updated 11:02");
     assert.equal(await page.locator(".analytics-heading h2").first().innerText(), "Wednesday so far");
-    assert.equal(await page.locator(".analytics-heading > span").first().innerText(), "oct 21 · 00:00–11:02 · against tuesday at the same hour");
+    assert.equal(await page.locator(".analytics-heading > span").first().innerText(), "Oct 21, 00:00–11:02, against Tuesday at the same hour");
     assert.equal(await page.locator(".analytics-summary p").innerText(), today.summary);
     const tiles = page.locator(".analytics-tile");
     assert.equal(await tiles.count(), 4);
     assert.deepEqual(await tiles.evaluateAll(items => items.map(item => item.innerText.split("\n").filter(Boolean))), [
-      ["Visits", "48", "+17% on tuesday"],
-      ["Page views", "91", "1.9 a visit"],
+      ["Visits", "48", "+17% on Tuesday"],
+      ["Page views", "91", "1.9 pages a visit"],
       ["Arrived from AI assistants", "6", "up from 4"],
-      ["Automated browsers", "3", "OpenAI 2 · signed · newcorp 1 · from its network"],
+      ["Automated browsers", "3", "OpenAI 2 (signed) and newcorp 1 (from its network)"],
     ]);
     assert.equal(await page.locator(".analytics-legend").innerText(), "no automation seen 43\nautomated browsers 3\ndeclared crawlers 2");
     assert.equal(await page.locator(".analytics-bars .analytics-bar").count(), 24);
     assert.equal(await page.locator(".analytics-bars .analytics-bar.is-future").count() > 0, true);
-    assert.match(await page.locator(".analytics-detector").innerText(), /Of the 43 with no automation seen, the detector says\s*human 38 · not human 2 · unknown 2 · not scored yet 1\s*provisional · still being measured/);
+    // The detector's verdicts read as one sentence (Paper p-Z-0, MONO-2).
+    assert.match(await page.locator(".analytics-detector").innerText(), /^Of the 43 with no automation seen, the detector says 38 are human, 2 not human, 2 unknown and 1 not scored yet\.\s*Provisional, still measured$/);
     // A null count, which the service doesn't send, is a dash.
     const careers = page.locator(".analytics-row", {hasText: "/careers"});
     assert.deepEqual(await careers.locator(".analytics-num").allInnerTexts(), ["–", "–", ""]);
@@ -225,7 +226,7 @@ test("page: today so far, each number against the day before, every page request
     assert.deepEqual(await aiPages.locator(".analytics-row:not(.is-head)").evaluateAll(rows => rows.map(row => row.innerText.split("\n").filter(Boolean))), [
       ["/docs/start", "12", "7"], ["/", "6", "3"], ["/pricing", "5", "0"], ["Other pages", "29", "29"],
     ]);
-    assert.equal(await aiPages.locator(".analytics-card-head code").innerText(), "91 loads");
+    assert.equal(await aiPages.locator(".analytics-card-head small").innerText(), "91 loads");
     assert.match(await page.locator(".analytics-notes").innerText(), /A visit ends after 30 minutes without activity\.$/);
     // Counting the moved host from the needs-you bar.
     await page.getByRole("button", {name: "Count newname.com instead"}).click();
@@ -235,8 +236,8 @@ test("page: today so far, each number against the day before, every page request
     await page.getByRole("tab", {name: "Last 7 days"}).click();
     await page.locator(".analytics-days").waitFor();
     assert.equal(await page.locator(".analytics-day").count(), 7);
-    assert.equal(await page.locator(".analytics-day-label > span").last().innerText(), "tue 20 so far");
-    assert.equal(await page.locator(".analytics-tile").first().locator("code").innerText(), "+9% on the week before");
+    assert.equal(await page.locator(".analytics-day-label > span").last().innerText(), "Tue 20 so far");
+    assert.equal(await page.locator(".analytics-tile").first().locator("small").innerText(), "+9% on the week before");
     assert.match(page.url(), /tab=week/);
   });
 });
@@ -291,11 +292,11 @@ test("page: a busy site's bars fill the chart, and today's label wraps rather th
       assert.ok(Math.abs(none[index + 1] - row.visits / totals[index + 1] * room) <= 2, `${row.date} is ${none[index + 1]}px`);
     });
     const labels = page.locator(".analytics-day-label");
-    assert.deepEqual(await labels.evaluateAll(items => items.map(item => item.innerText.replace("\n", " "))).then(items => items.slice(-2)), ["mon 19 990", "tue 20 so far 1,440"]);
+    assert.deepEqual(await labels.evaluateAll(items => items.map(item => item.innerText.replace("\n", " "))).then(items => items.slice(-2)), ["Mon 19 990", "Tue 20 so far 1,440"]);
     assert.equal(await labels.evaluateAll(items => items.every(item => [...item.children].every(child => child.scrollWidth <= child.clientWidth))), true);
     // On a phone the count gives way and so does "so far"; the heading still says today so far.
     await page.setViewportSize({width: 390, height: 844});
-    assert.equal(await labels.last().innerText(), "tue 20");
+    assert.equal(await labels.last().innerText(), "Tue 20");
     assert.equal(await labels.evaluateAll(items => items.every(item => item.firstElementChild.scrollWidth <= item.firstElementChild.clientWidth)), true);
   });
 });
@@ -305,7 +306,7 @@ test("page: waiting for the first visit has no tabs and shows the line", {timeou
   await open({integrations: [waiting], analytics: {pages: {today: pageOf("today", null, waiting)}, answer: () => ({})}}, "/analytics", async page => {
     await page.locator(".analytics-install").waitFor();
     assert.equal(await page.locator(".analytics-sections").count(), 0);
-    assert.match(await page.locator(".analytics-meta").innerText(), /^no visit yet · istanbul time · checked \d\d:\d\d$/);
+    assert.match(await page.locator(".analytics-meta").innerText(), /^No visit yet · Istanbul time · checked \d\d:\d\d$/);
     assert.equal(await page.locator(".analytics-heading h2").innerText(), "Waiting for the first visit");
     assert.equal(await page.locator(".analytics-script").innerText(), SCRIPT);
     assert.match(await page.locator(".analytics-install").innerText(), /If you set a CSP\s*Add Tin's analytics address to script-src and connect-src\.\s*script-src https:\/\/edge\.tin\.computer · connect-src https:\/\/edge\.tin\.computer/);
@@ -328,17 +329,20 @@ test("page: without the reporter there is no request section", {timeout: 120000}
     assert.match(await page.locator(".analytics-notes").innerText(), /^The script can't see crawlers/);
     assert.equal(await page.locator(".analytics-needs").innerText(), "Nothing needs you today");
     const cameFrom = page.locator(".analytics-table", {hasText: "Came from"});
-    assert.deepEqual(await cameFrom.locator(".analytics-row:not(.is-head)").allInnerTexts(), [
-      "No visits followed a link from another site",
-      "Regions, from browser time zones\nAmerica 304 · Europe 247 · Asia 120 · Australia 22 · Africa 15 · Pacific 4 · UTC 3",
-    ]);
-    const label = cameFrom.locator(".is-regions .is-label");
-    assert.equal(await label.evaluate(node => node.scrollWidth <= node.clientWidth), true);
-    // Seven regions stay inside the table, wrapping when they must.
+    assert.deepEqual(await cameFrom.locator(".analytics-row:not(.is-head)").allInnerTexts(), ["No visits followed a link from another site"]);
+    // Regions (Paper p-Y-0, R2): the three biggest and the rest, as one strip and a legend. America
+    // reads as the Americas, and UTC goes to the rest with the smaller places.
+    const regions = cameFrom.locator(".analytics-regions");
+    assert.equal(await regions.locator("> span").innerText(), "Regions, from browser time zones");
+    assert.deepEqual(await regions.locator(".analytics-regions-legend > span").allInnerTexts(), ["Americas 304", "Europe 247", "Asia 120", "4 more 44"]);
+    assert.deepEqual(await regions.locator(".analytics-regions-strip i").evaluateAll(parts => parts.map(part => part.style.flexGrow)), ["304", "247", "120", "44"]);
+    const widths = await regions.locator(".analytics-regions-strip i").evaluateAll(parts => parts.map(part => part.getBoundingClientRect().width));
+    assert.ok(widths[0] > widths[1] && widths[1] > widths[2] && widths[2] > widths[3], JSON.stringify(widths));
+    // The legend wraps inside the table rather than running past its edge.
     assert.equal(await cameFrom.evaluate(table => {
       const edge = table.getBoundingClientRect().right;
-      const regions = table.querySelector(".analytics-regions");
-      return regions.getBoundingClientRect().right <= edge && regions.scrollWidth <= regions.clientWidth;
+      const legend = table.querySelector(".analytics-regions-legend");
+      return [...legend.children].every(item => item.getBoundingClientRect().right <= edge);
     }), true);
   });
 });
