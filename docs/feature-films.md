@@ -21,6 +21,7 @@ Each format lands in `.films/<film>/<format>/`:
 | `film.gif` | 15 fps, palette per film, under X's 15 MB |
 | `poster.png` | The frame the script marks `poster`, at full size |
 | `marks/`, `sheet.png` | Every marked frame, and a contact sheet of them for review |
+| `motion/` | Every camera move, click and cut as a strip of every other frame (66ms apart), for reviewing the motion itself |
 | `captions.srt` | The captions with their times, for platforms that take a caption file |
 | `report.json` | Frames, length, sizes, frame hashes and the checks below |
 
@@ -60,20 +61,24 @@ and `play(f)`. `people-requests.js` is the example.
 
 | Call | What it does |
 | --- | --- |
-| `f.camera(target, {pad, duration, cut, wait, text, inside})` | Frames the target (a selector, a list of selectors, or a rect). `text` frames only the words inside, `inside` keeps the frame within a region (`f.inside` sets a default), `wait: false` lets the move run under the next calls. Never zooms past the device scale. |
+| `f.camera(target, {pad, duration, curve, cut, text, inside})` | Frames the target (a selector, a list of selectors, or a rect). `text` frames only the words inside, `inside` keeps the frame within a region (`f.inside` sets a default). 1.1 s on Stageshow's camera curve by default (`house` for a slow, longer move); never zooms past the device scale. |
 | `f.move(target, {to})` | The cursor travels in a shallow arc; the real pointer follows, so hovers happen. |
 | `f.click(target)` | Moves, rests, presses: the cursor dips, a ring spreads and the page gets a real click. |
 | `f.type(text)`, `f.scroll(container, target)` | Real keystrokes; an eased scroll of a container. |
 | `f.caption(text)` | One caption at a time; the last fades out and the next rises in. `null` clears it. |
 | `f.hold(seconds)`, `f.ready(selector)` | Lets time pass; waits (filmed) until something is visible. |
-| `f.open(route)`, `f.cut(change)` | Opens a view; fades to the ground, does `change` unfilmed, fades back. |
+| `f.open(route)`, `f.cut(change, {caption})` | Opens a view; fades to the ground into the cut and settles out of it, doing `change` unfilmed (open a view, move the world on, let time pass); `caption` arrives with the new scene. |
 | `f.mark(name)` | Keeps the frame just shot for the sheet. `poster` is required. |
 | `f.world`, `f.wide` | The served world, to move it on behind a cut; whether the format is wide. |
 
-How a good film reads, after Stageshow's guidance:
+How a good film reads, after Stageshow's guidance (its `references/motion.md` and `framing.md`):
 
-- one feature, three to five beats and a payoff, about 15 to 25 seconds;
-- open on a finished, readable screen; frame the part the story happens in;
+- one feature, three to five beats and a payoff, about 15 to 20 seconds;
+- open on a finished, readable screen, and hold one framing that works as a still: the camera
+  needs a reason, at most one push-in (or pull-out) per film, slow, within 2x, with the cursor
+  still while the view moves;
+- the cursor aims inside its target but off its words, and rests on empty surface between beats;
+- a cut lets time pass behind it, so nothing from the last scene (a toast, a hover) survives it;
 - one short caption per beat, in sentence case; feeds play muted, so the captions carry it;
 - the cursor moves only with a cause, and rests on empty surface;
 - the poster is the decision moment, the frame that tells the story alone;
@@ -81,15 +86,23 @@ How a good film reads, after Stageshow's guidance:
 
 ## Checks
 
-`report.json` and the command's output list what the film got wrong. Errors exit with status 1:
+`report.json` and the command's output list what the film got wrong. The camera is held to
+Stageshow's rules: more than one push-in, a push-in past 2x or faster than 1.1 s, more than three
+camera moves, or the cursor moving while the view moves are warnings. Errors exit with status 1:
 the page threw or logged an error, the cursor reached a target outside the frame, or nothing was
 marked `poster`. Warnings are for review: a click that moved what was clicked (the page shifted
 under the cursor), text under about 22 px at 1080 in a marked frame, a target the camera couldn't
 fit, a GIF over 15 MB or a film over 2 minutes 20 seconds. The
 browser test (`web/film.browser.test.js`) films a short take twice and checks the frames match.
 
+Checks find what can be measured; motion still needs eyes. Before a film goes out, read the
+motion strips, then give a fresh reviewer (a person, or an agent with no part in the film)
+Stageshow's `references/review.md` and `verify.md`, the marks, the sheet and the strips, and fix
+what they rank first. The shift and camera checks exist because a first review of stills missed a
+fast 2.6x zoom that only the motion showed.
+
 ## Credit
 
-The clock, the cursor's look and its travel and press timing are adapted from
+The clock, the named easing curves, the cursor's look and its travel and press timing are adapted from
 [Stageshow](https://github.com/benjitaylor/skills/tree/main/stageshow) (MIT, Copyright (c) 2026
 Benji Taylor); its license is in `third_party/licenses/stageshow-LICENSE.txt`.
