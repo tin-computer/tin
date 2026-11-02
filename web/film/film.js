@@ -58,6 +58,30 @@ const LET_GO = bezier([0.22, 1, 0.36, 1]);
 const RING = Math.round(0.55 * FPS);
 const RING_CURVE = bezier([0.25, 0.8, 0.25, 1]);
 
+// Where a camera's path ([centre x, centre y, width] a frame) sets off one way and comes back
+// within two seconds, by more than a tenth of its frame each way: a zig-zag.
+export function zigzags(lens) {
+  const found = [];
+  for (const [axis, name] of [[0, "side to side"], [1, "up and down"]]) {
+    // Runs of movement in one direction: where each starts and how far it goes.
+    const runs = [];
+    for (let n = 1; n < lens.length; n++) {
+      const step = lens[n][axis] - lens[n - 1][axis];
+      if (Math.abs(step) < 0.2) continue;
+      const last = runs.at(-1);
+      if (last?.sign === Math.sign(step)) last.travel += Math.abs(step);
+      else runs.push({sign: Math.sign(step), start: n, travel: Math.abs(step), width: lens[n][2]});
+    }
+    for (const [index, there] of runs.entries()) {
+      const back = runs[index + 1];
+      if (back && there.travel > there.width * 0.1 && back.travel > there.width * 0.1 && back.start - there.start < 2 * FPS) {
+        found.push({axis: name, at: there.start, there: Math.round(there.travel), back: Math.round(back.travel)});
+      }
+    }
+  }
+  return found;
+}
+
 class Director {
   // `page` is the stage, `app` the dashboard's frame in it. Everything the director works in
   // (frames, the cursor, rects) is in the stage's px; the screen sits `margin` in from its corner.
@@ -72,6 +96,7 @@ class Director {
     this.marks = {};
     this.hashes = [];
     this.trail = [];
+    this.lens = [];
     // Every trip the hand makes, for the path check.
     this.journeys = [];
     this.cursor = {x: 0, y: 0, visible: false, pressAt: null, releaseAt: null};
@@ -206,6 +231,7 @@ class Director {
     this.travelling = true;
     this.aim = box;
     this.journeys.push({from, to: end, start: this.n, end: this.n + frames, click: false, label: JSON.stringify(target).slice(0, 60)});
+    this.goal = end;
     await this.run(() => {
       i++;
       const t = reach(i / frames);
@@ -335,6 +361,12 @@ class Director {
     }
   }
 
+  judgeLens() {
+    for (const zig of zigzags(this.lens)) {
+      this.warn(`The camera zig-zags ${zig.axis} at ${(zig.at / FPS).toFixed(1)}s: ${zig.there}px one way, then ${zig.back}px back.`);
+    }
+  }
+
   // Stageshow's camera rules, read once the film has played.
   judgeCamera() {
     const pushes = this.moves.filter(move => move.zoom > 1.02);
@@ -366,6 +398,13 @@ class Director {
   // Back to a camera that moves only when told.
   still() { this.follower = null; }
 
+  // Tell a following camera what else it must keep in frame for now, as a director frames a beat
+  // before it happens: say, where a panel is about to open. Rects or selectors; nothing to clear.
+  async look(targets) {
+    if (!this.follower) return;
+    this.follower.look = targets ? await Promise.all([].concat(targets).map(target => this.rect(target))) : [];
+  }
+
   async track() {
     const follow = this.follower;
     const {width: out, height: tall, band} = this.size;
@@ -376,9 +415,13 @@ class Director {
       return {x: left, y: top, width: Math.max(...boxes.map(box => box.x + box.width)) - left, height: Math.max(...boxes.map(box => box.y + box.height)) - top};
     };
     // What must show: the hand, and anything the film named (a toast, say). What it would like to
-    // show: every mark still on screen, when it fits beside them at this zoom.
+    // show: every mark still on screen, when it fits beside them at this zoom. A film knows where
+    // the hand is going, so on a trip the camera looks at where it will land, as an operator who
+    // knows the script would, and never chases it out and back.
     const must = [];
-    if (this.cursor.visible) must.push({x: this.cursor.x - 20, y: this.cursor.y - 20, width: 40, height: 40});
+    const hand = this.travelling && this.goal ? this.goal : this.cursor;
+    if (this.cursor.visible) must.push({x: hand.x - 20, y: hand.y - 20, width: 40, height: 40});
+    must.push(...(follow.look || []));
     if (follow.attention.length) {
       const seen = await this.app.evaluate(selectors => selectors.map(selector => {
         const element = document.querySelector(selector);
@@ -551,8 +594,10 @@ class Director {
     const picture = await this.page.screenshot({clip, type: "png"});
     const strip = await this.page.screenshot({clip: this.strip, type: "png"});
     this.hashes.push(crypto.createHash("sha1").update(picture).update(strip).digest("hex").slice(0, 12));
-    // Where the hand was, in the picture's own terms (0 to 1 across and down), for the path check.
     const shown = this.picture;
+    // Where the camera looked, for the zig-zag check.
+    this.lens.push([shown.x + shown.width / 2, shown.y + shown.height / 2, shown.width].map(value => Math.round(value * 10) / 10));
+    // Where the hand was, in the picture's own terms (0 to 1 across and down), for the path check.
     this.trail.push(state.cursor.visible ? [(state.cursor.x - shown.x) / shown.width, (state.cursor.y - shown.y) / shown.height] : null);
     this.last = {picture, band: strip};
     await this.sink(picture, strip);
@@ -758,6 +803,7 @@ export async function shoot(film, {format = "4:5", theme = film.theme || "dark",
     director.caption(null);
     director.judgeCamera();
     director.judgeHand();
+    director.judgeLens();
     director.judgeText();
     await context.close();
 

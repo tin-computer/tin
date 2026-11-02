@@ -5,7 +5,7 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import test from "node:test";
-import {shoot, stage, FORMATS} from "./film/film.js";
+import {shoot, stage, zigzags, FORMATS} from "./film/film.js";
 import * as people from "./film/films/people-requests.js";
 
 const short = play => ({name: "short", now: people.now, timezone: people.timezone, world: people.world, play});
@@ -131,6 +131,14 @@ test("a margin sets the screen as a window on the backdrop, with room for the ba
   assert.equal(viewport.width, 1520);
   // A frame as wide as the room still has the band's height under it.
   assert.ok(viewport.height >= room.height + FORMATS["16:9"].band * (room.width / FORMATS["16:9"].width));
+});
+
+test("a camera that goes out and comes straight back is a zig-zag; one that settles is not", () => {
+  const path = moves => moves.flatMap(([from, to, frames]) => Array.from({length: frames}, (_, i) => [from + ((to - from) * (i + 1)) / frames, 300, 1000]));
+  // Out to the right after an entering hand, then back left to where it was going.
+  assert.deepEqual(zigzags(path([[500, 700, 15], [700, 300, 20]])).map(zig => zig.axis), ["side to side"]);
+  // One move, a long rest, then another the other way: two beats, not a zig-zag.
+  assert.deepEqual(zigzags(path([[500, 700, 15], [700, 700, 90], [700, 300, 20]])), []);
 });
 
 test("the caption band sits below the dashboard's screen", () => {

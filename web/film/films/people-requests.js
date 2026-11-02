@@ -113,7 +113,8 @@ export async function play(f) {
   // covering it or the status next to it: wide, past it over the empty notes; tall, before it.
   f.caption("Every score comes with its reason.");
   // Wide, from here the camera follows the hand, and any toast that opens.
-  if (f.wide) f.follow({zoom: 1.6, attention: [".toast.is-visible"]});
+  // Wide, from here the camera follows the hand, and the toast and the person panel when they open.
+  if (f.wide) f.follow({zoom: 1.6, attention: [".toast.is-visible", "#person-panel > header"]});
   await f.move(`${row("p-daniel")} td.is-fit`, {to: f.wide ? [0.95, 0.12] : [0.25, 0.3]});
   await f.hold(2);
   await f.mark("reason");
@@ -129,6 +130,8 @@ export async function play(f) {
 
   // Anyone else, by hand: two of the people not connected yet. The bar takes the header row.
   f.caption("Pick anyone else to ask.");
+  // Wide, the camera frames the two boxes and the header row, where Send will be, at once.
+  await f.look([".people-table thead", '[data-people-pick="p-chloe"]', '[data-people-pick="p-lea"]']);
   await f.click('[data-people-pick="p-chloe"]', {to: [0.85, 0.85]});
   await f.hold(0.3);
   await f.click('[data-people-pick="p-lea"]', {to: [0.85, 0.85]});
@@ -140,6 +143,7 @@ export async function play(f) {
   await f.hold(0.3);
   await f.mark("poster");
   await f.click(".people-picked-send", {to: [0.97, 0.3]});
+  await f.look(null);
   await f.ready(".toast.is-visible");
   await f.hold(0.2);
   for (const [index, id] of ["p-chloe", "p-lea"].entries()) await f.highlight(`${row(id)} td.is-linkedin`, {hold: 1.4, delay: index * 0.07});
@@ -150,15 +154,24 @@ export async function play(f) {
   await f.hold(0.2);
 
   // Open Chloé while her request waits, so the cut changes only what time changed. Tall, her
-  // panel covers the screen and the frame takes its head.
+  // panel covers the screen and the frame takes its head. Wide, the camera frames her name and
+  // where her panel will open before the hand sets off, so it moves once.
+  if (f.wide) {
+    const panel = await f.app.evaluate(() => parseFloat(getComputedStyle(document.documentElement).getPropertyValue("--spine-panel-width")) || 420);
+    const side = {x: f.margin.left + f.screen.width - panel, y: f.margin.top, width: panel, height: 150};
+    await f.look([`${row("p-chloe")} td.is-name`, side]);
+  }
   await f.click(`${row("p-chloe")} td.is-name`, {to: [0.86, 0.55]});
   await f.ready("#person-panel .person-section:last-of-type");
   if (!f.wide) await f.camera({x: 0, y: 0, width: f.screen.width, height: 1}, {cut: true, pad: 0, valign: "top"});
   await f.hold(0.1);
-  // The hand rests in the panel's head, past Open on LinkedIn: the head never moves, whatever
-  // the cut changes below it.
-  const link = await f.rect("#person-panel .person-panel-linkedin");
-  await f.move({x: link.x + link.width + 36, y: link.y + link.height * 0.6, width: 1, height: 1});
+  // Tall, the hand rests in the panel's head, past Open on LinkedIn: the head never moves,
+  // whatever the cut changes below it. Wide, the hand stays on her name, which nothing covers,
+  // and the camera holds her row and her panel together across the cut.
+  if (!f.wide) {
+    const link = await f.rect("#person-panel .person-panel-linkedin");
+    await f.move({x: link.x + link.width + 36, y: link.y + link.height * 0.6, width: 1, height: 1});
+  }
   await f.hold(0.7);
 
   // They accept: behind the cut time passes, the toast closes and Chloé's request is accepted.
@@ -173,6 +186,7 @@ export async function play(f) {
     await f.ready("#person-panel .person-section:last-of-type");
     await f.hold(0.5);
   }, {caption: "They accept. You start the conversation."});
+  await f.look(null);
   await f.highlight(await panelRow(f, LINKEDIN_FIELD), {hold: f.wide ? 5 : 3.6, pad: 0, over: true});
   if (await f.shows(ACCEPTED)) await f.highlight(await panelRow(f, ACCEPTED), {hold: 3.5, delay: 0.1, pad: 0, over: true});
   await f.hold(1.3);

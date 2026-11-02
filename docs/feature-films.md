@@ -52,7 +52,10 @@ There are two ways to frame a film, as in Screen Studio:
   stays above the frame.
 - **Follow.** The film opens on the whole window, centred with the same padding on every side.
   From `f.follow()` the camera eases in to one zoom and keeps centring on the cursor, plus what
-  the film names (`attention`, such as a toast). Marks pull the frame towards them when they fit
+  the film names (`attention`, such as a toast). A film knows where the hand is going, so on a
+  trip the camera aims at where it will land, never chasing it out and back. `f.look(targets)`
+  frames a beat before it happens, such as a row and where its panel will open, so the camera
+  moves once; `f.look(null)` lets go. Marks pull the frame towards them when they fit
   beside the cursor. A critically damped spring moves it, and a dead zone holds it still while
   the action stays in the middle of the frame. It opens out only as far as what must show needs.
   Near the window's edge it keeps centring, up to `overshoot` (30%) of the frame past the edge,
@@ -115,7 +118,7 @@ and `play(f)`. `people-requests.js` is the example.
 | `f.begin()`, `f.end()` | Fades in from the band's ground (from 85%, so the first frame isn't dark) and out to it. |
 | `f.shows(selector)` | Whether the target is on screen and on top: not scrolled out of its panel or covered. |
 | `f.mark(name)` | Keeps the frame just shot for the sheet. `poster` is required. |
-| `f.follow({zoom, attention, overshoot})`, `f.still()` | Starts and stops the following camera (above). |
+| `f.follow({zoom, attention, overshoot})`, `f.still()`, `f.look(targets)` | Starts and stops the following camera, and tells it what a beat will need in frame (above). |
 | `f.app`, `f.page` | The dashboard's frame and the stage, for anything the director doesn't cover. |
 | `f.world`, `f.wide` | The served world, to move it on behind a cut; whether the format is wide. |
 
@@ -146,7 +149,8 @@ camera moves, or the cursor moving while the view moves are warnings. Errors exi
 the page threw or logged an error, the cursor reached a target outside the frame, or nothing was
 marked `poster`. Warnings are for review: a click that moved what was clicked (the page shifted
 under the cursor), a hand that steps aside and comes most of the way back (a detour of more than
-80 px and 40% from a plain move, not a press), a crop that cuts a word or control in a marked frame, text under about 22 px
+80 px and 40% from a plain move, not a press), a camera that zig-zags (out and back within two
+seconds, by a tenth of its frame each way), a crop that cuts a word or control in a marked frame, text under about 22 px
 at 1080 in a marked frame (said once per film, smallest first, leaving out text a panel covers
 or a window clips), a target the camera couldn't fit, a GIF over
 15 MB or a film over 2 minutes 20 seconds. The browser test (`web/film.browser.test.js`) films a
