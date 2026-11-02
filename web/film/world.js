@@ -15,12 +15,13 @@ export function clock(now) {
 }
 
 // One person as the People API lists them. `fit` is Tin's score, `icp` the profile it matched.
-export function person(id, name, headline, {icp = null, fit = null, reason = "", relationship = "none", touch = null, notes = [], events = [], customer = false, at}) {
+export function person(id, name, headline, {icp = null, fit = null, reason = "", relationship = "none", related = null, touch = null, notes = [], events = [], customer = false, at}) {
   const scored = {by: "engagers", at, stale: false, stale_reason: null, definition: "strategy/ICP.md", previous: null};
   const fields = {
     icp: {value: icp, reason, ...scored},
     icp_fit: {value: fit, reason, ...scored},
-    linkedin_relationship: {value: relationship, reason: "", ...scored, definition: ""},
+    // `related` says which run last read the relationship and when, if not the scoring read.
+    linkedin_relationship: {value: relationship, reason: "", ...scored, definition: "", ...(related || {})},
   };
   if (customer) fields.customer = {value: "yes", reason: "", ...scored, by: "you", definition: ""};
   return {

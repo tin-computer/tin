@@ -77,6 +77,18 @@ export function installOverlay(screen) {
     const page = getComputedStyle(document.body);
     const ground = page.backgroundColor;
     const ink = page.color;
+    // The band continues whatever ground the picture ends on (a panel's canvas, the page), so it
+    // never reads as a lighter strip under a darker surface.
+    const foot = {x: frame.x + frame.width / 2, y: frame.y + (size.height - (state.band || 0)) * (frame.width / size.width) - 2};
+    let bandGround = ground;
+    for (const element of document.elementsFromPoint(foot.x, foot.y)) {
+      if (element.closest("[data-film-overlay]")) continue;
+      const color = getComputedStyle(element).backgroundColor;
+      if (color && color !== "transparent" && !/rgba\([^)]*,\s*0\)$/.test(color)) {
+        bandGround = color;
+        break;
+      }
+    }
     Object.assign(root.style, {left: `${frame.x}px`, top: `${frame.y}px`, width: `${frame.width}px`, height: `${frame.height}px`});
     Object.assign(parts.stage.style, {width: `${size.width}px`, height: `${size.height}px`, transform: `scale(${1 / k})`});
     const unit = Math.min(size.width, size.height);
@@ -84,7 +96,7 @@ export function installOverlay(screen) {
     Object.assign(parts.fade.style, {background: ground, opacity: String(state.fade || 0)});
 
     const band = state.band || 0;
-    Object.assign(parts.band.style, {height: `${band}px`, background: ground, display: band ? "grid" : "none", padding: `0 ${Math.round(unit * 0.08)}px`});
+    Object.assign(parts.band.style, {height: `${band}px`, background: bandGround, display: band ? "grid" : "none", padding: `0 ${Math.round(unit * 0.08)}px`});
     const caption = state.caption || {};
     parts.caption.textContent = caption.text || "";
     Object.assign(parts.caption.style, {
@@ -94,7 +106,7 @@ export function installOverlay(screen) {
     });
 
     parts.marks.innerHTML = (state.highlights || []).map(mark => {
-      const inset = 4;
+      const inset = 0;
       return `<i style="left:${(mark.x - frame.x) * k - inset}px;top:${(mark.y - frame.y) * k - inset}px;width:${mark.width * k + inset * 2}px;height:${mark.height * k + inset * 2}px;opacity:${mark.opacity}"></i>`;
     }).join("");
 

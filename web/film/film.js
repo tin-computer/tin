@@ -261,10 +261,21 @@ class Director {
   hide() { this.cursor.visible = false; }
 
   // One soft pass over what just changed: it washes in, holds and fades, while the film goes on.
-  async highlight(target, {hold = 1.1, delay = 0} = {}) {
-    const box = await this.rect(target);
+  // `pad` (CSS px) grows the mark around its target; a table cell's own padding keeps it inside.
+  async highlight(target, {hold = 1.1, delay = 0, pad = -3} = {}) {
+    const found = await this.rect(target);
+    const box = {x: found.x - pad, y: found.y - pad, width: found.width + pad * 2, height: found.height + pad * 2};
     const mark = {box, start: this.n + (delay ? seconds(delay) : 0), hold: seconds(hold)};
     this.highlights.push(mark);
+  }
+
+  // The film opens out of the band's ground, so a feed that loops comes back the way it left.
+  async begin({fade = 0.35} = {}) {
+    let i = 0;
+    const frames = seconds(fade);
+    const out = bezier("settle");
+    this.ending = 1;
+    await this.run(() => (this.ending = 1 - out(++i / frames)) <= 0);
   }
 
   // The film ends on a fade to the band's ground, picture, cursor and caption together, so a feed
@@ -343,7 +354,8 @@ class Director {
       const closing = current.end === null ? 1 : Math.min(1, (current.end - n) / 5);
       caption = {text: current.text, opacity: Math.min(opening, closing), rise: 1 - ease(opening)};
     }
-    this.ripples = this.ripples.filter(ripple => n - ripple.start < 17);
+    // A click's ring is short: the thing pressed may be gone a moment later.
+    this.ripples = this.ripples.filter(ripple => n - ripple.start < 11);
     caption.opacity *= 1 - this.ending;
     const highlights = this.highlights.map(mark => {
       const age = n - mark.start;
@@ -355,7 +367,7 @@ class Director {
       frame: this.frame, size: this.size, band: this.size.band, caption, fade: Math.max(this.fade, this.ending), highlights,
       // The cursor goes with the picture through a cut or the ending, never floating on the dark.
       cursor: {...this.cursor, opacity: 1 - Math.max(this.fade, this.ending)},
-      ripples: this.ripples.map(ripple => ({x: ripple.x, y: ripple.y, progress: ease((n - ripple.start) / 16)})),
+      ripples: this.ripples.map(ripple => ({x: ripple.x, y: ripple.y, progress: ease((n - ripple.start) / 10)})),
     };
   }
 }
