@@ -62,6 +62,33 @@ test("a click that moves the page under the cursor is reported", {timeout: 18000
   assert.ok(report.issues.warnings.some(line => /h1.* moved it \d+px: the page shifted under the cursor/.test(line)), report.issues.warnings);
 });
 
+test("the page sees the pointer only where the hand stops", {timeout: 180000}, async () => {
+  const row = '.people-table tr[data-person="p-daniel"]';
+  let crossed = false;
+  let arrived = false;
+  await take(short(async f => {
+    await f.camera([".people-view h1", ".people-table thead", ".people-table tbody tr:nth-child(-n+4)"], {cut: true});
+    await f.move(`${row} td.is-name`);
+    // Every frame, whether a score's reason card is open.
+    f.tracks.add(async () => {
+      crossed ||= await f.page.locator(".people-hover").isVisible();
+      return false;
+    });
+    // Across Daniel's score to the far end of his row: nothing opens on the way.
+    await f.move(`${row} td.is-linkedin`);
+    await f.hold(0.3);
+    const passing = crossed;
+    // Onto the score: its card opens.
+    await f.move(`${row} td.is-fit`);
+    await f.hold(0.3);
+    arrived = await f.page.locator(".people-hover").isVisible();
+    crossed = passing;
+    await f.mark("poster");
+  }));
+  assert.equal(crossed, false);
+  assert.equal(arrived, true);
+});
+
 // After Stageshow's motion rules: one push-in per story, within 2x and no faster than 1.1s, and the
 // cursor holds still while the view moves.
 test("a camera that breaks Stageshow's rules is reported", {timeout: 180000}, async () => {

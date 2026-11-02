@@ -61,6 +61,9 @@ class Director {
     this.fade = 0;
     this.ending = 0;
     this.highlights = [];
+    this.travelling = false;
+    // Text under the smallest size, by what it says: the least size and the marks it shows at.
+    this.small = new Map();
     this.inside = null;
     this.frame = {x: 0, y: 0, width: screen.width, height: screen.width * size.height / size.width};
     this.last = null;
@@ -134,8 +137,9 @@ class Director {
     await this.run(track, wait);
   }
 
-  // The cursor travels in a shallow arc, as a hand does (after Stageshow's act.move), and the real
-  // pointer follows it, so hovers happen.
+  // The cursor travels in a shallow arc, as a hand does (after Stageshow's act.move). The page
+  // sees the pointer only where the hand stops: it leaves as the trip starts and arrives with it,
+  // so a hover ends when the hand moves off and nothing it passes over lights up.
   async move(target, {to = [0.5, 0.5], duration} = {}) {
     if (this.cameraMoving) this.warn(`The cursor moves toward ${JSON.stringify(target)} while the camera moves; Stageshow holds the cursor still while the view moves.`);
     const box = await this.rect(target);
@@ -154,12 +158,14 @@ class Director {
     const length = Math.hypot(end.x - from.x, end.y - from.y) || 1;
     const normal = {x: -(end.y - from.y) / length, y: (end.x - from.x) / length};
     let i = 0;
+    this.travelling = true;
     await this.run(() => {
       i++;
       const t = ease(i / frames);
       const lift = Math.sin(Math.PI * t) * bow;
       this.cursor.x = lerp(from.x, end.x, t) + normal.x * lift;
       this.cursor.y = lerp(from.y, end.y, t) + normal.y * lift;
+      if (i >= frames) this.travelling = false;
       return i >= frames;
     });
     this.within(end, target);
@@ -242,9 +248,20 @@ class Director {
     await this.run(() => (this.fade = into(++i / frames)) >= 1);
     this.recording = false;
     await change();
+    // What was marked before the cut belongs to the picture that went.
+    this.highlights = this.highlights.filter(mark => mark.start > this.n);
     this.recording = true;
     i = 0;
     await this.run(() => (this.fade = 1 - out(++i / frames)) <= 0);
+  }
+
+  // Text too small to read on a phone, said once for the film, smallest first.
+  judgeText() {
+    if (!this.small.size) return;
+    const floor = Math.round(SMALLEST_TEXT * Math.min(this.size.width, this.size.height));
+    const runs = [...this.small].sort((a, b) => a[1].size - b[1].size);
+    const marks = [...new Set(runs.flatMap(([, item]) => [...item.marks]))];
+    this.warn(`${runs.length} text runs are under ${floor}px (at ${marks.join(", ")}): ${runs.slice(0, 5).map(([text, item]) => `“${text}” ${item.size}px`).join(", ")}.`);
   }
 
   // Stageshow's camera rules, read once the film has played.
@@ -261,21 +278,23 @@ class Director {
   hide() { this.cursor.visible = false; }
 
   // One soft pass over what just changed: it washes in, holds and fades, while the film goes on.
-  // `pad` (CSS px) grows the mark around its target; a table cell's own padding keeps it inside.
-  async highlight(target, {hold = 1.1, delay = 0, pad = -3} = {}) {
+  // `pad` (CSS px, or [across, down]) grows the mark around its target; a table cell's own
+  // padding keeps it inside. `over` draws it above the app's panels.
+  async highlight(target, {hold = 1.1, delay = 0, pad = -3, over = false} = {}) {
     const found = await this.rect(target);
-    const box = {x: found.x - pad, y: found.y - pad, width: found.width + pad * 2, height: found.height + pad * 2};
+    const [across, down] = Array.isArray(pad) ? pad : [pad, pad];
+    const box = {x: found.x - across, y: found.y - down, width: found.width + across * 2, height: found.height + down * 2, over};
     const mark = {box, start: this.n + (delay ? seconds(delay) : 0), hold: seconds(hold)};
     this.highlights.push(mark);
   }
 
   // The film opens out of the band's ground, so a feed that loops comes back the way it left.
-  async begin({fade = 0.35} = {}) {
+  async begin({fade = 0.35, from = 0.15} = {}) {
     let i = 0;
     const frames = seconds(fade);
     const out = bezier("settle");
-    this.ending = 1;
-    await this.run(() => (this.ending = 1 - out(++i / frames)) <= 0);
+    this.ending = from;
+    await this.run(() => (this.ending = from * (1 - out(++i / frames))) <= 0);
   }
 
   // The film ends on a fade to the band's ground, picture, cursor and caption together, so a feed
@@ -293,8 +312,22 @@ class Director {
     this.marks[name] = {frame: this.n - 1, png: this.last};
     const sizes = await this.page.evaluate(([frame, scale]) => window.__film.textSizes(frame, scale), [this.picture, 1 / this.scale]);
     const floor = SMALLEST_TEXT * Math.min(this.size.width, this.size.height);
-    const small = sizes.filter(item => item.size < floor);
-    if (small.length) this.warn(`At ${name}, ${small.length} text runs are under ${Math.round(floor)}px: ${small.slice(0, 4).map(item => `“${item.text}” ${item.size}px`).join(", ")}.`);
+    for (const item of sizes.filter(run => run.size < floor)) {
+      const seen = this.small.get(item.text);
+      this.small.set(item.text, {size: Math.min(item.size, seen?.size ?? Infinity), marks: new Set([...(seen?.marks || []), name])});
+    }
+  }
+
+  // Whether a target is on screen and on top at its middle: not scrolled out of its panel or
+  // covered by another layer.
+  async shows(selector) {
+    return this.page.evaluate(target => {
+      const element = document.querySelector(target);
+      const box = element?.getBoundingClientRect();
+      if (!box?.width || !box.height) return false;
+      const hit = document.elementsFromPoint(box.left + box.width / 2, box.top + box.height / 2).find(item => !item.closest("[data-film-overlay], [data-film-layer]"));
+      return Boolean(hit && element.contains(hit));
+    }, selector);
   }
 
   // ---- the machinery ----
@@ -328,11 +361,13 @@ class Director {
   warn(text) { if (!this.issues.warnings.includes(text)) this.issues.warnings.push(text); }
   error(text) { if (!this.issues.errors.includes(text)) this.issues.errors.push(text); }
 
-  // One frame: the tracks move on, the pointer goes where the cursor is drawn, time moves 1/30 s,
-  // every request lands, the overlay is drawn and the frame is shot.
+  // One frame: the tracks move on, the pointer goes where the cursor is drawn (on a trip, onto the
+  // caption band, which hides it from the page), time moves 1/30 s, every request lands, the
+  // overlay is drawn and the frame is shot.
   async shoot() {
     for (const track of [...this.tracks]) if (await track()) this.tracks.delete(track);
-    if (this.cursor.visible) await this.page.mouse.move(this.cursor.x, this.cursor.y);
+    const band = {x: this.frame.x + this.frame.width / 2, y: this.frame.y + (this.size.height - this.size.band / 2) * this.scale};
+    if (this.cursor.visible) await this.page.mouse.move(...(this.travelling ? [band.x, band.y] : [this.cursor.x, this.cursor.y]));
     await this.page.evaluate(() => window.__film.clock.step(1));
     await quiet(this.page);
     if (!this.recording) return;
@@ -501,6 +536,7 @@ export async function shoot(film, {format = "4:5", theme = film.theme || "dark",
     await film.play(director);
     director.caption(null);
     director.judgeCamera();
+    director.judgeText();
     await context.close();
 
     issues.blocked = [...new Set(issues.blocked)];

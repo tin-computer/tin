@@ -37,15 +37,18 @@ export function installOverlay(screen) {
   const POINTER = '<svg viewBox="10 7 13 19" width="100%" height="100%" fill="none"><g transform="translate(10 7)"><path d="m6.148 18.473 1.863-1.003 1.615-.839-2.568-4.816h4.332l-11.379-11.408v16.015l3.316-3.221z" fill="#fff"/><path d="m6.431 17 1.765-.941-2.775-5.202h3.604l-8.025-8.043v11.188l2.53-2.442z" fill="#000"/></g></svg>';
 
   let root = null;
+  let marks = null;
   const parts = {};
   function mount() {
-    if (root?.isConnected) return;
+    if (root?.isConnected && marks?.isConnected) return;
+    root?.remove();
+    marks?.remove();
     root = document.createElement("div");
     root.setAttribute("data-film-overlay", "");
     root.innerHTML = `<div data-film-stage>
       <div data-film-fade></div>
       <div data-film-band><p data-film-caption></p></div>
-      <div data-film-marks></div>
+      <div data-film-foot></div>
       <div data-film-ripples></div>
       <div data-film-cursor>${POINTER}</div>
     </div>`;
@@ -56,15 +59,30 @@ export function installOverlay(screen) {
       [data-film-stage] { position: absolute; left: 0; top: 0; transform-origin: 0 0; }
       [data-film-fade], [data-film-band] { position: absolute; left: 0; right: 0; }
       [data-film-fade] { top: 0; bottom: 0; }
-      [data-film-band] { bottom: 0; display: grid; place-items: center; }
+      /* The band takes the pointer while the hand travels, so nothing in the page is hovered. */
+      [data-film-band] { bottom: 0; display: grid; place-items: center; pointer-events: auto; }
       [data-film-caption] { margin: 0; text-align: center; text-wrap: balance; font-family: var(--sans, sans-serif); font-weight: 400; font-feature-settings: "kern"; }
       [data-film-cursor] { position: absolute; left: 0; top: 0; transform-origin: 0 0; }
       [data-film-ripples] > i { position: absolute; border-radius: 50%; border-style: solid; }
-      [data-film-marks] > i { position: absolute; border-radius: 6px; background: rgb(var(--accent-deep-rgb, 153 175 98) / 16%); box-shadow: inset 0 0 0 1.5px rgb(var(--accent-deep-rgb, 153 175 98) / 55%); }
+      [data-film-foot] { position: absolute; left: 0; right: 0; pointer-events: none; }
     `;
     root.append(css);
     document.documentElement.append(root);
-    for (const name of ["stage", "fade", "band", "caption", "marks", "ripples", "cursor"]) parts[name] = root.querySelector(`[data-film-${name}]`);
+    for (const name of ["stage", "fade", "band", "caption", "foot", "ripples", "cursor"]) parts[name] = root.querySelector(`[data-film-${name}]`);
+    // Highlights live in the page itself, among the app's own layers: under its toasts, over its
+    // panel when they mark something in it, and inside what fades.
+    marks = document.createElement("div");
+    marks.setAttribute("data-film-layer", "");
+    marks.innerHTML = '<div data-film-marks="under"></div><div data-film-marks="over"></div>';
+    const markCss = document.createElement("style");
+    markCss.textContent = `
+      [data-film-marks] { position: absolute; left: 0; top: 0; width: 0; height: 0; pointer-events: none; }
+      [data-film-marks="under"] { z-index: 9; }
+      [data-film-marks="over"] { z-index: 61; }
+      [data-film-marks] > i { position: absolute; border-radius: 5px; background: rgb(var(--accent-deep-rgb, 153 175 98) / 16%); box-shadow: inset 0 0 0 1.5px rgb(var(--accent-deep-rgb, 153 175 98) / 55%); }
+    `;
+    marks.append(markCss);
+    document.body.append(marks);
   }
 
   // state: {frame: {x, y, width, height} in CSS px of the viewport, size: {width, height} in
@@ -78,13 +96,15 @@ export function installOverlay(screen) {
     const ground = page.backgroundColor;
     const ink = page.color;
     // The band continues whatever ground the picture ends on (a panel's canvas, the page), so it
-    // never reads as a lighter strip under a darker surface.
+    // never reads as a lighter strip under a darker surface. Only a solid ground counts: a row's
+    // hover tint would leave the band see-through.
     const foot = {x: frame.x + frame.width / 2, y: frame.y + (size.height - (state.band || 0)) * (frame.width / size.width) - 2};
     let bandGround = ground;
     for (const element of document.elementsFromPoint(foot.x, foot.y)) {
-      if (element.closest("[data-film-overlay]")) continue;
+      if (element.closest("[data-film-overlay], [data-film-layer]")) continue;
       const color = getComputedStyle(element).backgroundColor;
-      if (color && color !== "transparent" && !/rgba\([^)]*,\s*0\)$/.test(color)) {
+      const alpha = /^rgba\(/.test(color) ? Number(color.split(",").at(-1).replace(")", "")) : color.startsWith("rgb(") ? 1 : 0;
+      if (alpha >= 0.99) {
         bandGround = color;
         break;
       }
@@ -105,10 +125,18 @@ export function installOverlay(screen) {
       transform: `translateY(${(caption.rise || 0) * unit * 0.02}px)`,
     });
 
-    parts.marks.innerHTML = (state.highlights || []).map(mark => {
-      const inset = 0;
-      return `<i style="left:${(mark.x - frame.x) * k - inset}px;top:${(mark.y - frame.y) * k - inset}px;width:${mark.width * k + inset * 2}px;height:${mark.height * k + inset * 2}px;opacity:${mark.opacity}"></i>`;
-    }).join("");
+    // In the body's own coordinates: it is the screen, the box these sit in, and it may scroll.
+    // The fade covers them as it covers the page.
+    const body = document.body.getBoundingClientRect();
+    const dx = document.body.scrollLeft - body.left, dy = document.body.scrollTop - body.top;
+    for (const layer of ["under", "over"]) {
+      marks.querySelector(`[data-film-marks="${layer}"]`).innerHTML = (state.highlights || []).filter(mark => (mark.over ? "over" : "under") === layer)
+        .map(mark => `<i style="left:${mark.x + dx}px;top:${mark.y + dy}px;width:${mark.width}px;height:${mark.height}px;opacity:${mark.opacity}"></i>`).join("");
+    }
+
+    // Where the frame cuts through the page above the band, the page fades into it.
+    const footHeight = band ? Math.round(unit * 0.035) : 0;
+    Object.assign(parts.foot.style, {bottom: `${band}px`, height: `${footHeight}px`, background: `linear-gradient(to bottom, transparent, ${bandGround})`});
 
     const cursor = state.cursor || {};
     const tall = unit * 0.05;
@@ -147,14 +175,19 @@ export function installOverlay(screen) {
     return {x, y, width: Math.max(...boxes.map(box => box.right)) - x, height: Math.max(...boxes.map(box => box.bottom)) - y};
   };
 
-  // The smallest text in frame, at output size: every visible text run the camera shows.
+  // The smallest text in frame, at output size: every visible text run the camera shows, leaving
+  // out what a panel covers. Everything is made hit-testable for the check, so a toast counts.
   film.textSizes = (frame, scale) => {
     const found = [];
+    const probe = document.createElement("style");
+    probe.textContent = "* { pointer-events: auto !important; }";
+    document.documentElement.append(probe);
+    const top = (x, y) => document.elementsFromPoint(x, y).find(element => !element.closest("[data-film-overlay], [data-film-layer]"));
     const walker = document.createTreeWalker(document.body, NodeFilter.SHOW_TEXT);
     for (let node = walker.nextNode(); node; node = walker.nextNode()) {
       const text = node.textContent.trim();
       const element = node.parentElement;
-      if (!text || !element || element.closest("[data-film-overlay]")) continue;
+      if (!text || !element || element.closest("[data-film-overlay], [data-film-layer]")) continue;
       const style = getComputedStyle(element);
       if (style.visibility === "hidden" || Number(style.opacity) === 0) continue;
       const range = document.createRange();
@@ -163,8 +196,11 @@ export function installOverlay(screen) {
       if (!box.width || !box.height) continue;
       const inside = box.left >= frame.x - 1 && box.top >= frame.y - 1 && box.right <= frame.x + frame.width + 1 && box.bottom <= frame.y + frame.height + 1;
       if (!inside) continue;
+      const over = top(box.left + box.width / 2, box.top + box.height / 2);
+      if (over && !element.contains(over) && !over.contains(element)) continue;
       found.push({text: text.slice(0, 60), size: Math.round(parseFloat(style.fontSize) * scale * 10) / 10});
     }
+    probe.remove();
     return found;
   };
 }

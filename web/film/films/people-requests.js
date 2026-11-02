@@ -8,10 +8,10 @@ export const title = "People and connection requests";
 // A Wednesday morning in Berlin.
 export const now = "2026-10-28T08:20:00Z";
 export const timezone = "Europe/Berlin";
-// Tall: a 600-wide screen (the compact grid, text at about 23px in the frame), taller than the
-// picture so the top menu stays out of frame. Wide: a screen exactly as tall as the main column's
-// frame, so toasts at its foot are in the picture and the list ends whole.
-export const screens = {"4:5": {width: 600, height: 760}, "16:9": {width: 1440, height: 572}};
+// Each screen ends where the picture does, so a toast at its foot sits clear of the edge. Tall: a
+// 600-wide screen (the compact grid, text at about 23px in the frame), its top menu above the
+// picture. Wide: the main column's frame.
+export const screens = {"4:5": {width: 600, height: 739}, "16:9": {width: 1440, height: 572}};
 
 const ICP_AGENCIES = "ICP 1: agency founders";
 const ICP_FINANCE = "ICP 2: studio finance leads";
@@ -47,14 +47,14 @@ function people() {
       notes: [{id: "n-grace", body: "Customer since August.", by: "you", mine: true, at: at("20d", "10:00"), edited: false}]}),
     person("p-hannah", "Hannah Kim", "Co-founder, Brightcut Films", {icp: ICP_AGENCIES, fit: 0.86, at: scored, reason: "Co-founder of a video studio; posted about chasing late invoices.", touch: reacted("1d", "21:04"),
       notes: [note("n-hannah", "Asked about pricing under the post.")]}),
-    person("p-maya", "Maya Lindqvist", "Managing partner, Lindqvist & Co", {icp: ICP_AGENCIES, fit: 0.84, at: scored, relationship: "connected", reason: "Runs a branding agency with monthly client retainers.", touch: viewed("1d", "07:55")}),
     person("p-sofia", "Sofia Marchetti", "Head of Finance, Patchbay", {icp: ICP_FINANCE, fit: 0.79, at: scored, reason: "Owns billing at a 40-person creative agency.", touch: reacted("2d", "16:20", "Mira"),
-      notes: [note("n-sofia", "Intro from Maya.")]}),
-    person("p-tomas", "Tomás Rivera", "Founder, Rivera Digital", {icp: ICP_AGENCIES, fit: 0.74, at: scored, relationship: "pending", reason: "Runs a small web agency that bills by the month.", touch: {kind: "invited", at: at("4d", "10:15"), who: "you"}}),
+      notes: [note("n-sofia", "Intro from Grace.")]}),
     chloe(),
     person("p-lea", "Lea Fischer", "Freelance brand designer", {icp: ICP_AGENCIES, fit: 0.52, at: scored, reason: "Works alone and bills a handful of clients.", touch: reacted("4d", "11:30"),
       notes: [note("n-lea", "Met at the studio founders' dinner in Berlin.")]}),
     person("p-nina", "Nina Weiss", "Studio manager, Kiln", {icp: ICP_FINANCE, fit: 0.47, at: scored, reason: "Runs operations at a product studio; billing sits with the founders.", touch: viewed("3d", "13:10")}),
+    // Asked by hand last week, from under the line.
+    person("p-tomas", "Tomás Rivera", "Founder, Rivera Digital", {icp: ICP_AGENCIES, fit: 0.44, at: scored, relationship: "pending", reason: "Runs a two-person web shop with a few clients.", touch: {kind: "invited", at: at("4d", "10:15"), who: "you"}}),
     person("p-jonas", "Jonas Weber", "Engineer, Quanta Labs", {icp: "none", fit: 0.12, at: scored, reason: "An engineer at a product company, not an agency.", touch: reacted("5d", "20:10")}),
     person("p-ben", "Ben Carter", "Building something new", {at: scored, reason: "Tin couldn't score this person this time; the next run tries again.", touch: viewed("5d", "08:20")}),
   ];
@@ -77,8 +77,14 @@ export function world() {
 }
 
 const row = id => `.people-table tr[data-person="${id}"]`;
+// A row of the person panel, edge to edge: its own top rule and the next row's, so a mark sits on
+// the panel's lines instead of doubling them.
+const panelRow = async (f, selector) => {
+  const box = await f.rect(selector);
+  return {x: box.x - 12, y: box.y, width: box.width + 24, height: box.height + 1};
+};
 
-// Directed after Stageshow's motion rules (references/motion.md), and two fresh-eye reviews: one
+// Directed after Stageshow's motion rules (references/motion.md) and three fresh-eye reviews: one
 // framing per format, held the whole film; every beat a real change with a cause; the cursor moves
 // only to act, aims off the words it clicks and stays where it pressed; marks on what changed; a
 // cut changes only what time changed; the film fades in and out of the band's ground.
@@ -116,50 +122,44 @@ export async function play(f) {
   await f.hold(0.3);
   await f.click('[data-people-pick="p-lea"]', {to: [0.85, 0.85]});
   await f.hold(0.5);
-  await f.move(".people-picked-send", {to: [0.9, 0.86]});
+  await f.move(".people-picked-send", {to: [0.94, 0.55]});
   await f.hold(0.9);
   await f.mark("poster");
-  // The cursor stays where it pressed.
-  await f.click(".people-picked-send", {to: [0.9, 0.86]});
+  // What Send does, as its toast says it. The cursor stays where it pressed.
+  await f.click(".people-picked-send", {to: [0.94, 0.55]});
+  f.caption("Tin sends them one at a time, from your LinkedIn.");
   await f.ready(".toast.is-visible");
   await f.hold(0.2);
-  for (const [index, id] of ["p-chloe", "p-lea"].entries()) await f.highlight(`${row(id)} td.is-linkedin`, {hold: 1.2, delay: index * 0.07});
-  await f.hold(1.6);
+  for (const [index, id] of ["p-chloe", "p-lea"].entries()) await f.highlight(`${row(id)} td.is-linkedin`, {hold: 1.4, delay: index * 0.07});
+  await f.hold(2.4);
   await f.mark("queued");
 
-  // Tall: open Chloé while her request waits, by the header and down her name, crossing no
-  // score; the cursor rests beside Open on LinkedIn. The cut then changes only what time changed.
-  if (!f.wide) {
-    await f.move(".people-table thead th.is-name", {to: [0.85, 0.5]});
-    await f.click(`${row("p-chloe")} td.is-name`, {to: [0.86, 0.55]});
-    await f.ready("#person-panel .person-section:last-of-type");
-    await f.camera({x: 0, y: 0, width: f.screen.width, height: 1}, {cut: true, pad: 0, valign: "top"});
-    await f.move("#person-panel .person-panel-linkedin", {to: [1.12, 0.55]});
-    await f.hold(0.8);
-  }
+  // Open Chloé while her request waits, so the cut changes only what time changed. Tall, her
+  // panel covers the screen and the frame takes its head.
+  await f.click(`${row("p-chloe")} td.is-name`, {to: [0.97, 0.55]});
+  await f.ready("#person-panel .person-section:last-of-type");
+  if (!f.wide) await f.camera({x: 0, y: 0, width: f.screen.width, height: 1}, {cut: true, pad: 0, valign: "top"});
+  await f.hold(1);
 
   // They accept: behind the cut time passes, the toast closes and Chloé's request is accepted.
   await f.cut(async () => {
     await f.hold(3.6);
     const list = f.world.people;
     list[list.findIndex(item => item.id === "p-chloe")] = chloe(true);
-    if (f.wide) {
-      await f.open("/people", {ready: `${row("p-chloe")} td.is-linkedin`});
-    } else {
-      // The panel reads her again, as a reload would.
-      await f.page.keyboard.press("Escape");
-      await f.open("/people", {ready: `${row("p-chloe")} td.is-name`});
-      await f.page.click(`${row("p-chloe")} td.is-name`, {position: {x: 4, y: 4}});
-      await f.ready("#person-panel .person-section:last-of-type");
-    }
+    // The panel reads her again, as a reload would.
+    await f.page.keyboard.press("Escape");
+    await f.open("/people", {ready: `${row("p-chloe")} td.is-name`});
+    await f.page.click(`${row("p-chloe")} td.is-name`, {position: {x: 4, y: 4}});
+    await f.ready("#person-panel .person-section:last-of-type");
   }, {caption: "They accept. You start the conversation."});
-  if (f.wide) {
-    await f.highlight(`${row("p-chloe")} td.is-linkedin`, {hold: 4});
-  } else {
-    await f.highlight("#person-panel .person-section:first-of-type > div.person-field:nth-of-type(3) .person-field-line", {hold: 4, pad: 8});
-    await f.highlight("#person-panel .person-section:last-of-type div.person-event:first-of-type", {hold: 4, delay: 0.1, pad: 8});
-  }
-  await f.hold(2.6);
+  await f.highlight(await panelRow(f, "#person-panel .person-section:first-of-type > div.person-field:nth-of-type(3)"), {hold: 3.6, pad: 0, over: true});
+  const accepted = "#person-panel .person-section:last-of-type div.person-event:first-of-type";
+  if (await f.shows(accepted)) await f.highlight(await panelRow(f, accepted), {hold: 3.5, delay: 0.1, pad: 0, over: true});
+  if (f.wide) await f.highlight(`${row("p-chloe")} td.is-linkedin`, {hold: 3.5, delay: 0.1});
+  await f.hold(1.2);
+  // The next move is yours.
+  await f.move("#person-panel .person-panel-linkedin", {to: [0.6, 0.9]});
+  await f.hold(2.2);
   await f.mark("accepted");
   await f.end();
 }
