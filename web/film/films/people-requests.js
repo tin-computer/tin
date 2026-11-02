@@ -151,7 +151,7 @@ export async function play(f) {
   await f.gone(".toast.is-visible");
   await f.hold(0.2);
 
-  // Open Chloé while her request waits, so the cut changes only what time changed. Tall, her
+  // Open Chloé while her request waits, so what changes next happens in her record. Tall, her
   // panel covers the screen and the frame takes its head. Wide, the camera frames her name and
   // where her panel will open before the hand sets off, so it moves once.
   if (f.wide) {
@@ -161,7 +161,12 @@ export async function play(f) {
   }
   await f.click(`${row("p-chloe")} td.is-name`, {to: [0.86, 0.55]});
   await f.ready("#person-panel .person-section:last-of-type");
-  if (!f.wide) await f.camera({x: 0, y: 0, width: f.screen.width, height: 1}, {cut: true, pad: 0, valign: "top"});
+  // Tall, once her panel has landed over the list, the camera glides up to its head, the hand
+  // still.
+  if (!f.wide) {
+    await f.hold(0.35);
+    await f.camera({x: 0, y: 0, width: f.screen.width, height: 1}, {pad: 0, valign: "top", duration: 0.8, curve: "house"});
+  }
   await f.hold(0.1);
   // Tall, the hand rests in the panel's head, past Open on LinkedIn: the head never moves,
   // whatever the cut changes below it. Wide, the hand stays on her name, which nothing covers,
