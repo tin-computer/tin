@@ -65,7 +65,7 @@ and `play(f)`. `people-requests.js` is the example.
 | --- | --- |
 | `f.camera(target, {pad, duration, curve, cut, text, inside})` | Frames the target (a selector, a list of selectors, or a rect). `text` frames only the words inside, `inside` keeps the frame within a region (`f.inside` sets a default). 1.1 s on Stageshow's camera curve by default (`house` for a slow, longer move); never zooms past the device scale. |
 | `f.move(target, {to})` | The cursor travels in a shallow arc. The page sees the pointer only where the hand stops: a hover ends as it moves off, and nothing it passes over lights up. |
-| `f.click(target)` | Moves, rests, presses: the cursor dips, a ring spreads and the page gets a real click. |
+| `f.click(target)` | Moves, rests, presses: the cursor dips, a ring spreads and the page gets a real click. The ring fades early if what was pressed goes. The cursor is a pointing hand wherever the page's own cursor would be a pointer. |
 | `f.type(text)`, `f.scroll(container, target)` | Real keystrokes; an eased scroll of a container. |
 | `f.caption(text)` | One caption at a time; the last fades out and the next rises in. `null` clears it. |
 | `f.hold(seconds)`, `f.ready(selector)` | Lets time pass; waits (filmed) until something is visible. |
@@ -110,6 +110,6 @@ fast 2.6x zoom that only the motion showed.
 
 ## Credit
 
-The clock, the named easing curves, the cursor's look and its travel and press timing are adapted from
+The clock, the named easing curves, the arrow and the pointing hand, and the cursor's travel and press timing are adapted from
 [Stageshow](https://github.com/benjitaylor/skills/tree/main/stageshow) (MIT, Copyright (c) 2026
 Benji Taylor); its license is in `third_party/licenses/stageshow-LICENSE.txt`.
