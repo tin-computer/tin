@@ -116,10 +116,11 @@ tools share `people_service.People`.
   - With the viewer's own LinkedIn reading on the project, a tick lane before the name lets
     them choose people to ask to connect (Paper REQ-A). Only people they can ask get a box:
     someone with a LinkedIn profile ID, not a customer, not their connection or invitee, and
-    not asked by them before. Ticking shows a bar above the grid with the schedule and "Send N
-    requests", which queues them at once (see [connection requests](linkedin-requests.md)).
-    When nobody on the list has a box, a line in the bar's place says why (REQ-A4): "Everyone
-    on this list is already connected to you or invited".
+    not asked by them before. Ticking lays a bar over the grid's pinned header row (PJ-A) with
+    the schedule and "Send N requests", which queues them at once (see
+    [connection requests](linkedin-requests.md)). When nobody on the list has a box, a line in
+    the footer beside the count says why (REQ-A4): "Everyone on this list is already connected
+    to you or invited". Neither moves the grid.
 - **Score hover:** the reason, the score, the ICP and when it was set.
   - A score computed under an earlier `strategy/ICP.md`, or by an earlier version of the
     scoring, reads "old": the view compares each value's `definition` with the current one
