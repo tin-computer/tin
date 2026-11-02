@@ -36,18 +36,27 @@ Each format lands in `.films/<film>/<format>/`:
 The caption band sits under the picture, outside the dashboard's screen: the window is a band's
 height taller than the screen, and the body is the box fixed elements sit in, so toasts, hover
 cards and the person panel never end up under a caption. A film can pick its screen per format
-(`screens`); end it where the picture ends, so a toast at its foot sits clear of the edge. Where
-the picture cuts through a list, the list fades into the band.
+(`screens`).
 
 The film sits on a backdrop: black under the dark theme, white under the light one. The caption
-band and the fades are the backdrop too. A screen with a `margin` (`{width, height, margin}`)
-becomes a window on it, as in Screen Studio: rounded corners and a hairline edge (and a soft
-shadow on white), with the margin as room the camera may frame. That lets a push-in close on
-something at the screen's edge, such as the person panel, and show the backdrop past it rather
-than stop short. End such a window on a row line; the margin under it runs into the band. A
-push-in needs the pixels: set `deviceScale` per format high enough that the closest frame is
-still drawn at one device pixel per output pixel (the 16:9 People film uses 3). The cursor and
-its ring grow with the camera, as if filmed with the screen.
+band and the fades are the backdrop too. A screen with a `margin` (`{width, height, margin}`, a
+number or `{top, right, bottom, left}`) becomes a window on it, as in Screen Studio: rounded
+corners where both sides sit on the backdrop, a hairline edge, a short soft shadow on white, and
+the margin as room the camera may frame. That lets a push-in close on something at the screen's
+edge, such as the person panel, and show the backdrop past it rather than stop short. A push-in
+needs the pixels: set `deviceScale` per format high enough that the closest frame is still drawn
+at one device pixel per output pixel (the 16:9 People film uses 3).
+
+Framing follows Stageshow's `references/framing.md`:
+
+- **Hard edges.** Nothing fades into the backdrop; the window's edges and the picture's crops
+  are clean lines.
+- **One gutter.** Every edge of the window that shows sits the same distance in, a full gutter
+  or well past. The People film's wide window has 56 px on its top, right and foot.
+- **Crop only filler.** No word, field or button is cut by the picture's edge: the camera nudges
+  each framing (up to `nudge`, 24 px by default, never above `floor`) to a clean line. End a
+  window just under its last row's words, so a toast near its foot covers whole rows.
+- **What opens stays in frame.** A toast, a card or a panel the story opens shows whole.
 
 ## How it works
 
@@ -73,9 +82,9 @@ and `play(f)`. `people-requests.js` is the example.
 
 | Call | What it does |
 | --- | --- |
-| `f.camera(target, {pad, duration, curve, cut, text, inside})` | Frames the target (a selector, a list of selectors, or a rect). `text` frames only the words inside, `inside` keeps the frame within a region (`f.inside` sets a default). 1.1 s on Stageshow's camera curve by default (`house` for a slow, longer move); never zooms past the device scale. |
+| `f.camera(target, {pad, duration, curve, cut, text, inside, nudge, floor})` | Frames the target (a selector, a list of selectors, or a rect). `text` frames only the words inside, `inside` keeps the frame within a region (`f.inside` sets a default). 1.1 s on Stageshow's camera curve by default (`house` for a slow, longer move); never zooms past the device scale, and moves up to `nudge` px so no edge cuts a word. |
 | `f.move(target, {to})` | The cursor travels in a shallow arc. The page sees the pointer only where the hand stops: a hover ends as it moves off, and nothing it passes over lights up. |
-| `f.click(target)` | Moves, rests, presses: the cursor dips, a ring spreads and the page gets a real click. The ring fades early if what was pressed goes. The cursor is a pointing hand wherever the page's own cursor would be a pointer. |
+| `f.click(target)` | Moves, rests, presses: the cursor dips to 0.9 in 80 ms and lets go over 260 ms, and the page gets a real click. A film exporting `ripple = true` also sends Stageshow's soft ring out, for when clicks must read at a glance; it fades early if what was pressed goes. |
 | `f.type(text)`, `f.scroll(container, target)` | Real keystrokes; an eased scroll of a container. |
 | `f.caption(text)` | One caption at a time; the last fades out and the next rises in. `null` clears it. |
 | `f.hold(seconds)`, `f.ready(selector)` | Lets time pass; waits (filmed) until something is visible. |
@@ -85,6 +94,11 @@ and `play(f)`. `people-requests.js` is the example.
 | `f.shows(selector)` | Whether the target is on screen and on top: not scrolled out of its panel or covered. |
 | `f.mark(name)` | Keeps the frame just shot for the sheet. `poster` is required. |
 | `f.world`, `f.wide` | The served world, to move it on behind a cut; whether the format is wide. |
+
+The cursor is Stageshow's: macOS's arrow and pointing hand at its large size (1.5x), drawn in the
+page's own pixels with a soft shadow, so it keeps its proportion to the interface and grows with
+the camera. It is the hand over a link, button or box the page points at and the arrow everywhere
+else, a clickable row included, and a change of kind crosses over in 0.2 s.
 
 How a good film reads, after Stageshow's guidance (its `references/motion.md` and `framing.md`):
 
@@ -107,8 +121,9 @@ Stageshow's rules: more than one push-in, a push-in past 2x or faster than 1.1 s
 camera moves, or the cursor moving while the view moves are warnings. Errors exit with status 1:
 the page threw or logged an error, the cursor reached a target outside the frame, or nothing was
 marked `poster`. Warnings are for review: a click that moved what was clicked (the page shifted
-under the cursor), text under about 22 px at 1080 in a marked frame (said once per film,
-smallest first, leaving out text a panel covers), a target the camera couldn't fit, a GIF over
+under the cursor), a crop that cuts a word or control in a marked frame, text under about 22 px
+at 1080 in a marked frame (said once per film, smallest first, leaving out text a panel covers
+or a window clips), a target the camera couldn't fit, a GIF over
 15 MB or a film over 2 minutes 20 seconds. The browser test (`web/film.browser.test.js`) films a
 short take twice and checks the frames match, and checks each of these rules.
 

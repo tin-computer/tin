@@ -2,7 +2,7 @@
 // the fade at a cut. The recorder sets every value each frame (nothing here animates by itself),
 // and the layer is designed in output pixels, then scaled onto the part of the page in frame.
 // Injected as an init script, so the function must stay self-contained.
-export function installOverlay({screen, margin = 0, backdrop = "#000", theme = "dark"}) {
+export function installOverlay({screen, margin = {top: 0, right: 0, bottom: 0, left: 0}, backdrop = "#000", theme = "dark"}) {
   const film = window.__film = window.__film || {};
 
   // The dashboard's screen: the body, a band's height shorter than the window and, with a margin,
@@ -14,8 +14,14 @@ export function installOverlay({screen, margin = 0, backdrop = "#000", theme = "
   const edge = theme === "light" ? "0 0 0 1px rgb(0 0 0 / 9%), 0 2px 10px rgb(0 0 0 / 7%)" : "0 0 0 1px rgb(255 255 255 / 9%)";
   // The dashboard's rail is a viewport tall (100svh), and the window is taller than the screen, so
   // it is held to the screen's height or its footer would run under the band.
+  // A corner is rounded where both its sides sit on the backdrop; an edge that runs off the picture
+  // stays square.
+  const m = margin;
+  const round = (a, b) => (a && b ? "12px" : "0");
+  const framed = m.top || m.right || m.bottom || m.left;
   fit.textContent = `html { overflow: hidden !important; background: ${backdrop} !important; }
-    body { position: relative; margin: ${margin}px !important; width: ${screen.width}px; height: ${screen.height}px !important; min-height: 0 !important; overflow: auto !important; transform: translateZ(0); scrollbar-width: none; ${margin ? `border-radius: 12px; box-shadow: ${edge};` : ""} }
+    body { position: relative; margin: ${m.top}px ${m.right}px ${m.bottom}px ${m.left}px !important; width: ${screen.width}px; height: ${screen.height}px !important; min-height: 0 !important; overflow: auto !important; transform: translateZ(0); scrollbar-width: none;
+      ${framed ? `border-radius: ${round(m.top, m.left)} ${round(m.top, m.right)} ${round(m.bottom, m.right)} ${round(m.bottom, m.left)}; box-shadow: ${edge};` : ""} }
     .app-shell { min-height: ${screen.height}px !important; }
     .rail { height: ${screen.height}px !important; }
     @media (max-width: 1100px) { .rail { height: var(--top-menu-height) !important; } }`;
@@ -45,6 +51,9 @@ export function installOverlay({screen, margin = 0, backdrop = "#000", theme = "
 
   let root = null;
   let marks = null;
+  // Frames drawn, and the cursor's kind: which glyph shows, which it came from and when.
+  let frames = 0;
+  const glyph = {kind: "pointer", from: null, at: -100};
   const parts = {};
   function mount() {
     if (root?.isConnected && marks?.isConnected) return;
@@ -55,7 +64,6 @@ export function installOverlay({screen, margin = 0, backdrop = "#000", theme = "
     root.innerHTML = `<div data-film-stage>
       <div data-film-fade></div>
       <div data-film-band><p data-film-caption></p></div>
-      <div data-film-foot></div>
       <div data-film-ripples></div>
       <div data-film-cursor="pointer">${POINTER}</div>
       <div data-film-cursor="hand">${HAND}</div>
@@ -71,12 +79,11 @@ export function installOverlay({screen, margin = 0, backdrop = "#000", theme = "
       [data-film-band] { bottom: 0; display: grid; place-items: center; pointer-events: auto; }
       [data-film-caption] { margin: 0; text-align: center; text-wrap: balance; font-family: var(--sans, sans-serif); font-weight: 400; font-feature-settings: "kern"; }
       [data-film-cursor] { position: absolute; left: 0; top: 0; transform-origin: 0 0; }
-      [data-film-ripples] > i { position: absolute; border-radius: 50%; border-style: solid; }
-      [data-film-foot] { position: absolute; left: 0; right: 0; pointer-events: none; }
+      [data-film-ripples] > i { position: absolute; border-radius: 50%; }
     `;
     root.append(css);
     document.documentElement.append(root);
-    for (const name of ["stage", "fade", "band", "caption", "foot", "ripples"]) parts[name] = root.querySelector(`[data-film-${name}]`);
+    for (const name of ["stage", "fade", "band", "caption", "ripples"]) parts[name] = root.querySelector(`[data-film-${name}]`);
     parts.pointer = root.querySelector('[data-film-cursor="pointer"]');
     parts.hand = root.querySelector('[data-film-cursor="hand"]');
     // Highlights live in the page itself, among the app's own layers: under its toasts, over its
@@ -97,21 +104,24 @@ export function installOverlay({screen, margin = 0, backdrop = "#000", theme = "
 
   // state: {frame: {x, y, width, height} in CSS px of the viewport, size: {width, height} in
   // output px, band (output px), caption: {text, opacity, rise}, cursor: {x, y, visible,
-  // pressed} in CSS px, ripples: [{x, y, progress}], fade (0 to 1), zoom}.
+  // press (its scale)} in CSS px, ripples: [{x, y, progress, fading}], fade (0 to 1)}.
   film.render = state => {
     mount();
     const {frame, size} = state;
     const k = size.width / frame.width;
     const ink = getComputedStyle(document.body).color;
-    Object.assign(root.style, {left: `${frame.x}px`, top: `${frame.y}px`, width: `${frame.width}px`, height: `${frame.height}px`});
-    Object.assign(parts.stage.style, {width: `${size.width}px`, height: `${size.height}px`, transform: `scale(${1 / k})`});
+    // A few px past the frame on every side: the shot is clipped to half pixels, and close in, the
+    // page must not peek out under the band or past the edge.
+    const spill = 4;
+    Object.assign(root.style, {left: `${frame.x - spill}px`, top: `${frame.y - spill}px`, width: `${frame.width + spill * 2}px`, height: `${frame.height + spill * 2}px`});
+    Object.assign(parts.stage.style, {left: `${spill}px`, top: `${spill}px`, width: `${size.width}px`, height: `${size.height}px`, transform: `scale(${1 / k})`});
     const unit = Math.min(size.width, size.height);
 
     // The band, the fades and the margin are all the backdrop.
-    Object.assign(parts.fade.style, {background: backdrop, opacity: String(state.fade || 0)});
+    Object.assign(parts.fade.style, {inset: `${-spill * k}px`, background: backdrop, opacity: String(state.fade || 0)});
 
     const band = state.band || 0;
-    Object.assign(parts.band.style, {height: `${band}px`, background: backdrop, display: band ? "grid" : "none", padding: `0 ${Math.round(unit * 0.08)}px`});
+    Object.assign(parts.band.style, {height: `${band + spill * k}px`, bottom: `${-spill * k}px`, left: `${-spill * k}px`, right: `${-spill * k}px`, background: backdrop, display: band ? "grid" : "none", padding: `0 ${Math.round(unit * 0.08) + spill * k}px ${spill * k}px`});
     const caption = state.caption || {};
     parts.caption.textContent = caption.text || "";
     Object.assign(parts.caption.style, {
@@ -129,38 +139,39 @@ export function installOverlay({screen, margin = 0, backdrop = "#000", theme = "
         .map(mark => `<i style="left:${mark.x + dx}px;top:${mark.y + dy}px;width:${mark.width}px;height:${mark.height}px;opacity:${mark.opacity}"></i>`).join("");
     }
 
-    // Where the frame cuts through the screen above the band, the screen fades into it, all the
-    // way before the edge, and more as more of the screen runs on below. Short enough to stay
-    // clear of a toast at the screen's foot (24px up).
-    const footHeight = band ? Math.round(Math.min(unit * 0.05, 22 * k)) : 0;
-    const pictureFoot = frame.y + (size.height - band) / k;
-    const below = margin + screen.height - pictureFoot;
-    Object.assign(parts.foot.style, {bottom: `${band}px`, height: `${footHeight}px`, background: `linear-gradient(to bottom, transparent, ${backdrop} 75%)`,
-      opacity: String(Math.max(0, Math.min(1, below / 22)))});
-
     // The hand over a control the page points at (a link, a button, a box), as Stageshow does;
-    // the arrow over everything else, a clickable row included.
+    // the arrow over everything else, a clickable row included. The cursor is drawn at macOS's
+    // size in the page's own pixels, Stageshow's large style (1.5x), so it grows with the camera
+    // as if filmed with the screen. A change of kind crosses over in 0.2 s: the new glyph grows
+    // from its hotspot as the old one shrinks into it.
     const cursor = state.cursor || {};
     const under = cursor.visible ? document.elementsFromPoint(cursor.x, cursor.y).find(element => !element.closest("[data-film-overlay], [data-film-layer]")) : null;
     const control = under?.closest("a[href], button, [role='button'], [role='tab'], input, label, select, summary");
-    const hand = Boolean(control && getComputedStyle(under).cursor === "pointer");
-    const tall = unit * 0.05 * (state.zoom || 1);
+    const kind = control && getComputedStyle(under).cursor === "pointer" ? "hand" : "pointer";
+    frames++;
+    if (kind !== glyph.kind) Object.assign(glyph, {kind, from: glyph.kind, at: frames});
+    const swap = Math.min(1, (frames - glyph.at) / 6);
+    const grown = swap * swap * (3 - 2 * swap);
     const at = `${(cursor.x - frame.x) * k}px, ${(cursor.y - frame.y) * k}px`;
-    const press = `scale(${cursor.pressed ? 0.9 : 1})`;
-    Object.assign(parts.pointer.style, {
-      width: `${tall * 13 / 19}px`, height: `${tall}px`, display: cursor.visible && !hand ? "block" : "none", opacity: String(cursor.opacity ?? 1),
-      transform: `translate(${at}) ${press}`,
-    });
-    // 32 units at 26/24 the arrow's scale; the fingertip is at (12, 4).
-    const unitPx = (tall / 19) * (26 / 24);
-    Object.assign(parts.hand.style, {
-      width: `${32 * unitPx}px`, height: `${32 * unitPx}px`, display: cursor.visible && hand ? "block" : "none", opacity: String(cursor.opacity ?? 1),
-      transformOrigin: `${12 * unitPx}px ${4 * unitPx}px`, transform: `translate(${at}) translate(${-12 * unitPx}px, ${-4 * unitPx}px) ${press}`,
-    });
+    // In page px: the arrow 13 by 19 units at 0.75 px a unit, the hand 32 units at 0.8125.
+    const LARGE = 1.5;
+    const sizes = {pointer: {unit: 0.75 * LARGE * k, width: 13, height: 19, hot: [0, 0]}, hand: {unit: 0.8125 * LARGE * k, width: 32, height: 32, hot: [12, 4]}};
+    for (const name of ["pointer", "hand"]) {
+      const {unit: u, width, height, hot} = sizes[name];
+      const share = name === glyph.kind ? grown : name === glyph.from ? 1 - grown : 0;
+      Object.assign(parts[name].style, {
+        width: `${width * u}px`, height: `${height * u}px`, display: cursor.visible && share > 0 ? "block" : "none",
+        opacity: String((cursor.opacity ?? 1) * share), transformOrigin: `${hot[0] * u}px ${hot[1] * u}px`,
+        transform: `translate(${at}) translate(${-hot[0] * u}px, ${-hot[1] * u}px) scale(${share * (cursor.press ?? 1)})`,
+        filter: `drop-shadow(0 ${1 * LARGE * k}px ${2 * LARGE * k}px rgba(0, 0, 0, 0.3))`,
+      });
+    }
 
+    // Stageshow's ring: 36 page px, a 1.5 px edge in the accent over a tenth of it, from a fifth of
+    // its size to all of it as it fades.
     parts.ripples.innerHTML = (state.ripples || []).map(ripple => {
-      const size = unit * 0.07 * (state.zoom || 1) * (0.2 + 0.8 * ripple.progress);
-      return `<i style="left:${(ripple.x - frame.x) * k - size / 2}px;top:${(ripple.y - frame.y) * k - size / 2}px;width:${size}px;height:${size}px;border-width:${Math.max(1.5, unit * 0.0025)}px;border-color:${ink};opacity:${(1 - ripple.progress) * 0.7 * (ripple.fading ?? 1)}"></i>`;
+      const size = 36 * k * (0.2 + 0.8 * ripple.progress);
+      return `<i style="left:${(ripple.x - frame.x) * k - size / 2}px;top:${(ripple.y - frame.y) * k - size / 2}px;width:${size}px;height:${size}px;border:${1.5 * k}px solid rgb(var(--accent-deep-rgb, 153 175 98));background:rgb(var(--accent-deep-rgb, 153 175 98) / 10%);opacity:${(1 - ripple.progress) * (ripple.fading ?? 1)}"></i>`;
     }).join("");
   };
 
@@ -168,6 +179,55 @@ export function installOverlay({screen, margin = 0, backdrop = "#000", theme = "
   film.hits = (selectors, x, y) => {
     const top = document.elementsFromPoint(x, y).find(element => !element.closest("[data-film-overlay], [data-film-layer]"));
     return Boolean(top?.closest([].concat(selectors).join(", ")));
+  };
+
+  // Every word and control on screen, as boxes: each line of text, each field and button. What
+  // a panel covers is left out.
+  const pieces = () => {
+    const probe = document.createElement("style");
+    probe.textContent = "* { pointer-events: auto !important; }";
+    document.documentElement.append(probe);
+    const shown = (element, box) => {
+      const style = getComputedStyle(element);
+      if (style.visibility === "hidden" || Number(style.opacity) === 0) return false;
+      const top = document.elementsFromPoint(box.left + box.width / 2, box.top + box.height / 2).find(item => !item.closest("[data-film-overlay], [data-film-layer]"));
+      // Drawn there only if the hit lands on it or inside it; an ancestor means it's clipped away.
+      return Boolean(top && element.contains(top));
+    };
+    const found = [];
+    const walker = document.createTreeWalker(document.body, NodeFilter.SHOW_TEXT);
+    for (let node = walker.nextNode(); node; node = walker.nextNode()) {
+      const text = node.textContent.trim();
+      const element = node.parentElement;
+      if (!text || !element || element.closest("[data-film-overlay], [data-film-layer]")) continue;
+      const range = document.createRange();
+      range.selectNodeContents(node);
+      for (const box of range.getClientRects()) if (box.width && box.height && shown(element, box)) found.push({text: text.slice(0, 40), box});
+    }
+    for (const element of document.body.querySelectorAll("input, button, select, textarea, [role=tab]")) {
+      const box = element.getBoundingClientRect();
+      if (box.width && box.height && shown(element, box)) found.push({text: element.getAttribute("aria-label") || element.textContent.trim().slice(0, 40) || element.tagName.toLowerCase(), box});
+    }
+    probe.remove();
+    return found;
+  };
+  const crosses = (a, b, at) => a < at - 0.5 && b > at + 0.5;
+  // Cut by the top or bottom edge, or by a side.
+  const byRows = (box, f) => box.right > f.x + 0.5 && box.left < f.x + f.width - 0.5 && (crosses(box.top, box.bottom, f.y) || crosses(box.top, box.bottom, f.y + f.height));
+  const bySides = (box, f) => box.bottom > f.y + 0.5 && box.top < f.y + f.height - 0.5 && (crosses(box.left, box.right, f.x) || crosses(box.left, box.right, f.x + f.width));
+  // What the picture's edges cut through.
+  film.sliced = picture => [...new Set(pieces().filter(({box}) => byRows(box, picture) || bySides(box, picture)).map(item => item.text))];
+  // The smallest move, up to `most` CSS px each way and never above `floor`, that leaves every
+  // word and control whole or wholly out; none if there is no such line.
+  film.clean = (frame, pictureHeight, room, most, floor) => {
+    const found = pieces();
+    const steps = [0];
+    for (let d = 1; d <= most; d++) steps.push(d, -d);
+    const at = (dx, dy) => ({x: frame.x + dx, y: frame.y + dy, width: frame.width, height: pictureHeight});
+    const fits = (dx, dy) => frame.x + dx >= -0.5 && frame.x + dx + frame.width <= room.width + 0.5 && frame.y + dy >= Math.max(0, floor) - 0.5 && frame.y + dy + pictureHeight <= room.height + 1;
+    const dy = steps.find(d => fits(0, d) && !found.some(({box}) => byRows(box, at(0, d)))) ?? 0;
+    const dx = steps.find(d => fits(d, dy) && !found.some(({box}) => bySides(box, at(d, dy)))) ?? 0;
+    return {dx, dy};
   };
 
   // Where something is on screen: the union of every match, in CSS px of the viewport. With
@@ -216,7 +276,7 @@ export function installOverlay({screen, margin = 0, backdrop = "#000", theme = "
       const inside = box.left >= frame.x - 1 && box.top >= frame.y - 1 && box.right <= frame.x + frame.width + 1 && box.bottom <= frame.y + frame.height + 1;
       if (!inside) continue;
       const over = top(box.left + box.width / 2, box.top + box.height / 2);
-      if (over && !element.contains(over) && !over.contains(element)) continue;
+      if (!over || !element.contains(over)) continue;
       found.push({text: text.slice(0, 60), size: Math.round(parseFloat(style.fontSize) * scale * 10) / 10});
     }
     probe.remove();

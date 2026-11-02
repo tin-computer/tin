@@ -30,11 +30,13 @@ export const FORMATS = {
 // screen than the picture lets the camera leave chrome (a top menu) out of the frame, and a margin
 // sets the screen as a window on the film's backdrop, as Screen Studio does, so the camera can
 // frame past its edge. The room is the window and its margin: everything the camera may show.
+// A margin is a number for every side, or {top, right, bottom, left}.
 export function stage(size, choice = size.screen) {
   const width = typeof choice === "object" ? choice.width : choice;
-  const margin = (typeof choice === "object" && choice.margin) || 0;
+  const given = (typeof choice === "object" && choice.margin) || 0;
+  const margin = typeof given === "number" ? {top: given, right: given, bottom: given, left: given} : {top: 0, right: 0, bottom: 0, left: 0, ...given};
   const height = typeof choice === "object" ? choice.height : Math.round((size.height - size.band) * (width / size.width));
-  const room = {width: width + margin * 2, height: height + margin * 2};
+  const room = {width: width + margin.left + margin.right, height: height + margin.top + margin.bottom};
   return {screen: {width, height}, margin, room, viewport: {width: room.width, height: Math.ceil(room.height + size.band * (room.width / size.width))}};
 }
 
@@ -47,10 +49,16 @@ const SMALLEST_TEXT = 0.02;
 const ease = t => (t < 0.5 ? 4 * t * t * t : 1 - (-2 * t + 2) ** 3 / 2);
 const lerp = (a, b, t) => a + (b - a) * t;
 const seconds = s => Math.max(1, Math.round(s * FPS));
+// Stageshow's cursor timing (kit/cursor.css): the press, its release, and the ring a click can
+// send out, 0.55 s on its own curve.
+const PRESS_IN = bezier([0, 0, 0.58, 1]);
+const LET_GO = bezier([0.22, 1, 0.36, 1]);
+const RING = Math.round(0.55 * FPS);
+const RING_CURVE = bezier([0.25, 0.8, 0.25, 1]);
 
 class Director {
-  constructor({page, format, size, screen, margin = 0, room = screen, deviceScale, served, issues}) {
-    Object.assign(this, {page, format, size, screen, margin, room, deviceScale, world: served, issues});
+  constructor({page, format, size, screen, margin = {top: 0, right: 0, bottom: 0, left: 0}, room = screen, deviceScale, served, issues, ripple = false}) {
+    Object.assign(this, {page, format, size, screen, margin, room, deviceScale, world: served, issues, ripple});
     this.wide = size.width > size.height;
     this.n = 0;
     this.recording = true;
@@ -59,7 +67,7 @@ class Director {
     this.ripples = [];
     this.marks = {};
     this.hashes = [];
-    this.cursor = {x: 0, y: 0, visible: false, pressed: false};
+    this.cursor = {x: 0, y: 0, visible: false, pressAt: null, releaseAt: null};
     // What moved when, for the camera rules and the motion strips.
     this.moves = [];
     this.events = [];
@@ -112,7 +120,9 @@ class Director {
   // `inside` (the director's default, or per call) keeps the frame within a region where it can,
   // so a close-up never ends halfway across a sidebar. After Stageshow's Camera: 1.1 s on its own
   // curve, and the report holds the film to one push-in, within 2x, with the cursor still.
-  async camera(target, {pad = 28, duration = 1.1, curve = "camera", cut = false, wait = true, align = "center", valign = "center", text = false, inside = this.inside} = {}) {
+  // The crop never cuts a word or a control: the frame moves by up to `nudge` CSS px to a clean
+  // line, never above `floor`.
+  async camera(target, {pad = 28, duration = 1.1, curve = "camera", cut = false, wait = true, align = "center", valign = "center", text = false, inside = this.inside, nudge = 24, floor = 0} = {}) {
     const box = await this.rect(target, text);
     const {width, height, band} = this.size;
     const room = height - band;
@@ -125,11 +135,15 @@ class Director {
     if (region && frame.width <= region.width) frame.x = Math.min(Math.max(region.x, frame.x), region.x + region.width - frame.width);
     const top = valign === "top" ? box.y - pad : box.y + box.height / 2 - (room * scale) / 2;
     frame.y = Math.max(0, Math.min(top, this.room.height - room * scale));
+    if (nudge) {
+      const shift = await this.page.evaluate(([frame, picture, room, nudge, top]) => window.__film.clean(frame, picture, room, nudge, top),
+        [frame, room * scale, this.room, nudge, floor]);
+      frame.x += shift.dx;
+      frame.y += shift.dy;
+    }
     if ((box.width + pad * 2) / width > scale + 1e-6 || (box.height + pad * 2) / room > scale + 1e-6) {
       this.warn(`The camera can't fit ${JSON.stringify(target)} in ${this.format}; it is cut.`);
     }
-    // The cursor and its ring grow with the camera, as if filmed with the screen.
-    this.base ??= frame.width;
     if (cut || !this.n) {
       this.frame = frame;
       // A click's ring belongs to the shot it was pressed in.
@@ -190,23 +204,24 @@ class Director {
     this.within(end, target);
   }
 
-  // Move, rest a moment, press: the drawn cursor dips and a ring spreads, and the page gets a
-  // real click at the same point.
+  // Move, rest a moment, press: the drawn cursor dips (in fast, let go softly, as Stageshow's
+  // does) and the page gets a real click at the same point. A film that asks for it (`ripple`)
+  // sends a soft ring out too, for when a click must read at a glance.
   async click(target, options) {
     await this.move(target, options);
     this.events.push({label: "click", start: this.n - 4, end: this.n + 14});
     await this.hold(0.12);
     const before = await this.page.evaluate(selectors => window.__film.rect(selectors), target);
-    this.cursor.pressed = true;
+    this.cursor.pressAt = this.n;
     await this.page.mouse.down();
     const ripple = {x: this.cursor.x, y: this.cursor.y, start: this.n, gone: null};
-    this.ripples.push(ripple);
+    if (this.ripple) this.ripples.push(ripple);
     await this.hold(0.1);
     await this.page.mouse.up();
-    this.cursor.pressed = false;
+    this.cursor.releaseAt = this.n;
     // The ring ends with what was pressed: once it is gone or covered at the press, it fades out.
-    if (typeof target === "string" || Array.isArray(target)) this.tracks.add(async () => {
-      if (ripple.gone !== null || this.n - ripple.start > 11) return true;
+    if (this.ripple && (typeof target === "string" || Array.isArray(target))) this.tracks.add(async () => {
+      if (ripple.gone !== null || this.n - ripple.start > RING) return true;
       const there = await this.page.evaluate(([selectors, x, y]) => window.__film.hits(selectors, x, y), [target, ripple.x, ripple.y]);
       if (!there) ripple.gone = this.n;
       return !there;
@@ -336,6 +351,8 @@ class Director {
   async mark(name) {
     if (!this.last) throw new Error(`Mark ${name} before any frame was shot.`);
     this.marks[name] = {frame: this.n - 1, png: this.last};
+    const cut = await this.page.evaluate(picture => window.__film.sliced(picture), this.picture);
+    if (cut.length) this.warn(`At ${name}, the crop cuts ${cut.slice(0, 3).map(text => `“${text}”`).join(", ")}.`);
     const sizes = await this.page.evaluate(([frame, scale]) => window.__film.textSizes(frame, scale), [this.picture, 1 / this.scale]);
     const floor = SMALLEST_TEXT * Math.min(this.size.width, this.size.height);
     for (const item of sizes.filter(run => run.size < floor)) {
@@ -420,7 +437,12 @@ class Director {
       caption = {text: current.text, opacity: Math.min(opening, closing), rise: 1 - ease(opening)};
     }
     // A click's ring is short, and shorter when the thing pressed goes.
-    this.ripples = this.ripples.filter(ripple => n - ripple.start < 11 && (ripple.gone === null || n - ripple.gone < 3));
+    this.ripples = this.ripples.filter(ripple => n - ripple.start < RING && (ripple.gone === null || n - ripple.gone < 3));
+    // The press: down to 0.9 in 80ms, back in 260ms, lifting like a finger.
+    const {pressAt, releaseAt} = this.cursor;
+    let press = 1;
+    if (pressAt !== null && (releaseAt === null || releaseAt < pressAt)) press = 1 - 0.1 * PRESS_IN(Math.min(1, (n - pressAt) / (0.08 * FPS)));
+    else if (releaseAt !== null) press = 0.9 + 0.1 * LET_GO(Math.min(1, (n - releaseAt) / (0.26 * FPS)));
     caption.opacity *= 1 - this.ending;
     const highlights = this.highlights.map(mark => {
       const age = n - mark.start;
@@ -431,8 +453,8 @@ class Director {
     return {
       frame: this.frame, size: this.size, band: this.size.band, caption, fade: Math.max(this.fade, this.ending), highlights,
       // The cursor goes with the picture through a cut or the ending, never floating on the dark.
-      cursor: {...this.cursor, opacity: 1 - Math.max(this.fade, this.ending)}, zoom: (this.base || this.frame.width) / this.frame.width,
-      ripples: this.ripples.map(ripple => ({x: ripple.x, y: ripple.y, progress: ease((n - ripple.start) / 10), fading: ripple.gone === null ? 1 : 1 - (n - ripple.gone) / 3})),
+      cursor: {x: this.cursor.x, y: this.cursor.y, visible: this.cursor.visible, press, opacity: 1 - Math.max(this.fade, this.ending)},
+      ripples: this.ripples.map(ripple => ({x: ripple.x, y: ripple.y, progress: RING_CURVE((n - ripple.start) / RING), fading: ripple.gone === null ? 1 : 1 - (n - ripple.gone) / 3})),
     };
   }
 }
@@ -553,7 +575,7 @@ export async function shoot(film, {format = "4:5", theme = film.theme || "dark",
     await page.goto(`${served.base}${world.start || "/system"}?project=project`, {waitUntil: "domcontentloaded"});
     await page.evaluate(() => document.fonts.ready);
 
-    const director = new Director({page, format, size, screen, margin, room, deviceScale, served, issues});
+    const director = new Director({page, format, size, screen, margin, room, deviceScale, served, issues, ripple: Boolean(film.ripple)});
     director.sink = async png => {
       if (!encoder) return;
       if (!encoder.child.stdin.write(png)) await new Promise(resolve => encoder.child.stdin.once("drain", resolve));

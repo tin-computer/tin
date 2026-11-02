@@ -111,8 +111,10 @@ test("a camera that breaks Stageshow's rules is reported", {timeout: 180000}, as
 test("a margin sets the screen as a window on the backdrop, with room for the band", () => {
   const {screen, margin, room, viewport} = stage(FORMATS["16:9"], {width: 1440, height: 534, margin: 40});
   assert.deepEqual(screen, {width: 1440, height: 534});
-  assert.equal(margin, 40);
+  assert.deepEqual(margin, {top: 40, right: 40, bottom: 40, left: 40});
   assert.deepEqual(room, {width: 1520, height: 614});
+  // Or per side: a full-bleed screen with a gutter only under it.
+  assert.deepEqual(stage(FORMATS["4:5"], {width: 600, height: 713, margin: {bottom: 25}}).room, {width: 600, height: 738});
   assert.equal(viewport.width, 1520);
   // A frame as wide as the room still has the band's height under it.
   assert.ok(viewport.height >= room.height + FORMATS["16:9"].band * (room.width / FORMATS["16:9"].width));

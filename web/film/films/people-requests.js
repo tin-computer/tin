@@ -8,12 +8,15 @@ export const title = "People and connection requests";
 // A Wednesday morning in Berlin.
 export const now = "2026-10-28T08:20:00Z";
 export const timezone = "Europe/Berlin";
-// Tall: a 600-wide screen (the compact grid, text at about 23px in the frame), its top menu above
-// the picture and its foot where the picture ends, so a toast there sits clear of the edge. Wide:
-// a window on the backdrop, framed from the main column to past its right edge, top and foot.
-// Pixels per CSS pixel: the wide film pushes in about 1.7x past a frame already 1.6x the screen.
+// After Stageshow's framing rules: hard edges, one gutter on every edge of the window that shows,
+// and no word cut. Tall: a 600-wide screen (the compact grid, text at about 23px in the frame),
+// sides to the picture's edges, its top menu above the frame. Wide: a window on the backdrop,
+// framed from the main column out past its top-right corner, the same gutter on the top, the
+// right and the foot. Both end just under the last row's words: the toast, 24px up, then covers
+// whole rows and lets none half show beneath it.
+export const screens = {"4:5": {width: 600, height: 703, margin: {bottom: 37}}, "16:9": {width: 1440, height: 486, margin: 56}};
+// Pixels per CSS pixel: the wide film pushes in about 1.7x past a frame already 1.5x the screen.
 export const deviceScale = {"4:5": 2, "16:9": 3};
-export const screens = {"4:5": {width: 600, height: 739}, "16:9": {width: 1440, height: 534, margin: 40}};
 
 const ICP_AGENCIES = "ICP 1: agency founders";
 const ICP_FINANCE = "ICP 2: studio finance leads";
@@ -89,14 +92,15 @@ const panelRow = async (f, selector) => {
 // Directed after Stageshow's motion rules (references/motion.md) and three fresh-eye reviews: one
 // framing per format, held the whole film; every beat a real change with a cause; the cursor moves
 // only to act, aims off the words it clicks and stays where it pressed; marks on what changed; a
-// cut changes only what time changed; the film fades in and out of the band's ground.
+// cut changes only what time changed; the film fades in from and out to its backdrop.
 export async function play(f) {
   // The content column: tall, below the top menu, the list running off the foot of the frame;
   // wide, clear of the sidebar and out past the window's edge onto the backdrop.
   const main = await f.rect("#main");
   const header = await f.rect(".people-view h1");
-  if (f.wide) await f.camera({x: main.x, y: 0, width: main.width + f.margin, height: 1}, {cut: true, pad: 0, valign: "top"});
-  else await f.camera({x: main.x, y: header.y - 22, width: main.width, height: 1}, {cut: true, pad: 0, valign: "top"});
+  if (f.wide) await f.camera({x: main.x, y: 0, width: main.width + f.margin.right, height: 1}, {cut: true, pad: 0, valign: "top"});
+  // Two px below the top menu, so its border can't show along the top edge.
+  else await f.camera({x: main.x, y: header.y - 20, width: main.width, height: 1}, {cut: true, pad: 0, valign: "top"});
   f.caption("Everyone who engaged, ranked by your ICP.");
   await f.begin();
   await f.hold(2);
@@ -173,11 +177,14 @@ export async function play(f) {
   // Wide, the film's one push-in, the hand still: onto her panel and out past the window's edge
   // onto the backdrop. The frame opens just before the search field, past the end of every ICP
   // and tab label, so it cuts no words, and starts below the window's rounded corner.
+  // Past the edge it keeps the opening's gutter, as the picture sees it.
   if (f.wide) {
     const panel = await f.rect("#person-panel");
     const search = await f.rect(".people-view .search-field");
     const left = search.x - 8;
-    await f.camera({x: left, y: panel.y + 12, width: panel.x + panel.width + f.margin - left, height: 1}, {pad: 0, align: "left", valign: "top"});
+    const gutter = f.margin.right / f.frame.width;
+    const width = (panel.x + panel.width - left) / (1 - gutter);
+    await f.camera({x: left, y: panel.y + 12, width, height: 1}, {pad: 0, align: "left", valign: "top", floor: panel.y + 12});
   }
   await f.hold(0.5);
   // The next move is yours: a short hop onto the link's arrow, crossing none of its words.
