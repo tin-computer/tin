@@ -13,7 +13,6 @@ When something in it doesn't fit Tin, tell Ege, who passes it on.
 |---|---|
 | `TIN_LITE_AGENT_TRAFFIC_SERVICE_TOKEN` | Tin's credential for the admin calls: create, change and remove a project's site. It reads no numbers. Ege sets it in the host settings; it never passes through chat. Without it, the card says that analytics isn't set up on this deployment. |
 | `TIN_LITE_AGENT_TRAFFIC_URL` | The service's origin, `https://edge.tin.computer` by default. Tests point it elsewhere. |
-| `TIN_LITE_AGENT_TRAFFIC_PROJECTS` | The pilot: only these project IDs (comma-separated) see the card. |
 
 Production sends project references as `tin:<project id>`. Staging and development send
 `tin-staging:<project id>`, which only the staging credential can reach. Staging's sites are
@@ -280,8 +279,7 @@ migrations in a disposable schema (`TIN_LITE_TEST_DATABASE_DSN`).
 ## Staging test
 
 Once Agent Traffic says the service is deployed: Ege sets the staging credential in staging's
-settings, the staging project's ID goes on `TIN_LITE_AGENT_TRAFFIC_PROJECTS`, and Agent Traffic
-links that project to `organic-tin`, a site with real visits. Then test set up, the waiting
-state, the live card, a workflow read and Stop measuring. A linked site's DELETE only unlinks it
+settings and Agent Traffic links a staging project to `organic-tin`, a site with real visits.
+Then test set up, the waiting state, the live card, a workflow read and Stop measuring. A linked site's DELETE only unlinks it
 (`200 unlinked`). To test deletion itself, set up another staging project on an exact host such
 as `something.vercel.app`.

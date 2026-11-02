@@ -311,8 +311,6 @@ class Settings(BaseSettings):
     agent_traffic_service_token: SecretStr | None = Field(
         default=None, alias="TIN_LITE_AGENT_TRAFFIC_SERVICE_TOKEN"
     )
-    # A pilot: only these projects see the Analytics card.
-    agent_traffic_projects_raw: str = Field(default="", alias="TIN_LITE_AGENT_TRAFFIC_PROJECTS")
 
     @field_validator("agent_traffic_url")
     @classmethod
@@ -328,10 +326,6 @@ class Settings(BaseSettings):
         ):
             raise ValueError("TIN_LITE_AGENT_TRAFFIC_URL must be an https origin")
         return value.strip().rstrip("/")
-
-    @property
-    def agent_traffic_projects(self) -> tuple[str, ...]:
-        return tuple(v.strip() for v in self.agent_traffic_projects_raw.split(",") if v.strip())
 
     private_workflow_projects_raw: str = Field(
         default="", alias="TIN_LITE_PRIVATE_WORKFLOW_PROJECTS"
