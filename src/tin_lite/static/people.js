@@ -236,7 +236,8 @@ window.TinPeople = (() => {
     </div>`;
   }
 
-  // In the bar's place when nobody on the list has a box, why (REQ-A4).
+  // When nobody on the list has a box, why (REQ-A4): in the footer beside the count, so it never
+  // moves the grid as a tab or a send changes who can be asked.
   function nobodyLine(people) {
     if (!picking() || !people.length || people.some((person) => person.requestable)) return "";
     const why = new Set(people.map((person) => {
@@ -249,7 +250,7 @@ window.TinPeople = (() => {
     const reasons = ["connected to you", "invited", "a customer"].filter((reason) => why.has(reason));
     const listed = reasons.length > 1 ? `${reasons.slice(0, -1).join(", ")} or ${reasons.at(-1)}` : reasons[0];
     const line = why.has("") ? "No one on this list can be asked right now." : `No one here to ask. Everyone on this list is already ${listed}.`;
-    return `<div class="people-picked people-nobody"><p>${escape(line)}</p></div>`;
+    return `<p class="people-nobody">${escape(line)}</p>`;
   }
 
   function renderBody() {
@@ -281,7 +282,6 @@ window.TinPeople = (() => {
       <div class="workflow-sections system-sections people-sections" role="tablist" aria-label="People segments">
         ${SEGMENTS.filter((segment) => !["invited", "site"].includes(segment.key) || view.segment === segment.key || segmentPeople(segment.key).length).map((segment) => `<button class="workflow-section ${view.segment === segment.key ? "is-active" : ""}" type="button" role="tab" aria-selected="${view.segment === segment.key}" data-people-segment="${segment.key}">${segment.label} <span>${segmentPeople(segment.key).length}</span></button>`).join("")}
       </div>
-      ${nobodyLine(people)}
       <div class="people-grid">
         ${pickedBar()}
         <table class="tin-table people-table ${pick ? "has-pick" : ""}">
@@ -300,6 +300,7 @@ window.TinPeople = (() => {
       </div>
       <footer class="people-pager">
         <code>${people.length ? `${start + 1}–${start + visible.length} of ${people.length}` : "0 of 0"}</code>
+        ${nobodyLine(people)}
         <span></span>
         ${pages > 1 ? `<div>
           <button type="button" data-people-page="-1" aria-label="Previous page" ${view.page === 0 ? "disabled" : ""}><svg aria-hidden="true" viewBox="0 0 12 12"><path d="M7.5 2.5 4 6l3.5 3.5" /></svg></button>
