@@ -463,10 +463,17 @@ class Director {
     if (this.cursor.visible) must.push({x: hand.x - 20, y: hand.y - 20, width: 40, height: 40});
     must.push(...(follow.look || []));
     if (follow.attention.length) {
+      // Where each lands, from its layout, ignoring transforms (Stageshow's rect with `layout`):
+      // a panel sliding in or a toast rising is framed where it will be, never chased.
       const seen = await this.app.evaluate(selectors => selectors.map(selector => {
         const element = document.querySelector(selector);
-        const box = element?.getBoundingClientRect();
-        return box && box.width && getComputedStyle(element).opacity !== "0" ? {x: box.x, y: box.y, width: box.width, height: box.height} : null;
+        if (!element?.offsetWidth || getComputedStyle(element).visibility === "hidden") return null;
+        let x = 0, y = 0;
+        for (let node = element; node; node = node.offsetParent) {
+          x += node.offsetLeft;
+          y += node.offsetTop;
+        }
+        return {x, y, width: element.offsetWidth, height: element.offsetHeight};
       }), follow.attention);
       must.push(...seen.filter(Boolean).map(box => this.onStage(box)));
     }
