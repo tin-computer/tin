@@ -87,8 +87,10 @@ a whole window that is 1.2x the screen.
   Every request lands in the frame that made it, so two takes are identical.
 - **The director.** The script calls `f.camera`, `f.move`, `f.click` and so on. Each frame the
   recorder moves the camera and cursor and steps the dashboard's clock. It then draws the marks
-  inside the dashboard's window and the stage's overlay (cursor, ring, caption band, fade), and
-  screenshots the camera's part of the stage. ffmpeg scales each frame to the output size.
+  inside the dashboard's window and the stage's overlay (cursor, ring, fade), and screenshots the
+  camera's part of the stage. The caption band is drawn apart, on a strip under everything the
+  camera frames, at one device pixel per output pixel, so its words hold still while the camera
+  moves. ffmpeg scales the picture to the output and stacks the band under it.
   Clicks, hovers and typing are real input to the real dashboard. `f.app` is the dashboard's
   frame, for anything a script does in it directly; `f.page` is the stage.
 - **Fonts.** Public builds film in Geist. `--fonts` (or `TIN_FILM_FONTS`) names a licensed

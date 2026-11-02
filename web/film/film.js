@@ -59,8 +59,8 @@ const RING_CURVE = bezier([0.25, 0.8, 0.25, 1]);
 class Director {
   // `page` is the stage, `app` the dashboard's frame in it. Everything the director works in
   // (frames, the cursor, rects) is in the stage's px; the screen sits `margin` in from its corner.
-  constructor({page, app, format, size, screen, margin = {top: 0, right: 0, bottom: 0, left: 0}, room = screen, deviceScale, served, issues, ripple = false}) {
-    Object.assign(this, {page, app, format, size, screen, margin, room, deviceScale, world: served, issues, ripple});
+  constructor({page, app, strip, format, size, screen, margin = {top: 0, right: 0, bottom: 0, left: 0}, room = screen, deviceScale, served, issues, ripple = false}) {
+    Object.assign(this, {page, app, strip, format, size, screen, margin, room, deviceScale, world: served, issues, ripple});
     this.wide = size.width > size.height;
     this.n = 0;
     this.recording = true;
@@ -523,11 +523,14 @@ class Director {
     state.cursor.kind = await this.app.evaluate(work => window.__film.frame(work),
       {highlights: state.highlights.map(mark => this.onScreen(mark)), cursor: point});
     await this.page.evaluate(state => window.__film.render(state), state);
-    const clip = Object.fromEntries(Object.entries(this.frame).map(([key, value]) => [key, Math.round(value * 2) / 2]));
-    const png = await this.page.screenshot({clip, type: "png"});
-    this.hashes.push(crypto.createHash("sha1").update(png).digest("hex").slice(0, 12));
-    this.last = png;
-    await this.sink(png);
+    // The picture, and the caption band drawn apart at one device pixel per output pixel, so the
+    // caption holds still while the camera moves. ffmpeg scales the picture and stacks the two.
+    const clip = Object.fromEntries(Object.entries(this.picture).map(([key, value]) => [key, Math.round(value * 2) / 2]));
+    const picture = await this.page.screenshot({clip, type: "png"});
+    const strip = await this.page.screenshot({clip: this.strip, type: "png"});
+    this.hashes.push(crypto.createHash("sha1").update(picture).update(strip).digest("hex").slice(0, 12));
+    this.last = {picture, band: strip};
+    await this.sink(picture, strip);
     this.n++;
   }
 
@@ -598,8 +601,9 @@ async function loadFonts(stylesheet) {
   return files;
 }
 
-function ffmpeg(args) {
-  const child = spawn("ffmpeg", ["-loglevel", "error", "-y", ...args], {stdio: ["pipe", "ignore", "pipe"]});
+// `band` opens a second input pipe, fd 3, for the caption band's frames.
+function ffmpeg(args, {band = false} = {}) {
+  const child = spawn("ffmpeg", ["-loglevel", "error", "-y", ...args], {stdio: ["pipe", "ignore", "pipe", ...(band ? ["pipe"] : [])]});
   let stderr = "";
   child.stderr.on("data", chunk => (stderr += chunk));
   const done = new Promise((resolve, reject) => child.on("close", code => (code ? reject(new Error(`ffmpeg: ${stderr.trim()}`)) : resolve())));
@@ -654,12 +658,21 @@ export async function shoot(film, {format = "4:5", theme = film.theme || "dark",
   fs.rmSync(dir, {recursive: true, force: true});
   fs.mkdirSync(dir, {recursive: true});
   const mp4 = path.join(dir, "film.mp4");
-  const encoder = encode && ffmpeg(["-f", "image2pipe", "-framerate", String(FPS), "-c:v", "png", "-i", "-",
-    "-vf", `scale=${size.width}:${size.height}:flags=lanczos,format=yuv420p`, "-c:v", "libx264", "-preset", "slow", "-crf", "18",
-    "-movflags", "+faststart", "-an", mp4]);
+  // The picture, scaled to the output, over the band, which is already at the output's pixels.
+  // Each input is known from its first frame: probing further would read ahead on one pipe while
+  // the recorder waits on the other.
+  const input = pipe => ["-probesize", "32", "-analyzeduration", "0", "-thread_queue_size", "64", "-f", "image2pipe", "-framerate", String(FPS), "-c:v", "png", "-i", pipe];
+  const encoder = encode && ffmpeg([...input("pipe:0"), ...input("pipe:3"),
+    "-filter_complex", `${stack(size)},format=yuv420p[out]`, "-map", "[out]", "-c:v", "libx264", "-preset", "slow", "-crf", "18",
+    "-movflags", "+faststart", "-an", mp4], {band: true});
   try {
     // A number, or one per format: a tall film that closes in on a panel needs more pixels.
     const deviceScale = (typeof film.deviceScale === "object" ? film.deviceScale[format] : film.deviceScale) || 2;
+    // The caption band's strip, under everything the camera may frame, at one device pixel per
+    // output pixel.
+    const strip = {x: 0, y: viewport.height + 4, width: size.width / deviceScale, height: size.band / deviceScale};
+    viewport.width = Math.max(viewport.width, Math.ceil(strip.width));
+    viewport.height = Math.ceil(strip.y + strip.height + 4);
     const context = await browser.newContext({viewport, deviceScaleFactor: deviceScale, colorScheme: theme, timezoneId: film.timezone || "UTC", locale: "en-US"});
     const backdrop = BACKDROP[theme] || BACKDROP.dark;
     await context.route("**/*", async route => {
@@ -685,7 +698,7 @@ export async function shoot(film, {format = "4:5", theme = film.theme || "dark",
     });
     await context.addInitScript(`(${installVirtualClock})(${JSON.stringify({fps: FPS, epoch: now})});`);
     await context.addInitScript(`(${installScreen})();`);
-    await context.addInitScript(`(${installStage})(${JSON.stringify({backdrop})});`);
+    await context.addInitScript(`(${installStage})(${JSON.stringify({backdrop, path: STAGE, strip, size})});`);
     await context.addInitScript(({member, theme}) => {
       window.Clerk = {load: async () => {}, isSignedIn: true, user: {id: "member", firstName: member}, session: {getToken: async () => "synthetic"}, mountSignIn: () => {}};
       localStorage.setItem("tin-lite:theme", theme);
@@ -702,10 +715,13 @@ export async function shoot(film, {format = "4:5", theme = film.theme || "dark",
     await app.waitForLoadState("domcontentloaded");
     await page.evaluate(() => document.fonts.ready);
 
-    const director = new Director({page, app, format, size, screen, margin, room, deviceScale, served, issues, ripple: Boolean(film.ripple)});
-    director.sink = async png => {
+    const director = new Director({page, app, strip, format, size, screen, margin, room, deviceScale, served, issues, ripple: Boolean(film.ripple)});
+    director.sink = async (picture, band) => {
       if (!encoder) return;
-      if (!encoder.child.stdin.write(png)) await new Promise(resolve => encoder.child.stdin.once("drain", resolve));
+      // ffmpeg reads ahead on the picture before it opens the band, so only the picture waits for
+      // room; the band's small frames queue until it is read.
+      encoder.child.stdio[3].write(band);
+      if (!encoder.child.stdin.write(picture)) await new Promise(resolve => encoder.child.stdin.once("drain", resolve));
     };
     // The dashboard boots without being filmed.
     director.recording = false;
@@ -725,6 +741,7 @@ export async function shoot(film, {format = "4:5", theme = film.theme || "dark",
     const report = {film: film.name, title: film.title, format, size, frames: director.n, seconds: director.n / FPS, hashes: director.hashes, issues};
     if (encoder) {
       encoder.child.stdin.end();
+      encoder.child.stdio[3].end();
       await encoder.done;
       await stills(director, size, dir);
       await motionStrips(director, size, dir);
@@ -739,6 +756,7 @@ export async function shoot(film, {format = "4:5", theme = film.theme || "dark",
     // won't act on a polite signal, so its input is closed and it is killed outright.
     if (encoder && encoder.child.exitCode === null) {
       encoder.child.stdin.destroy();
+      encoder.child.stdio[3]?.destroy();
       encoder.child.kill("SIGKILL");
       await encoder.done.catch(() => {});
     }
@@ -752,14 +770,22 @@ export async function shoot(film, {format = "4:5", theme = film.theme || "dark",
 
 // Each mark at full size (the poster among them), a contact sheet of them, and a GIF small
 // enough for X (15 MB).
+// The filter that puts the picture, scaled to the output, over the band.
+function stack(size) {
+  return `[0:v]scale=${size.width}:${size.height - size.band}:flags=lanczos,setsar=1[top];[1:v]setsar=1[bottom];[top][bottom]vstack=inputs=2`;
+}
+
 async function stills(director, size, dir) {
-  const scale = `scale=${size.width}:${size.height}:flags=lanczos`;
   fs.mkdirSync(path.join(dir, "marks"));
   const marks = Object.entries(director.marks).sort(([, a], [, b]) => a.frame - b.frame);
   const files = [];
   for (const [index, [name, mark]] of marks.entries()) {
     const file = path.join(dir, "marks", `${String(index + 1).padStart(2, "0")}-${name}.png`);
-    await encodeStills([mark.png], ["-vf", scale, "-frames:v", "1", file]);
+    const parts = ["picture", "band"].map(part => path.join(dir, "marks", `.${part}.png`));
+    fs.writeFileSync(parts[0], mark.png.picture);
+    fs.writeFileSync(parts[1], mark.png.band);
+    await ffmpeg(["-i", parts[0], "-i", parts[1], "-filter_complex", stack(size), "-frames:v", "1", file]).done;
+    for (const part of parts) fs.rmSync(part);
     files.push(file);
     if (name === "poster") fs.copyFileSync(file, path.join(dir, "poster.png"));
   }
