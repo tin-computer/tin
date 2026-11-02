@@ -321,7 +321,8 @@ export function installScreen() {
     return boxes;
   };
   film.rect = (selectors, text = false) => {
-    const boxes = [].concat(selectors).flatMap(selector => [...document.querySelectorAll(selector)])
+    // What the app keeps only to fade it out (inert) is no longer a target.
+    const boxes = [].concat(selectors).flatMap(selector => [...document.querySelectorAll(selector)]).filter(element => !element.closest("[inert]"))
       .flatMap(element => (text ? textBoxes(element) : [element.getBoundingClientRect()])).filter(box => box.width && box.height);
     if (!boxes.length) return null;
     const x = Math.min(...boxes.map(box => box.left));
