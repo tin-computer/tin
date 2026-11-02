@@ -110,10 +110,11 @@ export async function play(f) {
   await f.mark("reason");
 
   // Tin's read asks the ones who fit: their boxes go and their LinkedIn column reads Queued. The
-  // cursor steps off the score first, so the card closes, and waits past Chloé's name, where the
-  // founder goes next.
+  // cursor steps off the score first, so the card closes, onto the empty end of the tabs row: off
+  // the list, so no row lights up while the eye goes to the change.
   f.caption("Tin asks the ones who fit.");
-  await f.move(`${row("p-chloe")} td.is-name`, {to: [0.85, 0.5]});
+  const tabs = await f.rect(".people-sections", true);
+  await f.move({x: tabs.x + tabs.width + 40, y: tabs.y + tabs.height / 2, width: 1, height: 1});
   for (const id of FITS) asked(f.world.people.find(item => item.id === id));
   await f.open("/people", {ready: `${row("p-daniel")} td.is-linkedin`});
   for (const [index, id] of FITS.entries()) await f.highlight(`${row(id)} td.is-linkedin`, {hold: 1.2, delay: index * 0.07});
@@ -128,22 +129,26 @@ export async function play(f) {
   await f.hold(0.3);
   // What Send does, as its toast will say, while the hand goes to it. It stays where it pressed.
   f.caption("Tin sends them one at a time, from your LinkedIn.");
-  await f.move(".people-picked-send", {to: [0.94, 0.55]});
+  // Into the pill's round end, above the middle, so the hand covers none of its words.
+  await f.move(".people-picked-send", {to: [0.97, 0.3]});
   await f.hold(0.3);
   await f.mark("poster");
-  await f.click(".people-picked-send", {to: [0.94, 0.55]});
+  await f.click(".people-picked-send", {to: [0.97, 0.3]});
   await f.ready(".toast.is-visible");
   await f.hold(0.2);
   for (const [index, id] of ["p-chloe", "p-lea"].entries()) await f.highlight(`${row(id)} td.is-linkedin`, {hold: 1.4, delay: index * 0.07});
   await f.hold(2);
   await f.mark("queued");
+  // The toast leaves on its own before her panel opens over it.
+  await f.gone(".toast.is-visible");
+  await f.hold(0.2);
 
   // Open Chloé while her request waits, so the cut changes only what time changed. Tall, her
   // panel covers the screen and the frame takes its head.
   await f.click(`${row("p-chloe")} td.is-name`, {to: [0.86, 0.55]});
   await f.ready("#person-panel .person-section:last-of-type");
   if (!f.wide) await f.camera({x: 0, y: 0, width: f.screen.width, height: 1}, {cut: true, pad: 0, valign: "top"});
-  await f.hold(0.3);
+  await f.hold(0.1);
   // The hand rests in the panel's head, past Open on LinkedIn: the head never moves, whatever
   // the cut changes below it.
   const link = await f.rect("#person-panel .person-panel-linkedin");
@@ -175,8 +180,8 @@ export async function play(f) {
     await f.camera({x: left, y: panel.y + 12, width: panel.x + panel.width + f.margin - left, height: 1}, {pad: 0, align: "left", valign: "top"});
   }
   await f.hold(0.5);
-  // The next move is yours.
-  await f.move("#person-panel .person-panel-linkedin", {to: [0.6, 0.9]});
+  // The next move is yours: a short hop onto the link's arrow, crossing none of its words.
+  await f.move("#person-panel .person-panel-linkedin", {to: [0.95, 0.55]});
   await f.hold(2.2);
   await f.mark("accepted");
   await f.end();

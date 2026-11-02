@@ -10,7 +10,8 @@ export function installOverlay({screen, margin = 0, backdrop = "#000", theme = "
   // it the box fixed elements (toasts, hover cards, the person panel) sit in, so nothing the
   // dashboard shows ends up under the caption band. The document doesn't scroll; the screen does.
   const fit = document.createElement("style");
-  const edge = theme === "light" ? "0 0 0 1px rgb(0 0 0 / 9%), 0 24px 64px rgb(0 0 0 / 10%)" : "0 0 0 1px rgb(255 255 255 / 9%)";
+  // The shadow stays short enough to fade out above the band.
+  const edge = theme === "light" ? "0 0 0 1px rgb(0 0 0 / 9%), 0 2px 10px rgb(0 0 0 / 7%)" : "0 0 0 1px rgb(255 255 255 / 9%)";
   // The dashboard's rail is a viewport tall (100svh), and the window is taller than the screen, so
   // it is held to the screen's height or its footer would run under the band.
   fit.textContent = `html { overflow: hidden !important; background: ${backdrop} !important; }
@@ -137,10 +138,12 @@ export function installOverlay({screen, margin = 0, backdrop = "#000", theme = "
     Object.assign(parts.foot.style, {bottom: `${band}px`, height: `${footHeight}px`, background: `linear-gradient(to bottom, transparent, ${backdrop} 75%)`,
       opacity: String(Math.max(0, Math.min(1, below / 22)))});
 
-    // The hand where the page's own cursor would be a pointer, as a real one works.
+    // The hand over a control the page points at (a link, a button, a box), as Stageshow does;
+    // the arrow over everything else, a clickable row included.
     const cursor = state.cursor || {};
-    const under = cursor.visible && document.elementsFromPoint(cursor.x, cursor.y).find(element => !element.closest("[data-film-overlay], [data-film-layer]"));
-    const hand = Boolean(under && getComputedStyle(under).cursor === "pointer");
+    const under = cursor.visible ? document.elementsFromPoint(cursor.x, cursor.y).find(element => !element.closest("[data-film-overlay], [data-film-layer]")) : null;
+    const control = under?.closest("a[href], button, [role='button'], [role='tab'], input, label, select, summary");
+    const hand = Boolean(control && getComputedStyle(under).cursor === "pointer");
     const tall = unit * 0.05 * (state.zoom || 1);
     const at = `${(cursor.x - frame.x) * k}px, ${(cursor.y - frame.y) * k}px`;
     const press = `scale(${cursor.pressed ? 0.9 : 1})`;

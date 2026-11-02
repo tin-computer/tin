@@ -89,13 +89,21 @@ class Director {
     if (ready) await this.ready(ready);
   }
 
-  // Frames go by (recorded) until something is visible.
+  // Frames go by (recorded) until something is visible, or until it has gone.
   async ready(selector, {within = 10} = {}) {
     for (let i = 0; i < within * FPS; i++) {
       if (await this.page.locator(selector).first().isVisible()) return;
       await this.shoot();
     }
     throw new Error(`Nothing matched ${selector} within ${within}s.`);
+  }
+
+  async gone(selector, {within = 10} = {}) {
+    for (let i = 0; i < within * FPS; i++) {
+      if (!(await this.page.locator(selector).count())) return;
+      await this.shoot();
+    }
+    throw new Error(`${selector} was still there after ${within}s.`);
   }
 
   // Frame a target: everything it covers (with `text`, only its words), plus `pad` CSS px, as
@@ -169,6 +177,7 @@ class Director {
     const normal = {x: -(end.y - from.y) / length, y: (end.x - from.x) / length};
     let i = 0;
     this.travelling = true;
+    this.aim = box;
     await this.run(() => {
       i++;
       const t = ease(i / frames);
@@ -256,21 +265,20 @@ class Director {
   // A cut behind a fade: what `change` does (open another view, move the world on, let time pass)
   // isn't filmed. It accelerates into the cut and settles out of it (Stageshow's through and settle
   // curves); a new caption comes in with the new scene.
-  async cut(change, {fade = 0.3, caption} = {}) {
+  async cut(change, {fade = 0.25, caption} = {}) {
     let i = 0;
     const frames = seconds(fade);
     if (caption !== undefined) this.caption(caption, {delay: frames});
-    const into = bezier("through");
-    const out = bezier("settle");
     this.events.push({label: "cut", start: this.n - 4, end: this.n + frames * 2 + 4});
-    await this.run(() => (this.fade = into(++i / frames)) >= 1);
+    // An even dip, eased both ways, with no hold at the bottom.
+    await this.run(() => (this.fade = ease(++i / frames)) >= 1);
     this.recording = false;
     await change();
     // What was marked before the cut belongs to the picture that went.
     this.highlights = this.highlights.filter(mark => mark.start > this.n);
     this.recording = true;
     i = 0;
-    await this.run(() => (this.fade = 1 - out(++i / frames)) <= 0);
+    await this.run(() => (this.fade = 1 - ease(++i / frames)) <= 0);
   }
 
   // Text too small to read on a phone, said once for the film, smallest first.
@@ -317,11 +325,11 @@ class Director {
 
   // The film ends on a fade to the band's ground, picture, cursor and caption together, so a feed
   // that loops never snaps back to the opening.
-  async end({fade = 0.6} = {}) {
+  // It ends where it began, at the same depth of fade, so a feed's loop joins without a jump.
+  async end({fade = 0.6, to = 0.15} = {}) {
     let i = 0;
     const frames = seconds(fade);
-    const into = bezier("through");
-    await this.run(() => (this.ending = into(++i / frames)) >= 1);
+    await this.run(() => (this.ending = to * ease(++i / frames)) >= to - 1e-9);
   }
 
   // Keep the frame just shot: the poster, and the stills of the contact sheet.
@@ -384,8 +392,12 @@ class Director {
   // overlay is drawn and the frame is shot.
   async shoot() {
     for (const track of [...this.tracks]) if (await track()) this.tracks.delete(track);
+    // On a trip the page sees the pointer only once the hand is over what it's going to, so a
+    // hover starts as it enters, not when it stops.
     const band = {x: this.frame.x + this.frame.width / 2, y: this.frame.y + (this.size.height - this.size.band / 2) * this.scale};
-    if (this.cursor.visible) await this.page.mouse.move(...(this.travelling ? [band.x, band.y] : [this.cursor.x, this.cursor.y]));
+    const {x, y} = this.cursor;
+    const over = this.aim && x >= this.aim.x && x <= this.aim.x + this.aim.width && y >= this.aim.y && y <= this.aim.y + this.aim.height;
+    if (this.cursor.visible) await this.page.mouse.move(...(this.travelling && !over ? [band.x, band.y] : [x, y]));
     await this.page.evaluate(() => window.__film.clock.step(1));
     await quiet(this.page);
     if (!this.recording) return;
