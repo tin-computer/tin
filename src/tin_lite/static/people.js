@@ -222,11 +222,12 @@ window.TinPeople = (() => {
 
   // While people are ticked, the bar lies over the grid's header row (REQ-A, REQ-A3, Paper PJ-A):
   // pinned with it at its height, so nothing under it moves, and the select-all box stays beside it.
-  function pickedBar() {
+  // `fresh` when the header row showed before: the bar fades in over it (people.css).
+  function pickedBar(fresh = false) {
     const count = view.picked.size;
     if (!count || !picking()) return "";
     const { ready, line } = window.TinRequests.picked(view.requests());
-    return `<div class="people-picked people-selection" role="region" aria-label="Ticked people">
+    return `<div class="people-picked people-selection ${fresh ? "is-new" : ""}" role="region" aria-label="Ticked people">
       <strong>${count} selected</strong>
       <button class="people-picked-clear" type="button" data-people-clear-picked>Clear</button>
       <span class="people-picked-space"></span>
@@ -278,12 +279,13 @@ window.TinPeople = (() => {
     const pick = picking();
     const pickable = visible.filter((person) => person.requestable);
     const ticked = pickable.filter((person) => view.picked.has(person.id)).length;
+    const barBefore = body.querySelector(".people-grid > .people-picked:not(.is-leaving)");
     body.innerHTML = `
       <div class="workflow-sections system-sections people-sections" role="tablist" aria-label="People segments">
         ${SEGMENTS.filter((segment) => !["invited", "site"].includes(segment.key) || view.segment === segment.key || segmentPeople(segment.key).length).map((segment) => `<button class="workflow-section ${view.segment === segment.key ? "is-active" : ""}" type="button" role="tab" aria-selected="${view.segment === segment.key}" data-people-segment="${segment.key}">${segment.label} <span>${segmentPeople(segment.key).length}</span></button>`).join("")}
       </div>
       <div class="people-grid">
-        ${pickedBar()}
+        ${pickedBar(!barBefore)}
         <table class="tin-table people-table ${pick ? "has-pick" : ""}">
           <thead><tr>
             ${pick ? `<th class="is-pick" scope="col"><input type="checkbox" data-people-pick-all aria-label="Tick everyone on this page you can ask to connect" ${pickable.length ? "" : "disabled"} ${pickable.length && ticked === pickable.length ? "checked" : ""} /></th>` : ""}
@@ -310,6 +312,56 @@ window.TinPeople = (() => {
     const all = body.querySelector("[data-people-pick-all]");
     if (all) all.indeterminate = ticked > 0 && ticked < pickable.length;
     bindBody(body, pickable);
+    keepLeavingBar(body, barBefore);
+  }
+
+  // A bar that went (sent or cleared) stays a moment over the header row, inert: its words fade
+  // first, then the bar itself, uncovering the column names, so the two never overlap (Paper
+  // PJ-A). The grid re-renders as the requests refresh, so it is put back each time and its fade
+  // carries on where it was.
+  const BAR_FADE = 220;
+  function keepLeavingBar(body, barBefore) {
+    const grid = body.querySelector(".people-grid");
+    const barNow = grid?.querySelector(":scope > .people-picked:not(.is-leaving)");
+    if (barBefore && grid && !barNow && !reducedMotion()) {
+      barBefore.classList.remove("is-new");
+      barBefore.classList.add("is-leaving");
+      barBefore.removeAttribute("role");
+      barBefore.inert = true;
+      barBefore.setAttribute("aria-hidden", "true");
+      view.leavingBar = { node: barBefore, at: performance.now() };
+    }
+    const leaving = view.leavingBar;
+    if (!leaving) return;
+    const elapsed = performance.now() - leaving.at;
+    if (!grid || barNow || elapsed >= BAR_FADE) {
+      leaving.node.remove();
+      view.leavingBar = null;
+      return;
+    }
+    grid.prepend(leaving.node);
+    for (const part of leaving.node.children) part.animate([{ opacity: 1 }, { opacity: 0 }], { duration: 100, delay: -elapsed, easing: "ease-in", fill: "forwards" });
+    leaving.node.animate([{ opacity: 1 }, { opacity: 0 }], { duration: BAR_FADE - 100, delay: 100 - elapsed, easing: "ease-out", fill: "both" });
+    clearTimeout(leaving.timer);
+    leaving.timer = setTimeout(() => {
+      leaving.node.remove();
+      if (view.leavingBar === leaving) view.leavingBar = null;
+    }, BAR_FADE - elapsed);
+  }
+
+  function reducedMotion() {
+    return window.matchMedia?.("(prefers-reduced-motion: reduce)").matches;
+  }
+
+  // A closed panel leaves the way it came in (people.css), inert, then goes.
+  function leave(panel) {
+    if (!panel) return;
+    panel.removeAttribute("id");
+    if (reducedMotion()) return panel.remove();
+    panel.inert = true;
+    panel.setAttribute("aria-hidden", "true");
+    panel.classList.add("is-leaving");
+    setTimeout(() => panel.remove(), 240);
   }
 
   function header(key, label) {
@@ -693,7 +745,7 @@ window.TinPeople = (() => {
   function renderPanel() {
     let panel = document.getElementById("person-panel");
     if (!view?.openId) {
-      panel?.remove();
+      leave(panel);
       document.body.classList.remove("has-person-panel");
       return;
     }

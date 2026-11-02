@@ -209,7 +209,8 @@ window.TinRequests = (() => {
   function queuedText(answer) {
     const at = answer.first_send ? when(answer.first_send, { at: true }) : "";
     if (answer.queued === 1) return `Queued. Tin sends it from your LinkedIn${at ? ` ${at}` : ""}.`;
-    return `Queued. Tin sends the ${answer.queued} one at a time from your LinkedIn${at ? `, the first ${at}` : ""}.`;
+    const them = answer.queued === 2 ? "both" : `all ${answer.queued}`;
+    return `Queued. Tin sends ${them} one at a time from your LinkedIn${at ? `, the first ${at}` : ""}.`;
   }
 
   // The person panel's LinkedIn row while the member's request to them waits (Paper REQ-C2).
