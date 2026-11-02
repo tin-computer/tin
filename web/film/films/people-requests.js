@@ -8,10 +8,12 @@ export const title = "People and connection requests";
 // A Wednesday morning in Berlin.
 export const now = "2026-10-28T08:20:00Z";
 export const timezone = "Europe/Berlin";
-// Each screen ends where the picture does, so a toast at its foot sits clear of the edge. Tall: a
-// 600-wide screen (the compact grid, text at about 23px in the frame), its top menu above the
-// picture. Wide: the main column's frame.
-export const screens = {"4:5": {width: 600, height: 739}, "16:9": {width: 1440, height: 572}};
+// Tall: a 600-wide screen (the compact grid, text at about 23px in the frame), its top menu above
+// the picture and its foot where the picture ends, so a toast there sits clear of the edge. Wide:
+// a window on the backdrop, framed from the main column to past its right edge, top and foot.
+// Pixels per CSS pixel: the wide film pushes in about 1.7x past a frame already 1.6x the screen.
+export const deviceScale = {"4:5": 2, "16:9": 3};
+export const screens = {"4:5": {width: 600, height: 739}, "16:9": {width: 1440, height: 534, margin: 40}};
 
 const ICP_AGENCIES = "ICP 1: agency founders";
 const ICP_FINANCE = "ICP 2: studio finance leads";
@@ -35,7 +37,7 @@ function chloe(accepted = false) {
 }
 
 // The people who fit, before Tin's read has asked them.
-const FITS = ["p-daniel", "p-hannah", "p-sofia"];
+const FITS = ["p-daniel", "p-hannah"];
 
 function people() {
   const reacted = (ago, time, who = "you") => ({kind: "reacted", at: at(ago, time), who});
@@ -47,8 +49,6 @@ function people() {
       notes: [{id: "n-grace", body: "Customer since August.", by: "you", mine: true, at: at("20d", "10:00"), edited: false}]}),
     person("p-hannah", "Hannah Kim", "Co-founder, Brightcut Films", {icp: ICP_AGENCIES, fit: 0.86, at: scored, reason: "Co-founder of a video studio; posted about chasing late invoices.", touch: reacted("1d", "21:04"),
       notes: [note("n-hannah", "Asked about pricing under the post.")]}),
-    person("p-sofia", "Sofia Marchetti", "Head of Finance, Patchbay", {icp: ICP_FINANCE, fit: 0.79, at: scored, reason: "Owns billing at a 40-person creative agency.", touch: reacted("2d", "16:20", "Mira"),
-      notes: [note("n-sofia", "Intro from Grace.")]}),
     chloe(),
     person("p-lea", "Lea Fischer", "Freelance brand designer", {icp: ICP_AGENCIES, fit: 0.52, at: scored, reason: "Works alone and bills a handful of clients.", touch: reacted("4d", "11:30"),
       notes: [note("n-lea", "Met at the studio founders' dinner in Berlin.")]}),
@@ -91,20 +91,21 @@ const panelRow = async (f, selector) => {
 // only to act, aims off the words it clicks and stays where it pressed; marks on what changed; a
 // cut changes only what time changed; the film fades in and out of the band's ground.
 export async function play(f) {
-  // The content column, top to bottom: in the tall format below the top menu, wide clear of the
-  // sidebar. The list runs off the foot of the frame.
+  // The content column: tall, below the top menu, the list running off the foot of the frame;
+  // wide, clear of the sidebar and out past the window's edge onto the backdrop.
   const main = await f.rect("#main");
   const header = await f.rect(".people-view h1");
-  await f.camera({x: main.x, y: header.y - 22, width: main.width, height: 1}, {cut: true, pad: 0, valign: "top"});
+  if (f.wide) await f.camera({x: main.x, y: 0, width: main.width + f.margin, height: 1}, {cut: true, pad: 0, valign: "top"});
+  else await f.camera({x: main.x, y: header.y - 22, width: main.width, height: 1}, {cut: true, pad: 0, valign: "top"});
   f.caption("Everyone who engaged, ranked by your ICP.");
   await f.begin();
   await f.hold(2);
   await f.mark("grid");
 
-  // The reason behind a score opens under the cursor, which stops just past the score and above
-  // its line, so it neither crosses nor covers the number.
+  // The reason behind a score opens under the hand, which stops beside the number without
+  // covering it or the status next to it: wide, past it over the empty notes; tall, before it.
   f.caption("Every score comes with its reason.");
-  await f.move(`${row("p-daniel")} td.is-fit`, {to: [0.95, 0.12]});
+  await f.move(`${row("p-daniel")} td.is-fit`, {to: f.wide ? [0.95, 0.12] : [0.25, 0.3]});
   await f.hold(2);
   await f.mark("reason");
 
@@ -160,18 +161,20 @@ export async function play(f) {
     await f.page.click(`${row("p-chloe")} td.is-name`, {position: {x: 4, y: 4}});
     await f.ready("#person-panel .person-section:last-of-type");
     await f.hold(0.5);
-    // Wide, the panel is shorter than her record: it opens scrolled just far enough to show what
-    // happened, as it would after a look down.
-    await f.page.evaluate(selector => {
-      const body = document.querySelector("#person-panel .person-panel-body");
-      const below = document.querySelector(selector).getBoundingClientRect().bottom + 12 - body.getBoundingClientRect().bottom;
-      if (below > 0) body.scrollTop += below;
-    }, ACCEPTED);
   }, {caption: "They accept. You start the conversation."});
-  await f.highlight(await panelRow(f, LINKEDIN_FIELD), {hold: 3.6, pad: 0, over: true});
+  await f.highlight(await panelRow(f, LINKEDIN_FIELD), {hold: f.wide ? 5 : 3.6, pad: 0, over: true});
   if (await f.shows(ACCEPTED)) await f.highlight(await panelRow(f, ACCEPTED), {hold: 3.5, delay: 0.1, pad: 0, over: true});
-  if (f.wide) await f.highlight(`${row("p-chloe")} td.is-linkedin`, {hold: 3.5, delay: 0.1});
-  await f.hold(1.4);
+  await f.hold(0.8);
+  // Wide, the film's one push-in, the hand still: onto her panel and out past the window's edge
+  // onto the backdrop. The frame opens just before the search field, past the end of every ICP
+  // and tab label, so it cuts no words, and starts below the window's rounded corner.
+  if (f.wide) {
+    const panel = await f.rect("#person-panel");
+    const search = await f.rect(".people-view .search-field");
+    const left = search.x - 8;
+    await f.camera({x: left, y: panel.y + 12, width: panel.x + panel.width + f.margin - left, height: 1}, {pad: 0, align: "left", valign: "top"});
+  }
+  await f.hold(0.5);
   // The next move is yours.
   await f.move("#person-panel .person-panel-linkedin", {to: [0.6, 0.9]});
   await f.hold(2.2);

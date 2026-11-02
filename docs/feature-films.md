@@ -39,6 +39,16 @@ cards and the person panel never end up under a caption. A film can pick its scr
 (`screens`); end it where the picture ends, so a toast at its foot sits clear of the edge. Where
 the picture cuts through a list, the list fades into the band.
 
+The film sits on a backdrop: black under the dark theme, white under the light one. The caption
+band and the fades are the backdrop too. A screen with a `margin` (`{width, height, margin}`)
+becomes a window on it, as in Screen Studio: rounded corners and a hairline edge (and a soft
+shadow on white), with the margin as room the camera may frame. That lets a push-in close on
+something at the screen's edge, such as the person panel, and show the backdrop past it rather
+than stop short. End such a window on a row line; the margin under it runs into the band. A
+push-in needs the pixels: set `deviceScale` per format high enough that the closest frame is
+still drawn at one device pixel per output pixel (the 16:9 People film uses 3). The cursor and
+its ring grow with the camera, as if filmed with the screen.
+
 ## How it works
 
 - **The demo world.** `serveApp` from `web/app-fixture.js` serves the dashboard with synthetic

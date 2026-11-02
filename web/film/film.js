@@ -26,14 +26,20 @@ export const FORMATS = {
 
 // The screen is exactly the picture when the camera is all the way out; the window is a band's
 // height taller, so the band never covers the dashboard.
-// A film can pick its own screen per format: a width, or {width, height} where a taller screen
-// than the picture lets the camera leave chrome (a top menu) out of the frame.
+// A film can pick its own screen per format: a width, or {width, height, margin} where a taller
+// screen than the picture lets the camera leave chrome (a top menu) out of the frame, and a margin
+// sets the screen as a window on the film's backdrop, as Screen Studio does, so the camera can
+// frame past its edge. The room is the window and its margin: everything the camera may show.
 export function stage(size, choice = size.screen) {
   const width = typeof choice === "object" ? choice.width : choice;
-  const scale = width / size.width;
-  const height = typeof choice === "object" ? choice.height : Math.round((size.height - size.band) * scale);
-  return {screen: {width, height}, viewport: {width, height: Math.ceil(height + size.band * scale)}};
+  const margin = (typeof choice === "object" && choice.margin) || 0;
+  const height = typeof choice === "object" ? choice.height : Math.round((size.height - size.band) * (width / size.width));
+  const room = {width: width + margin * 2, height: height + margin * 2};
+  return {screen: {width, height}, margin, room, viewport: {width: room.width, height: Math.ceil(room.height + size.band * (room.width / size.width))}};
 }
+
+// What the screen sits on: black under the dark theme, white under the light one.
+export const BACKDROP = {dark: "#000", light: "#fff"};
 // The smallest text a frame may show, as a share of its short side: about 22px at 1080.
 const SMALLEST_TEXT = 0.02;
 // The cursor's travel, as Stageshow's act.move eases it; everything else uses the named curves in
@@ -43,8 +49,8 @@ const lerp = (a, b, t) => a + (b - a) * t;
 const seconds = s => Math.max(1, Math.round(s * FPS));
 
 class Director {
-  constructor({page, format, size, screen, deviceScale, served, issues}) {
-    Object.assign(this, {page, format, size, screen, deviceScale, world: served, issues});
+  constructor({page, format, size, screen, margin = 0, room = screen, deviceScale, served, issues}) {
+    Object.assign(this, {page, format, size, screen, margin, room, deviceScale, world: served, issues});
     this.wide = size.width > size.height;
     this.n = 0;
     this.recording = true;
@@ -103,17 +109,19 @@ class Director {
     const {width, height, band} = this.size;
     const room = height - band;
     let scale = Math.max((box.width + pad * 2) / width, (box.height + pad * 2) / room, 1 / this.deviceScale);
-    scale = Math.min(scale, this.screen.width / width, this.screen.height / room);
+    scale = Math.min(scale, this.room.width / width, this.room.height / room);
     const frame = {width: width * scale, height: height * scale};
     const left = align === "left" ? box.x - pad : align === "right" ? box.x + box.width + pad - frame.width : box.x + box.width / 2 - frame.width / 2;
-    frame.x = Math.min(Math.max(0, left), this.screen.width - frame.width);
+    frame.x = Math.min(Math.max(0, left), this.room.width - frame.width);
     const region = inside && (await this.page.evaluate(selector => window.__film.rect(selector), inside));
     if (region && frame.width <= region.width) frame.x = Math.min(Math.max(region.x, frame.x), region.x + region.width - frame.width);
     const top = valign === "top" ? box.y - pad : box.y + box.height / 2 - (room * scale) / 2;
-    frame.y = Math.min(Math.max(0, top), this.screen.height - room * scale);
+    frame.y = Math.max(0, Math.min(top, this.room.height - room * scale));
     if ((box.width + pad * 2) / width > scale + 1e-6 || (box.height + pad * 2) / room > scale + 1e-6) {
       this.warn(`The camera can't fit ${JSON.stringify(target)} in ${this.format}; it is cut.`);
     }
+    // The cursor and its ring grow with the camera, as if filmed with the screen.
+    this.base ??= frame.width;
     if (cut || !this.n) {
       this.frame = frame;
       // A click's ring belongs to the shot it was pressed in.
@@ -411,7 +419,7 @@ class Director {
     return {
       frame: this.frame, size: this.size, band: this.size.band, caption, fade: Math.max(this.fade, this.ending), highlights,
       // The cursor goes with the picture through a cut or the ending, never floating on the dark.
-      cursor: {...this.cursor, opacity: 1 - Math.max(this.fade, this.ending)},
+      cursor: {...this.cursor, opacity: 1 - Math.max(this.fade, this.ending)}, zoom: (this.base || this.frame.width) / this.frame.width,
       ripples: this.ripples.map(ripple => ({x: ripple.x, y: ripple.y, progress: ease((n - ripple.start) / 10), fading: ripple.gone === null ? 1 : 1 - (n - ripple.gone) / 3})),
     };
   }
@@ -483,7 +491,7 @@ export async function shoot(film, {format = "4:5", theme = film.theme || "dark",
   const world = film.world();
   const now = Date.parse(film.now);
   const served = await serveApp({decisionCount: 0, ...world.serve, now: () => new Date(now)});
-  const {screen, viewport} = stage(size, film.screens?.[format]);
+  const {screen, margin, room, viewport} = stage(size, film.screens?.[format]);
   const browser = await chromium.launch({headless: true});
   const issues = {errors: [], warnings: [], blocked: []};
   const dir = path.join(out, film.name, `${format.replace(":", "x")}${theme === "dark" ? "" : `-${theme}`}`);
@@ -518,7 +526,7 @@ export async function shoot(film, {format = "4:5", theme = film.theme || "dark",
       return route.continue();
     });
     await context.addInitScript(`(${installVirtualClock})(${JSON.stringify({fps: FPS, epoch: now})});`);
-    await context.addInitScript(`(${installOverlay})(${JSON.stringify(screen)});`);
+    await context.addInitScript(`(${installOverlay})(${JSON.stringify({screen, margin, backdrop: BACKDROP[theme] || BACKDROP.dark, theme})});`);
     await context.addInitScript(({member, theme}) => {
       window.Clerk = {load: async () => {}, isSignedIn: true, user: {id: "member", firstName: member}, session: {getToken: async () => "synthetic"}, mountSignIn: () => {}};
       localStorage.setItem("tin-lite:theme", theme);
@@ -533,7 +541,7 @@ export async function shoot(film, {format = "4:5", theme = film.theme || "dark",
     await page.goto(`${served.base}${world.start || "/system"}?project=project`, {waitUntil: "domcontentloaded"});
     await page.evaluate(() => document.fonts.ready);
 
-    const director = new Director({page, format, size, screen, deviceScale, served, issues});
+    const director = new Director({page, format, size, screen, margin, room, deviceScale, served, issues});
     director.sink = async png => {
       if (!encoder) return;
       if (!encoder.child.stdin.write(png)) await new Promise(resolve => encoder.child.stdin.once("drain", resolve));

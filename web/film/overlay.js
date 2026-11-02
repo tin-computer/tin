@@ -2,16 +2,19 @@
 // the fade at a cut. The recorder sets every value each frame (nothing here animates by itself),
 // and the layer is designed in output pixels, then scaled onto the part of the page in frame.
 // Injected as an init script, so the function must stay self-contained.
-export function installOverlay(screen) {
+export function installOverlay({screen, margin = 0, backdrop = "#000", theme = "dark"}) {
   const film = window.__film = window.__film || {};
 
-  // The dashboard's screen: the body, a band's height shorter than the window. Its transform
-  // makes it the box fixed elements (toasts, hover cards, the person panel) sit in, so nothing
-  // the dashboard shows ends up under the caption band.
+  // The dashboard's screen: the body, a band's height shorter than the window and, with a margin,
+  // set on the backdrop as a window with rounded corners and a hairline edge. Its transform makes
+  // it the box fixed elements (toasts, hover cards, the person panel) sit in, so nothing the
+  // dashboard shows ends up under the caption band. The document doesn't scroll; the screen does.
   const fit = document.createElement("style");
+  const edge = theme === "light" ? "0 0 0 1px rgb(0 0 0 / 9%), 0 24px 64px rgb(0 0 0 / 10%)" : "0 0 0 1px rgb(255 255 255 / 9%)";
   // The dashboard's rail is a viewport tall (100svh), and the window is taller than the screen, so
   // it is held to the screen's height or its footer would run under the band.
-  fit.textContent = `body { position: relative; width: ${screen.width}px; height: ${screen.height}px !important; min-height: 0 !important; overflow: auto !important; transform: translateZ(0); scrollbar-width: none; }
+  fit.textContent = `html { overflow: hidden !important; background: ${backdrop} !important; }
+    body { position: relative; margin: ${margin}px !important; width: ${screen.width}px; height: ${screen.height}px !important; min-height: 0 !important; overflow: auto !important; transform: translateZ(0); scrollbar-width: none; ${margin ? `border-radius: 12px; box-shadow: ${edge};` : ""} }
     .app-shell { min-height: ${screen.height}px !important; }
     .rail { height: ${screen.height}px !important; }
     @media (max-width: 1100px) { .rail { height: var(--top-menu-height) !important; } }`;
@@ -93,36 +96,21 @@ export function installOverlay(screen) {
 
   // state: {frame: {x, y, width, height} in CSS px of the viewport, size: {width, height} in
   // output px, band (output px), caption: {text, opacity, rise}, cursor: {x, y, visible,
-  // pressed} in CSS px, ripples: [{x, y, progress}], fade (0 to 1)}.
+  // pressed} in CSS px, ripples: [{x, y, progress}], fade (0 to 1), zoom}.
   film.render = state => {
     mount();
     const {frame, size} = state;
     const k = size.width / frame.width;
-    const page = getComputedStyle(document.body);
-    const ground = page.backgroundColor;
-    const ink = page.color;
-    // The band continues whatever ground the picture ends on (a panel's canvas, the page), so it
-    // never reads as a lighter strip under a darker surface. Only a solid ground counts: a row's
-    // hover tint would leave the band see-through.
-    const foot = {x: frame.x + frame.width / 2, y: frame.y + (size.height - (state.band || 0)) * (frame.width / size.width) - 2};
-    let bandGround = ground;
-    for (const element of document.elementsFromPoint(foot.x, foot.y)) {
-      if (element.closest("[data-film-overlay], [data-film-layer]")) continue;
-      const color = getComputedStyle(element).backgroundColor;
-      const alpha = /^rgba\(/.test(color) ? Number(color.split(",").at(-1).replace(")", "")) : color.startsWith("rgb(") ? 1 : 0;
-      if (alpha >= 0.99) {
-        bandGround = color;
-        break;
-      }
-    }
+    const ink = getComputedStyle(document.body).color;
     Object.assign(root.style, {left: `${frame.x}px`, top: `${frame.y}px`, width: `${frame.width}px`, height: `${frame.height}px`});
     Object.assign(parts.stage.style, {width: `${size.width}px`, height: `${size.height}px`, transform: `scale(${1 / k})`});
     const unit = Math.min(size.width, size.height);
 
-    Object.assign(parts.fade.style, {background: ground, opacity: String(state.fade || 0)});
+    // The band, the fades and the margin are all the backdrop.
+    Object.assign(parts.fade.style, {background: backdrop, opacity: String(state.fade || 0)});
 
     const band = state.band || 0;
-    Object.assign(parts.band.style, {height: `${band}px`, background: bandGround, display: band ? "grid" : "none", padding: `0 ${Math.round(unit * 0.08)}px`});
+    Object.assign(parts.band.style, {height: `${band}px`, background: backdrop, display: band ? "grid" : "none", padding: `0 ${Math.round(unit * 0.08)}px`});
     const caption = state.caption || {};
     parts.caption.textContent = caption.text || "";
     Object.assign(parts.caption.style, {
@@ -140,16 +128,20 @@ export function installOverlay(screen) {
         .map(mark => `<i style="left:${mark.x + dx}px;top:${mark.y + dy}px;width:${mark.width}px;height:${mark.height}px;opacity:${mark.opacity}"></i>`).join("");
     }
 
-    // Where the frame cuts through the page above the band, the page fades into it, all the way
-    // before the edge. Short enough to stay clear of a toast at the screen's foot (24px up).
+    // Where the frame cuts through the screen above the band, the screen fades into it, all the
+    // way before the edge, and more as more of the screen runs on below. Short enough to stay
+    // clear of a toast at the screen's foot (24px up).
     const footHeight = band ? Math.round(Math.min(unit * 0.05, 22 * k)) : 0;
-    Object.assign(parts.foot.style, {bottom: `${band}px`, height: `${footHeight}px`, background: `linear-gradient(to bottom, transparent, ${bandGround} 75%)`});
+    const pictureFoot = frame.y + (size.height - band) / k;
+    const below = margin + screen.height - pictureFoot;
+    Object.assign(parts.foot.style, {bottom: `${band}px`, height: `${footHeight}px`, background: `linear-gradient(to bottom, transparent, ${backdrop} 75%)`,
+      opacity: String(Math.max(0, Math.min(1, below / 22)))});
 
     // The hand where the page's own cursor would be a pointer, as a real one works.
     const cursor = state.cursor || {};
     const under = cursor.visible && document.elementsFromPoint(cursor.x, cursor.y).find(element => !element.closest("[data-film-overlay], [data-film-layer]"));
     const hand = Boolean(under && getComputedStyle(under).cursor === "pointer");
-    const tall = unit * 0.05;
+    const tall = unit * 0.05 * (state.zoom || 1);
     const at = `${(cursor.x - frame.x) * k}px, ${(cursor.y - frame.y) * k}px`;
     const press = `scale(${cursor.pressed ? 0.9 : 1})`;
     Object.assign(parts.pointer.style, {
@@ -164,7 +156,7 @@ export function installOverlay(screen) {
     });
 
     parts.ripples.innerHTML = (state.ripples || []).map(ripple => {
-      const size = unit * 0.07 * (0.2 + 0.8 * ripple.progress);
+      const size = unit * 0.07 * (state.zoom || 1) * (0.2 + 0.8 * ripple.progress);
       return `<i style="left:${(ripple.x - frame.x) * k - size / 2}px;top:${(ripple.y - frame.y) * k - size / 2}px;width:${size}px;height:${size}px;border-width:${Math.max(1.5, unit * 0.0025)}px;border-color:${ink};opacity:${(1 - ripple.progress) * 0.7 * (ripple.fading ?? 1)}"></i>`;
     }).join("");
   };

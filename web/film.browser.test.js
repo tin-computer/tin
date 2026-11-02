@@ -108,6 +108,16 @@ test("a camera that breaks Stageshow's rules is reported", {timeout: 180000}, as
   assert.match(said, /the cursor moves toward .*p-daniel.* while the camera moves/i);
 });
 
+test("a margin sets the screen as a window on the backdrop, with room for the band", () => {
+  const {screen, margin, room, viewport} = stage(FORMATS["16:9"], {width: 1440, height: 534, margin: 40});
+  assert.deepEqual(screen, {width: 1440, height: 534});
+  assert.equal(margin, 40);
+  assert.deepEqual(room, {width: 1520, height: 614});
+  assert.equal(viewport.width, 1520);
+  // A frame as wide as the room still has the band's height under it.
+  assert.ok(viewport.height >= room.height + FORMATS["16:9"].band * (room.width / FORMATS["16:9"].width));
+});
+
 test("the caption band sits below the dashboard's screen", () => {
   for (const size of Object.values(FORMATS)) {
     const {screen, viewport} = stage(size);
