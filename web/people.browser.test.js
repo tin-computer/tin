@@ -94,6 +94,35 @@ test("the grid lists people best fit first, by segment, with the reason behind a
   }
 });
 
+// Where the grid would be left narrower than its compact layout beside the panel, the panel floats
+// over it instead: opening someone moves nothing under the cursor (filmed in Films · People).
+test("on a narrower screen a person opens over the grid, which doesn't move", {timeout: 120000}, async () => {
+  const {server, base} = await serveApp({engagers: true});
+  const browser = await chromium.launch({headless: true});
+  try {
+    for (const [width, beside] of [[720, false], [1024, false], [1440, true]]) {
+      const {page, context, errors} = await openApp(browser, base, {url: "/people", viewport: {width, height: 900}});
+      await page.locator(".people-table").waitFor();
+      const layout = () => page.evaluate(() => ({
+        grid: document.querySelector(".people-grid").getBoundingClientRect().toJSON(),
+        row: document.querySelector('tr[data-person="p-maya"]').getBoundingClientRect().top,
+      }));
+      const before = await layout();
+      await page.getByRole("row", {name: "Maya Lindqvist"}).click();
+      await page.locator("#person-panel").getByRole("link", {name: "Open on LinkedIn"}).waitFor();
+      const after = await layout();
+      assert.equal(after.row, before.row, `at ${width}`);
+      if (beside) assert.ok(after.grid.width < before.grid.width, `at ${width} the grid narrows beside the panel`);
+      else assert.deepEqual(after.grid, before.grid, `at ${width} the panel floats over the grid`);
+      assert.deepEqual(errors, []);
+      await context.close();
+    }
+  } finally {
+    await browser.close();
+    server.close();
+  }
+});
+
 test("a person opens beside a narrower grid, and the address keeps them", {timeout: 120000}, async () => {
   const {server, base} = await serveApp({engagers: true});
   const browser = await chromium.launch({headless: true});
