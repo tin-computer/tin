@@ -127,7 +127,7 @@ test("people ticked in People are queued at once, best fit first", {timeout: 120
     await page.locator(".people-table").waitFor();
     // Only people you can ask get a box: not your connections.
     assert.equal(await page.locator('tr[data-person="p-maya"] td.is-pick input').count(), 0);
-    assert.equal(await page.locator(".people-picked").count(), 0);
+    assert.equal(await page.locator(".people-picked:not(.is-leaving)").count(), 0);
     await page.locator('tr[data-person="p-lea"] td.is-pick input').check();
     await page.locator('tr[data-person="p-daniel"] td.is-pick input').check();
     // Ticking doesn't open the person.
@@ -137,11 +137,11 @@ test("people ticked in People are queued at once, best fit first", {timeout: 120
     assert.match(await bar.innerText(), /One at a time from your LinkedIn, weekdays 9:00–17:00 Europe\/Berlin · the first around \d+:\d\d (today|tomorrow)/);
     assert.equal(await page.locator('tr[data-person="p-daniel"]').getAttribute("class"), " is-picked");
     await bar.getByRole("button", {name: "Send 2 requests"}).click();
-    await page.locator(".toast", {hasText: /Queued\. Tin sends the 2 one at a time from your LinkedIn, the first around \d+:\d\d/}).waitFor();
+    await page.locator(".toast", {hasText: /Queued\. Tin sends both one at a time from your LinkedIn, the first around \d+:\d\d/}).waitFor();
     const write = served.requestWrites.find(item => item.path === "/send");
     assert.deepEqual(write.body.people, ["p-daniel", "p-lea"]);
     assert.match(write.body.request_id, /^[0-9a-f-]{36}$/);
-    assert.equal(await page.locator(".people-picked").count(), 0);
+    assert.equal(await page.locator(".people-picked:not(.is-leaving)").count(), 0);
     assert.equal(await page.locator('tr[data-person="p-daniel"] td.is-linkedin').innerText(), "Queued");
     assert.equal(await page.locator('tr[data-person="p-daniel"] td.is-pick input').count(), 0);
   });
@@ -183,6 +183,12 @@ test("ticking someone turns the header row into the bar, and nothing under it mo
       assert.equal(pinned.head.top, top);
       assert.equal(pinned.bar.top, top);
       await page.locator(".people-selection").getByRole("button", {name: "Clear"}).click();
+      // The bar fades out over the header row: inert and hidden from assistive tech while it goes,
+      // and no longer the bar.
+      assert.equal(await page.locator(".people-picked:not(.is-leaving)").count(), 0);
+      const leaving = page.locator(".people-selection.is-leaving");
+      if (await leaving.count()) assert.deepEqual(await leaving.evaluate(bar => [bar.inert, bar.getAttribute("aria-hidden")]), [true, "true"]);
+      await page.locator(".people-selection").waitFor({state: "detached"});
     }
   });
 });
@@ -196,7 +202,7 @@ test("the box above the grid ticks everyone you can ask on the page", {timeout: 
     await all.click();
     assert.match(await page.locator(".people-picked").innerText(), /^3 selected/);
     await page.locator(".people-picked").getByRole("button", {name: "Clear"}).click();
-    assert.equal(await page.locator(".people-picked").count(), 0);
+    assert.equal(await page.locator(".people-picked:not(.is-leaving)").count(), 0);
   });
 });
 
