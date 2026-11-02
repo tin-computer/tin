@@ -8,15 +8,17 @@ export const title = "People and connection requests";
 // A Wednesday morning in Berlin.
 export const now = "2026-10-28T08:20:00Z";
 export const timezone = "Europe/Berlin";
-// After Stageshow's framing rules: hard edges, one gutter on every edge of the window that shows,
-// and no word cut. Tall: a 600-wide screen (the compact grid, text at about 23px in the frame),
-// sides to the picture's edges, its top menu above the frame. Wide: a window on the backdrop,
-// framed from the main column out past its top-right corner, the same gutter on the top, the
-// right and the foot. Both end just under the last row's words: the toast, 24px up, then covers
-// whole rows and lets none half show beneath it.
-export const screens = {"4:5": {width: 600, height: 703, margin: {bottom: 37}}, "16:9": {width: 1440, height: 486, margin: 56}};
-// Pixels per CSS pixel: the wide film pushes in about 1.7x past a frame already 1.5x the screen.
-export const deviceScale = {"4:5": 2, "16:9": 3};
+// Tall: a 600-wide screen (the compact grid, text at about 23px in the frame), sides to the
+// picture's edges, its top menu above the frame, ending just under the last row's words, so the
+// toast, 24px up, covers whole rows. Wide: the whole window, sidebar and all, centred on the
+// backdrop with the same padding on every side, then a camera that follows the hand. Its height
+// sets that padding and puts the toast's top on a row line; the room around it lets the camera
+// centre on the window's edge.
+export const screens = {"4:5": {width: 600, height: 703, margin: {bottom: 37}}, "16:9": {width: 1440, height: 618, margin: 300}};
+// The wide film follows at 1.6x of the whole window: two device pixels per CSS pixel keep it sharp.
+export const deviceScale = {"4:5": 2, "16:9": 2};
+// The padding round the whole wide window at rest, from its height and the 16:9 picture.
+const REST = 69;
 
 const ICP_AGENCIES = "ICP 1: agency founders";
 const ICP_FINANCE = "ICP 2: studio finance leads";
@@ -98,7 +100,8 @@ export async function play(f) {
   // wide, clear of the sidebar and out past the window's edge onto the backdrop.
   const main = await f.rect("#main");
   const header = await f.rect(".people-view h1");
-  if (f.wide) await f.camera({x: main.x, y: 0, width: main.width + f.margin.right, height: 1}, {cut: true, pad: 0, valign: "top"});
+  const whole = {x: f.margin.left, y: f.margin.top, width: f.screen.width, height: f.screen.height};
+  if (f.wide) await f.camera(whole, {cut: true, pad: REST, nudge: 0});
   // Two px below the top menu, so its border can't show along the top edge.
   else await f.camera({x: main.x, y: header.y - 20, width: main.width, height: 1}, {cut: true, pad: 0, valign: "top"});
   f.caption("Everyone who engaged, ranked by your ICP.");
@@ -109,6 +112,8 @@ export async function play(f) {
   // The reason behind a score opens under the hand, which stops beside the number without
   // covering it or the status next to it: wide, past it over the empty notes; tall, before it.
   f.caption("Every score comes with its reason.");
+  // Wide, from here the camera follows the hand, and any toast that opens.
+  if (f.wide) f.follow({zoom: 1.6, attention: [".toast.is-visible"]});
   await f.move(`${row("p-daniel")} td.is-fit`, {to: f.wide ? [0.95, 0.12] : [0.25, 0.3]});
   await f.hold(2);
   await f.mark("reason");
@@ -167,26 +172,13 @@ export async function play(f) {
     // The panel reads her again, as a reload would.
     await f.page.keyboard.press("Escape");
     await f.open("/people", {ready: `${row("p-chloe")} td.is-name`});
-    await f.page.click(`${row("p-chloe")} td.is-name`, {position: {x: 4, y: 4}});
+    await f.app.click(`${row("p-chloe")} td.is-name`, {position: {x: 4, y: 4}});
     await f.ready("#person-panel .person-section:last-of-type");
     await f.hold(0.5);
   }, {caption: "They accept. You start the conversation."});
   await f.highlight(await panelRow(f, LINKEDIN_FIELD), {hold: f.wide ? 5 : 3.6, pad: 0, over: true});
   if (await f.shows(ACCEPTED)) await f.highlight(await panelRow(f, ACCEPTED), {hold: 3.5, delay: 0.1, pad: 0, over: true});
-  await f.hold(0.8);
-  // Wide, the film's one push-in, the hand still: onto her panel and out past the window's edge
-  // onto the backdrop. The frame opens just before the search field, past the end of every ICP
-  // and tab label, so it cuts no words, and starts below the window's rounded corner.
-  // Past the edge it keeps the opening's gutter, as the picture sees it.
-  if (f.wide) {
-    const panel = await f.rect("#person-panel");
-    const search = await f.rect(".people-view .search-field");
-    const left = search.x - 8;
-    const gutter = f.margin.right / f.frame.width;
-    const width = (panel.x + panel.width - left) / (1 - gutter);
-    await f.camera({x: left, y: panel.y + 12, width, height: 1}, {pad: 0, align: "left", valign: "top", floor: panel.y + 12});
-  }
-  await f.hold(0.5);
+  await f.hold(1.3);
   // The next move is yours: a short hop onto the link's arrow, crossing none of its words.
   await f.move("#person-panel .person-panel-linkedin", {to: [0.95, 0.55]});
   await f.hold(2.2);

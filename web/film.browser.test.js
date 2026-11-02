@@ -52,7 +52,7 @@ test("a click that moves the page under the cursor is reported", {timeout: 18000
   const report = await take(short(async f => {
     await f.camera([".people-view h1", ".people-table thead", ".people-table tbody tr:nth-child(-n+4)"], {cut: true});
     // Whatever the dashboard does, this click pushes the grid down 60px.
-    await f.page.evaluate(() => document.querySelector(".people-view h1").addEventListener("click", () => {
+    await f.app.evaluate(() => document.querySelector(".people-view h1").addEventListener("click", () => {
       document.querySelector(".people-view").style.paddingTop = "60px";
     }, {once: true}));
     await f.click(".people-view h1");
@@ -71,7 +71,7 @@ test("the page sees the pointer only where the hand stops", {timeout: 180000}, a
     await f.move(`${row} td.is-name`);
     // Every frame, whether a score's reason card is open.
     f.tracks.add(async () => {
-      crossed ||= await f.page.locator(".people-hover").isVisible();
+      crossed ||= await f.app.locator(".people-hover").isVisible();
       return false;
     });
     // Across Daniel's score to the far end of his row: nothing opens on the way.
@@ -81,7 +81,7 @@ test("the page sees the pointer only where the hand stops", {timeout: 180000}, a
     // Onto the score: its card opens.
     await f.move(`${row} td.is-fit`);
     await f.hold(0.3);
-    arrived = await f.page.locator(".people-hover").isVisible();
+    arrived = await f.app.locator(".people-hover").isVisible();
     crossed = passing;
     await f.mark("poster");
   }));

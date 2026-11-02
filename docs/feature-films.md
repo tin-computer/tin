@@ -33,30 +33,48 @@ Each format lands in `.films/<film>/<format>/`:
 | `16:9` | 1920 × 1080 | 1440 px wide, the desktop layout | X on desktop, the site, blog posts |
 | `1:1` | 1080 × 1080 | 720 px wide | where a square fits better |
 
-The caption band sits under the picture, outside the dashboard's screen: the window is a band's
-height taller than the screen, and the body is the box fixed elements sit in, so toasts, hover
-cards and the person panel never end up under a caption. A film can pick its screen per format
-(`screens`).
+The dashboard runs in its own window: an iframe exactly the screen's size, on a stage page that
+draws everything else. Inside it the dashboard lays out, places its popovers and answers its
+breakpoints as in any browser. The stage holds the backdrop, black under the dark theme and white
+under the light one, with the caption band and the fades in the same colour. A film picks its
+screen per format (`screens`). The stage is a band's height taller than the room the camera may
+frame, so the band never covers the dashboard.
 
-The film sits on a backdrop: black under the dark theme, white under the light one. The caption
-band and the fades are the backdrop too. A screen with a `margin` (`{width, height, margin}`, a
-number or `{top, right, bottom, left}`) becomes a window on it, as in Screen Studio: rounded
-corners where both sides sit on the backdrop, a hairline edge, a short soft shadow on white, and
-the margin as room the camera may frame. That lets a push-in close on something at the screen's
-edge, such as the person panel, and show the backdrop past it rather than stop short. A push-in
-needs the pixels: set `deviceScale` per format high enough that the closest frame is still drawn
-at one device pixel per output pixel (the 16:9 People film uses 3).
+A screen with a `margin` (`{width, height, margin}`, a number or `{top, right, bottom, left}`)
+sits in from the stage's corner as a window, as in Screen Studio. Its corners are rounded where
+both sides sit on the backdrop, it has a hairline edge, and on white a short soft shadow. The
+margin is room the camera may frame past the window's edge.
+
+There are two ways to frame a film, as in Screen Studio:
+
+- **Still.** The camera moves only when the script says (`f.camera`), at most one push-in. The
+  People film's 4:5 cut works this way: the screen fills the picture's width and its top menu
+  stays above the frame.
+- **Follow.** The film opens on the whole window, centred with the same padding on every side.
+  From `f.follow()` the camera eases in to one zoom and keeps centring on the cursor, plus what
+  the film names (`attention`, such as a toast). Marks pull the frame towards them when they fit
+  beside the cursor. A critically damped spring moves it, and a dead zone holds it still while
+  the action stays in the middle of the frame. It opens out only as far as what must show needs.
+  Near the window's edge it keeps centring, up to `overshoot` (30%) of the frame past the edge,
+  where the window's boundary shows on the backdrop. Size the room's margin for that. The People
+  film's 16:9 cut follows.
 
 Framing follows Stageshow's `references/framing.md`:
 
-- **Hard edges.** Nothing fades into the backdrop; the window's edges and the picture's crops
+- **Hard edges.** Nothing fades into the backdrop. The window's edges and the picture's crops
   are clean lines.
-- **One gutter.** Every edge of the window that shows sits the same distance in, a full gutter
-  or well past. The People film's wide window has 56 px on its top, right and foot.
-- **Crop only filler.** No word, field or button is cut by the picture's edge: the camera nudges
-  each framing (up to `nudge`, 24 px by default, never above `floor`) to a clean line. End a
-  window just under its last row's words, so a toast near its foot covers whole rows.
-- **What opens stays in frame.** A toast, a card or a panel the story opens shows whole.
+- **Symmetry at rest.** A whole window sits centred with even padding. A film's still framing
+  shows one gutter, a full one or well past, on every edge of the window that shows.
+- **Crop only filler.** In a still framing, no word, field or button is cut by the picture's
+  edge. The camera nudges each framing (up to `nudge`, 24 px by default, never above `floor`) to
+  a clean line. A following camera crops as it goes, as Screen Studio's does. End a window just
+  under its last row's words, so a toast near its foot covers whole rows.
+- **What opens stays in frame.** A toast, a card or a panel the story opens shows whole. A
+  following camera is told about it with `attention`.
+
+A push-in needs the pixels. Set `deviceScale` per format high enough that the closest frame is
+still drawn at one device pixel per output pixel. The People film uses 2: it follows at 1.6x of
+a whole window that is 1.2x the screen.
 
 ## How it works
 
@@ -67,10 +85,12 @@ Framing follows Stageshow's `references/framing.md`:
 - **The clock.** `web/film/clock.js` replaces the page's timers, animation frames, CSS animations
   and `Date` before the dashboard loads. Time moves only when the recorder steps it, by 1/30 s.
   Every request lands in the frame that made it, so two takes are identical.
-- **The director.** The script calls `f.camera`, `f.move`, `f.click` and so on; each frame the
-  recorder moves the camera and cursor, steps the clock, draws the overlay (cursor, ripple,
-  caption band, fade) and screenshots the camera's part of the screen. ffmpeg scales each frame
-  to the output size. Clicks, hovers and typing are real input to the real dashboard.
+- **The director.** The script calls `f.camera`, `f.move`, `f.click` and so on. Each frame the
+  recorder moves the camera and cursor and steps the dashboard's clock. It then draws the marks
+  inside the dashboard's window and the stage's overlay (cursor, ring, caption band, fade), and
+  screenshots the camera's part of the stage. ffmpeg scales each frame to the output size.
+  Clicks, hovers and typing are real input to the real dashboard. `f.app` is the dashboard's
+  frame, for anything a script does in it directly; `f.page` is the stage.
 - **Fonts.** Public builds film in Geist. `--fonts` (or `TIN_FILM_FONTS`) names a licensed
   stylesheet; the recorder fetches it and its files and serves them from the film's own origin,
   where `index.html` asks for the private stylesheet. Nothing licensed is committed.
@@ -93,6 +113,8 @@ and `play(f)`. `people-requests.js` is the example.
 | `f.begin()`, `f.end()` | Fades in from the band's ground (from 85%, so the first frame isn't dark) and out to it. |
 | `f.shows(selector)` | Whether the target is on screen and on top: not scrolled out of its panel or covered. |
 | `f.mark(name)` | Keeps the frame just shot for the sheet. `poster` is required. |
+| `f.follow({zoom, attention, overshoot})`, `f.still()` | Starts and stops the following camera (above). |
+| `f.app`, `f.page` | The dashboard's frame and the stage, for anything the director doesn't cover. |
 | `f.world`, `f.wide` | The served world, to move it on behind a cut; whether the format is wide. |
 
 The cursor is Stageshow's: macOS's arrow and pointing hand at its large size (1.5x), drawn in the

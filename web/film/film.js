@@ -12,7 +12,7 @@ import {chromium} from "playwright";
 import {serveApp} from "../app-fixture.js";
 import {installVirtualClock} from "./clock.js";
 import {bezier} from "./ease.js";
-import {installOverlay} from "./overlay.js";
+import {installScreen, installStage} from "./overlay.js";
 
 export const FPS = 30;
 // Output sizes, the caption band under the picture, and how wide a screen the dashboard is filmed
@@ -57,8 +57,10 @@ const RING = Math.round(0.55 * FPS);
 const RING_CURVE = bezier([0.25, 0.8, 0.25, 1]);
 
 class Director {
-  constructor({page, format, size, screen, margin = {top: 0, right: 0, bottom: 0, left: 0}, room = screen, deviceScale, served, issues, ripple = false}) {
-    Object.assign(this, {page, format, size, screen, margin, room, deviceScale, world: served, issues, ripple});
+  // `page` is the stage, `app` the dashboard's frame in it. Everything the director works in
+  // (frames, the cursor, rects) is in the stage's px; the screen sits `margin` in from its corner.
+  constructor({page, app, format, size, screen, margin = {top: 0, right: 0, bottom: 0, left: 0}, room = screen, deviceScale, served, issues, ripple = false}) {
+    Object.assign(this, {page, app, format, size, screen, margin, room, deviceScale, world: served, issues, ripple});
     this.wide = size.width > size.height;
     this.n = 0;
     this.recording = true;
@@ -76,12 +78,17 @@ class Director {
     this.ending = 0;
     this.highlights = [];
     this.travelling = false;
+    this.follower = null;
     // Text under the smallest size, by what it says: the least size and the marks it shows at.
     this.small = new Map();
     this.inside = null;
     this.frame = {x: 0, y: 0, width: screen.width, height: screen.width * size.height / size.width};
     this.last = null;
   }
+
+  // A box between the screen's px and the stage's.
+  onStage(box) { return box && {...box, x: box.x + this.margin.left, y: box.y + this.margin.top}; }
+  onScreen(box) { return box && {...box, x: box.x - this.margin.left, y: box.y - this.margin.top}; }
 
   // CSS px of page per output px, and the part of the frame above the caption band.
   get scale() { return this.frame.width / this.size.width; }
@@ -90,7 +97,7 @@ class Director {
   // ---- what a film script calls ----
 
   async open(route, {ready} = {}) {
-    await this.page.evaluate(to => {
+    await this.app.evaluate(to => {
       history.pushState(null, "", to);
       dispatchEvent(new PopStateEvent("popstate"));
     }, `${route}${route.includes("?") ? "&" : "?"}project=project`);
@@ -100,7 +107,7 @@ class Director {
   // Frames go by (recorded) until something is visible, or until it has gone.
   async ready(selector, {within = 10} = {}) {
     for (let i = 0; i < within * FPS; i++) {
-      if (await this.page.locator(selector).first().isVisible()) return;
+      if (await this.app.locator(selector).first().isVisible()) return;
       await this.shoot();
     }
     throw new Error(`Nothing matched ${selector} within ${within}s.`);
@@ -108,7 +115,7 @@ class Director {
 
   async gone(selector, {within = 10} = {}) {
     for (let i = 0; i < within * FPS; i++) {
-      if (!(await this.page.locator(selector).count())) return;
+      if (!(await this.app.locator(selector).count())) return;
       await this.shoot();
     }
     throw new Error(`${selector} was still there after ${within}s.`);
@@ -131,13 +138,14 @@ class Director {
     const frame = {width: width * scale, height: height * scale};
     const left = align === "left" ? box.x - pad : align === "right" ? box.x + box.width + pad - frame.width : box.x + box.width / 2 - frame.width / 2;
     frame.x = Math.min(Math.max(0, left), this.room.width - frame.width);
-    const region = inside && (await this.page.evaluate(selector => window.__film.rect(selector), inside));
+    const region = inside && this.onStage(await this.app.evaluate(selector => window.__film.rect(selector), inside));
     if (region && frame.width <= region.width) frame.x = Math.min(Math.max(region.x, frame.x), region.x + region.width - frame.width);
     const top = valign === "top" ? box.y - pad : box.y + box.height / 2 - (room * scale) / 2;
     frame.y = Math.max(0, Math.min(top, this.room.height - room * scale));
     if (nudge) {
-      const shift = await this.page.evaluate(([frame, picture, room, nudge, top]) => window.__film.clean(frame, picture, room, nudge, top),
-        [frame, room * scale, this.room, nudge, floor]);
+      const top = Math.max(0, floor);
+      const shift = await this.app.evaluate(([frame, picture, room, nudge]) => window.__film.clean(frame, picture, room, nudge),
+        [this.onScreen(frame), room * scale, this.onScreen({x: 0, y: top, width: this.room.width, height: this.room.height - top}), nudge]);
       frame.x += shift.dx;
       frame.y += shift.dy;
     }
@@ -211,7 +219,7 @@ class Director {
     await this.move(target, options);
     this.events.push({label: "click", start: this.n - 4, end: this.n + 14});
     await this.hold(0.12);
-    const before = await this.page.evaluate(selectors => window.__film.rect(selectors), target);
+    const before = typeof target === "object" && !Array.isArray(target) ? null : await this.app.evaluate(selectors => window.__film.rect(selectors), target);
     this.cursor.pressAt = this.n;
     await this.page.mouse.down();
     const ripple = {x: this.cursor.x, y: this.cursor.y, start: this.n, gone: null};
@@ -222,7 +230,7 @@ class Director {
     // The ring ends with what was pressed: once it is gone or covered at the press, it fades out.
     if (this.ripple && (typeof target === "string" || Array.isArray(target))) this.tracks.add(async () => {
       if (ripple.gone !== null || this.n - ripple.start > RING) return true;
-      const there = await this.page.evaluate(([selectors, x, y]) => window.__film.hits(selectors, x, y), [target, ripple.x, ripple.y]);
+      const there = await this.app.evaluate(([selectors, x, y]) => window.__film.hits(selectors, x, y), [target, ripple.x - this.margin.left, ripple.y - this.margin.top]);
       if (!there) ripple.gone = this.n;
       return !there;
     });
@@ -231,7 +239,7 @@ class Director {
     let frames = 0;
     this.tracks.add(async () => {
       if (++frames < 6) return false;
-      const after = before && (await this.page.evaluate(selectors => window.__film.rect(selectors), target));
+      const after = before && (await this.app.evaluate(selectors => window.__film.rect(selectors), target));
       const moved = after ? Math.round(Math.hypot(after.x - before.x, after.y - before.y)) : 0;
       if (moved > 4) this.warn(`Clicking ${JSON.stringify(target)} moved it ${moved}px: the page shifted under the cursor.`);
       return true;
@@ -240,7 +248,7 @@ class Director {
 
   // Scroll a container until a target inside it sits `offset` CSS px below its top edge.
   async scroll(container, target, {duration = 0.8, offset = 24} = {}) {
-    const [from, to] = await this.page.evaluate(([outer, inner, gap]) => {
+    const [from, to] = await this.app.evaluate(([outer, inner, gap]) => {
       const box = document.querySelector(outer);
       const top = box.scrollTop + document.querySelector(inner).getBoundingClientRect().top - box.getBoundingClientRect().top - gap;
       return [box.scrollTop, Math.max(0, Math.min(top, box.scrollHeight - box.clientHeight))];
@@ -249,7 +257,7 @@ class Director {
     let i = 0;
     await this.run(async () => {
       i++;
-      await this.page.evaluate(([outer, top]) => (document.querySelector(outer).scrollTop = top), [container, lerp(from, to, ease(i / frames))]);
+      await this.app.evaluate(([outer, top]) => (document.querySelector(outer).scrollTop = top), [container, lerp(from, to, ease(i / frames))]);
       return i >= frames;
     });
   }
@@ -318,6 +326,91 @@ class Director {
 
   hide() { this.cursor.visible = false; }
 
+  // Screen Studio's follow camera. From wherever the camera is, it eases in to `zoom` (of the
+  // frame it starts from) and keeps centring on what matters: the cursor, every mark still
+  // showing, and whatever matches `attention` (a toast, say), zooming out only as far as they
+  // need to fit. A critically damped spring moves it, so it trails the hand softly and never
+  // jerks. Near the window's edge it keeps centring, up to `overshoot` of the frame past the
+  // edge, where the window's boundary shows on the backdrop.
+  follow({zoom = 1.6, attention = [], pad = 48, overshoot = 0.3, pan = 6, push = 4} = {}) {
+    const frame = this.frame;
+    const picture = this.picture;
+    this.follower = {
+      zoom, attention, pad, overshoot, pan, push, widest: frame.width, target: null,
+      x: {at: picture.x + picture.width / 2, speed: 0}, y: {at: picture.y + picture.height / 2, speed: 0}, width: {at: frame.width, speed: 0},
+    };
+  }
+
+  // Back to a camera that moves only when told.
+  still() { this.follower = null; }
+
+  async track() {
+    const follow = this.follower;
+    const {width: out, height: tall, band} = this.size;
+    const ratio = (tall - band) / out;
+    const union = boxes => {
+      if (!boxes.length) return null;
+      const left = Math.min(...boxes.map(box => box.x)), top = Math.min(...boxes.map(box => box.y));
+      return {x: left, y: top, width: Math.max(...boxes.map(box => box.x + box.width)) - left, height: Math.max(...boxes.map(box => box.y + box.height)) - top};
+    };
+    // What must show: the hand, and anything the film named (a toast, say). What it would like to
+    // show: every mark still on screen, when it fits beside them at this zoom.
+    const must = [];
+    if (this.cursor.visible) must.push({x: this.cursor.x - 20, y: this.cursor.y - 20, width: 40, height: 40});
+    if (follow.attention.length) {
+      const seen = await this.app.evaluate(selectors => selectors.map(selector => {
+        const element = document.querySelector(selector);
+        const box = element?.getBoundingClientRect();
+        return box && box.width && getComputedStyle(element).opacity !== "0" ? {x: box.x, y: box.y, width: box.width, height: box.height} : null;
+      }), follow.attention);
+      must.push(...seen.filter(Boolean).map(box => this.onStage(box)));
+    }
+    const marks = this.highlights.filter(mark => mark.start <= this.n + 1 && this.n - mark.start < mark.hold + 23).map(mark => mark.box);
+    const close = follow.widest / follow.zoom;
+    const fits = (box, width) => box.width + follow.pad * 2 <= width && box.height + follow.pad * 2 <= width * ratio;
+    const needed = union(must);
+    let width = close;
+    let focus = needed;
+    if (needed) {
+      // One zoom: it opens out only as far as what must show needs.
+      width = Math.min(follow.widest, Math.max(close, needed.width + follow.pad * 2, (needed.height + follow.pad * 2) / ratio));
+      const wider = union([...must, ...marks]);
+      if (marks.length && fits(wider, width)) focus = wider;
+    }
+    let target = follow.target;
+    if (focus) {
+      const center = {x: focus.x + focus.width / 2, y: focus.y + focus.height / 2};
+      // A dead zone, as Screen Studio has: while what it follows stays in the middle of the frame
+      // it is heading for, at the same zoom, that frame stands.
+      const inner = target && {x: target.x - target.width * 0.32, y: target.y - target.width * ratio * 0.32, width: target.width * 0.64, height: target.width * ratio * 0.64};
+      const settled = target && Math.abs(target.width - width) < 1 && focus.x >= inner.x && focus.y >= inner.y
+        && focus.x + focus.width <= inner.x + inner.width && focus.y + focus.height <= inner.y + inner.height;
+      if (!settled) {
+        // Past the window's edge by no more than the overshoot, and never out of the room.
+        const screen = {x: this.margin.left, y: this.margin.top, width: this.screen.width, height: this.screen.height};
+        const high = width * ratio;
+        const spare = {x: follow.overshoot * width, y: follow.overshoot * high};
+        const keep = (value, low, highest) => (low > highest ? (low + highest) / 2 : Math.min(Math.max(value, low), highest));
+        target = {
+          x: keep(center.x, Math.max(screen.x - spare.x, 0) + width / 2, Math.min(screen.x + screen.width + spare.x, this.room.width) - width / 2),
+          y: keep(center.y, Math.max(screen.y - spare.y, 0) + high / 2, Math.min(screen.y + screen.height + spare.y, this.room.height) - high / 2),
+          width,
+        };
+        follow.target = target;
+      }
+    }
+    if (!target) target = {x: follow.x.at, y: follow.y.at, width: follow.width.at};
+    const spring = (state, aim, omega) => {
+      state.speed += (omega * omega * (aim - state.at) - 2 * omega * state.speed) / FPS;
+      state.at += state.speed / FPS;
+    };
+    spring(follow.x, target.x, follow.pan);
+    spring(follow.y, target.y, follow.pan);
+    spring(follow.width, target.width, follow.push);
+    const w = follow.width.at;
+    this.frame = {x: follow.x.at - w / 2, y: follow.y.at - (w * ratio) / 2, width: w, height: (w * tall) / out};
+  }
+
   // One soft pass over what just changed: it washes in, holds and fades, while the film goes on.
   // `pad` (CSS px, or [across, down]) grows the mark around its target; a table cell's own
   // padding keeps it inside. `over` draws it above the app's panels.
@@ -351,9 +444,12 @@ class Director {
   async mark(name) {
     if (!this.last) throw new Error(`Mark ${name} before any frame was shot.`);
     this.marks[name] = {frame: this.n - 1, png: this.last};
-    const cut = await this.page.evaluate(picture => window.__film.sliced(picture), this.picture);
+    // A following camera crops through the screen as it goes, as Screen Studio's does; a framed
+    // shot shouldn't.
+    const cut = this.follower ? [] : await this.app.evaluate(picture => window.__film.sliced(picture), this.onScreen(this.picture));
     if (cut.length) this.warn(`At ${name}, the crop cuts ${cut.slice(0, 3).map(text => `“${text}”`).join(", ")}.`);
-    const sizes = await this.page.evaluate(([frame, scale]) => window.__film.textSizes(frame, scale), [this.picture, 1 / this.scale]);
+    const sizes = (await this.app.evaluate(frame => window.__film.textSizes(frame), this.onScreen(this.picture)))
+      .map(item => ({...item, size: Math.round((item.size / this.scale) * 10) / 10}));
     const floor = SMALLEST_TEXT * Math.min(this.size.width, this.size.height);
     for (const item of sizes.filter(run => run.size < floor)) {
       const seen = this.small.get(item.text);
@@ -364,7 +460,7 @@ class Director {
   // Whether a target is on screen and on top at its middle: not scrolled out of its panel or
   // covered by another layer.
   async shows(selector) {
-    return this.page.evaluate(target => {
+    return this.app.evaluate(target => {
       const element = document.querySelector(target);
       const box = element?.getBoundingClientRect();
       if (!box?.width || !box.height) return false;
@@ -377,9 +473,9 @@ class Director {
 
   async rect(target, text = false) {
     if (target && typeof target === "object" && !Array.isArray(target) && "width" in target) return target;
-    const box = await this.page.evaluate(([selectors, words]) => window.__film.rect(selectors, words), [target, text]);
+    const box = await this.app.evaluate(([selectors, words]) => window.__film.rect(selectors, words), [target, text]);
     if (!box) throw new Error(`Nothing on screen matches ${JSON.stringify(target)}.`);
-    return box;
+    return this.onStage(box);
   }
 
   // Run a track to its end, or start it and let later frames carry it.
@@ -395,6 +491,8 @@ class Director {
   }
 
   within(point, target) {
+    // A following camera brings the hand back into frame itself.
+    if (this.follower) return;
     const picture = this.picture;
     if (point.x < picture.x || point.y < picture.y || point.x > picture.x + picture.width || point.y > picture.y + picture.height) {
       this.error(`The cursor reaches ${JSON.stringify(target)} outside the ${this.format} frame.`);
@@ -409,16 +507,22 @@ class Director {
   // overlay is drawn and the frame is shot.
   async shoot() {
     for (const track of [...this.tracks]) if (await track()) this.tracks.delete(track);
+    if (this.follower) await this.track();
     // On a trip the page sees the pointer only once the hand is over what it's going to, so a
     // hover starts as it enters, not when it stops.
     const band = {x: this.frame.x + this.frame.width / 2, y: this.frame.y + (this.size.height - this.size.band / 2) * this.scale};
     const {x, y} = this.cursor;
     const over = this.aim && x >= this.aim.x && x <= this.aim.x + this.aim.width && y >= this.aim.y && y <= this.aim.y + this.aim.height;
     if (this.cursor.visible) await this.page.mouse.move(...(this.travelling && !over ? [band.x, band.y] : [x, y]));
-    await this.page.evaluate(() => window.__film.clock.step(1));
-    await quiet(this.page);
+    await this.app.evaluate(() => window.__film.clock.step(1));
+    await quiet(this.app);
     if (!this.recording) return;
-    await this.page.evaluate(state => window.__film.render(state), this.state());
+    // Inside the screen: its marks, and which cursor it would show at the hand. Then the stage.
+    const state = this.state();
+    const point = state.cursor.visible ? this.onScreen({x: state.cursor.x, y: state.cursor.y}) : null;
+    state.cursor.kind = await this.app.evaluate(work => window.__film.frame(work),
+      {highlights: state.highlights.map(mark => this.onScreen(mark)), cursor: point});
+    await this.page.evaluate(state => window.__film.render(state), state);
     const clip = Object.fromEntries(Object.entries(this.frame).map(([key, value]) => [key, Math.round(value * 2) / 2]));
     const png = await this.page.screenshot({clip, type: "png"});
     this.hashes.push(crypto.createHash("sha1").update(png).digest("hex").slice(0, 12));
@@ -518,6 +622,24 @@ function srt(captions, total) {
   return captions.map((item, index) => `${index + 1}\n${time(item.start)} --> ${time(Math.min(item.end ?? total, total))}\n${item.text}\n`).join("\n");
 }
 
+// The stage: the backdrop, and the dashboard in its own window, an iframe exactly the screen's
+// size, `margin` in from the corner. A corner is rounded where both its sides sit on the
+// backdrop; an edge that runs off the picture stays square. The hairline edge, and on white a
+// short shadow that fades out above the band. The app's stylesheet gives the captions its type.
+const STAGE = "/__film/stage";
+function stagePage({screen, margin: m, viewport, backdrop, theme, fonts, start}) {
+  const round = (a, b) => (a && b ? "12px" : "0");
+  const edge = theme === "light" ? "0 0 0 1px rgb(0 0 0 / 9%), 0 2px 10px rgb(0 0 0 / 7%)" : "0 0 0 1px rgb(255 255 255 / 9%)";
+  const framed = m.top || m.right || m.bottom || m.left;
+  return `<!doctype html><html data-theme="${theme}"><head><meta charset="utf-8">
+<link rel="stylesheet" href="/assets/app.css">${fonts ? '<link rel="stylesheet" href="/film-fonts/fonts.css">' : ""}
+<style>
+  html, body { margin: 0 !important; padding: 0 !important; width: ${viewport.width}px; height: ${viewport.height}px; min-height: 0 !important; overflow: hidden !important; background: ${backdrop} !important; }
+  #screen { position: absolute; left: ${m.left}px; top: ${m.top}px; width: ${screen.width}px; height: ${screen.height}px; border: 0; display: block; background: ${backdrop};
+    ${framed ? `border-radius: ${round(m.top, m.left)} ${round(m.top, m.right)} ${round(m.bottom, m.right)} ${round(m.bottom, m.left)}; box-shadow: ${edge};` : ""} }
+</style></head><body><iframe id="screen" src="${start}"></iframe></body></html>`;
+}
+
 // Film one format: serve the world, open the dashboard under the virtual clock, play the script.
 export async function shoot(film, {format = "4:5", theme = film.theme || "dark", out, fonts = null, encode = true} = {}) {
   const size = FORMATS[format];
@@ -539,6 +661,7 @@ export async function shoot(film, {format = "4:5", theme = film.theme || "dark",
     // A number, or one per format: a tall film that closes in on a panel needs more pixels.
     const deviceScale = (typeof film.deviceScale === "object" ? film.deviceScale[format] : film.deviceScale) || 2;
     const context = await browser.newContext({viewport, deviceScaleFactor: deviceScale, colorScheme: theme, timezoneId: film.timezone || "UTC", locale: "en-US"});
+    const backdrop = BACKDROP[theme] || BACKDROP.dark;
     await context.route("**/*", async route => {
       const url = route.request().url();
       if (!url.startsWith(served.base)) {
@@ -546,6 +669,7 @@ export async function shoot(film, {format = "4:5", theme = film.theme || "dark",
         return route.abort();
       }
       const {pathname} = new URL(url);
+      if (pathname === STAGE) return route.fulfill({body: stagePage({screen, margin, viewport, backdrop, theme, fonts: Boolean(fonts), start: `${world.start || "/system"}?project=project`}), contentType: "text/html"});
       // Clerk is stubbed (below); the fixture leaves its script address unfilled.
       if (decodeURIComponent(pathname).startsWith("/{{CLERK_FRONTEND_API_URL}}/")) return route.fulfill({body: "", contentType: "text/javascript"});
       if (pathname.startsWith("/film-fonts/") && fonts?.has(path.basename(pathname))) {
@@ -560,7 +684,8 @@ export async function shoot(film, {format = "4:5", theme = film.theme || "dark",
       return route.continue();
     });
     await context.addInitScript(`(${installVirtualClock})(${JSON.stringify({fps: FPS, epoch: now})});`);
-    await context.addInitScript(`(${installOverlay})(${JSON.stringify({screen, margin, backdrop: BACKDROP[theme] || BACKDROP.dark, theme})});`);
+    await context.addInitScript(`(${installScreen})();`);
+    await context.addInitScript(`(${installStage})(${JSON.stringify({backdrop})});`);
     await context.addInitScript(({member, theme}) => {
       window.Clerk = {load: async () => {}, isSignedIn: true, user: {id: "member", firstName: member}, session: {getToken: async () => "synthetic"}, mountSignIn: () => {}};
       localStorage.setItem("tin-lite:theme", theme);
@@ -572,17 +697,20 @@ export async function shoot(film, {format = "4:5", theme = film.theme || "dark",
       const where = message.location()?.url;
       issues.errors.push(`The page logged an error: ${message.text()}${where ? ` (${where.replace(served.base, "")})` : ""}`);
     });
-    await page.goto(`${served.base}${world.start || "/system"}?project=project`, {waitUntil: "domcontentloaded"});
+    await page.goto(`${served.base}${STAGE}`, {waitUntil: "domcontentloaded"});
+    const app = await (await page.waitForSelector("#screen")).contentFrame();
+    await app.waitForLoadState("domcontentloaded");
     await page.evaluate(() => document.fonts.ready);
 
-    const director = new Director({page, format, size, screen, margin, room, deviceScale, served, issues, ripple: Boolean(film.ripple)});
+    const director = new Director({page, app, format, size, screen, margin, room, deviceScale, served, issues, ripple: Boolean(film.ripple)});
     director.sink = async png => {
       if (!encoder) return;
       if (!encoder.child.stdin.write(png)) await new Promise(resolve => encoder.child.stdin.once("drain", resolve));
     };
     // The dashboard boots without being filmed.
     director.recording = false;
-    for (let i = 0; i < 20 * FPS && !(await page.locator(world.ready || "main").count()); i++) await director.shoot();
+    for (let i = 0; i < 20 * FPS && !(await app.locator(world.ready || "main").count()); i++) await director.shoot();
+    await app.evaluate(() => document.fonts.ready);
     await page.evaluate(() => document.fonts.ready);
     director.recording = true;
     await film.play(director);
