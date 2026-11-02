@@ -69,74 +69,68 @@ export function world() {
   };
 }
 
-const rows = n => `.people-table tbody tr[data-person]:nth-child(-n+${n})`;
 const row = id => `.people-table tr[data-person="${id}"]`;
 
+// Directed after Stageshow's motion rules: one framing for the whole story, a good still on its
+// own; the cursor moves only with a cause, aims off the words it clicks and rests on empty surface
+// between beats; at most one push-in, slow, where the payoff would be too small to read.
 export async function play(f) {
-  // Close-ups stay in the dashboard's main column, clear of the sidebar.
-  f.inside = "#main";
-
-  // Everyone who engaged, ranked by ICP fit: the table, and in tall formats its compact layout.
-  const grid = [".people-view h1", ".people-sections", ".people-table thead", rows(f.wide ? 8 : 10)];
-  await f.camera(grid, {cut: true});
+  // The content column, as wide as the frame allows: in the tall format that is the compact
+  // screen whole; wide, the main column from the top, clear of the sidebar.
+  const main = await f.rect("#main");
+  await f.camera({x: main.x, y: 0, width: main.width, height: 1}, {cut: true, pad: 0});
   f.caption("Everyone who engaged, ranked by your ICP.");
-  await f.hold(2.4);
+  await f.hold(2.2);
   await f.mark("grid");
 
-  // The reason behind a score.
+  // The reason behind a score opens under the cursor.
   f.caption("Every score comes with its reason.");
-  await f.move(`${row("p-daniel")} td.is-fit`, {to: [0.6, 0.5]});
-  await f.hold(0.3);
-  await f.camera([`${row("p-daniel")} td.is-name`, `${row("p-daniel")} td.is-fit`, ".people-hover"], {pad: 40, text: true});
-  await f.hold(1.8);
+  await f.move(`${row("p-daniel")} td.is-fit`, {to: [0.7, 0.6]});
+  await f.hold(2.2);
   await f.mark("reason");
 
-  // Tin has asked the people who fit: back to the whole grid, where they read "Queued". The
-  // cursor rests on the empty end of the tabs row, so the reason card closes.
+  // Tin has asked the people who fit: they read Queued. The cursor rests on the tabs row's empty
+  // end, so the reason card closes.
   f.caption("Tin asks the ones who fit.");
-  await f.camera(grid, {wait: false});
-  await f.move(".people-sections", {to: [0.9, 0.5]});
-  await f.hold(2.2);
+  await f.move(".people-sections", {to: [0.88, 0.5]});
+  await f.hold(2);
   await f.mark("asked");
 
-  // Two more just under the line, by hand: the bar takes the header row's place.
+  // Two more by hand, just under the line: the bar takes the header row's place; Send.
   f.caption("Pick anyone else to ask.");
-  const picks = [".people-table thead", `${rows(9)} td.is-pick`, `${rows(9)} td.is-name`, `${rows(9)} td.is-fit`, `${rows(9)} td.is-linkedin`];
-  await f.camera(picks, {pad: 32, wait: false});
   await f.click('[data-people-pick="p-chloe"]');
-  await f.hold(0.3);
+  await f.hold(0.35);
   await f.click('[data-people-pick="p-lea"]');
-  await f.hold(0.4);
-  await f.move(".people-picked-send");
-  await f.hold(0.9);
+  await f.hold(0.5);
+  await f.move(".people-picked-send", {to: [0.88, 0.62]});
+  await f.hold(1);
   await f.mark("poster");
-  await f.click(".people-picked-send");
+  await f.click(".people-picked-send", {to: [0.88, 0.62]});
   await f.ready(".toast.is-visible");
-  await f.camera([".people-table thead", `${rows(9)} td.is-name`, `${rows(9)} td.is-linkedin`, ".toast"], {pad: 28, text: true});
-  await f.hold(1.8);
+  await f.hold(1.6);
   await f.mark("queued");
 
-  // They accept.
+  // They accept. Behind the cut time passes: the toast closes and Daniel has accepted.
   await f.cut(async () => {
     f.hide();
+    await f.hold(3.6);
     const list = f.world.people;
     list[list.findIndex(item => item.id === "p-daniel")] = daniel(true);
     await f.open("/people", {ready: "[data-people-pick]"});
-  });
-  f.caption("They accept. You start the conversation.");
-  await f.camera(grid, {cut: true});
-  await f.click(`${row("p-daniel")} td.is-name`);
+  }, {caption: "They accept. You start the conversation."});
+  await f.click(`${row("p-daniel")} td.is-name`, {to: [0.86, 0.55]});
   await f.ready("#person-panel .person-section:last-of-type");
-  await f.hold(0.3);
-  await f.scroll("#person-panel .person-panel-body", "#person-panel .person-section:last-of-type", {offset: 80});
-  // Wide, Daniel's whole row (now Connected) beside the panel; tall, the panel's timeline alone.
-  if (f.wide) await f.camera([row("p-daniel"), "#person-panel .person-section:last-of-type"], {pad: 28, inside: null});
-  else {
-    // The panel's own width around the timeline, so no sliver of the list shows beside it.
+  await f.hold(0.6);
+  // The film's one camera move, slow and with the cursor still. Wide, the panel's timeline sits
+  // below the content column, so the camera pulls out to the whole app: the list with Daniel
+  // Connected, and his panel. Tall, the panel is too small to read, so it closes in on it.
+  if (f.wide) {
+    await f.camera({x: 0, y: 0, width: f.screen.width, height: f.screen.height}, {pad: 0, inside: null, duration: 1.8, curve: "house"});
+  } else {
     const panel = await f.rect("#person-panel");
     const timeline = await f.rect("#person-panel .person-section:last-of-type");
-    await f.camera({x: panel.x, y: timeline.y - 24, width: panel.width, height: timeline.height + 48}, {pad: 0, inside: null});
+    await f.camera({x: panel.x, y: timeline.y - 24, width: panel.width, height: timeline.height + 48}, {pad: 0, inside: null, duration: 1.8, curve: "house"});
   }
-  await f.hold(2.4);
+  await f.hold(2.2);
   await f.mark("accepted");
 }

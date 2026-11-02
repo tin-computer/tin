@@ -11,6 +11,7 @@ import {pathToFileURL} from "node:url";
 import {chromium} from "playwright";
 import {serveApp} from "../app-fixture.js";
 import {installVirtualClock} from "./clock.js";
+import {bezier} from "./ease.js";
 import {installOverlay} from "./overlay.js";
 
 export const FPS = 30;
@@ -32,6 +33,8 @@ export function stage(size, width = size.screen) {
 }
 // The smallest text a frame may show, as a share of its short side: about 22px at 1080.
 const SMALLEST_TEXT = 0.02;
+// The cursor's travel, as Stageshow's act.move eases it; everything else uses the named curves in
+// ease.js.
 const ease = t => (t < 0.5 ? 4 * t * t * t : 1 - (-2 * t + 2) ** 3 / 2);
 const lerp = (a, b, t) => a + (b - a) * t;
 const seconds = s => Math.max(1, Math.round(s * FPS));
@@ -48,6 +51,10 @@ class Director {
     this.marks = {};
     this.hashes = [];
     this.cursor = {x: 0, y: 0, visible: false, pressed: false};
+    // What moved when, for the camera rules and the motion strips.
+    this.moves = [];
+    this.events = [];
+    this.cameraMoving = false;
     this.fade = 0;
     this.inside = null;
     this.frame = {x: 0, y: 0, width: screen.width, height: screen.width * size.height / size.width};
@@ -81,8 +88,9 @@ class Director {
   // large as the format allows. It never zooms past the device scale, where every output pixel
   // is still a pixel the browser drew.
   // `inside` (the director's default, or per call) keeps the frame within a region where it can,
-  // so a close-up never ends halfway across a sidebar.
-  async camera(target, {pad = 28, duration = 0.9, cut = false, wait = true, align = "center", text = false, inside = this.inside} = {}) {
+  // so a close-up never ends halfway across a sidebar. After Stageshow's Camera: 1.1 s on its own
+  // curve, and the report holds the film to one push-in, within 2x, with the cursor still.
+  async camera(target, {pad = 28, duration = 1.1, curve = "camera", cut = false, wait = true, align = "center", text = false, inside = this.inside} = {}) {
     const box = await this.rect(target, text);
     const {width, height, band} = this.size;
     const room = height - band;
@@ -103,11 +111,18 @@ class Director {
     }
     const from = {...this.frame};
     const frames = seconds(duration);
+    const curveAt = bezier(curve);
+    const zoom = from.width / frame.width;
+    if (Math.abs(zoom - 1) < 0.02 && Math.hypot(frame.x - from.x, frame.y - from.y) < 2) return;
+    this.moves.push({label: JSON.stringify(target).slice(0, 60), start: this.n, end: this.n + frames, zoom, seconds: frames / FPS});
+    this.events.push({label: `camera ${zoom > 1.02 ? "in" : zoom < 0.98 ? "out" : "pan"}`, start: this.n, end: this.n + frames});
     let i = 0;
+    this.cameraMoving = true;
     const track = () => {
       i++;
-      const t = ease(i / frames);
+      const t = curveAt(i / frames);
       this.frame = {x: lerp(from.x, frame.x, t), y: lerp(from.y, frame.y, t), width: lerp(from.width, frame.width, t), height: lerp(from.height, frame.height, t)};
+      if (i >= frames) this.cameraMoving = false;
       return i >= frames;
     };
     await this.run(track, wait);
@@ -116,6 +131,7 @@ class Director {
   // The cursor travels in a shallow arc, as a hand does (after Stageshow's act.move), and the real
   // pointer follows it, so hovers happen.
   async move(target, {to = [0.5, 0.5], duration} = {}) {
+    if (this.cameraMoving) this.warn(`The cursor moves toward ${JSON.stringify(target)} while the camera moves; Stageshow holds the cursor still while the view moves.`);
     const box = await this.rect(target);
     const end = {x: box.x + box.width * to[0], y: box.y + box.height * to[1]};
     // It comes in from the right edge, level with where it's going, so it crosses nothing that
@@ -125,9 +141,10 @@ class Director {
       Object.assign(this.cursor, {visible: true, x: picture.x + picture.width * 1.03, y: end.y + picture.height * 0.03});
     }
     const from = {x: this.cursor.x, y: this.cursor.y};
-    const distance = Math.hypot(end.x - from.x, end.y - from.y) / this.scale;
-    const frames = seconds(duration ?? Math.min(0.75, Math.max(0.35, 0.3 + distance * 0.0005)));
-    const bow = Math.min(distance * 0.08, 24) * this.scale;
+    // Stageshow's hand: a shallow arc, quicker over short hops (distance in screen px).
+    const distance = Math.hypot(end.x - from.x, end.y - from.y);
+    const frames = seconds(duration ?? Math.min(0.65, Math.max(0.3, (260 + distance * 0.9) / 1000)));
+    const bow = Math.min(distance * 0.08, 24);
     const length = Math.hypot(end.x - from.x, end.y - from.y) || 1;
     const normal = {x: -(end.y - from.y) / length, y: (end.x - from.x) / length};
     let i = 0;
@@ -146,6 +163,7 @@ class Director {
   // real click at the same point.
   async click(target, options) {
     await this.move(target, options);
+    this.events.push({label: "click", start: this.n - 4, end: this.n + 14});
     await this.hold(0.12);
     const before = await this.page.evaluate(selectors => window.__film.rect(selectors), target);
     this.cursor.pressed = true;
@@ -189,13 +207,14 @@ class Director {
     }
   }
 
-  // One caption at a time: the old one fades out, the new one fades in and rises a little.
-  caption(text) {
+  // One caption at a time: the old one fades out, the new one fades in and rises a little, `delay`
+  // frames on (a cut hands its caption over while the frame is dark).
+  caption(text, {delay = 0} = {}) {
     const current = this.captions.at(-1);
-    let start = this.n;
+    let start = this.n + delay;
     if (current && current.end === null) {
       current.end = this.n + 5;
-      start = current.end;
+      start = Math.max(current.end, start);
     }
     if (text) this.captions.push({text, start, end: null});
   }
@@ -204,16 +223,33 @@ class Director {
     for (let i = 0, frames = seconds(duration); i < frames; i++) await this.shoot();
   }
 
-  // A cut behind a fade: what `change` does (open another view, move the world on) isn't filmed.
-  async cut(change, {fade = 0.25} = {}) {
+  // A cut behind a fade: what `change` does (open another view, move the world on, let time pass)
+  // isn't filmed. It accelerates into the cut and settles out of it (Stageshow's through and settle
+  // curves); a new caption comes in with the new scene.
+  async cut(change, {fade = 0.3, caption} = {}) {
     let i = 0;
     const frames = seconds(fade);
-    await this.run(() => (this.fade = ++i / frames) >= 1);
+    if (caption !== undefined) this.caption(caption, {delay: frames});
+    const into = bezier("through");
+    const out = bezier("settle");
+    this.events.push({label: "cut", start: this.n - 4, end: this.n + frames * 2 + 4});
+    await this.run(() => (this.fade = into(++i / frames)) >= 1);
     this.recording = false;
     await change();
     this.recording = true;
     i = 0;
-    await this.run(() => (this.fade = 1 - ++i / frames) <= 0);
+    await this.run(() => (this.fade = 1 - out(++i / frames)) <= 0);
+  }
+
+  // Stageshow's camera rules, read once the film has played.
+  judgeCamera() {
+    const pushes = this.moves.filter(move => move.zoom > 1.02);
+    for (const move of this.moves) {
+      if (move.zoom > 2.01) this.warn(`The camera zooms ${move.zoom.toFixed(1)}x in one move (${move.label}); a push-in stays within 2x.`);
+      if (move.zoom > 1.15 && move.seconds < 1.1) this.warn(`The camera zooms ${move.zoom.toFixed(1)}x in ${move.seconds.toFixed(1)}s (${move.label}); a push-in takes 1.1s or more.`);
+    }
+    if (pushes.length > 1) this.warn(`The camera pushes in ${pushes.length} times; one push-in per story, in and back out.`);
+    if (this.moves.length > 3) this.warn(`The camera moves ${this.moves.length} times; cut any move nobody would miss.`);
   }
 
   hide() { this.cursor.visible = false; }
@@ -421,6 +457,7 @@ export async function shoot(film, {format = "4:5", theme = film.theme || "dark",
     director.recording = true;
     await film.play(director);
     director.caption(null);
+    director.judgeCamera();
     await context.close();
 
     issues.blocked = [...new Set(issues.blocked)];
@@ -431,6 +468,7 @@ export async function shoot(film, {format = "4:5", theme = film.theme || "dark",
       encoder.child.stdin.end();
       await encoder.done;
       await stills(director, size, dir);
+      await motionStrips(director, size, dir);
       fs.writeFileSync(path.join(dir, "captions.srt"), srt(director.captions, director.n));
       report.bytes = Object.fromEntries(fs.readdirSync(dir).filter(name => name.includes(".")).map(name => [name, fs.statSync(path.join(dir, name)).size]));
       if (report.bytes["film.gif"] > 15 * 1024 * 1024) issues.warnings.push("The GIF is over X's 15 MB.");
@@ -471,6 +509,22 @@ async function stills(director, size, dir) {
   await encodeStills(files.map(file => fs.readFileSync(file)), ["-vf", `scale=${Math.round(size.width / 2.5)}:-2:flags=lanczos,tile=${columns}x${Math.ceil(files.length / columns)}:padding=24:margin=24:color=0x44403a`, "-frames:v", "1", path.join(dir, "sheet.png")]);
   const width = Math.round(size.width * (size.width > size.height ? 0.5 : 0.6) / 2) * 2;
   await ffmpeg(["-i", path.join(dir, "film.mp4"), "-vf", `fps=15,scale=${width}:-2:flags=lanczos,split[a][b];[a]palettegen=stats_mode=diff[p];[b][p]paletteuse=dither=bayer:bayer_scale=4`, path.join(dir, "film.gif")]).done;
+}
+
+// Every camera move, click and cut as a strip of every other frame, for looking at the motion
+// itself (Stageshow's rehearse: film each beat at 40 to 80ms and look). Stills never show it.
+async function motionStrips(director, size, dir) {
+  fs.mkdirSync(path.join(dir, "motion"));
+  for (const [index, event] of director.events.entries()) {
+    const first = Math.max(0, event.start);
+    const last = Math.min(director.n - 1, event.end);
+    const count = Math.floor((last - first) / 2) + 1;
+    if (count < 2) continue;
+    const columns = Math.min(8, count);
+    const name = `${String(index + 1).padStart(2, "0")}-${event.label.replace(/\W+/g, "-")}-${(first / FPS).toFixed(1)}s.png`;
+    await ffmpeg(["-i", path.join(dir, "film.mp4"), "-vf", `select='between(n\\,${first}\\,${last})*not(mod(n-${first}\\,2))',scale=${Math.round(size.width / 4)}:-2,tile=${columns}x${Math.ceil(count / columns)}:padding=6:color=0x44403a`,
+      "-frames:v", "1", "-fps_mode", "vfr", path.join(dir, "motion", name)]).done;
+  }
 }
 
 export async function loadFilm(name) {

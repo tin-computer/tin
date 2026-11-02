@@ -9,7 +9,12 @@ export function installOverlay(screen) {
   // makes it the box fixed elements (toasts, hover cards, the person panel) sit in, so nothing
   // the dashboard shows ends up under the caption band.
   const fit = document.createElement("style");
-  fit.textContent = `body { position: relative; width: ${screen.width}px; height: ${screen.height}px !important; min-height: 0 !important; overflow: auto !important; transform: translateZ(0); scrollbar-width: none; }`;
+  // The dashboard's rail is a viewport tall (100svh), and the window is taller than the screen, so
+  // it is held to the screen's height or its footer would run under the band.
+  fit.textContent = `body { position: relative; width: ${screen.width}px; height: ${screen.height}px !important; min-height: 0 !important; overflow: auto !important; transform: translateZ(0); scrollbar-width: none; }
+    .app-shell { min-height: ${screen.height}px !important; }
+    .rail { height: ${screen.height}px !important; }
+    @media (max-width: 1100px) { .rail { height: var(--top-menu-height) !important; } }`;
   // Init scripts can run before the document has its <html>.
   const place = () => document.documentElement && (document.documentElement.append(fit), true);
   if (!place()) new MutationObserver((_, observer) => place() && observer.disconnect()).observe(document, {childList: true});
