@@ -359,6 +359,21 @@ class Director {
     await this.run(() => (this.fade = 1 - ease(++i / frames)) <= 0);
   }
 
+  // A change shown where it happens, with no cut: `change` moves the world on and has the app
+  // re-render, unfilmed; then what differs on screen rolls, slides, arrives or fades (`morph` in
+  // overlay.js). `caption` arrives with it.
+  async morph(change, {caption} = {}) {
+    await this.app.evaluate(() => window.__film.capture());
+    this.recording = false;
+    await change();
+    this.recording = true;
+    const done = await this.app.evaluate(() => window.__film.morph());
+
+    this.events.push({label: "morph", start: this.n - 2, end: this.n + 24});
+    if (caption !== undefined) this.caption(caption);
+    return done;
+  }
+
   // Text too small to read on a phone, said once for the film, smallest first.
   judgeText() {
     if (!this.small.size) return;

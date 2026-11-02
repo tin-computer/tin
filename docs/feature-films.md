@@ -114,6 +114,7 @@ and `play(f)`. `people-requests.js` is the example.
 | `f.type(text)`, `f.scroll(container, target)` | Real keystrokes; an eased scroll of a container. |
 | `f.caption(text)` | One caption at a time; the last fades out and the next rises in. `null` clears it. |
 | `f.hold(seconds)`, `f.ready(selector)` | Lets time pass; waits (filmed) until something is visible. |
+| `f.morph(change, {caption})` | Shows a change where it happens, with no cut. `change` moves the world on and has the app re-render, unfilmed; then what differs on screen moves, after Stageshow's motion rules. A word that changed rolls (the old slides up and out, the new rises in, its span easing to its new width). Rows that moved slide to their new place once what left has faded. New rows fade in with a small rise. Text that went fades where it was. The film's clock moves it all frame by frame. |
 | `f.open(route)`, `f.cut(change, {caption})` | Opens a view; fades to the ground into the cut and settles out of it, doing `change` unfilmed (open a view, move the world on, let time pass); `caption` arrives with the new scene. |
 | `f.highlight(target, {hold, delay, pad, over})` | A soft mark on what just changed: it washes in, holds and fades. It is drawn in the page, under its toasts and inside its fades; `over` puts it above a panel. |
 | `f.begin()`, `f.end()` | Fades in from the band's ground (from 85%, so the first frame isn't dark) and out to it. |
@@ -136,7 +137,8 @@ How a good film reads, after Stageshow's guidance (its `references/motion.md` an
   still while the view moves;
 - the cursor moves only with a cause, aims inside its target but off its words, and rests on
   empty surface between beats;
-- a cut lets time pass behind it and changes only what time changed, so nothing from the last
+- show a change where it happens (`f.morph`), as the product would on its next refresh; keep a
+  cut for a real change of scene. A cut changes only what time changed, so nothing from the last
   scene (a toast, a hover) survives it;
 - one short caption per beat, in sentence case; feeds play muted, so the captions carry it;
 - the poster is the decision moment, the frame that tells the story alone;

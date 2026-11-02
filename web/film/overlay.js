@@ -124,6 +124,187 @@ export function installScreen() {
   film.textSizes = frame => pieces().filter(({box, size}) => size && box.left >= frame.x - 1 && box.top >= frame.y - 1
     && box.right <= frame.x + frame.width + 1 && box.bottom <= frame.y + frame.height + 1).map(({text, size}) => ({text, size}));
 
+  // A change shown where it happens, after Stageshow's motion rules ("every change moves",
+  // "change only what changed", "no holes or blank frames"). `capture` notes the page as it is;
+  // after the app has re-rendered, `morph` animates the difference: a word that changed rolls (the
+  // old slides up and out, the new rises in, its span easing to its new width, as Stageshow's
+  // Roll does), a block that moved slides to its new place, a new block fades in with a small
+  // rise, and text that went fades out where it was. Web animations, so the film's clock moves
+  // them frame by frame.
+  const pathOf = element => {
+    const parts = [];
+    // From the nearest element with an id (the panel, the main column), so things added
+    // elsewhere in the page don't shift it.
+    for (let node = element; node && node !== document.body; node = node.parentElement) {
+      if (node.id) {
+        parts.unshift(`#${node.id}`);
+        break;
+      }
+      const key = node.getAttribute("data-person") ? `[${node.getAttribute("data-person")}]` : "";
+      parts.unshift(`${node.tagName}${key}.${[...node.classList].sort().join(".")}:${[...(node.parentElement?.children || [])].indexOf(node)}`);
+    }
+    return parts.join(">");
+  };
+  const snapshot = () => {
+    const leaves = [];
+    const walker = document.createTreeWalker(document.body, NodeFilter.SHOW_TEXT);
+    for (let node = walker.nextNode(); node; node = walker.nextNode()) {
+      const text = node.textContent.trim();
+      const element = node.parentElement;
+      if (!text || !element || element.closest(`${ours}, script, style`)) continue;
+      const range = document.createRange();
+      range.selectNodeContents(node);
+      const box = range.getBoundingClientRect();
+      if (!box.width || !box.height) continue;
+      const style = getComputedStyle(element);
+      leaves.push({node, text, box, path: `${pathOf(element)}#${[...element.childNodes].indexOf(node)}`,
+        look: {font: style.font, color: style.color, letterSpacing: style.letterSpacing}});
+    }
+    const blocks = [];
+    for (const element of document.body.querySelectorAll("*")) {
+      if (element.closest(ours)) continue;
+      if (!/block|flex|grid|table-row|list-item/.test(getComputedStyle(element).display)) continue;
+      const key = element.textContent.replace(/\s+/g, " ").trim();
+      const box = element.getBoundingClientRect();
+      if (key && box.width && box.height) blocks.push({element, key, box, path: pathOf(element)});
+    }
+    // A block that says no more than the block around it is that block: keep the outermost, so a
+    // section and its heading don't make each other look like twins.
+    const kept = blocks.filter(block => !blocks.some(other => other !== block && other.key === block.key && other.element.contains(block.element)));
+    return {leaves, blocks: kept};
+  };
+  const once = items => {
+    const count = new Map();
+    for (const item of items) count.set(item.key ?? item.text, (count.get(item.key ?? item.text) || 0) + 1);
+    return item => count.get(item.key ?? item.text) === 1;
+  };
+  film.capture = () => {
+    film.before = snapshot();
+  };
+  film.morph = () => {
+    const before = film.before;
+    const after = snapshot();
+    film.before = null;
+    if (!before) return {rolled: 0, moved: 0, entered: 0, left: 0};
+    const SETTLE = "cubic-bezier(0.22, 1, 0.36, 1)";
+
+    // Blocks the same in both (by their whole text, said once in each, or else by their place in
+    // the page, when what they say changed): those that moved slide from where they were. One
+    // inside another moves only by its own difference, so the two never add up.
+    const lone = once(before.blocks), loneAfter = once(after.blocks);
+    const was = new Map(before.blocks.filter(lone).map(block => [block.key, block]));
+    const wasAt = new Map(before.blocks.map(block => [block.path, block]));
+    // By text first, across the page, then by place for the rest, so a new row in an old row's
+    // place isn't taken for it.
+    const taken = new Set(), pairs = new Map();
+    for (const block of after.blocks) {
+      const old = loneAfter(block) && was.get(block.key);
+      if (old && !taken.has(old)) {
+        taken.add(old);
+        pairs.set(block, old);
+      }
+    }
+    for (const block of after.blocks) {
+      if (pairs.has(block)) continue;
+      const old = wasAt.get(block.path);
+      if (old && !taken.has(old)) {
+        taken.add(old);
+        pairs.set(block, old);
+      }
+    }
+    const moved = [...pairs].map(([block, old]) => ({element: block.element, dx: old.box.left - block.box.left, dy: old.box.top - block.box.top}));
+    // Words: the same text said once in each is the same word; otherwise the same place in the
+    // page is. A word whose place now says something else rolls.
+    const loneLeaf = once(before.leaves), loneLeafAfter = once(after.leaves);
+    const byText = new Map(before.leaves.filter(loneLeaf).map(leaf => [leaf.text, leaf]));
+    const byPath = new Map(before.leaves.map(leaf => [leaf.path, leaf]));
+    const used = new Set(), rolled = [], fresh = [], paired = new Set();
+    // Words said once in both are paired first, across the whole page, so a row that moved down
+    // keeps its words and a new row in its old place doesn't roll out of it.
+    for (const leaf of after.leaves) {
+      const twin = loneLeafAfter(leaf) && byText.get(leaf.text);
+      if (twin && !used.has(twin)) {
+        used.add(twin);
+        paired.add(leaf);
+      }
+    }
+    for (const leaf of after.leaves) {
+      if (paired.has(leaf)) continue;
+      const old = byPath.get(leaf.path);
+      if (old && !used.has(old)) {
+        used.add(old);
+        if (old.text !== leaf.text) rolled.push({leaf, old});
+        continue;
+      }
+      fresh.push(leaf);
+    }
+    const slides = [];
+    for (const item of moved) {
+      const outer = moved.filter(other => other !== item && other.element.contains(item.element))
+        .sort((a, b) => (a.element.contains(b.element) ? 1 : -1))[0];
+      // What holds a rolling word only slides up or down: its width is the roll's to ease.
+      const rolling = rolled.some(({leaf}) => item.element.contains(leaf.node));
+      const dx = rolling ? 0 : item.dx - (outer?.dx || 0), dy = item.dy - (outer?.dy || 0);
+      if (Math.hypot(dx, dy) >= 0.5) slides.push({element: item.element, dx, dy});
+    }
+    // They close up once what left has faded, so nothing moves through words still going.
+    for (const {element, dx, dy} of slides) {
+      element.animate([{transform: `translate(${dx}px, ${dy}px)`}, {transform: "none"}], {duration: 500, delay: 120, easing: SETTLE, fill: "backwards"});
+    }
+
+    for (const {leaf, old} of rolled) {
+      const roll = document.createElement("span");
+      roll.style.cssText = "display: inline-grid; vertical-align: bottom; clip-path: inset(0 -100vw); white-space: pre;";
+      const out = document.createElement("span");
+      const into = document.createElement("span");
+      out.textContent = old.node.textContent;
+      into.textContent = leaf.node.textContent;
+      for (const part of [out, into]) part.style.cssText = "grid-area: 1 / 1; justify-self: start; width: max-content;";
+      roll.append(out, into);
+      leaf.node.replaceWith(roll);
+      const from = old.box.width, to = into.getBoundingClientRect().width;
+      out.animate([{transform: "none", opacity: 1, filter: "blur(0)"}, {transform: "translateY(-100%)", opacity: 0, filter: "blur(2px)"}],
+        {duration: 280, easing: "cubic-bezier(0.55, 0, 1, 0.45)", fill: "forwards"});
+      into.animate([{transform: "translateY(100%)", opacity: 0, filter: "blur(2px)"}, {transform: "none", opacity: 1, filter: "blur(0)"}],
+        {duration: 550, delay: 110, easing: SETTLE, fill: "backwards"});
+      // The span eases to its new width, so what follows moves with it; then it is plain text again.
+      roll.animate([{width: `${from}px`}, {width: `${to}px`}], {duration: 500, easing: SETTLE})
+        .finished.then(() => roll.isConnected && roll.replaceWith(document.createTextNode(leaf.node.textContent)));
+    }
+
+    // New blocks, the outermost whose words are all new, fade in with a small rise as the rows
+    // around them make room.
+    const freshNodes = new Set(fresh.map(leaf => leaf.node));
+    const novel = after.blocks.filter(block => {
+      const inside = after.leaves.filter(leaf => block.element.contains(leaf.node));
+      return inside.length && inside.every(leaf => freshNodes.has(leaf.node));
+    });
+    const arrivals = novel.filter(block => !novel.some(other => other !== block && other.element.contains(block.element)));
+    for (const {element} of arrivals) {
+      // It arrives as what it replaces leaves: once the rows making room for it have mostly gone.
+      element.animate([{opacity: 0, transform: "translateY(8px)"}, {opacity: 1, transform: "none"}], {duration: 350, delay: 420, easing: SETTLE, fill: "backwards"});
+    }
+    const covered = new Set(arrivals.flatMap(({element}) => fresh.filter(leaf => element.contains(leaf.node)).map(leaf => leaf.node)));
+    for (const leaf of fresh.filter(leaf => !covered.has(leaf.node))) {
+      leaf.node.parentElement?.animate([{opacity: 0}, {opacity: 1}], {duration: 300, delay: 420, easing: SETTLE, fill: "backwards"});
+    }
+
+    // What went fades out where it was.
+    const gone = before.leaves.filter(leaf => !used.has(leaf));
+    for (const leaf of gone) {
+      const ghost = document.createElement("span");
+      ghost.textContent = leaf.node.textContent;
+      Object.assign(ghost.style, {position: "fixed", left: `${leaf.box.left}px`, top: `${leaf.box.top}px`, font: leaf.look.font, color: leaf.look.color,
+        letterSpacing: leaf.look.letterSpacing, whiteSpace: "pre", pointerEvents: "none", zIndex: "62", margin: "0"});
+      mount();
+      marks.append(ghost);
+      ghost.animate([{opacity: 1}, {opacity: 0}], {duration: 150, easing: "ease-out", fill: "forwards"}).finished.then(() => ghost.remove());
+    }
+    const name = element => `${element.tagName.toLowerCase()}.${[...element.classList].join(".")}`;
+    return {rolled: rolled.map(({old, leaf}) => `${old.text} -> ${leaf.text}`), moved: slides.map(({element, dx, dy}) => `${name(element)} ${Math.round(dx)},${Math.round(dy)}`),
+      entered: arrivals.map(({element}) => name(element)), left: gone.map(leaf => leaf.text)};
+  };
+
   // Where something is: the union of every match, in the screen's px. With `text`, only what is
   // written inside them, so a full-width row frames as its words.
   const textBoxes = element => {

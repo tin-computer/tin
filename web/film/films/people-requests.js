@@ -172,18 +172,20 @@ export async function play(f) {
   }
   await f.hold(0.7);
 
-  // They accept: behind the cut time passes, the toast closes and Chloé's request is accepted.
-  await f.cut(async () => {
-    await f.hold(3.6);
+  // They accept, in place, with no cut: her record changes where it is, as Stageshow's motion
+  // rules ask. Her status rolls from Queued to Connected, the note under it fades, the rows
+  // below close up, and the accepted request arrives at the top of her timeline. The list
+  // behind changes the same way.
+  await f.morph(async () => {
     const list = f.world.people;
     list[list.findIndex(item => item.id === "p-chloe")] = chloe(true);
-    // The panel reads her again, as a reload would.
-    await f.page.keyboard.press("Escape");
+    // The app reads her again, as it would on its next refresh.
     await f.open("/people", {ready: `${row("p-chloe")} td.is-name`});
     await f.app.evaluate(selector => document.querySelector(selector).click(), `${row("p-chloe")} td.is-name`);
     await f.ready("#person-panel .person-section:last-of-type");
-    await f.hold(0.5);
+    await f.hold(0.3);
   }, {caption: "They accept. You start the conversation."});
+  await f.hold(0.35);
   await f.look(null);
   await f.highlight(await panelRow(f, LINKEDIN_FIELD), {hold: f.wide ? 5 : 3.6, pad: 0, over: true});
   if (await f.shows(ACCEPTED)) await f.highlight(await panelRow(f, ACCEPTED), {hold: 3.5, delay: 0.1, pad: 0, over: true});

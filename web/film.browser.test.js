@@ -89,6 +89,28 @@ test("the page sees the pointer only where the hand stops", {timeout: 180000}, a
   assert.equal(arrived, true);
 });
 
+test("a change shown in place rolls the word that changed, with no cut", {timeout: 180000}, async () => {
+  let done = null;
+  let from = 0;
+  const report = await take(short(async f => {
+    await f.camera([".people-view h1", ".people-table thead", ".people-table tbody tr:nth-child(-n+6)"], {cut: true});
+    await f.hold(0.2);
+    from = f.n;
+    done = await f.morph(async () => {
+      const chloe = f.world.people.find(item => item.id === "p-chloe");
+      chloe.fields.linkedin_relationship.value = "connected";
+      chloe.requestable = false;
+      await f.open("/people", {ready: '.people-table tr[data-person="p-chloe"] td.is-name'});
+    });
+    await f.hold(0.8);
+    await f.mark("poster");
+  }));
+  assert.ok(done.rolled.includes("Not connected -> Connected"), JSON.stringify(done));
+  // It moves over several frames rather than swapping in one, and nothing fades to the backdrop.
+  const changing = report.hashes.slice(from, from + 12);
+  assert.ok(new Set(changing).size >= 8, `${new Set(changing).size} distinct frames`);
+});
+
 test("a hand that steps aside and comes back is reported", {timeout: 180000}, async () => {
   const row = id => `.people-table tr[data-person="${id}"]`;
   const report = await take(short(async f => {
