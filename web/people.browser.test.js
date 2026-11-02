@@ -158,6 +158,10 @@ test("a person opens beside a narrower grid, and the address keeps them", {timeo
     await page.locator("#person-panel").focus();
     await page.keyboard.press("Escape");
     assert.equal(await page.locator("#person-panel").count(), 0);
+    // It slides out the way it came, inert while it goes, then is gone.
+    const leaving = page.locator("aside.person-panel.is-leaving");
+    if (await leaving.count()) assert.equal(await leaving.evaluate(panel => panel.inert), true);
+    await page.locator("aside.person-panel").waitFor({state: "detached"});
     assert.equal(new URL(page.url()).searchParams.get("person"), null);
     assert.equal(await page.locator(".people-table th.is-headline").isVisible(), true);
 
