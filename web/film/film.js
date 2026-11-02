@@ -116,6 +116,8 @@ class Director {
     }
     if (cut || !this.n) {
       this.frame = frame;
+      // A click's ring belongs to the shot it was pressed in.
+      this.ripples = [];
       return;
     }
     const from = {...this.frame};
@@ -180,10 +182,18 @@ class Director {
     const before = await this.page.evaluate(selectors => window.__film.rect(selectors), target);
     this.cursor.pressed = true;
     await this.page.mouse.down();
-    this.ripples.push({x: this.cursor.x, y: this.cursor.y, start: this.n});
+    const ripple = {x: this.cursor.x, y: this.cursor.y, start: this.n, gone: null};
+    this.ripples.push(ripple);
     await this.hold(0.1);
     await this.page.mouse.up();
     this.cursor.pressed = false;
+    // The ring ends with what was pressed: once it is gone or covered at the press, it fades out.
+    if (typeof target === "string" || Array.isArray(target)) this.tracks.add(async () => {
+      if (ripple.gone !== null || this.n - ripple.start > 11) return true;
+      const there = await this.page.evaluate(([selectors, x, y]) => window.__film.hits(selectors, x, y), [target, ripple.x, ripple.y]);
+      if (!there) ripple.gone = this.n;
+      return !there;
+    });
     // The page shouldn't move what was just clicked out from under the cursor. Checked a few
     // frames on, as the next calls go.
     let frames = 0;
@@ -389,8 +399,8 @@ class Director {
       const closing = current.end === null ? 1 : Math.min(1, (current.end - n) / 5);
       caption = {text: current.text, opacity: Math.min(opening, closing), rise: 1 - ease(opening)};
     }
-    // A click's ring is short: the thing pressed may be gone a moment later.
-    this.ripples = this.ripples.filter(ripple => n - ripple.start < 11);
+    // A click's ring is short, and shorter when the thing pressed goes.
+    this.ripples = this.ripples.filter(ripple => n - ripple.start < 11 && (ripple.gone === null || n - ripple.gone < 3));
     caption.opacity *= 1 - this.ending;
     const highlights = this.highlights.map(mark => {
       const age = n - mark.start;
@@ -402,7 +412,7 @@ class Director {
       frame: this.frame, size: this.size, band: this.size.band, caption, fade: Math.max(this.fade, this.ending), highlights,
       // The cursor goes with the picture through a cut or the ending, never floating on the dark.
       cursor: {...this.cursor, opacity: 1 - Math.max(this.fade, this.ending)},
-      ripples: this.ripples.map(ripple => ({x: ripple.x, y: ripple.y, progress: ease((n - ripple.start) / 10)})),
+      ripples: this.ripples.map(ripple => ({x: ripple.x, y: ripple.y, progress: ease((n - ripple.start) / 10), fading: ripple.gone === null ? 1 : 1 - (n - ripple.gone) / 3})),
     };
   }
 }

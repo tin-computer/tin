@@ -77,6 +77,8 @@ export function world() {
 }
 
 const row = id => `.people-table tr[data-person="${id}"]`;
+const LINKEDIN_FIELD = "#person-panel .person-section:first-of-type > div.person-field:nth-of-type(3)";
+const ACCEPTED = "#person-panel .person-section:last-of-type div.person-event:first-of-type";
 // A row of the person panel, edge to edge: its own top rule and the next row's, so a mark sits on
 // the panel's lines instead of doubling them.
 const panelRow = async (f, selector) => {
@@ -99,17 +101,18 @@ export async function play(f) {
   await f.hold(2);
   await f.mark("grid");
 
-  // The reason behind a score opens under the cursor, which sits above the card, off its words.
+  // The reason behind a score opens under the cursor, which stops just past the score and above
+  // its line, so it neither crosses nor covers the number.
   f.caption("Every score comes with its reason.");
-  await f.move(`${row("p-daniel")} td.is-fit`, {to: [0.2, 0.25]});
+  await f.move(`${row("p-daniel")} td.is-fit`, {to: [0.95, 0.12]});
   await f.hold(2);
   await f.mark("reason");
 
   // Tin's read asks the ones who fit: their boxes go and their LinkedIn column reads Queued. The
-  // cursor steps off the score onto the empty end of the title row first, so the card closes.
+  // cursor steps off the score first, so the card closes, and waits past Chloé's name, where the
+  // founder goes next.
   f.caption("Tin asks the ones who fit.");
-  const title = await f.rect(".people-view h1", true);
-  await f.move({x: title.x + title.width + 48, y: title.y + title.height / 2, width: 1, height: 1});
+  await f.move(`${row("p-chloe")} td.is-name`, {to: [0.85, 0.5]});
   for (const id of FITS) asked(f.world.people.find(item => item.id === id));
   await f.open("/people", {ready: `${row("p-daniel")} td.is-linkedin`});
   for (const [index, id] of FITS.entries()) await f.highlight(`${row(id)} td.is-linkedin`, {hold: 1.2, delay: index * 0.07});
@@ -121,25 +124,30 @@ export async function play(f) {
   await f.click('[data-people-pick="p-chloe"]', {to: [0.85, 0.85]});
   await f.hold(0.3);
   await f.click('[data-people-pick="p-lea"]', {to: [0.85, 0.85]});
-  await f.hold(0.5);
-  await f.move(".people-picked-send", {to: [0.94, 0.55]});
-  await f.hold(0.9);
-  await f.mark("poster");
-  // What Send does, as its toast says it. The cursor stays where it pressed.
-  await f.click(".people-picked-send", {to: [0.94, 0.55]});
+  await f.hold(0.3);
+  // What Send does, as its toast will say, while the hand goes to it. It stays where it pressed.
   f.caption("Tin sends them one at a time, from your LinkedIn.");
+  await f.move(".people-picked-send", {to: [0.94, 0.55]});
+  await f.hold(0.3);
+  await f.mark("poster");
+  await f.click(".people-picked-send", {to: [0.94, 0.55]});
   await f.ready(".toast.is-visible");
   await f.hold(0.2);
   for (const [index, id] of ["p-chloe", "p-lea"].entries()) await f.highlight(`${row(id)} td.is-linkedin`, {hold: 1.4, delay: index * 0.07});
-  await f.hold(2.4);
+  await f.hold(2);
   await f.mark("queued");
 
   // Open Chloé while her request waits, so the cut changes only what time changed. Tall, her
   // panel covers the screen and the frame takes its head.
-  await f.click(`${row("p-chloe")} td.is-name`, {to: [0.97, 0.55]});
+  await f.click(`${row("p-chloe")} td.is-name`, {to: [0.86, 0.55]});
   await f.ready("#person-panel .person-section:last-of-type");
   if (!f.wide) await f.camera({x: 0, y: 0, width: f.screen.width, height: 1}, {cut: true, pad: 0, valign: "top"});
-  await f.hold(1);
+  await f.hold(0.3);
+  // The hand rests in the panel's head, past Open on LinkedIn: the head never moves, whatever
+  // the cut changes below it.
+  const link = await f.rect("#person-panel .person-panel-linkedin");
+  await f.move({x: link.x + link.width + 36, y: link.y + link.height * 0.6, width: 1, height: 1});
+  await f.hold(0.7);
 
   // They accept: behind the cut time passes, the toast closes and Chloé's request is accepted.
   await f.cut(async () => {
@@ -151,12 +159,19 @@ export async function play(f) {
     await f.open("/people", {ready: `${row("p-chloe")} td.is-name`});
     await f.page.click(`${row("p-chloe")} td.is-name`, {position: {x: 4, y: 4}});
     await f.ready("#person-panel .person-section:last-of-type");
+    await f.hold(0.5);
+    // Wide, the panel is shorter than her record: it opens scrolled just far enough to show what
+    // happened, as it would after a look down.
+    await f.page.evaluate(selector => {
+      const body = document.querySelector("#person-panel .person-panel-body");
+      const below = document.querySelector(selector).getBoundingClientRect().bottom + 12 - body.getBoundingClientRect().bottom;
+      if (below > 0) body.scrollTop += below;
+    }, ACCEPTED);
   }, {caption: "They accept. You start the conversation."});
-  await f.highlight(await panelRow(f, "#person-panel .person-section:first-of-type > div.person-field:nth-of-type(3)"), {hold: 3.6, pad: 0, over: true});
-  const accepted = "#person-panel .person-section:last-of-type div.person-event:first-of-type";
-  if (await f.shows(accepted)) await f.highlight(await panelRow(f, accepted), {hold: 3.5, delay: 0.1, pad: 0, over: true});
+  await f.highlight(await panelRow(f, LINKEDIN_FIELD), {hold: 3.6, pad: 0, over: true});
+  if (await f.shows(ACCEPTED)) await f.highlight(await panelRow(f, ACCEPTED), {hold: 3.5, delay: 0.1, pad: 0, over: true});
   if (f.wide) await f.highlight(`${row("p-chloe")} td.is-linkedin`, {hold: 3.5, delay: 0.1});
-  await f.hold(1.2);
+  await f.hold(1.4);
   // The next move is yours.
   await f.move("#person-panel .person-panel-linkedin", {to: [0.6, 0.9]});
   await f.hold(2.2);

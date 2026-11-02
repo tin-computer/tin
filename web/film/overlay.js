@@ -33,8 +33,11 @@ export function installOverlay(screen) {
       .finally(() => film.pending--);
   };
 
-  // The pointer, after Stageshow's MacPointer (MIT): white edge, black arrow, hotspot at its tip.
+  // The pointer and the pointing hand, after Stageshow's MacPointer and MacPointingHand (MIT): the
+  // arrow's hotspot at its tip, the hand's at its fingertip. The hand draws a little larger, as on
+  // macOS, and shows where the page's own cursor would be a pointer (links, buttons, rows).
   const POINTER = '<svg viewBox="10 7 13 19" width="100%" height="100%" fill="none"><g transform="translate(10 7)"><path d="m6.148 18.473 1.863-1.003 1.615-.839-2.568-4.816h4.332l-11.379-11.408v16.015l3.316-3.221z" fill="#fff"/><path d="m6.431 17 1.765-.941-2.775-5.202h3.604l-8.025-8.043v11.188l2.53-2.442z" fill="#000"/></g></svg>';
+  const HAND = '<svg viewBox="0 0 32 32" width="100%" height="100%" fill="none"><path d="M10.6 6a1.7 1.7 0 0 1 3.4 0v6.6a1.3 1.3 0 0 1 2.6 0v.7a1.3 1.3 0 0 1 2.6 0v.7a1.3 1.3 0 0 1 2.6 0V19c0 3.1-2 5.6-5 5.6h-2.6c-2 0-3.3-.9-4.4-2.4l-3.1-4.1c-.6-.9-.4-2 .5-2.5.8-.4 1.7-.2 2.3.5l1.1 1.4V6Z" fill="#fff" stroke="#000" stroke-width="1.1" stroke-linejoin="round"/><path d="M14 12.6v3.6M16.6 13.3v3M19.2 14v2.6" stroke="#000" stroke-width="1" stroke-linecap="round"/></svg>';
 
   let root = null;
   let marks = null;
@@ -50,7 +53,8 @@ export function installOverlay(screen) {
       <div data-film-band><p data-film-caption></p></div>
       <div data-film-foot></div>
       <div data-film-ripples></div>
-      <div data-film-cursor>${POINTER}</div>
+      <div data-film-cursor="pointer">${POINTER}</div>
+      <div data-film-cursor="hand">${HAND}</div>
     </div>`;
     const css = document.createElement("style");
     css.textContent = `
@@ -68,7 +72,9 @@ export function installOverlay(screen) {
     `;
     root.append(css);
     document.documentElement.append(root);
-    for (const name of ["stage", "fade", "band", "caption", "foot", "ripples", "cursor"]) parts[name] = root.querySelector(`[data-film-${name}]`);
+    for (const name of ["stage", "fade", "band", "caption", "foot", "ripples"]) parts[name] = root.querySelector(`[data-film-${name}]`);
+    parts.pointer = root.querySelector('[data-film-cursor="pointer"]');
+    parts.hand = root.querySelector('[data-film-cursor="hand"]');
     // Highlights live in the page itself, among the app's own layers: under its toasts, over its
     // panel when they mark something in it, and inside what fades.
     marks = document.createElement("div");
@@ -134,21 +140,39 @@ export function installOverlay(screen) {
         .map(mark => `<i style="left:${mark.x + dx}px;top:${mark.y + dy}px;width:${mark.width}px;height:${mark.height}px;opacity:${mark.opacity}"></i>`).join("");
     }
 
-    // Where the frame cuts through the page above the band, the page fades into it.
-    const footHeight = band ? Math.round(unit * 0.035) : 0;
-    Object.assign(parts.foot.style, {bottom: `${band}px`, height: `${footHeight}px`, background: `linear-gradient(to bottom, transparent, ${bandGround})`});
+    // Where the frame cuts through the page above the band, the page fades into it, all the way
+    // before the edge. Short enough to stay clear of a toast at the screen's foot (24px up).
+    const footHeight = band ? Math.round(Math.min(unit * 0.05, 22 * k)) : 0;
+    Object.assign(parts.foot.style, {bottom: `${band}px`, height: `${footHeight}px`, background: `linear-gradient(to bottom, transparent, ${bandGround} 75%)`});
 
+    // The hand where the page's own cursor would be a pointer, as a real one works.
     const cursor = state.cursor || {};
+    const under = cursor.visible && document.elementsFromPoint(cursor.x, cursor.y).find(element => !element.closest("[data-film-overlay], [data-film-layer]"));
+    const hand = Boolean(under && getComputedStyle(under).cursor === "pointer");
     const tall = unit * 0.05;
-    Object.assign(parts.cursor.style, {
-      width: `${tall * 13 / 19}px`, height: `${tall}px`, display: cursor.visible ? "block" : "none", opacity: String(cursor.opacity ?? 1),
-      transform: `translate(${(cursor.x - frame.x) * k}px, ${(cursor.y - frame.y) * k}px) scale(${cursor.pressed ? 0.9 : 1})`,
+    const at = `${(cursor.x - frame.x) * k}px, ${(cursor.y - frame.y) * k}px`;
+    const press = `scale(${cursor.pressed ? 0.9 : 1})`;
+    Object.assign(parts.pointer.style, {
+      width: `${tall * 13 / 19}px`, height: `${tall}px`, display: cursor.visible && !hand ? "block" : "none", opacity: String(cursor.opacity ?? 1),
+      transform: `translate(${at}) ${press}`,
+    });
+    // 32 units at 26/24 the arrow's scale; the fingertip is at (12, 4).
+    const unitPx = (tall / 19) * (26 / 24);
+    Object.assign(parts.hand.style, {
+      width: `${32 * unitPx}px`, height: `${32 * unitPx}px`, display: cursor.visible && hand ? "block" : "none", opacity: String(cursor.opacity ?? 1),
+      transformOrigin: `${12 * unitPx}px ${4 * unitPx}px`, transform: `translate(${at}) translate(${-12 * unitPx}px, ${-4 * unitPx}px) ${press}`,
     });
 
     parts.ripples.innerHTML = (state.ripples || []).map(ripple => {
       const size = unit * 0.07 * (0.2 + 0.8 * ripple.progress);
-      return `<i style="left:${(ripple.x - frame.x) * k - size / 2}px;top:${(ripple.y - frame.y) * k - size / 2}px;width:${size}px;height:${size}px;border-width:${Math.max(1.5, unit * 0.0025)}px;border-color:${ink};opacity:${(1 - ripple.progress) * 0.7}"></i>`;
+      return `<i style="left:${(ripple.x - frame.x) * k - size / 2}px;top:${(ripple.y - frame.y) * k - size / 2}px;width:${size}px;height:${size}px;border-width:${Math.max(1.5, unit * 0.0025)}px;border-color:${ink};opacity:${(1 - ripple.progress) * 0.7 * (ripple.fading ?? 1)}"></i>`;
     }).join("");
+  };
+
+  // Whether what is on top at a point (leaving out the film's own layers) is, or is inside, a match.
+  film.hits = (selectors, x, y) => {
+    const top = document.elementsFromPoint(x, y).find(element => !element.closest("[data-film-overlay], [data-film-layer]"));
+    return Boolean(top?.closest([].concat(selectors).join(", ")));
   };
 
   // Where something is on screen: the union of every match, in CSS px of the viewport. With
