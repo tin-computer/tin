@@ -118,12 +118,9 @@ export async function play(f) {
   await f.hold(2);
   await f.mark("reason");
 
-  // Tin's read asks the ones who fit: their boxes go and their LinkedIn column reads Queued. The
-  // cursor steps off the score first, so the card closes, onto the empty end of the tabs row: off
-  // the list, so no row lights up while the eye goes to the change.
+  // Tin's read asks the ones who fit: their boxes go and their LinkedIn column reads Queued, beside
+  // the reason still open. The hand stays where it is; its next trip is to the founder's own pick.
   f.caption("Tin asks the ones who fit.");
-  const tabs = await f.rect(".people-sections", true);
-  await f.move({x: tabs.x + tabs.width + 40, y: tabs.y + tabs.height / 2, width: 1, height: 1});
   for (const id of FITS) asked(f.world.people.find(item => item.id === id));
   await f.open("/people", {ready: `${row("p-daniel")} td.is-linkedin`});
   for (const [index, id] of FITS.entries()) await f.highlight(`${row(id)} td.is-linkedin`, {hold: 1.2, delay: index * 0.07});

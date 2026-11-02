@@ -44,9 +44,11 @@ export function stage(size, choice = size.screen) {
 export const BACKDROP = {dark: "#000", light: "#fff"};
 // The smallest text a frame may show, as a share of its short side: about 22px at 1080.
 const SMALLEST_TEXT = 0.02;
-// The cursor's travel, as Stageshow's act.move eases it; everything else uses the named curves in
-// ease.js.
+// The cuts' dip and the cursor's press; everything else uses the named curves in ease.js.
 const ease = t => (t < 0.5 ? 4 * t * t * t : 1 - (-2 * t + 2) ** 3 / 2);
+// A hand's reach (Flash and Hogan, 1985): the path that changes acceleration least, so its speed
+// rises and falls as one smooth bell with no kink at the middle, as a person's pointing does.
+const reach = t => t * t * t * (10 - 15 * t + 6 * t * t);
 const lerp = (a, b, t) => a + (b - a) * t;
 const seconds = s => Math.max(1, Math.round(s * FPS));
 // Stageshow's cursor timing (kit/cursor.css): the press, its release, and the ring a click can
@@ -69,6 +71,9 @@ class Director {
     this.ripples = [];
     this.marks = {};
     this.hashes = [];
+    this.trail = [];
+    // Every trip the hand makes, for the path check.
+    this.journeys = [];
     this.cursor = {x: 0, y: 0, visible: false, pressAt: null, releaseAt: null};
     // What moved when, for the camera rules and the motion strips.
     this.moves = [];
@@ -200,9 +205,10 @@ class Director {
     let i = 0;
     this.travelling = true;
     this.aim = box;
+    this.journeys.push({from, to: end, start: this.n, end: this.n + frames, click: false, label: JSON.stringify(target).slice(0, 60)});
     await this.run(() => {
       i++;
-      const t = ease(i / frames);
+      const t = reach(i / frames);
       const lift = Math.sin(Math.PI * t) * bow;
       this.cursor.x = lerp(from.x, end.x, t) + normal.x * lift;
       this.cursor.y = lerp(from.y, end.y, t) + normal.y * lift;
@@ -217,6 +223,7 @@ class Director {
   // sends a soft ring out too, for when a click must read at a glance.
   async click(target, options) {
     await this.move(target, options);
+    this.journeys.at(-1).click = true;
     this.events.push({label: "click", start: this.n - 4, end: this.n + 14});
     await this.hold(0.12);
     const before = typeof target === "object" && !Array.isArray(target) ? null : await this.app.evaluate(selectors => window.__film.rect(selectors), target);
@@ -311,6 +318,21 @@ class Director {
     const runs = [...this.small].sort((a, b) => a[1].size - b[1].size);
     const marks = [...new Set(runs.flatMap(([, item]) => [...item.marks]))];
     this.warn(`${runs.length} text runs are under ${floor}px (at ${marks.join(", ")}): ${runs.slice(0, 5).map(([text, item]) => `“${text}” ${item.size}px`).join(", ")}.`);
+  }
+
+  // A hand goes where it's going. A trip that only steps aside and then comes most of the way back
+  // (from a plain move, not a press) reads as fidgeting: say so.
+  judgeHand() {
+    const far = (a, b) => Math.hypot(a.x - b.x, a.y - b.y);
+    for (const [index, first] of this.journeys.entries()) {
+      const next = this.journeys[index + 1];
+      if (!next || first.click || next.start - first.end > 4 * FPS) continue;
+      const travelled = far(first.from, first.to) + far(next.from, next.to);
+      const direct = far(first.from, next.to);
+      if (travelled > direct * 1.4 && travelled - direct > 80) {
+        this.warn(`The hand steps aside to ${first.label} and comes back toward ${next.label}, ${Math.round(travelled - direct)}px out of its way; go straight, or let it rest where it was.`);
+      }
+    }
   }
 
   // Stageshow's camera rules, read once the film has played.
@@ -529,6 +551,9 @@ class Director {
     const picture = await this.page.screenshot({clip, type: "png"});
     const strip = await this.page.screenshot({clip: this.strip, type: "png"});
     this.hashes.push(crypto.createHash("sha1").update(picture).update(strip).digest("hex").slice(0, 12));
+    // Where the hand was, in the picture's own terms (0 to 1 across and down), for the path check.
+    const shown = this.picture;
+    this.trail.push(state.cursor.visible ? [(state.cursor.x - shown.x) / shown.width, (state.cursor.y - shown.y) / shown.height] : null);
     this.last = {picture, band: strip};
     await this.sink(picture, strip);
     this.n++;
@@ -732,13 +757,14 @@ export async function shoot(film, {format = "4:5", theme = film.theme || "dark",
     await film.play(director);
     director.caption(null);
     director.judgeCamera();
+    director.judgeHand();
     director.judgeText();
     await context.close();
 
     issues.blocked = [...new Set(issues.blocked)];
     if (!director.marks.poster) issues.errors.push("The film never marks its poster.");
     if (director.n / FPS > 140) issues.warnings.push("Longer than X's 2 minutes 20 seconds.");
-    const report = {film: film.name, title: film.title, format, size, frames: director.n, seconds: director.n / FPS, hashes: director.hashes, issues};
+    const report = {film: film.name, title: film.title, format, size, frames: director.n, seconds: director.n / FPS, hashes: director.hashes, trail: director.trail, issues};
     if (encoder) {
       encoder.child.stdin.end();
       encoder.child.stdio[3].end();

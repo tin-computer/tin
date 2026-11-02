@@ -105,7 +105,7 @@ and `play(f)`. `people-requests.js` is the example.
 | Call | What it does |
 | --- | --- |
 | `f.camera(target, {pad, duration, curve, cut, text, inside, nudge, floor})` | Frames the target (a selector, a list of selectors, or a rect). `text` frames only the words inside, `inside` keeps the frame within a region (`f.inside` sets a default). 1.1 s on Stageshow's camera curve by default (`house` for a slow, longer move); never zooms past the device scale, and moves up to `nudge` px so no edge cuts a word. |
-| `f.move(target, {to})` | The cursor travels in a shallow arc. The page sees the pointer only where the hand stops: a hover ends as it moves off, and nothing it passes over lights up. |
+| `f.move(target, {to})` | The cursor travels in a shallow arc, on a minimum-jerk reach (Flash and Hogan, 1985), so its speed rises and falls as one smooth bell, as a person's pointing does, timed by distance. The page sees the pointer only once the hand is over its target: nothing it passes over lights up. |
 | `f.click(target)` | Moves, rests, presses: the cursor dips to 0.9 in 80 ms and lets go over 260 ms, and the page gets a real click. A film exporting `ripple = true` also sends Stageshow's soft ring out, for when clicks must read at a glance; it fades early if what was pressed goes. |
 | `f.type(text)`, `f.scroll(container, target)` | Real keystrokes; an eased scroll of a container. |
 | `f.caption(text)` | One caption at a time; the last fades out and the next rises in. `null` clears it. |
@@ -145,7 +145,8 @@ Stageshow's rules: more than one push-in, a push-in past 2x or faster than 1.1 s
 camera moves, or the cursor moving while the view moves are warnings. Errors exit with status 1:
 the page threw or logged an error, the cursor reached a target outside the frame, or nothing was
 marked `poster`. Warnings are for review: a click that moved what was clicked (the page shifted
-under the cursor), a crop that cuts a word or control in a marked frame, text under about 22 px
+under the cursor), a hand that steps aside and comes most of the way back (a detour of more than
+80 px and 40% from a plain move, not a press), a crop that cuts a word or control in a marked frame, text under about 22 px
 at 1080 in a marked frame (said once per film, smallest first, leaving out text a panel covers
 or a window clips), a target the camera couldn't fit, a GIF over
 15 MB or a film over 2 minutes 20 seconds. The browser test (`web/film.browser.test.js`) films a

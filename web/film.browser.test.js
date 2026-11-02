@@ -89,6 +89,19 @@ test("the page sees the pointer only where the hand stops", {timeout: 180000}, a
   assert.equal(arrived, true);
 });
 
+test("a hand that steps aside and comes back is reported", {timeout: 180000}, async () => {
+  const row = id => `.people-table tr[data-person="${id}"]`;
+  const report = await take(short(async f => {
+    await f.camera([".people-view h1", ".people-table thead", ".people-table tbody tr:nth-child(-n+6)"], {cut: true});
+    await f.move(`${row("p-daniel")} td.is-fit`);
+    // Up to the title for nothing, then back down to Lea's box.
+    await f.move(".people-view h1");
+    await f.click('[data-people-pick="p-lea"]');
+    await f.mark("poster");
+  }));
+  assert.ok(report.issues.warnings.some(line => /steps aside to .*h1.* comes back toward .*p-lea/.test(line)), report.issues.warnings);
+});
+
 // After Stageshow's motion rules: one push-in per story, within 2x and no faster than 1.1s, and the
 // cursor holds still while the view moves.
 test("a camera that breaks Stageshow's rules is reported", {timeout: 180000}, async () => {
