@@ -197,13 +197,6 @@ def ready(settings: Any) -> bool:
     return getattr(settings, "agent_traffic_service_token", None) is not None
 
 
-def enabled(settings: Any, project_id: UUID | None) -> bool:
-    if project_id is None:
-        return False
-    values = getattr(settings, "agent_traffic_projects", ())
-    return str(project_id) in {str(value) for value in values}
-
-
 def project_ref(settings: Any, project_id: UUID) -> str:
     """`tin:<project>` in production; staging and development use the staging credential."""
 
@@ -730,9 +723,7 @@ class AgentTrafficConnections:
     def service(self) -> AgentTraffic:
         return AgentTraffic(self.integrations._client, self.settings)
 
-    def _require_enabled(self, project_id: UUID) -> None:
-        if not enabled(self.settings, project_id):
-            raise IntegrationNotConfiguredError("Analytics is not available for this project yet")
+    def _require_configured(self, project_id: UUID) -> None:
         if not self.integrations.is_configured(PROVIDER):
             raise IntegrationNotConfiguredError(NOT_SET_UP)
 
@@ -767,7 +758,7 @@ class AgentTrafficConnections:
     async def set_up(self, *, project_id: UUID, clerk_user_id: str, url: str | None = None):
         """Create the project's site, or update it, from Start here's address or `url`."""
 
-        self._require_enabled(project_id)
+        self._require_configured(project_id)
         latest = await self.address(project_id)
         if url is not None:
             address, source = site_address(url), "entered"
@@ -788,7 +779,7 @@ class AgentTrafficConnections:
     async def count_host(self, *, project_id: UUID, clerk_user_id: str, host: str):
         """Count the host the script moved to instead, from the card's offer."""
 
-        self._require_enabled(project_id)
+        self._require_configured(project_id)
         site = await self.site(project_id)
         offered = {item["host"] for item in moved_hosts((site or {}).get("status"))}
         if not isinstance(host, str) or host.lower() not in offered:
@@ -1024,7 +1015,7 @@ class AgentTrafficConnections:
         asks for a new value (the previous one keeps working for 24 hours); otherwise it shows
         the stored one again. It never goes to MCP, a log or a workflow input.
         """
-        self._require_enabled(project_id)
+        self._require_configured(project_id)
         connection = await self.db.get_integration_connection(
             project_id=project_id, provider_key=PROVIDER
         )
