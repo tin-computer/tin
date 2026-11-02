@@ -26,10 +26,13 @@ export const FORMATS = {
 
 // The screen is exactly the picture when the camera is all the way out; the window is a band's
 // height taller, so the band never covers the dashboard.
-export function stage(size, width = size.screen) {
+// A film can pick its own screen per format: a width, or {width, height} where a taller screen
+// than the picture lets the camera leave chrome (a top menu) out of the frame.
+export function stage(size, choice = size.screen) {
+  const width = typeof choice === "object" ? choice.width : choice;
   const scale = width / size.width;
-  const screen = {width, height: Math.round((size.height - size.band) * scale)};
-  return {screen, viewport: {width, height: Math.ceil(size.height * scale)}};
+  const height = typeof choice === "object" ? choice.height : Math.round((size.height - size.band) * scale);
+  return {screen: {width, height}, viewport: {width, height: Math.ceil(height + size.band * scale)}};
 }
 // The smallest text a frame may show, as a share of its short side: about 22px at 1080.
 const SMALLEST_TEXT = 0.02;
@@ -56,6 +59,8 @@ class Director {
     this.events = [];
     this.cameraMoving = false;
     this.fade = 0;
+    this.ending = 0;
+    this.highlights = [];
     this.inside = null;
     this.frame = {x: 0, y: 0, width: screen.width, height: screen.width * size.height / size.width};
     this.last = null;
@@ -90,7 +95,7 @@ class Director {
   // `inside` (the director's default, or per call) keeps the frame within a region where it can,
   // so a close-up never ends halfway across a sidebar. After Stageshow's Camera: 1.1 s on its own
   // curve, and the report holds the film to one push-in, within 2x, with the cursor still.
-  async camera(target, {pad = 28, duration = 1.1, curve = "camera", cut = false, wait = true, align = "center", text = false, inside = this.inside} = {}) {
+  async camera(target, {pad = 28, duration = 1.1, curve = "camera", cut = false, wait = true, align = "center", valign = "center", text = false, inside = this.inside} = {}) {
     const box = await this.rect(target, text);
     const {width, height, band} = this.size;
     const room = height - band;
@@ -101,7 +106,8 @@ class Director {
     frame.x = Math.min(Math.max(0, left), this.screen.width - frame.width);
     const region = inside && (await this.page.evaluate(selector => window.__film.rect(selector), inside));
     if (region && frame.width <= region.width) frame.x = Math.min(Math.max(region.x, frame.x), region.x + region.width - frame.width);
-    frame.y = Math.min(Math.max(0, box.y + box.height / 2 - (room * scale) / 2), this.screen.height - room * scale);
+    const top = valign === "top" ? box.y - pad : box.y + box.height / 2 - (room * scale) / 2;
+    frame.y = Math.min(Math.max(0, top), this.screen.height - room * scale);
     if ((box.width + pad * 2) / width > scale + 1e-6 || (box.height + pad * 2) / room > scale + 1e-6) {
       this.warn(`The camera can't fit ${JSON.stringify(target)} in ${this.format}; it is cut.`);
     }
@@ -254,6 +260,22 @@ class Director {
 
   hide() { this.cursor.visible = false; }
 
+  // One soft pass over what just changed: it washes in, holds and fades, while the film goes on.
+  async highlight(target, {hold = 1.1, delay = 0} = {}) {
+    const box = await this.rect(target);
+    const mark = {box, start: this.n + (delay ? seconds(delay) : 0), hold: seconds(hold)};
+    this.highlights.push(mark);
+  }
+
+  // The film ends on a fade to the band's ground, picture, cursor and caption together, so a feed
+  // that loops never snaps back to the opening.
+  async end({fade = 0.6} = {}) {
+    let i = 0;
+    const frames = seconds(fade);
+    const into = bezier("through");
+    await this.run(() => (this.ending = into(++i / frames)) >= 1);
+  }
+
   // Keep the frame just shot: the poster, and the stills of the contact sheet.
   async mark(name) {
     if (!this.last) throw new Error(`Mark ${name} before any frame was shot.`);
@@ -322,8 +344,17 @@ class Director {
       caption = {text: current.text, opacity: Math.min(opening, closing), rise: 1 - ease(opening)};
     }
     this.ripples = this.ripples.filter(ripple => n - ripple.start < 17);
+    caption.opacity *= 1 - this.ending;
+    const highlights = this.highlights.map(mark => {
+      const age = n - mark.start;
+      const rise = 8, fall = 15;
+      const opacity = age < 0 ? 0 : age < rise ? age / rise : age < rise + mark.hold ? 1 : Math.max(0, 1 - (age - rise - mark.hold) / fall);
+      return {...mark.box, opacity};
+    }).filter(mark => mark.opacity > 0);
     return {
-      frame: this.frame, size: this.size, band: this.size.band, caption, fade: this.fade, cursor: this.cursor,
+      frame: this.frame, size: this.size, band: this.size.band, caption, fade: Math.max(this.fade, this.ending), highlights,
+      // The cursor goes with the picture through a cut or the ending, never floating on the dark.
+      cursor: {...this.cursor, opacity: 1 - Math.max(this.fade, this.ending)},
       ripples: this.ripples.map(ripple => ({x: ripple.x, y: ripple.y, progress: ease((n - ripple.start) / 16)})),
     };
   }
@@ -385,7 +416,7 @@ function srt(captions, total) {
     const pad = (value, size = 2) => String(value).padStart(size, "0");
     return `${pad(Math.floor(ms / 3600000))}:${pad(Math.floor(ms / 60000) % 60)}:${pad(Math.floor(ms / 1000) % 60)},${pad(ms % 1000, 3)}`;
   };
-  return captions.map((item, index) => `${index + 1}\n${time(item.start)} --> ${time(item.end ?? total)}\n${item.text}\n`).join("\n");
+  return captions.map((item, index) => `${index + 1}\n${time(item.start)} --> ${time(Math.min(item.end ?? total, total))}\n${item.text}\n`).join("\n");
 }
 
 // Film one format: serve the world, open the dashboard under the virtual clock, play the script.

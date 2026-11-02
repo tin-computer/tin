@@ -45,6 +45,7 @@ export function installOverlay(screen) {
     root.innerHTML = `<div data-film-stage>
       <div data-film-fade></div>
       <div data-film-band><p data-film-caption></p></div>
+      <div data-film-marks></div>
       <div data-film-ripples></div>
       <div data-film-cursor>${POINTER}</div>
     </div>`;
@@ -59,10 +60,11 @@ export function installOverlay(screen) {
       [data-film-caption] { margin: 0; text-align: center; text-wrap: balance; font-family: var(--sans, sans-serif); font-weight: 400; font-feature-settings: "kern"; }
       [data-film-cursor] { position: absolute; left: 0; top: 0; transform-origin: 0 0; }
       [data-film-ripples] > i { position: absolute; border-radius: 50%; border-style: solid; }
+      [data-film-marks] > i { position: absolute; border-radius: 6px; background: rgb(var(--accent-deep-rgb, 153 175 98) / 16%); box-shadow: inset 0 0 0 1.5px rgb(var(--accent-deep-rgb, 153 175 98) / 55%); }
     `;
     root.append(css);
     document.documentElement.append(root);
-    for (const name of ["stage", "fade", "band", "caption", "ripples", "cursor"]) parts[name] = root.querySelector(`[data-film-${name}]`);
+    for (const name of ["stage", "fade", "band", "caption", "marks", "ripples", "cursor"]) parts[name] = root.querySelector(`[data-film-${name}]`);
   }
 
   // state: {frame: {x, y, width, height} in CSS px of the viewport, size: {width, height} in
@@ -91,10 +93,15 @@ export function installOverlay(screen) {
       transform: `translateY(${(caption.rise || 0) * unit * 0.02}px)`,
     });
 
+    parts.marks.innerHTML = (state.highlights || []).map(mark => {
+      const inset = 4;
+      return `<i style="left:${(mark.x - frame.x) * k - inset}px;top:${(mark.y - frame.y) * k - inset}px;width:${mark.width * k + inset * 2}px;height:${mark.height * k + inset * 2}px;opacity:${mark.opacity}"></i>`;
+    }).join("");
+
     const cursor = state.cursor || {};
     const tall = unit * 0.05;
     Object.assign(parts.cursor.style, {
-      width: `${tall * 13 / 19}px`, height: `${tall}px`, display: cursor.visible ? "block" : "none",
+      width: `${tall * 13 / 19}px`, height: `${tall}px`, display: cursor.visible ? "block" : "none", opacity: String(cursor.opacity ?? 1),
       transform: `translate(${(cursor.x - frame.x) * k}px, ${(cursor.y - frame.y) * k}px) scale(${cursor.pressed ? 0.9 : 1})`,
     });
 
