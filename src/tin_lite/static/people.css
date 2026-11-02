@@ -396,8 +396,10 @@
 }
 
 .people-pager code {
+  flex-shrink: 0;
   color: var(--ink-muted);
   font: 11.5px/14px var(--mono);
+  white-space: nowrap;
 }
 
 .people-pager > span { flex: 1; }
