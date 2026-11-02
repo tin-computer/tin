@@ -217,7 +217,14 @@ test("a queued request says when it goes in the panel, and can be cancelled", {t
   });
 });
 
-test("when nobody on the list can be asked, the bar's place says why", {timeout: 120000}, async () => {
+test("when nobody on the list can be asked, the footer says why, and the grid stays put", {timeout: 120000}, async () => {
+  // Where the grid starts with someone to ask, so the line can be shown not to move it.
+  let top = null;
+  await open({url: "/people", state: requests({on: true}), people: syntheticPeople()}, async page => {
+    await page.locator(".people-table").waitFor();
+    assert.equal(await page.locator(".people-nobody").count(), 0);
+    top = (await page.locator(".people-grid").boundingBox()).y;
+  });
   const relate = (people, value) => people.forEach(person => {
     person.fields.linkedin_relationship = {...person.fields.linkedin_relationship, value};
     person.requestable = false;
@@ -229,8 +236,9 @@ test("when nobody on the list can be asked, the bar's place says why", {timeout:
   daniel.invited_at = "2026-10-15T09:40:00Z";
   await open({url: "/people", state: requests({on: true}), people}, async page => {
     await page.locator(".people-table").waitFor();
-    assert.equal(await page.locator(".people-nobody").innerText(), "No one here to ask. Everyone on this list is already connected to you or invited.");
+    assert.equal(await page.locator(".people-pager .people-nobody").innerText(), "No one here to ask. Everyone on this list is already connected to you or invited.");
     assert.equal(await page.locator("[data-people-pick-all]").isDisabled(), true);
+    assert.equal((await page.locator(".people-grid").boundingBox()).y, top);
   });
   // A reason Tin can't name reads plainly.
   const unnamed = syntheticPeople();
