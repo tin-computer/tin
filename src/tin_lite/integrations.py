@@ -865,7 +865,7 @@ class IntegrationService:
         return AgentTrafficConnections(self)
 
     def definitions(self, connections, *, project_id=None):
-        from tin_lite import agent_traffic_connection, linkedin_posting
+        from tin_lite import linkedin_posting
         from tin_lite.connection_collection import enabled
         from tin_lite.project_connections import CUSTOM_KEY, custom_definition
 
@@ -873,8 +873,6 @@ class IntegrationService:
             LINKEDIN_PROVIDER: enabled,
             # Zernio bills Tin per connected account, so only listed projects see the card.
             LINKEDIN_POSTING_PROVIDER: linkedin_posting.enabled,
-            # A pilot until Agent Traffic's service has run on founder sites.
-            AGENT_TRAFFIC_PROVIDER: agent_traffic_connection.enabled,
         }
         return (
             *(
@@ -980,10 +978,6 @@ class IntegrationService:
                     raise IntegrationNotConfiguredError("LinkedIn posting is unavailable.")
                 continue
             if requirement.provider_key == AGENT_TRAFFIC_PROVIDER:
-                from tin_lite import agent_traffic_connection
-
-                if not agent_traffic_connection.enabled(self._settings, project_id):
-                    raise IntegrationNotConfiguredError("Analytics is unavailable.")
                 if connection.credential_ciphertext is None or set(
                     requirement.capabilities
                 ) - _granted(connection):
@@ -1080,13 +1074,8 @@ class IntegrationService:
             )
         if provider_key == AGENT_TRAFFIC_PROVIDER:
             # No sign-in: the founder presses Set up on the card, which shows what happens next.
-            from tin_lite import agent_traffic_connection
             from tin_lite.product_urls import dashboard_url
 
-            if not agent_traffic_connection.enabled(self._settings, project_id):
-                raise IntegrationNotConfiguredError(
-                    "Analytics is not available for this project yet"
-                )
             return ConnectStart(
                 authorization_url=f"{dashboard_url(self._settings)}/integrations?project={project_id}"
             )

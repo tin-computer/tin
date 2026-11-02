@@ -84,7 +84,7 @@ async def onboarding(db, project_id, url, *, timezone=TIMEZONE, status="succeede
 
 
 async def analytics(db, url="https://www.example.com", **overrides):
-    """A pilot project (with Start here's address unless `url` is None) and its service."""
+    """A project (with Start here's address unless `url` is None) and its service."""
 
     project = await db.create_project(name="Example", state_repo_id=f"repo-{uuid4().hex[:12]}")
     if url is not None:
@@ -93,7 +93,6 @@ async def analytics(db, url="https://www.example.com", **overrides):
     values = {
         "agent_traffic_service_token": SecretStr(SERVICE_CREDENTIAL),
         "agent_traffic_url": "https://edge.tin.test",
-        "agent_traffic_projects": (str(project.id),),
         "deployment_environment": "production",
     }
     values.update(overrides)
@@ -209,20 +208,13 @@ def test_removals_wait_longer_each_time_up_to_six_hours() -> None:
     assert removal_wait(1, retry_after=300) == 300
 
 
-async def test_the_card_is_shown_only_to_pilot_projects(publication_db) -> None:
+async def test_every_project_sees_the_card(publication_db) -> None:
     service, api, project = await analytics(publication_db)
-    assert AGENT_TRAFFIC_PROVIDER in {d.key for d in service.definitions([], project_id=project.id)}
-    assert AGENT_TRAFFIC_PROVIDER not in {d.key for d in service.definitions([], project_id=None)}
-    unlisted, _, other = await analytics(publication_db, agent_traffic_projects=())
-    assert AGENT_TRAFFIC_PROVIDER not in {
-        d.key for d in unlisted.definitions([], project_id=other.id)
-    }
-    with pytest.raises(IntegrationNotConfiguredError, match="not available for this project"):
-        await unlisted.agent_traffic.set_up(project_id=other.id, clerk_user_id=USER_ID)
-    with pytest.raises(IntegrationNotConfiguredError):
-        await unlisted.start_connect(
-            project_id=other.id, provider_key=AGENT_TRAFFIC_PROVIDER, clerk_user_id=USER_ID
-        )
+    _, _, other = await analytics(publication_db)
+    for project_id in (project.id, other.id, None):
+        assert AGENT_TRAFFIC_PROVIDER in {
+            d.key for d in service.definitions([], project_id=project_id)
+        }
     started = await service.start_connect(
         project_id=project.id, provider_key=AGENT_TRAFFIC_PROVIDER, clerk_user_id=USER_ID
     )
