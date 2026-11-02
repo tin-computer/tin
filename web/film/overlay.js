@@ -2,10 +2,8 @@
 // screen's size, so it lays out, positions its popovers and answers its breakpoints as in a
 // browser. `installScreen` runs inside it: the marks on what changed, among the app's own
 // layers, and the measures the recorder takes. `installStage` runs on the page around it, the
-// stage: the backdrop, the fade, the cursor and a click's ring, designed in output pixels and
-// scaled onto the part of the stage in frame. The caption band is drawn apart, on a strip under
-// everything the camera frames, at the output's own pixels, so it holds still whatever the camera
-// does. The
+// stage: the page is the shot, and the camera moves the room in it with a transform. It holds
+// the fade, the caption band at its foot, the cursor and a click's ring. The
 // recorder sets every value each frame; nothing here animates by itself. Both functions are
 // injected as init scripts, so each must stay self-contained.
 
@@ -151,7 +149,7 @@ export function installScreen() {
   };
 }
 
-export function installStage({backdrop = "#000", path = "/", strip = null, size = null} = {}) {
+export function installStage({backdrop = "#000", path = "/", size, dpr = 2} = {}) {
   if (window !== window.top || location.pathname !== path) return;
   const film = window.__film = window.__film || {};
 
@@ -160,6 +158,12 @@ export function installStage({backdrop = "#000", path = "/", strip = null, size 
   const POINTER = '<svg viewBox="10 7 13 19" width="100%" height="100%" fill="none"><g transform="translate(10 7)"><path d="m6.148 18.473 1.863-1.003 1.615-.839-2.568-4.816h4.332l-11.379-11.408v16.015l3.316-3.221z" fill="#fff"/><path d="m6.431 17 1.765-.941-2.775-5.202h3.604l-8.025-8.043v11.188l2.53-2.442z" fill="#000"/></g></svg>';
   const HAND = '<svg viewBox="0 0 32 32" width="100%" height="100%" fill="none"><path d="M10.6 6a1.7 1.7 0 0 1 3.4 0v6.6a1.3 1.3 0 0 1 2.6 0v.7a1.3 1.3 0 0 1 2.6 0v.7a1.3 1.3 0 0 1 2.6 0V19c0 3.1-2 5.6-5 5.6h-2.6c-2 0-3.3-.9-4.4-2.4l-3.1-4.1c-.6-.9-.4-2 .5-2.5.8-.4 1.7-.2 2.3.5l1.1 1.4V6Z" fill="#fff" stroke="#000" stroke-width="1.1" stroke-linejoin="round"/><path d="M14 12.6v3.6M16.6 13.3v3M19.2 14v2.6" stroke="#000" stroke-width="1" stroke-linecap="round"/></svg>';
 
+  // The page is the shot: `size` output px at `dpr` device px per CSS px. The picture is its top,
+  // where the camera moves the room (the window on its backdrop) with a transform, so motion is
+  // smooth to a fraction of a pixel and text is drawn straight at the output's resolution. The
+  // caption band is its foot, still, whatever the camera does.
+  const view = {width: size.width / dpr, height: size.height / dpr, picture: (size.height - size.band) / dpr, band: size.band / dpr};
+  const unit = Math.min(size.width, size.height) / dpr;
   let root = null;
   // Frames drawn, and the cursor's kind: which glyph shows, which it came from and when.
   let frames = 0;
@@ -167,72 +171,54 @@ export function installStage({backdrop = "#000", path = "/", strip = null, size 
   const parts = {};
   function mount() {
     if (root?.isConnected) return;
-    parts.strip?.remove();
     root = document.createElement("div");
     root.setAttribute("data-film-overlay", "");
     root.innerHTML = `<style>
-      [data-film-overlay] { position: fixed; z-index: 2147483647; pointer-events: none; overflow: hidden; contain: strict; }
+      [data-film-overlay] { position: fixed; inset: 0; z-index: 2147483647; pointer-events: none; overflow: hidden; }
       [data-film-overlay] * { box-sizing: border-box; }
-      [data-film-stage] { position: absolute; left: 0; top: 0; transform-origin: 0 0; }
-      [data-film-fade], [data-film-band] { position: absolute; }
-      /* Under the picture: it takes the pointer while the hand travels, so nothing in the screen
-         is hovered. The band itself is drawn apart, at the output's own pixels. */
-      [data-film-band] { pointer-events: auto; }
+      [data-film-fade] { position: absolute; left: 0; top: 0; width: 100%; height: ${view.picture}px; background: ${backdrop}; }
+      /* The band takes the pointer while the hand travels, so nothing in the screen is hovered. */
+      [data-film-band] { position: absolute; left: 0; top: ${view.picture}px; width: 100%; height: ${view.band}px; background: ${backdrop};
+        display: grid; place-items: center; padding: 0 ${unit * 0.08}px; pointer-events: auto; }
+      [data-film-band] p { margin: 0; text-align: center; text-wrap: balance; font-family: var(--sans, sans-serif); font-weight: 400; font-feature-settings: "kern";
+        font-size: ${Math.round(unit * dpr * 0.037) / dpr}px; line-height: ${Math.round(unit * dpr * 0.046) / dpr}px; letter-spacing: -0.01em; }
+      [data-film-lens] { position: absolute; left: 0; top: 0; width: 100%; height: ${view.picture}px; overflow: hidden; }
       [data-film-cursor] { position: absolute; left: 0; top: 0; }
       [data-film-ripples] > i { position: absolute; border-radius: 50%; }
-    </style><div data-film-stage>
+    </style>
       <div data-film-fade></div>
-      <div data-film-band></div>
-      <div data-film-ripples></div>
-      <div data-film-cursor="pointer">${POINTER}</div>
-      <div data-film-cursor="hand">${HAND}</div>
-    </div>`;
+      <div data-film-band><p></p></div>
+      <div data-film-lens><div data-film-ripples></div><div data-film-cursor="pointer">${POINTER}</div><div data-film-cursor="hand">${HAND}</div></div>`;
     document.body.append(root);
-    // The caption band, drawn apart at one device pixel per output pixel: the backdrop and one
-    // caption, centred, in the app's sans.
-    if (strip && size) {
-      const px = strip.width / size.width;
-      const unit = Math.min(size.width, size.height) * px;
-      parts.strip = document.createElement("div");
-      parts.strip.setAttribute("data-film-strip", "");
-      parts.strip.innerHTML = `<style>
-        [data-film-strip] { position: fixed; left: ${strip.x}px; top: ${strip.y}px; width: ${strip.width}px; height: ${strip.height}px; background: ${backdrop}; display: grid; place-items: center; padding: 0 ${unit * 0.08}px; box-sizing: border-box; pointer-events: none; }
-        [data-film-strip] p { margin: 0; text-align: center; text-wrap: balance; font-family: var(--sans, sans-serif); font-weight: 400; font-feature-settings: "kern";
-          font-size: ${Math.round(Math.min(size.width, size.height) * 0.037) * px}px; line-height: ${Math.round(Math.min(size.width, size.height) * 0.046) * px}px; letter-spacing: -0.01em; }
-      </style><p></p>`;
-      parts.unit = unit;
-      document.body.append(parts.strip);
-    }
-    for (const name of ["stage", "fade", "band", "ripples"]) parts[name] = root.querySelector(`[data-film-${name}]`);
+    for (const name of ["fade", "band", "lens", "ripples"]) parts[name] = root.querySelector(`[data-film-${name}]`);
+    parts.words = parts.band.querySelector("p");
     parts.pointer = root.querySelector('[data-film-cursor="pointer"]');
     parts.hand = root.querySelector('[data-film-cursor="hand"]');
+    parts.room = document.getElementById("room");
   }
 
-  // state: {frame: {x, y, width, height} in the stage's px, size: {width, height} and band in
-  // output px, caption: {text, opacity, rise}, cursor: {x, y, visible, kind, press, opacity},
-  // ripples: [{x, y, progress, fading}], fade (0 to 1)}.
+  // Where a point of the room shows in the page, for the frame: the recorder's pointer goes there.
+  film.toView = (frame, point) => {
+    const s = view.width / frame.width;
+    return {x: (point.x - frame.x) * s, y: (point.y - frame.y) * s};
+  };
+  // Where the pointer rests while the hand travels: on the band.
+  film.parking = {x: view.width / 2, y: view.picture + view.band / 2};
+
+  // state: {frame: {x, y, width, height} in the room's px, caption: {text, opacity, rise},
+  // cursor: {x, y, visible, kind, press, opacity}, ripples: [{x, y, progress, fading}], fade}.
   film.render = state => {
     mount();
-    const {frame, size} = state;
-    const k = size.width / frame.width;
-    // A few px past the frame on every side: the shot is clipped to half pixels, and close in, the
-    // screen must not peek out under the band or past the edge.
-    const spill = 4;
-    Object.assign(root.style, {left: `${frame.x - spill}px`, top: `${frame.y - spill}px`, width: `${frame.width + spill * 2}px`, height: `${frame.height + spill * 2}px`});
-    Object.assign(parts.stage.style, {left: `${spill}px`, top: `${spill}px`, width: `${size.width}px`, height: `${size.height}px`, transform: `scale(${1 / k})`});
-    const unit = Math.min(size.width, size.height);
-    const out = spill * k;
+    const {frame} = state;
+    // CSS px of the page per px of the room.
+    const s = view.width / frame.width;
+    parts.room.style.transform = `translate(${-frame.x * s}px, ${-frame.y * s}px) scale(${s})`;
+    parts.fade.style.opacity = String(state.fade || 0);
 
-    // The band, the fades and the margin are all the backdrop.
-    Object.assign(parts.fade.style, {inset: `${-out}px`, background: backdrop, opacity: String(state.fade || 0)});
-    const band = state.band || 0;
-    Object.assign(parts.band.style, {left: `${-out}px`, right: `${-out}px`, bottom: `${-out}px`, height: `${band + out}px`, display: band ? "block" : "none"});
-    if (parts.strip) {
-      const caption = state.caption || {};
-      const words = parts.strip.querySelector("p");
-      words.textContent = caption.text || "";
-      Object.assign(words.style, {color: getComputedStyle(document.body).color, opacity: String(caption.opacity ?? 0), transform: `translateY(${(caption.rise || 0) * parts.unit * 0.02}px)`});
-    }
+    const caption = state.caption || {};
+    parts.words.textContent = caption.text || "";
+    Object.assign(parts.words.style, {color: getComputedStyle(document.body).color, opacity: String(caption.opacity ?? 0),
+      transform: `translateY(${(caption.rise || 0) * unit * 0.02}px)`});
 
     // The cursor is drawn at macOS's size in the screen's own px, Stageshow's large style (1.5x),
     // so it grows with the camera as if filmed with the screen. A change of kind crosses over in
@@ -243,10 +229,10 @@ export function installStage({backdrop = "#000", path = "/", strip = null, size 
     if (kind !== glyph.kind) Object.assign(glyph, {kind, from: glyph.kind, at: frames});
     const swap = Math.min(1, (frames - glyph.at) / 6);
     const grown = swap * swap * (3 - 2 * swap);
-    const at = `${(cursor.x - frame.x) * k}px, ${(cursor.y - frame.y) * k}px`;
+    const at = `${(cursor.x - frame.x) * s}px, ${(cursor.y - frame.y) * s}px`;
     // In screen px: the arrow 13 by 19 units at 0.75 px a unit, the hand 32 units at 0.8125.
     const LARGE = 1.5;
-    const sizes = {pointer: {unit: 0.75 * LARGE * k, width: 13, height: 19, hot: [0, 0]}, hand: {unit: 0.8125 * LARGE * k, width: 32, height: 32, hot: [12, 4]}};
+    const sizes = {pointer: {unit: 0.75 * LARGE * s, width: 13, height: 19, hot: [0, 0]}, hand: {unit: 0.8125 * LARGE * s, width: 32, height: 32, hot: [12, 4]}};
     for (const name of ["pointer", "hand"]) {
       const {unit: u, width, height, hot} = sizes[name];
       const share = name === glyph.kind ? grown : name === glyph.from ? 1 - grown : 0;
@@ -254,15 +240,15 @@ export function installStage({backdrop = "#000", path = "/", strip = null, size 
         width: `${width * u}px`, height: `${height * u}px`, display: cursor.visible && share > 0 ? "block" : "none",
         opacity: String((cursor.opacity ?? 1) * share), transformOrigin: `${hot[0] * u}px ${hot[1] * u}px`,
         transform: `translate(${at}) translate(${-hot[0] * u}px, ${-hot[1] * u}px) scale(${share * (cursor.press ?? 1)})`,
-        filter: `drop-shadow(0 ${1 * LARGE * k}px ${2 * LARGE * k}px rgba(0, 0, 0, 0.3))`,
+        filter: `drop-shadow(0 ${1 * LARGE * s}px ${2 * LARGE * s}px rgba(0, 0, 0, 0.3))`,
       });
     }
 
     // Stageshow's ring: 36 screen px, a 1.5 px edge in the accent over a tenth of it, from a fifth
     // of its size to all of it as it fades.
     parts.ripples.innerHTML = (state.ripples || []).map(ripple => {
-      const size = 36 * k * (0.2 + 0.8 * ripple.progress);
-      return `<i style="left:${(ripple.x - frame.x) * k - size / 2}px;top:${(ripple.y - frame.y) * k - size / 2}px;width:${size}px;height:${size}px;border:${1.5 * k}px solid rgb(var(--accent-deep-rgb, 153 175 98));background:rgb(var(--accent-deep-rgb, 153 175 98) / 10%);opacity:${(1 - ripple.progress) * (ripple.fading ?? 1)}"></i>`;
+      const width = 36 * s * (0.2 + 0.8 * ripple.progress);
+      return `<i style="left:${(ripple.x - frame.x) * s - width / 2}px;top:${(ripple.y - frame.y) * s - width / 2}px;width:${width}px;height:${width}px;border:${1.5 * s}px solid rgb(var(--accent-deep-rgb, 153 175 98));background:rgb(var(--accent-deep-rgb, 153 175 98) / 10%);opacity:${(1 - ripple.progress) * (ripple.fading ?? 1)}"></i>`;
     }).join("");
   };
 }

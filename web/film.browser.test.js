@@ -5,7 +5,7 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import test from "node:test";
-import {shoot, stage, zigzags, FORMATS} from "./film/film.js";
+import {shoot, stage, zigzags, creeps, FORMATS} from "./film/film.js";
 import * as people from "./film/films/people-requests.js";
 
 const short = play => ({name: "short", now: people.now, timezone: people.timezone, world: people.world, play});
@@ -139,6 +139,15 @@ test("a camera that goes out and comes straight back is a zig-zag; one that sett
   assert.deepEqual(zigzags(path([[500, 700, 15], [700, 300, 20]])).map(zig => zig.axis), ["side to side"]);
   // One move, a long rest, then another the other way: two beats, not a zig-zag.
   assert.deepEqual(zigzags(path([[500, 700, 15], [700, 700, 90], [700, 300, 20]])), []);
+});
+
+test("a camera that drifts on a pixel at a time creeps; one that glides and stops does not", () => {
+  // A spring's long tail: 40 frames each moving the frame's centre by under a pixel of output.
+  const tail = Array.from({length: 41}, (_, i) => [500 + i * 0.4, 300, 1920]);
+  assert.equal(creeps(tail, 1920).length, 1);
+  // A glide that gets somewhere and then holds still.
+  const glide = [...Array.from({length: 30}, (_, i) => [500 + 300 * (1 - Math.cos((Math.PI * i) / 29)) / 2, 300, 1920]), ...Array.from({length: 30}, () => [800, 300, 1920])];
+  assert.deepEqual(creeps(glide, 1920), []);
 });
 
 test("the caption band sits below the dashboard's screen", () => {

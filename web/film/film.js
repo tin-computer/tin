@@ -58,6 +58,28 @@ const LET_GO = bezier([0.22, 1, 0.36, 1]);
 const RING = Math.round(0.55 * FPS);
 const RING_CURVE = bezier([0.25, 0.8, 0.25, 1]);
 
+// Where a camera's path creeps: a run of frames that each move it a little, but less than
+// `CREEP` output px, longer than a third of a second. A move goes somewhere or holds still.
+const CREEP = 1.2;
+export function creeps(lens, out) {
+  const found = [];
+  let run = null;
+  for (let n = 1; n < lens.length; n++) {
+    const [x, y, width] = lens[n], [px, py, pwidth] = lens[n - 1];
+    const k = out / width;
+    const moved = Math.max(Math.hypot(x - px, y - py) * k, Math.abs(width - pwidth) * k);
+    const small = moved > 0.05 && moved < CREEP;
+    if (small) run = run || {at: n, frames: 0};
+    if (small) run.frames++;
+    if (!small && run) {
+      if (run.frames > FPS / 3) found.push(run);
+      run = null;
+    }
+  }
+  if (run && run.frames > FPS / 3) found.push(run);
+  return found;
+}
+
 // Where a camera's path ([centre x, centre y, width] a frame) sets off one way and comes back
 // within two seconds, by more than a tenth of its frame each way: a zig-zag.
 export function zigzags(lens) {
@@ -85,8 +107,8 @@ export function zigzags(lens) {
 class Director {
   // `page` is the stage, `app` the dashboard's frame in it. Everything the director works in
   // (frames, the cursor, rects) is in the stage's px; the screen sits `margin` in from its corner.
-  constructor({page, app, strip, format, size, screen, margin = {top: 0, right: 0, bottom: 0, left: 0}, room = screen, deviceScale, served, issues, ripple = false}) {
-    Object.assign(this, {page, app, strip, format, size, screen, margin, room, deviceScale, world: served, issues, ripple});
+  constructor({page, app, format, size, screen, margin = {top: 0, right: 0, bottom: 0, left: 0}, room = screen, deviceScale, served, issues, ripple = false}) {
+    Object.assign(this, {page, app, format, size, screen, margin, room, deviceScale, world: served, issues, ripple});
     this.wide = size.width > size.height;
     this.n = 0;
     this.recording = true;
@@ -362,6 +384,9 @@ class Director {
   }
 
   judgeLens() {
+    for (const creep of creeps(this.lens, this.size.width)) {
+      this.warn(`The camera creeps at ${(creep.at / FPS).toFixed(1)}s: ${creep.frames} frames in a row move it under ${CREEP} output px each; a move should end still.`);
+    }
     for (const zig of zigzags(this.lens)) {
       this.warn(`The camera zig-zags ${zig.axis} at ${(zig.at / FPS).toFixed(1)}s: ${zig.there}px one way, then ${zig.back}px back.`);
     }
@@ -383,16 +408,16 @@ class Director {
   // Screen Studio's follow camera. From wherever the camera is, it eases in to `zoom` (of the
   // frame it starts from) and keeps centring on what matters: the cursor, every mark still
   // showing, and whatever matches `attention` (a toast, say), zooming out only as far as they
-  // need to fit. A critically damped spring moves it, so it trails the hand softly and never
-  // jerks. Near the window's edge it keeps centring, up to `overshoot` of the frame past the
-  // edge, where the window's boundary shows on the backdrop.
-  follow({zoom = 1.6, attention = [], pad = 48, overshoot = 0.3, pan = 6, push = 4} = {}) {
+  // need to fit. It moves in glides: each one eased, 0.7 to 1.2 s by how far it goes, setting
+  // off at the speed the camera already has and ending exactly still, as an operator's move
+  // does. A camera that creeps on, a pixel at a time, after the move reads as jitter. Near the
+  // window's edge it keeps centring, up to `overshoot` of the frame past the edge, where the
+  // window's boundary shows on the backdrop.
+  follow({zoom = 1.6, attention = [], pad = 48, overshoot = 0.3} = {}) {
     const frame = this.frame;
     const picture = this.picture;
-    this.follower = {
-      zoom, attention, pad, overshoot, pan, push, widest: frame.width, target: null,
-      x: {at: picture.x + picture.width / 2, speed: 0}, y: {at: picture.y + picture.height / 2, speed: 0}, width: {at: frame.width, speed: 0},
-    };
+    const at = {x: picture.x + picture.width / 2, y: picture.y + picture.height / 2, width: frame.width};
+    this.follower = {zoom, attention, pad, overshoot, widest: frame.width, target: null, at, speed: {x: 0, y: 0, width: 0}, glide: null};
   }
 
   // Back to a camera that moves only when told.
@@ -442,38 +467,70 @@ class Director {
       const wider = union([...must, ...marks]);
       if (marks.length && fits(wider, width)) focus = wider;
     }
+    // Whether to re-aim, as an operator decides: to bring something into view, never because
+    // something left. The camera moves when the hand's landing point leaves the middle of the
+    // frame it is heading for, when something it must show leaves that frame, or when a new mark
+    // appears outside it and fits; a mark fading or a frame that could be a little tighter never
+    // moves it, so there are no micro-adjustments.
+    const keys = ["x", "y", "width"];
     let target = follow.target;
+    const inside = (box, frame, inset) => {
+      const high = frame.width * ratio;
+      const left = frame.x - frame.width / 2 + frame.width * inset, top = frame.y - high / 2 + high * inset;
+      return box.x >= left && box.y >= top && box.x + box.width <= frame.x + frame.width / 2 - frame.width * inset && box.y + box.height <= frame.y + high / 2 - high * inset;
+    };
     if (focus) {
-      const center = {x: focus.x + focus.width / 2, y: focus.y + focus.height / 2};
-      // A dead zone, as Screen Studio has: while what it follows stays in the middle of the frame
-      // it is heading for, at the same zoom, that frame stands.
-      const inner = target && {x: target.x - target.width * 0.32, y: target.y - target.width * ratio * 0.32, width: target.width * 0.64, height: target.width * ratio * 0.64};
-      const settled = target && Math.abs(target.width - width) < 1 && focus.x >= inner.x && focus.y >= inner.y
-        && focus.x + focus.width <= inner.x + inner.width && focus.y + focus.height <= inner.y + inner.height;
-      if (!settled) {
+      const handBox = must[0];
+      const marked = marks.length ? union([...must, ...marks]) : null;
+      const go = !target
+        || (handBox && !inside(handBox, target, 0.18))
+        || (needed && !inside(needed, target, 0.02))
+        || (marked && focus === marked && !inside(marked, target, 0.02))
+        || Math.abs(width - target.width) / target.width > 0.06;
+      if (go) {
+        const center = {x: focus.x + focus.width / 2, y: focus.y + focus.height / 2};
         // Past the window's edge by no more than the overshoot, and never out of the room.
         const screen = {x: this.margin.left, y: this.margin.top, width: this.screen.width, height: this.screen.height};
         const high = width * ratio;
         const spare = {x: follow.overshoot * width, y: follow.overshoot * high};
         const keep = (value, low, highest) => (low > highest ? (low + highest) / 2 : Math.min(Math.max(value, low), highest));
-        target = {
+        const next = {
           x: keep(center.x, Math.max(screen.x - spare.x, 0) + width / 2, Math.min(screen.x + screen.width + spare.x, this.room.width) - width / 2),
           y: keep(center.y, Math.max(screen.y - spare.y, 0) + high / 2, Math.min(screen.y + screen.height + spare.y, this.room.height) - high / 2),
           width,
         };
-        follow.target = target;
+        // And only to a frame that's really different, unless what must show would be cut.
+        const change = target ? Math.max(Math.hypot(next.x - target.x, next.y - target.y), Math.abs(next.width - target.width)) / target.width : 1;
+        if (change > 0.05 || (needed && !inside(needed, target, 0))) {
+          target = next;
+          follow.target = target;
+        }
       }
     }
-    if (!target) target = {x: follow.x.at, y: follow.y.at, width: follow.width.at};
-    const spring = (state, aim, omega) => {
-      state.speed += (omega * omega * (aim - state.at) - 2 * omega * state.speed) / FPS;
-      state.at += state.speed / FPS;
-    };
-    spring(follow.x, target.x, follow.pan);
-    spring(follow.y, target.y, follow.pan);
-    spring(follow.width, target.width, follow.push);
-    const w = follow.width.at;
-    this.frame = {x: follow.x.at - w / 2, y: follow.y.at - (w * ratio) / 2, width: w, height: (w * tall) / out};
+    if (!target) target = {...follow.at};
+    // A new glide when the target moves: from here, at the speed it has now, to the target.
+    const heading = follow.glide?.to || follow.at;
+    if (keys.some(key => Math.abs(target[key] - heading[key]) > 0.5)) {
+      const far = Math.hypot(target.x - follow.at.x, target.y - follow.at.y) / follow.at.width + Math.abs(Math.log(target.width / follow.at.width));
+      const frames = Math.round(FPS * (0.7 + 0.5 * Math.min(1, far)));
+      follow.glide = {from: {...follow.at}, speed: {...follow.speed}, to: {...target}, start: this.n, frames};
+    }
+    const glide = follow.glide;
+    if (glide) {
+      // A cubic Hermite: it leaves at the camera's own speed and arrives at rest.
+      const t = Math.min(1, (this.n + 1 - glide.start) / glide.frames);
+      const h00 = 2 * t ** 3 - 3 * t ** 2 + 1, h10 = t ** 3 - 2 * t ** 2 + t, h01 = -2 * t ** 3 + 3 * t ** 2;
+      const before = {...follow.at};
+      for (const key of keys) follow.at[key] = h00 * glide.from[key] + h10 * glide.speed[key] * glide.frames + h01 * glide.to[key];
+      for (const key of keys) follow.speed[key] = follow.at[key] - before[key];
+      if (t >= 1) {
+        follow.glide = null;
+        follow.at = {...glide.to};
+        follow.speed = {x: 0, y: 0, width: 0};
+      }
+    }
+    const w = follow.at.width;
+    this.frame = {x: follow.at.x - w / 2, y: follow.at.y - (w * ratio) / 2, width: w, height: (w * tall) / out};
   }
 
   // One soft pass over what just changed: it washes in, holds and fades, while the film goes on.
@@ -575,10 +632,13 @@ class Director {
     if (this.follower) await this.track();
     // On a trip the page sees the pointer only once the hand is over what it's going to, so a
     // hover starts as it enters, not when it stops.
-    const band = {x: this.frame.x + this.frame.width / 2, y: this.frame.y + (this.size.height - this.size.band / 2) * this.scale};
     const {x, y} = this.cursor;
     const over = this.aim && x >= this.aim.x && x <= this.aim.x + this.aim.width && y >= this.aim.y && y <= this.aim.y + this.aim.height;
-    if (this.cursor.visible) await this.page.mouse.move(...(this.travelling && !over ? [band.x, band.y] : [x, y]));
+    if (this.cursor.visible) {
+      const spot = this.travelling && !over ? await this.page.evaluate(() => window.__film.parking)
+        : await this.page.evaluate(([frame, point]) => window.__film.toView(frame, point), [this.frame, {x, y}]);
+      await this.page.mouse.move(spot.x, spot.y);
+    }
     await this.app.evaluate(() => window.__film.clock.step(1));
     await quiet(this.app);
     if (!this.recording) return;
@@ -588,19 +648,16 @@ class Director {
     state.cursor.kind = await this.app.evaluate(work => window.__film.frame(work),
       {highlights: state.highlights.map(mark => this.onScreen(mark)), cursor: point});
     await this.page.evaluate(state => window.__film.render(state), state);
-    // The picture, and the caption band drawn apart at one device pixel per output pixel, so the
-    // caption holds still while the camera moves. ffmpeg scales the picture and stacks the two.
-    const clip = Object.fromEntries(Object.entries(this.picture).map(([key, value]) => [key, Math.round(value * 2) / 2]));
-    const picture = await this.page.screenshot({clip, type: "png"});
-    const strip = await this.page.screenshot({clip: this.strip, type: "png"});
-    this.hashes.push(crypto.createHash("sha1").update(picture).update(strip).digest("hex").slice(0, 12));
+    // The page is the shot, at the output's size.
+    const png = await this.page.screenshot({type: "png"});
+    this.hashes.push(crypto.createHash("sha1").update(png).digest("hex").slice(0, 12));
     const shown = this.picture;
     // Where the camera looked, for the zig-zag check.
     this.lens.push([shown.x + shown.width / 2, shown.y + shown.height / 2, shown.width].map(value => Math.round(value * 10) / 10));
     // Where the hand was, in the picture's own terms (0 to 1 across and down), for the path check.
     this.trail.push(state.cursor.visible ? [(state.cursor.x - shown.x) / shown.width, (state.cursor.y - shown.y) / shown.height] : null);
-    this.last = {picture, band: strip};
-    await this.sink(picture, strip);
+    this.last = png;
+    await this.sink(png);
     this.n++;
   }
 
@@ -671,9 +728,8 @@ async function loadFonts(stylesheet) {
   return files;
 }
 
-// `band` opens a second input pipe, fd 3, for the caption band's frames.
-function ffmpeg(args, {band = false} = {}) {
-  const child = spawn("ffmpeg", ["-loglevel", "error", "-y", ...args], {stdio: ["pipe", "ignore", "pipe", ...(band ? ["pipe"] : [])]});
+function ffmpeg(args) {
+  const child = spawn("ffmpeg", ["-loglevel", "error", "-y", ...args], {stdio: ["pipe", "ignore", "pipe"]});
   let stderr = "";
   child.stderr.on("data", chunk => (stderr += chunk));
   const done = new Promise((resolve, reject) => child.on("close", code => (code ? reject(new Error(`ffmpeg: ${stderr.trim()}`)) : resolve())));
@@ -701,17 +757,18 @@ function srt(captions, total) {
 // backdrop; an edge that runs off the picture stays square. The hairline edge, and on white a
 // short shadow that fades out above the band. The app's stylesheet gives the captions its type.
 const STAGE = "/__film/stage";
-function stagePage({screen, margin: m, viewport, backdrop, theme, fonts, start}) {
+function stagePage({screen, margin: m, room, view, backdrop, theme, fonts, start}) {
   const round = (a, b) => (a && b ? "12px" : "0");
   const edge = theme === "light" ? "0 0 0 1px rgb(0 0 0 / 9%), 0 2px 10px rgb(0 0 0 / 7%)" : "0 0 0 1px rgb(255 255 255 / 9%)";
   const framed = m.top || m.right || m.bottom || m.left;
   return `<!doctype html><html data-theme="${theme}"><head><meta charset="utf-8">
 <link rel="stylesheet" href="/assets/app.css">${fonts ? '<link rel="stylesheet" href="/film-fonts/fonts.css">' : ""}
 <style>
-  html, body { margin: 0 !important; padding: 0 !important; width: ${viewport.width}px; height: ${viewport.height}px; min-height: 0 !important; overflow: hidden !important; background: ${backdrop} !important; }
+  html, body { margin: 0 !important; padding: 0 !important; width: ${view.width}px; height: ${view.height}px; min-height: 0 !important; overflow: hidden !important; background: ${backdrop} !important; }
+  #room { position: absolute; left: 0; top: 0; width: ${room.width}px; height: ${room.height}px; transform-origin: 0 0; }
   #screen { position: absolute; left: ${m.left}px; top: ${m.top}px; width: ${screen.width}px; height: ${screen.height}px; border: 0; display: block; background: ${backdrop};
     ${framed ? `border-radius: ${round(m.top, m.left)} ${round(m.top, m.right)} ${round(m.bottom, m.right)} ${round(m.bottom, m.left)}; box-shadow: ${edge};` : ""} }
-</style></head><body><iframe id="screen" src="${start}"></iframe></body></html>`;
+</style></head><body><div id="room"><iframe id="screen" src="${start}"></iframe></div></body></html>`;
 }
 
 // Film one format: serve the world, open the dashboard under the virtual clock, play the script.
@@ -728,22 +785,16 @@ export async function shoot(film, {format = "4:5", theme = film.theme || "dark",
   fs.rmSync(dir, {recursive: true, force: true});
   fs.mkdirSync(dir, {recursive: true});
   const mp4 = path.join(dir, "film.mp4");
-  // The picture, scaled to the output, over the band, which is already at the output's pixels.
-  // Each input is known from its first frame: probing further would read ahead on one pipe while
-  // the recorder waits on the other.
-  const input = pipe => ["-probesize", "32", "-analyzeduration", "0", "-thread_queue_size", "64", "-f", "image2pipe", "-framerate", String(FPS), "-c:v", "png", "-i", pipe];
-  const encoder = encode && ffmpeg([...input("pipe:0"), ...input("pipe:3"),
-    "-filter_complex", `${stack(size)},format=yuv420p[out]`, "-map", "[out]", "-c:v", "libx264", "-preset", "slow", "-crf", "18",
-    "-movflags", "+faststart", "-an", mp4], {band: true});
+  const encoder = encode && ffmpeg(["-f", "image2pipe", "-framerate", String(FPS), "-c:v", "png", "-i", "-",
+    "-vf", `scale=${size.width}:${size.height}:flags=lanczos,format=yuv420p`, "-c:v", "libx264", "-preset", "slow", "-crf", "18",
+    "-movflags", "+faststart", "-an", mp4]);
   try {
     // A number, or one per format: a tall film that closes in on a panel needs more pixels.
-    const deviceScale = (typeof film.deviceScale === "object" ? film.deviceScale[format] : film.deviceScale) || 2;
-    // The caption band's strip, under everything the camera may frame, at one device pixel per
-    // output pixel.
-    const strip = {x: 0, y: viewport.height + 4, width: size.width / deviceScale, height: size.band / deviceScale};
-    viewport.width = Math.max(viewport.width, Math.ceil(strip.width));
-    viewport.height = Math.ceil(strip.y + strip.height + 4);
-    const context = await browser.newContext({viewport, deviceScaleFactor: deviceScale, colorScheme: theme, timezoneId: film.timezone || "UTC", locale: "en-US"});
+    // The stage page is the shot: the output's size at two device px per CSS px. The camera moves
+    // the room inside it, so text is drawn at whatever scale the camera needs.
+    const deviceScale = 2;
+    const view = {width: size.width / deviceScale, height: size.height / deviceScale};
+    const context = await browser.newContext({viewport: view, deviceScaleFactor: deviceScale, colorScheme: theme, timezoneId: film.timezone || "UTC", locale: "en-US"});
     const backdrop = BACKDROP[theme] || BACKDROP.dark;
     await context.route("**/*", async route => {
       const url = route.request().url();
@@ -752,7 +803,7 @@ export async function shoot(film, {format = "4:5", theme = film.theme || "dark",
         return route.abort();
       }
       const {pathname} = new URL(url);
-      if (pathname === STAGE) return route.fulfill({body: stagePage({screen, margin, viewport, backdrop, theme, fonts: Boolean(fonts), start: `${world.start || "/system"}?project=project`}), contentType: "text/html"});
+      if (pathname === STAGE) return route.fulfill({body: stagePage({screen, margin, room, view, backdrop, theme, fonts: Boolean(fonts), start: `${world.start || "/system"}?project=project`}), contentType: "text/html"});
       // Clerk is stubbed (below); the fixture leaves its script address unfilled.
       if (decodeURIComponent(pathname).startsWith("/{{CLERK_FRONTEND_API_URL}}/")) return route.fulfill({body: "", contentType: "text/javascript"});
       if (pathname.startsWith("/film-fonts/") && fonts?.has(path.basename(pathname))) {
@@ -768,7 +819,7 @@ export async function shoot(film, {format = "4:5", theme = film.theme || "dark",
     });
     await context.addInitScript(`(${installVirtualClock})(${JSON.stringify({fps: FPS, epoch: now})});`);
     await context.addInitScript(`(${installScreen})();`);
-    await context.addInitScript(`(${installStage})(${JSON.stringify({backdrop, path: STAGE, strip, size})});`);
+    await context.addInitScript(`(${installStage})(${JSON.stringify({backdrop, path: STAGE, size, dpr: deviceScale})});`);
     await context.addInitScript(({member, theme}) => {
       window.Clerk = {load: async () => {}, isSignedIn: true, user: {id: "member", firstName: member}, session: {getToken: async () => "synthetic"}, mountSignIn: () => {}};
       localStorage.setItem("tin-lite:theme", theme);
@@ -785,13 +836,10 @@ export async function shoot(film, {format = "4:5", theme = film.theme || "dark",
     await app.waitForLoadState("domcontentloaded");
     await page.evaluate(() => document.fonts.ready);
 
-    const director = new Director({page, app, strip, format, size, screen, margin, room, deviceScale, served, issues, ripple: Boolean(film.ripple)});
-    director.sink = async (picture, band) => {
+    const director = new Director({page, app, format, size, screen, margin, room, deviceScale, served, issues, ripple: Boolean(film.ripple)});
+    director.sink = async png => {
       if (!encoder) return;
-      // ffmpeg reads ahead on the picture before it opens the band, so only the picture waits for
-      // room; the band's small frames queue until it is read.
-      encoder.child.stdio[3].write(band);
-      if (!encoder.child.stdin.write(picture)) await new Promise(resolve => encoder.child.stdin.once("drain", resolve));
+      if (!encoder.child.stdin.write(png)) await new Promise(resolve => encoder.child.stdin.once("drain", resolve));
     };
     // The dashboard boots without being filmed.
     director.recording = false;
@@ -810,10 +858,9 @@ export async function shoot(film, {format = "4:5", theme = film.theme || "dark",
     issues.blocked = [...new Set(issues.blocked)];
     if (!director.marks.poster) issues.errors.push("The film never marks its poster.");
     if (director.n / FPS > 140) issues.warnings.push("Longer than X's 2 minutes 20 seconds.");
-    const report = {film: film.name, title: film.title, format, size, frames: director.n, seconds: director.n / FPS, hashes: director.hashes, trail: director.trail, issues};
+    const report = {film: film.name, title: film.title, format, size, frames: director.n, seconds: director.n / FPS, hashes: director.hashes, trail: director.trail, lens: director.lens, issues};
     if (encoder) {
       encoder.child.stdin.end();
-      encoder.child.stdio[3].end();
       await encoder.done;
       await stills(director, size, dir);
       await motionStrips(director, size, dir);
@@ -828,7 +875,6 @@ export async function shoot(film, {format = "4:5", theme = film.theme || "dark",
     // won't act on a polite signal, so its input is closed and it is killed outright.
     if (encoder && encoder.child.exitCode === null) {
       encoder.child.stdin.destroy();
-      encoder.child.stdio[3]?.destroy();
       encoder.child.kill("SIGKILL");
       await encoder.done.catch(() => {});
     }
@@ -842,22 +888,13 @@ export async function shoot(film, {format = "4:5", theme = film.theme || "dark",
 
 // Each mark at full size (the poster among them), a contact sheet of them, and a GIF small
 // enough for X (15 MB).
-// The filter that puts the picture, scaled to the output, over the band.
-function stack(size) {
-  return `[0:v]scale=${size.width}:${size.height - size.band}:flags=lanczos,setsar=1[top];[1:v]setsar=1[bottom];[top][bottom]vstack=inputs=2`;
-}
-
 async function stills(director, size, dir) {
   fs.mkdirSync(path.join(dir, "marks"));
   const marks = Object.entries(director.marks).sort(([, a], [, b]) => a.frame - b.frame);
   const files = [];
   for (const [index, [name, mark]] of marks.entries()) {
     const file = path.join(dir, "marks", `${String(index + 1).padStart(2, "0")}-${name}.png`);
-    const parts = ["picture", "band"].map(part => path.join(dir, "marks", `.${part}.png`));
-    fs.writeFileSync(parts[0], mark.png.picture);
-    fs.writeFileSync(parts[1], mark.png.band);
-    await ffmpeg(["-i", parts[0], "-i", parts[1], "-filter_complex", stack(size), "-frames:v", "1", file]).done;
-    for (const part of parts) fs.rmSync(part);
+    await encodeStills([mark.png], ["-vf", `scale=${size.width}:${size.height}:flags=lanczos`, "-frames:v", "1", file]);
     files.push(file);
     if (name === "poster") fs.copyFileSync(file, path.join(dir, "poster.png"));
   }

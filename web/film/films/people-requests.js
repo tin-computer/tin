@@ -15,8 +15,6 @@ export const timezone = "Europe/Berlin";
 // sets that padding and puts the toast's top on a row line; the room around it lets the camera
 // centre on the window's edge.
 export const screens = {"4:5": {width: 600, height: 703, margin: {bottom: 37}}, "16:9": {width: 1440, height: 618, margin: 300}};
-// The wide film follows at 1.6x of the whole window: two device pixels per CSS pixel keep it sharp.
-export const deviceScale = {"4:5": 2, "16:9": 2};
 // The padding round the whole wide window at rest, from its height and the 16:9 picture.
 const REST = 69;
 
@@ -182,7 +180,7 @@ export async function play(f) {
     // The panel reads her again, as a reload would.
     await f.page.keyboard.press("Escape");
     await f.open("/people", {ready: `${row("p-chloe")} td.is-name`});
-    await f.app.click(`${row("p-chloe")} td.is-name`, {position: {x: 4, y: 4}});
+    await f.app.evaluate(selector => document.querySelector(selector).click(), `${row("p-chloe")} td.is-name`);
     await f.ready("#person-panel .person-section:last-of-type");
     await f.hold(0.5);
   }, {caption: "They accept. You start the conversation."});

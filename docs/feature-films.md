@@ -55,9 +55,13 @@ There are two ways to frame a film, as in Screen Studio:
   the film names (`attention`, such as a toast). A film knows where the hand is going, so on a
   trip the camera aims at where it will land, never chasing it out and back. `f.look(targets)`
   frames a beat before it happens, such as a row and where its panel will open, so the camera
-  moves once; `f.look(null)` lets go. Marks pull the frame towards them when they fit
-  beside the cursor. A critically damped spring moves it, and a dead zone holds it still while
-  the action stays in the middle of the frame. It opens out only as far as what must show needs.
+  moves once; `f.look(null)` lets go. Marks pull the frame towards them when they fit beside
+  the cursor. It re-aims as an operator does: to bring something into view, never because
+  something left. That means when the hand's landing point leaves the middle of the frame, when
+  something it must show leaves the frame, or when a new mark appears outside it. It only
+  re-aims to a frame that is really different. Each move is a glide, 0.7 to 1.2 s by distance,
+  that sets off at the camera's own speed and ends exactly still. Between moves it holds still,
+  never creeping or nudging. It opens out only as far as what must show needs.
   Near the window's edge it keeps centring, up to `overshoot` (30%) of the frame past the edge,
   where the window's boundary shows on the backdrop. Size the room's margin for that. The People
   film's 16:9 cut follows.
@@ -75,10 +79,6 @@ Framing follows Stageshow's `references/framing.md`:
 - **What opens stays in frame.** A toast, a card or a panel the story opens shows whole. A
   following camera is told about it with `attention`.
 
-A push-in needs the pixels. Set `deviceScale` per format high enough that the closest frame is
-still drawn at one device pixel per output pixel. The People film uses 2: it follows at 1.6x of
-a whole window that is 1.2x the screen.
-
 ## How it works
 
 - **The demo world.** `serveApp` from `web/app-fixture.js` serves the dashboard with synthetic
@@ -90,10 +90,11 @@ a whole window that is 1.2x the screen.
   Every request lands in the frame that made it, so two takes are identical.
 - **The director.** The script calls `f.camera`, `f.move`, `f.click` and so on. Each frame the
   recorder moves the camera and cursor and steps the dashboard's clock. It then draws the marks
-  inside the dashboard's window and the stage's overlay (cursor, ring, fade), and screenshots the
-  camera's part of the stage. The caption band is drawn apart, on a strip under everything the
-  camera frames, at one device pixel per output pixel, so its words hold still while the camera
-  moves. ffmpeg scales the picture to the output and stacks the band under it.
+  inside the dashboard's window and the stage's overlay (cursor, ring, fade, caption band), and
+  screenshots the stage. The stage page is the shot itself, at the output's size, and the camera
+  is a CSS transform on the room inside it, as Stageshow's Camera is. Motion is therefore smooth
+  to a fraction of a pixel, text is drawn straight at the output's resolution, and the caption
+  band at the foot holds still whatever the camera does.
   Clicks, hovers and typing are real input to the real dashboard. `f.app` is the dashboard's
   frame, for anything a script does in it directly; `f.page` is the stage.
 - **Fonts.** Public builds film in Geist. `--fonts` (or `TIN_FILM_FONTS`) names a licensed
@@ -150,7 +151,8 @@ the page threw or logged an error, the cursor reached a target outside the frame
 marked `poster`. Warnings are for review: a click that moved what was clicked (the page shifted
 under the cursor), a hand that steps aside and comes most of the way back (a detour of more than
 80 px and 40% from a plain move, not a press), a camera that zig-zags (out and back within two
-seconds, by a tenth of its frame each way), a crop that cuts a word or control in a marked frame, text under about 22 px
+seconds, by a tenth of its frame each way), a camera that creeps (a third of a second or more of
+frames moving it under 1.2 output px each), a crop that cuts a word or control in a marked frame, text under about 22 px
 at 1080 in a marked frame (said once per film, smallest first, leaving out text a panel covers
 or a window clips), a target the camera couldn't fit, a GIF over
 15 MB or a film over 2 minutes 20 seconds. The browser test (`web/film.browser.test.js`) films a
