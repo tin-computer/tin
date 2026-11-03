@@ -1,5 +1,7 @@
 // Synthetic people and markup only. Every browser request is fulfilled locally.
 export const actor = { key: "https://www.linkedin.com/in/test-owner", profile_url: "https://www.linkedin.com/in/test-owner", name: "Test Owner", source: "browser_profile_link" };
+// LinkedIn's /me answer for the signed-in test owner.
+export const me = { miniProfile: { publicIdentifier: "test-owner", firstName: "Test", lastName: "Owner" } };
 export const friend = { name: "Test Connection", profile_url: "https://www.linkedin.com/in/test-friend", degree: "1st" };
 export function searchURL(page = 1, id = "test-friend-id") {
   const url = new URL("https://www.linkedin.com/search/results/people/");

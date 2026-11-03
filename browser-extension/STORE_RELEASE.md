@@ -31,6 +31,11 @@ expires), and refreshes it while the extension is available. Temporary compute i
 independently of this saved session. Neither path signs the user out or writes cloud cookies
 back to Chrome. Disconnecting removes saved credentials and invalidates collection access.
 
+To confirm which LinkedIn account is signed in, the extension asks LinkedIn (`/voyager/api/me`,
+the same read Tin's server makes) from the member's own LinkedIn tab and keeps only the public
+profile ID, name and profile-photo address. Since 0.4.4 it never infers the account from the
+page layout, where current LinkedIn pages show other people's links and photos.
+
 The update uses the existing cookies, storage, webRequest, scripting and alarms permissions
 and existing Tin/LinkedIn host access. There are no additional Chrome permissions. The Tin
 setup confirmation records project, account and collection mode; it is separate from Chrome's

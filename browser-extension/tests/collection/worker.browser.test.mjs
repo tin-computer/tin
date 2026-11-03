@@ -5,7 +5,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { createServer } from "node:http";
 import { chromium } from "playwright";
-import { selection, profileHTML, resultsHTML, person } from "./fixtures.mjs";
+import { selection, profileHTML, resultsHTML, person, me } from "./fixtures.mjs";
 
 const extensionPath = new URL("../..",import.meta.url).pathname;
 for (const mode of ["legacy", "handoff", "automatic", "missing_account"]) test(mode === "missing_account" ? "a missing account on the prepared page pauses without claiming the saved login expired" : mode === "automatic" ? "paired MV3 worker collects a queued run without opening the popup" : mode === "handoff" ? "cloud cleanup handoff resumes automatically in Chrome without another transfer" : "real MV3 pairing, popup closure, worker restart and lost page acknowledgement", {timeout:90000}, async t => {
@@ -46,7 +46,9 @@ for (const mode of ["legacy", "handoff", "automatic", "missing_account"]) test(m
   let code=await readFile(workerFile,"utf8");code=code.replace("const origins = new Set([",`const origins = new Set([${JSON.stringify(base)},`);await writeFile(workerFile,code);
   const context=await chromium.launchPersistentContext(join(dir,"profile"),{channel:"chromium",headless:true,args:[`--disable-extensions-except=${fixture}`,`--load-extension=${fixture}`]});
   t.after(()=>context.close());
-  await context.route("https://www.linkedin.com/**",route=>{const url=new URL(route.request().url());const page=Number(url.searchParams.get("page")||1);return route.fulfill({contentType:"text/html; charset=utf-8",body:url.pathname.startsWith("/in/")?(missingAccount&&job.state==="collecting"?profileHTML().replace(/<header[\s\S]*?<\/header>/, ""):profileHTML()):resultsHTML(page,[person(page)],page===1?"next":"end")});});
+  await context.addCookies([{name:"JSESSIONID",value:'"ajax:fixture"',domain:".www.linkedin.com",path:"/",secure:true}]);
+  // LinkedIn stops answering who is signed in once the missing-account run is collecting.
+  await context.route("https://www.linkedin.com/**",route=>{const url=new URL(route.request().url());const page=Number(url.searchParams.get("page")||1);if(url.pathname==="/voyager/api/me")return missingAccount&&job.state==="collecting"?route.fulfill({status:401,contentType:"application/json",body:"{}"}):route.fulfill({contentType:"application/json",body:JSON.stringify(me)});return route.fulfill({contentType:"text/html; charset=utf-8",body:url.pathname.startsWith("/in/")?profileHTML():resultsHTML(page,[person(page)],page===1?"next":"end")});});
   let worker=context.serviceWorkers()[0]||await context.waitForEvent("serviceworker");
   const runtimeErrors=[];worker.on("console",msg=>{if(msg.type()==="error")runtimeErrors.push(msg.text());});
   const li=await context.newPage();await li.goto(selection.friend.profile_url);

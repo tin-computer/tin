@@ -5,7 +5,7 @@ import {tmpdir} from "node:os";
 import {join} from "node:path";
 import {createServer} from "node:http";
 import {chromium} from "playwright";
-import {selection,profileHTML} from "./fixtures.mjs";
+import {selection,profileHTML,me} from "./fixtures.mjs";
 
 for (const mode of ["stored", "embedded", "unavailable"]) test(mode === "embedded" ? "fresh MV3 setup reads embedded search metadata without a search request or seeded query" : mode === "unavailable" ? "setup verifies the login when the initial search has no query and leaves friend preparation to the run" : "MV3 prepares a reusable session once, keeps cookies local and honors saved permission", {timeout:65000}, async t=>{
   const embedded = mode !== "stored";
@@ -46,6 +46,8 @@ for (const mode of ["stored", "embedded", "unavailable"]) test(mode === "embedde
   await context.route("https://www.linkedin.com/**",async r=>{
     const url = new URL(r.request().url());
     requested.push(url.pathname);
+    // The extension's own signed-in check carries the CSRF token; the page's boot request doesn't.
+    if(url.pathname==="/voyager/api/me"&&r.request().headers()["csrf-token"]) return r.fulfill({contentType:"application/json",body:JSON.stringify(me)});
     if(url.pathname.startsWith("/voyager/")) {
       assert.equal(url.searchParams.has("queryId"),false,"no live search request is needed for embedded results");
       // Playwright-fulfilled requests never reach Chrome's header observer. Supply

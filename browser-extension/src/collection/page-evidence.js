@@ -91,21 +91,13 @@
     if (new Set(selections.map(item => JSON.stringify([item.name, item.context.key]))).size !== 1) fail("ambiguous_friend_filter");
     return { friend: { name: C.text(selections[0].name, 200), profile_url: targetURL, degree: "1st", observed_at: new Date().toISOString() }, collection_url: selections[0].context.url };
   }
+  // Who is signed in comes from LinkedIn's /me answer, which the extension's worker reads and
+  // passes in before each call. Never from the page: current layouts put other people's profile
+  // links and photos in headers and navigation.
   function account() {
-    const scopes = [...document.querySelectorAll('header, [role="banner"], nav, [role="navigation"]')].filter(node => visible(node) && !node.closest('main, [role="main"], aside'));
-    const links = scopes.flatMap(scope => [...scope.querySelectorAll('a[href*="/in/"]')]).filter(node => visible(node) && profileURL(node));
-    const urls = [...new Set(links.map(profileURL))];
-    if (urls.length === 1) return { key: urls[0], profile_url: urls[0], name: C.text(text(links[0]), 200), source: "browser_profile_link" };
-    const photos = scopes.flatMap(scope => [...scope.querySelectorAll("img")]).filter(visible);
-    const identities = photos.flatMap(photo => {
-      try {
-        const url = new URL(photo.currentSrc || photo.src);
-        if (url.protocol !== "https:" || url.hostname !== "media.licdn.com" || !url.pathname.includes("/profile-displayphoto") || !url.pathname.includes("/dms/image/")) return [];
-        return [{ key: `avatar:${url.pathname.split("/profile-displayphoto")[0]}`, name: C.text(photo.alt, 200), source: "browser_avatar_marker" }];
-      } catch { return []; }
-    });
-    if (new Set(identities.map(item => item.key)).size === 1) return identities[0];
-    fail("account_unavailable");
+    const member = globalThis.TinSignedInMember;
+    if (!member?.key) fail("account_unavailable");
+    return member;
   }
   function resultCards(boundary) {
     const found = new Map();

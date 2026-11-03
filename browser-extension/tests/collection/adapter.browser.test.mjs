@@ -18,7 +18,8 @@ async function pageFor(t, html, url = searchURL()) {
   await page.addScriptTag({ path: fileURLToPath(new URL("../../src/collection/core.js", import.meta.url)) });
   await page.addScriptTag({ path: fileURLToPath(new URL("../../src/collection/page-evidence.js", import.meta.url)) });
   await page.addScriptTag({ path: fileURLToPath(new URL("../../src/collection/linkedin.js", import.meta.url)) });
-  await page.evaluate(() => { globalThis.chrome = { runtime: { sendMessage: async () => ({ ok: true }) } }; });
+  // The worker passes the member LinkedIn's /me named; the page never guesses it.
+  await page.evaluate(actor => { globalThis.chrome = { runtime: { sendMessage: async () => ({ ok: true }) } }; globalThis.TinSignedInMember = actor; }, selection.actor);
   return page;
 }
 const read = (page, run, timeout = 1000) => page.evaluate(({ run, timeout }) => TinLinkedIn.snapshot(run, { poll: 15, timeout }), { run, timeout });
@@ -180,47 +181,32 @@ test("collects lazy virtualized rows and can reread them from the top", async t 
 test("account changes and altered friend filters are rejected", async t => {
   const page = await pageFor(t, resultsHTML());
   const run = C.createRun(selection);
-  await page.locator(".global-nav__me-profile-link").evaluate(el => { el.href = "https://www.linkedin.com/in/different-owner"; });
+  await page.evaluate(() => { globalThis.TinSignedInMember = { key: "https://www.linkedin.com/in/different-owner" }; });
   await assert.rejects(read(page, run), /account_changed/);
-  await page.locator(".global-nav__me-profile-link").evaluate((el, url) => { el.href = url; }, selection.actor.key);
+  await page.evaluate(actor => { globalThis.TinSignedInMember = actor; }, selection.actor);
   await page.evaluate(url => history.pushState({}, "", url), searchURL(1, "different-friend"));
   await assert.rejects(read(page, run), /filters_changed/);
 });
 
-test("stable avatar identity ignores expiring image parameters and rejects placeholders", async t => {
-  const page = await pageFor(t, profileHTML(), selection.friend.profile_url);
+test("another person's link or photo in a header never becomes the signed-in account", async t => {
+  const page = await pageFor(t, resultsHTML());
   await page.evaluate(() => {
-    document.querySelector("header").innerHTML = '<img class="global-nav__me-photo" alt="Test Owner" src="https://media.licdn.com/dms/image/v2/TEST/profile-displayphoto-shrink_100_100/0/1?e=1">';
+    document.querySelector("header").innerHTML = '<a href="https://www.linkedin.com/in/someone-else">Someone Else • 1st</a><img alt="" src="https://media.licdn.com/dms/image/v2/OTHER/profile-displayphoto-shrink_100_100/0/1">';
   });
-  const a = await page.evaluate(() => TinLinkedIn.profile());
-  await page.locator("img").evaluate(el => { el.src = "https://media.licdn.com/dms/image/v2/TEST/profile-displayphoto-shrink_400_400/0/1?e=2"; });
-  const b = await page.evaluate(() => TinLinkedIn.profile());
-  assert.equal(a.actor.key, b.actor.key);
-  assert.equal(a.actor.source, "browser_avatar_marker");
-  await page.locator("img").evaluate(el => { el.src = "https://www.linkedin.com/ghost-person.svg"; });
-  await assert.rejects(page.evaluate(() => TinLinkedIn.profile({timeout:150,poll:15})), /account_evidence_unavailable/);
+  const snapshot = await read(page, C.createRun(selection));
+  assert.equal(snapshot.actor.key, selection.actor.key);
 });
 
-test("profile and results wait for the signed-in header to render", async t => {
+test("profile and results wait for the signed-in member", async t => {
   const page = await pageFor(t, profileHTML(), selection.friend.profile_url);
-  await page.evaluate(() => {
-    const header=document.querySelector('header'), html=header.innerHTML;
-    header.innerHTML='';setTimeout(()=>{header.innerHTML=html;},120);
-  });
+  await page.evaluate(actor => { delete globalThis.TinSignedInMember; setTimeout(() => { globalThis.TinSignedInMember = actor; }, 120); }, selection.actor);
   const profile = await page.evaluate(() => TinLinkedIn.profile({timeout:1000,poll:15}));
   assert.equal(profile.actor.key,selection.actor.key);
-  await page.evaluate(({html,url})=>{
-    history.replaceState({},'',url);document.body.innerHTML=new DOMParser().parseFromString(html,'text/html').body.innerHTML;
-    const header=document.querySelector('header'), content=header.innerHTML;
-    header.innerHTML='';setTimeout(()=>{header.innerHTML=content;},120);
-  },{html:resultsHTML(),url:searchURL()});
-  const snapshot = await read(page,C.createRun(selection));
-  assert.equal(snapshot.actor.key,selection.actor.key);
 });
 
 test("missing account markup is a page-read failure and challenges still stop immediately", async t => {
   const page = await pageFor(t, resultsHTML());
-  await page.locator('header').evaluate(node=>node.remove());
+  await page.evaluate(()=>{ delete globalThis.TinSignedInMember; });
   await assert.rejects(read(page,C.createRun(selection),150),/account_evidence_unavailable/);
   await page.evaluate(()=>document.body.insertAdjacentHTML('afterbegin','<input name="session_password">'));
   await assert.rejects(read(page,C.createRun(selection),150),/login_or_checkpoint/);
