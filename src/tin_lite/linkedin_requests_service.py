@@ -15,7 +15,7 @@ from typing import Any
 from uuid import UUID
 
 from tin_lite import linkedin_requests as requests
-from tin_lite.connection_collection import PROVIDER, enabled
+from tin_lite.connection_collection import PROVIDER
 from tin_lite.connection_collection_connection import permission
 
 logger = logging.getLogger(__name__)
@@ -91,8 +91,9 @@ class ConnectionRequests:
             week = await requests.week(conn, project_id, member, now)
             # When one more request, chosen now in People, would go.
             next_open = (await requests.plan(conn, project_id, member, ["next"], now) or [None])[0]
-        offered = enabled(self.settings, project_id)
-        reading = await self._reading(project_id, member) if offered else None
+        # Every project offers sending; the API keeps `offered` for the dashboard.
+        offered = True
+        reading = await self._reading(project_id, member)
         on = sending["on"] or (not sending["set"] and reading == "cloud")
         return {
             "offered": offered,

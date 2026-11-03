@@ -33,7 +33,6 @@ from tin_lite.campaign_revisions import request_email_campaign_revision
 from tin_lite.capture_revisions import ProposalFile
 from tin_lite.codex_api_relay import router as codex_api_router
 from tin_lite.connection_collection import validate_inputs as validate_collection_inputs
-from tin_lite.connection_collection import visible as collection_visible
 from tin_lite.connection_collection_api import router as collection_router
 from tin_lite.content_delivery_api import router as content_delivery_router
 from tin_lite.content_draft_api import router as content_draft_router
@@ -2735,8 +2734,7 @@ async def list_workflows(
         item
         for item in workflows
         # Agent-only workflows (start here) run through the MCP; the catalog does not list them.
-        if collection_visible(request.app.state.settings, item, project_id)
-        and linkedin_visible(request.app.state.settings, item, project_id)
+        if linkedin_visible(request.app.state.settings, item, project_id)
         and not (item.definition or {}).get("agent_only")
         and (item.definition or {}).get("public_discovery", True)
         and (

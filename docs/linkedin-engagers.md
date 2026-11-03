@@ -8,9 +8,7 @@ each weekday.
 
 ## Who can run it
 
-- **Projects:** the same allowlist as [connection collection](connection-collection.md)
-  (`TIN_LITE_CONNECTION_COLLECTION_PROJECTS`). The workflow is hidden elsewhere, and a start is
-  refused.
+- **Projects:** every project, as for [connection collection](connection-collection.md).
 - **Runtime:** it needs the LinkedIn cloud runtime, with a template that includes the
   engagement reads, and the native model service (`TIN_LITE_LUNA_API_KEY`).
 - **Member:** each member runs it with their own LinkedIn connection. Their saved session reads

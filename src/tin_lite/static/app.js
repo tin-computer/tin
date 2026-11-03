@@ -6898,6 +6898,9 @@ function renderIntegrations() {
   bindIntegrationCardControls();
 }
 
+// Black marks that take the ink colour in the dark theme.
+const MONOCHROME_LOGOS = new Set(["infra.github", "infra.github_user", "social.x"]);
+
 function renderIntegrationCard(integration) {
   if (integration.merged) return renderLinkedInCard(integration);
   if (integration.key === ANALYTICS_KEY) return renderAnalyticsCard(integration);
@@ -6914,6 +6917,7 @@ function renderIntegrationCard(integration) {
     "payments.stripe": "/assets/integrations/stripe.svg",
     "analytics.posthog": "/assets/integrations/posthog.svg",
     "messaging.slack": "/assets/integrations/slack.svg",
+    "social.x": "/assets/integrations/x.svg",
   };
   const logo = logoPaths[integration.key]
     ? `<img src="${logoPaths[integration.key]}" alt="" />`
@@ -6945,7 +6949,7 @@ function renderIntegrationCard(integration) {
   const unlocks = (integration.unlocks || []).join(" · ");
   return `<article class="integration-card ${connected ? "is-connected" : "is-available"} ${needsResource ? "is-needs-setup" : ""} ${expanded ? "is-expanded" : ""}">
     <div class="integration-card-row">
-      <span class="integration-badge ${["infra.github", "infra.github_user"].includes(integration.key) ? "is-monochrome" : ""}" aria-hidden="true">${logo}</span>
+      <span class="integration-badge ${MONOCHROME_LOGOS.has(integration.key) ? "is-monochrome" : ""}" ${MONOCHROME_LOGOS.has(integration.key) ? `style="--logo-mask: url('${logoPaths[integration.key]}')"` : ""} aria-hidden="true">${logo}</span>
       <span class="integration-identity">
         <strong class="integration-name">${escapeHtml(integration.name)}</strong>
         <code class="integration-key">${escapeHtml(integration.key)}</code>
@@ -7528,7 +7532,7 @@ function renderLinkedInCard(card) {
     : `<button class="integration-connect" type="button" data-integration-expand="linkedin" aria-expanded="${expanded}">Connect</button>`;
   return `<article class="integration-card linkedin-card ${connected ? "is-connected" : "is-available"} ${readingSetup ? "is-needs-setup" : ""} ${expanded ? "is-expanded" : ""}">
     <div class="integration-card-row">
-      <span class="integration-badge" aria-hidden="true">in</span>
+      <span class="integration-badge" aria-hidden="true"><img src="/assets/integrations/linkedin.svg" alt="" /></span>
       <span class="integration-identity">
         <strong class="integration-name">LinkedIn</strong>
         <code class="integration-key">${escapeHtml(kinds)}</code>

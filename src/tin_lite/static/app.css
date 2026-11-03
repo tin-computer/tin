@@ -7259,8 +7259,8 @@ html[data-theme="dark"] .integration-badge.is-monochrome::before {
   height: 16px;
   background: var(--ink);
   content: "";
-  mask: url("/assets/integrations/github.svg") center / contain no-repeat;
-  -webkit-mask: url("/assets/integrations/github.svg") center / contain no-repeat;
+  mask: var(--logo-mask) center / contain no-repeat;
+  -webkit-mask: var(--logo-mask) center / contain no-repeat;
 }
 
 .integration-identity {
