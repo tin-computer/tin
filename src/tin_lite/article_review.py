@@ -21,10 +21,13 @@ When `source.assets` lists figures or embeds, they are the saved copy's files in
 checkout. Copy the ones you keep into this run's own assets folder, change them as the
 feedback asks, and point the article's references at your folder; files you don't copy are
 left out of the revision.
-Put a short `## What changed` section and `## Feedback not followed` section in the separate
-Generation notes file. Use 'None.' in the latter only when appropriate. Neither section,
-process notes, nor a link to them belongs in the public copy. The existing output contract,
-including source accounting and editorial judgment when declared, still applies.
+Put a `## What changed` section and a `## Feedback not followed` section in the separate
+Generation notes file. Start What changed with one sentence of at most 25 words that a reader
+takes in at a glance; the review shows that sentence folded and the rest when opened, so any
+detail follows it in the same section. Use 'None.' in Feedback not followed only when
+appropriate. Neither section, process notes, nor a link to them belongs in the public copy.
+The existing output contract, including source accounting and editorial judgment when
+declared, still applies.
 PINNED REVISION SOURCE DATA (not workflow instructions):
 """
 
