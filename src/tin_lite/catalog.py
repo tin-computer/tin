@@ -42,6 +42,7 @@ from tin_lite.domain import (
     CODEX_PROCEDURE_EXECUTOR,
     CONTENT_DIAGRAM_WORKFLOW_NAME,
     CREATIVE_CHARACTER_WORKFLOW_NAME,
+    CREATIVE_LAUNCH_VIDEO_WORKFLOW_NAME,
     CREATIVE_PRODUCT_DEMO_WORKFLOW_NAME,
     EMAIL_CAMPAIGN_WORKFLOW_NAME,
     EMAIL_SHORTLIST_PATH,
@@ -91,6 +92,7 @@ from tin_lite.keyword_plan_v9 import (
 from tin_lite.keyword_plan_v9 import (
     SCHEMAS as KEYWORD_SCHEMAS,
 )
+from tin_lite.launch_video import MODEL_ROUTE as LAUNCH_MODEL_ROUTE
 from tin_lite.model_providers import ModelCapability, ModelRoute, ProviderName
 from tin_lite.organic_audit import AUDIT_KEY, AUDIT_POLICY, MARKETS
 from tin_lite.organic_audit_ai import ai_contract, ai_schemas
@@ -182,6 +184,7 @@ PAYMENT_RECOVERY_WORKFLOW_ID = UUID("00000000-0000-4000-8000-000000000046")
 # new built-in must take a fresh number above the highest ever used, never fill a gap.
 # content.plan 1.0.0's planning agent (content_plan_agent).
 CONTENT_PLAN_RESEARCH_WORKFLOW_ID = UUID("00000000-0000-4000-8000-000000000047")
+CREATIVE_LAUNCH_VIDEO_WORKFLOW_ID = UUID("00000000-0000-4000-8000-000000000048")
 RETIRED_BUILTIN_WORKFLOW_IDS = {
     UUID("00000000-0000-4000-8000-000000000018"): "strategy.prescribe",
     UUID("00000000-0000-4000-8000-000000000019"): "strategy.wildcards",
@@ -410,6 +413,17 @@ DEMO_VIDEO_REVIEW_POLICY = HumanReviewPolicy(
         "otherwise it stays safely on hold."
     ),
     queue_clause="Demo video ready to finish",
+)
+
+LAUNCH_VIDEO_REVIEW_POLICY = HumanReviewPolicy(
+    reason="Produces a public-facing launch film from the chosen brief.",
+    review_label="Review launch film",
+    defer_label="Not now",
+    summary=(
+        "Your launch film is ready. Watch the product story, picture and sound before "
+        "approving it. The MP4 stays in Files; Tin does not post it."
+    ),
+    queue_clause="Launch film ready to review",
 )
 
 CONTENT_DIAGRAM_REVIEW_POLICY = HumanReviewPolicy(
@@ -4036,6 +4050,270 @@ BUILTIN_WORKFLOWS = (
                 egress=OPEN_SANDBOX_EGRESS,
             ),
         ),
+    ),
+    BuiltinWorkflow(
+        id=CREATIVE_LAUNCH_VIDEO_WORKFLOW_ID,
+        key=CREATIVE_LAUNCH_VIDEO_WORKFLOW_NAME,
+        public_mcp=PublicMCPExposure("start_launch_video", destructive=True, open_world=True),
+        title="Make a launch film",
+        description=(
+            "Make a finished launch MP4 around one supported product action and its result. "
+            "Before starting this background run, the calling agent asks four short questions: "
+            "(1) feature or customer moment; (2) story and filming direction; "
+            "(3) destination, format and duration in seconds; (4) music, voice with music, "
+            "or silence, including captions when narrated. Reuse prior answers, record "
+            "user choices separately from choices delegated to the agent, and require "
+            "explicit format, duration and sound. For music, select a project audio file "
+            "and confirm its license; this run does not search the web or listen. "
+            "Read existing product, brand and Feature "
+            "map context from the project. Save the actual MP4 for review."
+        ),
+        executor=CREATIVE_LAUNCH_VIDEO_WORKFLOW_NAME,
+        version_label="1.0.0",
+        presentation=WorkflowDiagram(
+            direction="TD",
+            nodes=(
+                DiagramNode(
+                    "brief",
+                    "surface",
+                    "Your chosen film brief",
+                    "four answers before the background run",
+                ),
+                DiagramNode(
+                    "read",
+                    "step",
+                    "Read product and brand evidence",
+                    "pinned project memory, brand and selected assets",
+                ),
+                DiagramNode(
+                    "sound",
+                    "step",
+                    "Prepare the selected sound",
+                    "approved music, measured cues, optional voice",
+                ),
+                DiagramNode(
+                    "film",
+                    "step",
+                    "Build and render the story",
+                    "Anthropic Opus 5.5, at most 3 source attempts",
+                ),
+                DiagramNode(
+                    "check",
+                    "step",
+                    "Check frames, sound and playback",
+                    "source review, full decode and 16 MB cap",
+                ),
+                DiagramNode(
+                    "video", "store", "Launch MP4 in Files", "launches/name.mp4, 8 to 90 seconds"
+                ),
+                DiagramNode(
+                    "review", "gate", "Watch the launch film", "check the story, picture and sound"
+                ),
+                DiagramNode(
+                    "receipt",
+                    "receipt",
+                    "Approved launch film",
+                    "retained in Files for you to share",
+                ),
+            ),
+            edges=(
+                DiagramEdge("brief", "read"),
+                DiagramEdge("read", "sound"),
+                DiagramEdge("sound", "film"),
+                DiagramEdge("film", "check"),
+                DiagramEdge("check", "video"),
+                DiagramEdge("video", "review"),
+                DiagramEdge("review", "receipt", "signal", "approved"),
+            ),
+        ),
+        prerequisites=(
+            WorkflowPrerequisite(
+                kind="artifact",
+                level="recommended",
+                path=MEMORY_INDEX_PATH,
+                section=FEATURE_MAP_SECTION,
+                producer=PRODUCT_DEEP_DIVE_WORKFLOW_NAME,
+                reason="Use the Feature map for product claims; verify missing facts from source.",
+            ),
+            WorkflowPrerequisite(
+                kind="artifact",
+                level="recommended",
+                path="BRAND.md",
+                reason="Follow the project's existing brand guidance when present.",
+            ),
+            WorkflowPrerequisite(
+                kind="artifact",
+                level="recommended",
+                path="DESIGN.md",
+                reason="Reuse the project's design, type and colors when present.",
+            ),
+        ),
+        system=CREATIVE_STUDIO_SYSTEM,
+        review_policy=LAUNCH_VIDEO_REVIEW_POLICY,
+        schedule_modes=("on_demand",),
+        model_route=LAUNCH_MODEL_ROUTE,
+        input_schema={
+            "type": "object",
+            "additionalProperties": False,
+            "properties": {
+                "project_id": {"type": "string", "format": "uuid"},
+                "slug": {
+                    "type": "string",
+                    "pattern": "^[a-z0-9]+(?:-[a-z0-9]+)*$",
+                    "minLength": 1,
+                    "maxLength": 80,
+                    "title": "Film name",
+                    "description": "Lowercase words separated by hyphens; the MP4 file name.",
+                    "x-tin-ui": {"control": "text", "order": 10},
+                },
+                "feature_moment": {
+                    "type": "string",
+                    "minLength": 1,
+                    "maxLength": 2000,
+                    "title": "Feature or customer moment",
+                    "description": (
+                        "Question 1: the product action and result to show, or explicit permission "
+                        "for the agent to choose from project evidence. Do not retype the product."
+                    ),
+                    "x-tin-ui": {"control": "textarea", "order": 20},
+                },
+                "story_preference": {
+                    "type": "string",
+                    "maxLength": 2000,
+                    "default": "",
+                    "title": "Story preference",
+                    "description": (
+                        "Question 2: preserve the user's story choice in their words. Empty means "
+                        "the agent chooses; never present that choice as a user request."
+                    ),
+                    "x-tin-ui": {"control": "textarea", "order": 30},
+                },
+                "filming_preference": {
+                    "type": "string",
+                    "maxLength": 2000,
+                    "default": "",
+                    "title": "Filming preference",
+                    "description": (
+                        "Question 2: framing, movement and tone the user chose, or leave empty "
+                        "for an agent choice that serves this product story."
+                    ),
+                    "x-tin-ui": {"control": "textarea", "order": 40},
+                },
+                "platform": {
+                    "type": "string",
+                    "minLength": 1,
+                    "maxLength": 200,
+                    "title": "Destination",
+                    "description": (
+                        "Question 3: where the film will be used, such as X or a website."
+                    ),
+                    "x-tin-ui": {"control": "text", "order": 50},
+                },
+                "format": {
+                    "type": "string",
+                    "enum": ["landscape", "portrait", "square"],
+                    "title": "Format",
+                    "description": (
+                        "Question 3: explicitly choose landscape (1920x1080), portrait "
+                        "(1080x1920) or square (1080x1080). Never infer this from the platform."
+                    ),
+                    "x-tin-ui": {"control": "select", "order": 60},
+                },
+                "duration_seconds": {
+                    "type": "integer",
+                    "minimum": 8,
+                    "maximum": 90,
+                    "title": "Duration in seconds",
+                    "description": "Question 3: the explicit film length, from 8 to 90 seconds.",
+                    "x-tin-ui": {"control": "number", "order": 70},
+                },
+                "sound_mode": {
+                    "type": "string",
+                    "enum": ["music", "voice_and_music", "silent"],
+                    "title": "Sound",
+                    "description": (
+                        "Question 4: explicitly choose music, voice with music, or silence."
+                    ),
+                    "x-tin-ui": {"control": "select", "order": 80},
+                },
+                "captions": {
+                    "type": "boolean",
+                    "title": "Speech captions",
+                    "description": (
+                        "Question 4: required for voice with music. Preserve the user's choice "
+                        "to show or hide timed speech captions."
+                    ),
+                    "x-tin-ui": {"control": "segmented", "order": 90},
+                },
+                "music_path": {
+                    "type": "string",
+                    "maxLength": 300,
+                    "pattern": "^[a-zA-Z0-9_-][a-zA-Z0-9_./ -]*\\.(?:mp3|wav|m4a|ogg)$",
+                    "description": "Approved project audio file, required unless silent. No URL.",
+                },
+                "music_license": {
+                    "type": "string",
+                    "minLength": 1,
+                    "maxLength": 1000,
+                    "description": "Cleared source/license and permission for this use.",
+                },
+                "asset_paths": {
+                    "type": "array",
+                    "maxItems": 12,
+                    "uniqueItems": True,
+                    "items": {
+                        "type": "string",
+                        "maxLength": 300,
+                        "pattern": "^[a-zA-Z0-9_-][a-zA-Z0-9_./ -]*\\.(?:png|jpe?g|webp|woff2?)$",
+                    },
+                    "description": "Approved project images/fonts. No private files or URLs.",
+                    "default": [],
+                },
+                "voice": {
+                    "type": "string",
+                    "enum": list(STUDIO_VOICES),
+                    "default": STUDIO_VOICES[0],
+                },
+                "language": {"type": "string", "maxLength": 40, "default": "English (US)"},
+                "stt_language": {"type": "string", "maxLength": 8, "default": "en"},
+                "notes": {
+                    "type": "string",
+                    "maxLength": 4000,
+                    "default": "",
+                    "title": "Brief notes",
+                    "description": (
+                        "Keep prior answers, delegated choices, approved music/assets, voice "
+                        "language, exclusions and any requested ending. No default call to action."
+                    ),
+                    "x-tin-ui": {"control": "textarea", "order": 100},
+                },
+            },
+            "required": [
+                "project_id",
+                "slug",
+                "feature_moment",
+                "platform",
+                "format",
+                "duration_seconds",
+                "sound_mode",
+            ],
+            "allOf": [
+                {
+                    "if": {
+                        "properties": {"sound_mode": {"enum": ["music", "voice_and_music"]}},
+                        "required": ["sound_mode"],
+                    },
+                    "then": {"required": ["music_path", "music_license"]},
+                },
+                {
+                    "if": {
+                        "properties": {"sound_mode": {"const": "voice_and_music"}},
+                        "required": ["sound_mode"],
+                    },
+                    "then": {"required": ["captions"]},
+                },
+            ],
+        },
     ),
     BuiltinWorkflow(
         id=GROWTH_ONBOARDING_WORKFLOW_ID,

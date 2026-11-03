@@ -7,7 +7,13 @@ from uuid import UUID
 from temporalio.exceptions import WorkflowAlreadyStartedError
 
 from tin_lite import content_draft, content_plan, organic_system
-from tin_lite.domain import PREREQUISITE_WAIT_MEMO, RunStatus, Workflow, WorkflowRun
+from tin_lite.domain import (
+    CREATIVE_LAUNCH_VIDEO_WORKFLOW_NAME,
+    PREREQUISITE_WAIT_MEMO,
+    RunStatus,
+    Workflow,
+    WorkflowRun,
+)
 from tin_lite.executor_gates import (
     google_ads_gate,
     keyword_plan_gate,
@@ -199,6 +205,24 @@ async def start_workflow_run(
         raise WorkflowExecutorUnavailableError(
             "Studio voice is not configured. No video run or model purchase was started."
         )
+    if existing is None and workflow.executor == CREATIVE_LAUNCH_VIDEO_WORKFLOW_NAME:
+        if getattr(settings, "anthropic_api_key", None) is None:
+            raise WorkflowExecutorUnavailableError(
+                "Launch films require ANTHROPIC_API_KEY on the Tin server. "
+                "No model call was started."
+            )
+        if not getattr(settings, "e2b_studio_api_template", None):
+            raise WorkflowExecutorUnavailableError(
+                "Launch rendering requires an updated protected Studio image. "
+                "No model call was started."
+            )
+        if (input_payload or {}).get("sound_mode") == "voice_and_music" and getattr(
+            settings, "fal_key", None
+        ) is None:
+            raise WorkflowExecutorUnavailableError(
+                "Narrated launch films require the Studio voice provider. "
+                "No model call was started."
+            )
     if workflow.project_id is not None:
         from tin_lite.private_workflows import require_private_execution
 

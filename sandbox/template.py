@@ -36,10 +36,18 @@ NUMPY_PACKAGE_VERSION = "2.3.4"
 STUDIO_PYTHON = "/opt/tin-lite/studio-venv/bin/python"
 STUDIO_FILES = (
     "tin_studio.py",
+    "tin_launch.py",
     "capture.py",
     "render.py",
     "voice.py",
     "studio_contracts.py",
+    "launch/render.mjs",
+    "launch/review_frames.mjs",
+    "launch/mix.sh",
+    "launch/lib/browser-safety.mjs",
+    "launch/lib/motion.js",
+    "launch/lib/music.js",
+    "launch/lib/captions.js",
     "fonts/Montserrat-ExtraBold.ttf",
     "fonts/Montserrat-Bold.ttf",
 )
@@ -106,7 +114,10 @@ _STUDIO_INSTALL = (
     f"'numpy=={NUMPY_PACKAGE_VERSION}' && "
     "chown -R user:user /opt/tin-lite/studio /opt/tin-lite/studio-venv"
 )
-_STUDIO_CHECK = f"{STUDIO_PYTHON} /opt/tin-lite/studio/tin_studio.py help >/dev/null"
+_STUDIO_CHECK = (
+    f"{STUDIO_PYTHON} /opt/tin-lite/studio/tin_studio.py help >/dev/null && "
+    f"{STUDIO_PYTHON} /opt/tin-lite/studio/tin_launch.py --help >/dev/null"
+)
 
 
 class TemplateSettings(BaseSettings):
@@ -268,6 +279,9 @@ def _studio_layer(template):
     template = template.copy(
         "sandbox/tin_studio.sh", "/opt/tin-lite/studio/tin-studio", user="user", mode=0o755
     )
+    template = template.copy(
+        "sandbox/tin_launch.sh", "/opt/tin-lite/studio/tin-launch", user="user", mode=0o755
+    )
     for name in STUDIO_FILES:
         template = template.copy(
             f"sandbox/studio/{name}", f"/opt/tin-lite/studio/{name}", user="user", mode=0o644
@@ -276,6 +290,12 @@ def _studio_layer(template):
         template.run_cmd(_STUDIO_INSTALL, user="root")
         .run_cmd(_STUDIO_CHECK, user="user")
         .make_symlink("/opt/tin-lite/studio/tin-studio", "/usr/local/bin/tin-studio", user="root")
+        .make_symlink("/opt/tin-lite/studio/tin-launch", "/usr/local/bin/tin-launch", user="root")
+        .make_symlink(
+            "/opt/tin-lite/diagram/node_modules",
+            "/opt/tin-lite/studio/launch/node_modules",
+            user="root",
+        )
     )
 
 
