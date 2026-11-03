@@ -152,5 +152,29 @@
     const keywords = collectionFilters(run.collection_url).keywords;
     return [header, ...run.people.map(p => [p.name, p.profile_url, p.headline, p.location, p.visible_text, run.friend.name, run.friend.profile_url, p.degree, p.observed_at, p.source_page, run.status, run.reason, run.completeness, keywords])].map(row => row.map(csvCell).join(",")).join("\r\n") + "\r\n";
   }
-  root.TinCollectorCore = Object.freeze({ LIMITS, VERSION, text, linkedinURL, profileURL, searchContext, fingerprint, prepareSelection, createRun, halt, checkSnapshot, acceptSnapshot, result, csv });
+  // The signed-in member, from LinkedIn's own /me answer: current page layouts put other people's
+  // profile links and photos where a signed-in header used to be. The member's photo markers
+  // match pairings recorded from the page's avatar before 0.4.4, so those keep working.
+  function signedInMember(value) {
+    const id = value?.public_identifier;
+    if (typeof id !== "string" || !/^[^/\\?#\s]{1,100}$/.test(id)) fail("account_unavailable");
+    // Encoded as Tin's server encodes it (RFC 3986 unreserved characters only), so both agree.
+    const encoded = encodeURIComponent(id).replace(/[!'()*]/g, c => "%" + c.charCodeAt(0).toString(16).toUpperCase());
+    const url = profileURL("https://www.linkedin.com/in/" + encoded);
+    const name = [value.first_name, value.last_name].filter(part => typeof part === "string" && part.trim()).map(part => part.trim()).join(" ").slice(0, 200);
+    const aliases = [url];
+    for (const picture of Array.isArray(value.pictures) ? value.pictures.slice(0, 10) : []) {
+      try {
+        const parsed = new URL(picture);
+        if (parsed.protocol === "https:" && parsed.hostname === "media.licdn.com" && parsed.pathname.includes("/dms/image/") && parsed.pathname.includes("/profile-displayphoto")) {
+          aliases.push(`avatar:${parsed.pathname.split("/profile-displayphoto")[0]}`);
+        }
+      } catch { /* Not a photo address. */ }
+    }
+    return { key: url, profile_url: url, name, source: "linkedin_me", aliases: [...new Set(aliases)] };
+  }
+  function sameMember(member, recorded) {
+    return Boolean(recorded?.key) && (member?.key === recorded.key || (member?.aliases || []).includes(recorded.key));
+  }
+  root.TinCollectorCore = Object.freeze({ LIMITS, VERSION, text, linkedinURL, profileURL, searchContext, signedInMember, sameMember, fingerprint, prepareSelection, createRun, halt, checkSnapshot, acceptSnapshot, result, csv });
 })(globalThis);
