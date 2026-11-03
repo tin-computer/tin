@@ -13,7 +13,7 @@ from test_procedure_publication import publication_db as publication_db
 
 from tin_lite import content_draft
 from tin_lite.activities import TinActivities
-from tin_lite.article_review import change_summary, short_change_summary
+from tin_lite.article_review import change_summary
 from tin_lite.billing_contracts import BillingError
 from tin_lite.content_draft_sources import ContentDraftSources
 from tin_lite.mcp_server import _review_summary
@@ -362,24 +362,6 @@ def test_the_review_shows_what_the_revision_notes_say_changed():
         == "Shorter opening."
     )
     assert change_summary(b"# Generation notes\n\nRevised as asked.\n") is None
-
-
-def test_what_changed_is_one_sentence_above_the_article():
-    # A paragraph shows its first sentence; the whole account stays in Generation notes.
-    notes = (
-        b"# Generation notes\n\n## What changed\n\nRemoved every link to the page itself, "
-        b"including the opening link.\nRemoved the navigation row. Kept the timing table.\n\n"
-        b"## Feedback not followed\n\nNone.\n"
-    )
-    first = "Removed every link to the page itself, including the opening link."
-    assert change_summary(notes) == first
-    # A list shows its first item.
-    listed = b"## What changed\n\n- Shorter opening.\n- New table.\n"
-    assert change_summary(listed) == "Shorter opening."
-    # One very long sentence is cut at a word, never failing the paid revision.
-    long = short_change_summary("Changed " + "the wording of many sections, " * 20 + "as asked.")
-    assert long.endswith("…") and len(long) <= 201 and not long.endswith(",…")
-    assert short_change_summary(None) is None and short_change_summary("  \n") is None
 
 
 async def test_failed_revision_retry_retains_copy_and_can_stop_chain(publication_db, monkeypatch):

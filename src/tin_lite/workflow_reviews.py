@@ -4,7 +4,6 @@ import hashlib
 from uuid import NAMESPACE_URL, UUID, uuid4, uuid5
 
 from tin_lite import content_draft, content_editorial_judgment, page_assets
-from tin_lite.article_review import short_change_summary
 from tin_lite.domain import RunStatus
 from tin_lite.project_files import safe_project_file_path
 from tin_lite.workflow_review_store import ReviewConflict, accept_approval, digest, unpack
@@ -128,11 +127,7 @@ class WorkflowReviews:
             run.id,
         )
         publication = await self.db.get_effect(f"{run.id}:procedure_canonical_commit")
-        # Revisions saved before the one-sentence rule kept their whole section; they show its
-        # first sentence too.
-        summary = short_change_summary(
-            (publication.result or {}).get("review_change_summary") if publication else None
-        )
+        summary = (publication.result or {}).get("review_change_summary") if publication else None
         return {
             "run_id": str(run.id),
             "project_id": str(run.project_id),
