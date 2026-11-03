@@ -23,7 +23,6 @@ from tin_lite.connection_collection import (
     cloud_ready,
     digest,
     failure_transition,
-    require_enabled,
 )
 
 
@@ -48,7 +47,6 @@ class CollectionStore:
         self.db, self.settings = database, settings
 
     async def access(self, conn, project_id, user):
-        require_enabled(self.settings, project_id)
         if not await self.db.has_project_access(
             project_id=project_id, clerk_user_id=user, conn=conn
         ):

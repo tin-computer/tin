@@ -26,7 +26,6 @@ from tin_lite.connection_collection import (
     PROVIDER,
     CollectionError,
     cloud_ready,
-    enabled,
 )
 from tin_lite.connection_collection_connection import permission, usable
 from tin_lite.connection_collection_store import document
@@ -106,8 +105,6 @@ async def saved_session(db, settings, cipher, project_id, member) -> tuple[dict,
     """A member's saved session and LinkedIn account, under the collection's own checks: cloud
     reading allowed, a live session from a paired browser, and the member's own connection."""
 
-    if not enabled(settings, project_id):
-        raise WorkflowInputError("Reading LinkedIn isn't turned on for this project yet.")
     if not cloud_ready(settings) or cipher is None:
         raise IntegrationUpstreamError("Tin's LinkedIn reader isn't available right now.")
     # Each member has their own LinkedIn connection; a run reads its starter's posts.

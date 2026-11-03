@@ -1,23 +1,22 @@
 # Connection collection
 
-`connections.collect` is an operator-enabled native workflow. It takes one to three
+`connections.collect` is a native workflow every project can run. It takes one to three
 LinkedIn profile URLs, an optional keyword query and an execution policy. Each selected
 profile must be a visible first-degree connection. Results are second-degree connections;
 mutual first-degree connections are excluded. This integration supplies reusable collection
 and export machinery. Project-specific research and delivery belong in private packages.
 
-## Enable a project
+## Set up a deployment
 
 Apply migrations through the normal deployment process. Set
-`TIN_LITE_CONNECTION_COLLECTION_PROJECTS` to the designated project UUIDs and
-`TIN_LITE_LINKEDIN_EXTENSION_IDS` to the allowed Chrome extension IDs, both comma-separated.
-These lists default to empty. An integration appears only on an enabled project.
-Membership and the allowlist are checked again on every device operation and publication.
-The account owner who paired the extension must start the collection.
+`TIN_LITE_LINKEDIN_EXTENSION_IDS` to the allowed Chrome extension IDs, comma-separated. The
+list defaults to empty; without it LinkedIn can't be connected on this deployment.
+Every project shows the card. Membership is checked again on every device operation and
+publication. The account owner who paired the extension must start the collection.
 
 ## Connect once, then run from Tin
 
-On an enabled project, choose **Integrations → LinkedIn → Connect**. The setup screen gives
+Choose **Integrations → LinkedIn → Connect**. The setup screen gives
 three steps: install Tin for Chrome, sign in to LinkedIn in the same Chrome profile, and
 return to Tin. It detects the extension version and account before enabling confirmation.
 Users choose **Cloud with browser backup**, **Cloud only**, or **This browser only** once.
@@ -179,8 +178,8 @@ Cloud execution uses the existing `E2B_API_KEY` with a dedicated
 encryption key. The optional `TIN_LITE_LINKEDIN_E2B_API_KEY` overrides the existing key
 for operators who want a different account; it is not required. The old
 `TIN_LITE_LINKEDIN_CLOUD_QUALIFIED` setting is accepted as a compatibility alias.
-Enabling the runtime permits an operator's designated-project pilot; it does not assert
-that live acceptance has passed.
+Enabling the runtime turns on cloud reading for every project; it does not assert that
+live acceptance has passed.
 
 Build only the collection image from the repository root:
 

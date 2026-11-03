@@ -67,7 +67,8 @@ def tin_state(
     integrations = [
         {"provider_key": item.key, "name": item.name, "connected": item.key in connected}
         for item in registered_integrations()
-        # These connections belong to separately enabled projects, not the starter plan;
+        # LinkedIn reading is each member's own and posting is for listed projects, not the
+        # starter plan; Analytics is set up from its card;
         # Slack only delivers summaries, so no plan waits on it.
         if item.key
         not in {

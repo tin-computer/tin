@@ -203,37 +203,18 @@ async def start_workflow_run(
         from tin_lite.private_workflows import require_private_execution
 
         require_private_execution(settings, workflow, project_id)
-    if workflow.executor == "connections.collect":
-        from tin_lite.connection_collection import enabled
-
-        if not enabled(settings, project_id):
-            raise WorkflowExecutorUnavailableError(
-                "Connection collection is unavailable on this project."
-            )
     if workflow.executor in {"social.linkedin_engagers", "social.linkedin_profile_viewers"}:
-        from tin_lite.connection_collection import enabled
-
-        if not enabled(settings, project_id):
-            raise WorkflowExecutorUnavailableError(
-                "Reading LinkedIn isn't turned on for this project yet."
-            )
         if not getattr(settings, "luna_api_key", None):
             raise WorkflowExecutorUnavailableError(
                 "Scoring people from LinkedIn requires the native model service."
             )
     if workflow.executor == "social.linkedin_requests":
-        from tin_lite.connection_collection import enabled
-
         if not _linkedin_requests:
             # A LinkedIn read that finds people who fit, or choosing people in People, starts it
             # when no run of the member's still has requests waiting.
             raise WorkflowInputError(
                 "Tin sends connection requests on its own, after a LinkedIn read or when you "
                 "choose people in People."
-            )
-        if not enabled(settings, project_id):
-            raise WorkflowExecutorUnavailableError(
-                "Reading LinkedIn isn't turned on for this project yet."
             )
     if workflow.executor == "social.x_revise" and not _x_feedback:
         raise WorkflowInputError("Read the X draft and use request_workflow_changes to revise it.")
