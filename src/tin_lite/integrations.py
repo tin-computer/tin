@@ -866,11 +866,9 @@ class IntegrationService:
 
     def definitions(self, connections, *, project_id=None):
         from tin_lite import linkedin_posting
-        from tin_lite.connection_collection import enabled
         from tin_lite.project_connections import CUSTOM_KEY, custom_definition
 
         gated = {
-            LINKEDIN_PROVIDER: enabled,
             # Zernio bills Tin per connected account, so only listed projects see the card.
             LINKEDIN_POSTING_PROVIDER: linkedin_posting.enabled,
         }
@@ -966,10 +964,6 @@ class IntegrationService:
                     )
                 continue
             if requirement.provider_key == LINKEDIN_PROVIDER:
-                from tin_lite.connection_collection import enabled
-
-                if not enabled(self._settings, project_id):
-                    raise IntegrationNotConfiguredError("Connection collection is unavailable.")
                 continue
             if requirement.provider_key == LINKEDIN_POSTING_PROVIDER:
                 from tin_lite import linkedin_posting
@@ -1060,11 +1054,8 @@ class IntegrationService:
         self._require_configured(provider_key)
         definition = self._definition(provider_key)
         if provider_key == LINKEDIN_PROVIDER:
-            from tin_lite.connection_collection import enabled
             from tin_lite.product_urls import dashboard_url
 
-            if not enabled(self._settings, project_id):
-                raise IntegrationNotConfiguredError("Connection collection is unavailable.")
             return ConnectStart(
                 authorization_url=f"{dashboard_url(self._settings)}/connect?project={project_id}&providers={LINKEDIN_PROVIDER}"
             )

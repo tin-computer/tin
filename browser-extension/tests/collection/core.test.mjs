@@ -144,3 +144,17 @@ test("CSV quotes fields and neutralizes spreadsheet formulas", () => {
   assert.ok(csv.includes('"visible_results_only"'));
   assert.equal(csv.split("\r\n").length, 3);
 });
+
+test("the signed-in member comes from LinkedIn's /me answer and still matches photo-keyed pairings", () => {
+  const member = C.signedInMember({ public_identifier: "test-owner", first_name: "Test", last_name: "Owner",
+    pictures: ["https://media.licdn.com/dms/image/v2/TEST/profile-displayphoto-shrink_100_100/0/1?e=1"] });
+  assert.equal(member.key, actor.key);
+  assert.equal(member.name, "Test Owner");
+  assert.ok(C.sameMember(member, actor));
+  assert.ok(C.sameMember(member, { key: "avatar:/dms/image/v2/TEST" }), "pairings made from the page photo before 0.4.4");
+  assert.equal(C.sameMember(member, { key: "https://www.linkedin.com/in/someone-else" }), false);
+  assert.equal(C.sameMember(member, { key: "avatar:/dms/image/v2/OTHER" }), false);
+  // Encoded the way Tin's server encodes it.
+  assert.equal(C.signedInMember({ public_identifier: "a(b)!" }).key, "https://www.linkedin.com/in/a%28b%29%21");
+  for (const bad of [undefined, "", "a/b", "a?b", "x".repeat(101)]) assert.throws(() => C.signedInMember({ public_identifier: bad }), /account_unavailable/);
+});

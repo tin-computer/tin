@@ -46,15 +46,46 @@ importScripts("collection/core.js");
     delete state.navigation;
     await save(state);
   }
-  async function pageCall(tabId, method, input) {
-    await chrome.scripting.executeScript({ target: { tabId }, files: ["src/collection/core.js", "src/collection/page-evidence.js", "src/collection/linkedin.js"] });
-    const [result] = await chrome.scripting.executeScript({ target: { tabId }, func: async (method, input) => {
+  // Who is signed in, as LinkedIn answers from the member's own tab: the same /me read Tin's
+  // server makes. Only the public profile ID, name and photo addresses leave the tab.
+  async function signedIn(tabId) {
+    const cookie = await chrome.cookies.get({ url: "https://www.linkedin.com/", name: "JSESSIONID" });
+    const csrf = String(cookie?.value || "").replace(/^"|"$/g, "");
+    if (!/^[\x21-\x7e]{1,200}$/.test(csrf) || csrf.includes('"')) throw Error("account_unavailable");
+    const [result] = await chrome.scripting.executeScript({ target: { tabId }, func: async csrf => {
       try {
-        if (method === "account") return { ok: true, value: globalThis.TinPageEvidence.account() };
+        const response = await fetch("/voyager/api/me", { credentials: "same-origin", redirect: "error", headers: { "csrf-token": csrf } });
+        if ([401, 403].includes(response.status)) return { ok: false, code: "account_unavailable" };
+        if (!response.ok) return { ok: false, code: "browser_unavailable" };
+        const profile = (await response.json())?.miniProfile || {};
+        const image = profile.picture?.["com.linkedin.common.VectorImage"] || {};
+        const artifacts = Array.isArray(image.artifacts) ? image.artifacts.slice(0, 10) : [];
+        return { ok: true, value: { public_identifier: profile.publicIdentifier, first_name: profile.firstName, last_name: profile.lastName,
+          pictures: artifacts.map(item => String(image.rootUrl || "") + String(item?.fileIdentifyingUrlPathSegment || "")) } };
+      } catch { return { ok: false, code: "browser_unavailable" }; }
+    }, args: [csrf] });
+    if (!result?.result?.ok) throw Error(result?.result?.code || "browser_unavailable");
+    return C.signedInMember(result.result.value);
+  }
+  // `recorded` is the account this device paired with: a different signed-in member stops the
+  // call, and the page then compares against the recorded account so its key never changes.
+  async function pageCall(tabId, method, input, recorded) {
+    let member = null;
+    try { member = await signedIn(tabId); }
+    catch (error) { if (method !== "diagnostics") throw error; }
+    if (member && recorded) {
+      if (!C.sameMember(member, recorded)) throw Error("account_changed");
+      member = { ...recorded, source: member.source };
+    }
+    if (method === "account") return member;
+    await chrome.scripting.executeScript({ target: { tabId }, files: ["src/collection/core.js", "src/collection/page-evidence.js", "src/collection/linkedin.js"] });
+    const [result] = await chrome.scripting.executeScript({ target: { tabId }, func: async (method, input, member) => {
+      globalThis.TinSignedInMember = member;
+      try {
         if (!["profile", "snapshot", "searchContract", "diagnostics"].includes(method)) throw Error("invalid_operation");
         return { ok: true, value: await globalThis.TinLinkedIn[method](input) };
       } catch (error) { return { ok: false, code: error.message }; }
-    }, args: [method, input || null] });
+    }, args: [method, input || null, member] });
     if (!result?.result?.ok) throw Error(result?.result?.code || "browser_unavailable");
     return result.result.value;
   }
@@ -128,7 +159,7 @@ importScripts("collection/core.js");
         secure:c.secure,http_only:c.httpOnly,same_site:c.sameSite,...(c.expirationDate?{expiration_date:c.expirationDate}:{})}))
       .sort((a,b) => `${a.name}:${a.domain}:${a.path}`.localeCompare(`${b.name}:${b.domain}:${b.path}`));
     const first = await cookies();
-    if ((await pageCall(accountTab.id, "account")).key !== state.actor.key) throw Error("account_changed");
+    await pageCall(accountTab.id, "account", null, state.actor);
     if (JSON.stringify(first) !== JSON.stringify(await cookies())) throw Error("session_changed_during_capture");
     return {cookies:first,user_agent:navigator.userAgent,browser_context:observed.context};
   }
@@ -141,7 +172,7 @@ importScripts("collection/core.js");
     const untilExpiry = Date.parse(current.session_expires_at || "") - Date.now();
     if (current.session_available && untilExpiry > 86400000 && (!query || state.session_query_id === query.id)) return;
     const accountTab = await linkedInTab();
-    if ((await pageCall(accountTab.id, "account")).key !== state.actor.key) throw Error("account_changed");
+    await pageCall(accountTab.id, "account", null, state.actor);
     const context = (await chrome.storage.local.get("tin.linkedin.collection.context.v3"))["tin.linkedin.collection.context.v3"];
     let preparedTab;
     try {
@@ -158,7 +189,7 @@ importScripts("collection/core.js");
           // A server-rendered or cached first page need not issue a GraphQL request.
           // Keep the query and browser context bound to this same setup tab.
           let evidence;
-          try { evidence = await pageCall(preparedTab.id, "searchContract"); }
+          try { evidence = await pageCall(preparedTab.id, "searchContract", null, state.actor); }
           catch (error) {
             if (["wrong_page","account_unavailable"].includes(error.message)) continue;
             throw error;
@@ -201,8 +232,8 @@ importScripts("collection/core.js");
       state.job = pending; state.status = "cloud_running"; await save(state); return publicState(state);
     }
     const accountTab = await linkedInTab();
-    const identity = actor(await pageCall(accountTab.id, "account"));
-    if (identity.key !== state.actor.key || identity.key !== pending.actor.key) throw Error("account_changed");
+    const identity = actor(await pageCall(accountTab.id, "account", null, state.actor));
+    if (identity.key !== pending.actor.key) throw Error("account_changed");
     state.job = pending;
     if (pending.state === "paused") { await command(state, "resume", { actor_key: identity.key }); return begin(consent); }
     if (["http_v1","http_v2"].includes(pending.cloud_transport) && pending.execution_mode !== "cloud" && pending.state !== "handoff_pending" && !consent && !state.connection?.permission?.version) throw Error("cloud_transfer_consent_required");
@@ -326,7 +357,7 @@ importScripts("collection/core.js");
         schedule(); return;
       }
       if (state.phase === "profile") {
-        const selection = C.prepareSelection(await pageCall(state.tab_id, "profile"), state.job.inputs.keywords);
+        const selection = C.prepareSelection(await pageCall(state.tab_id, "profile", null, state.actor), state.job.inputs.keywords);
         if (selection.actor.key !== state.actor.key) throw Error("account_changed");
         if (selection.friend.profile_url !== state.job.inputs.friends[state.job.friend_index]) throw Error("friend_changed");
         state.selection = selection;
@@ -335,7 +366,7 @@ importScripts("collection/core.js");
         await navigate(state,url.href,"read"); schedule(); return;
       }
       const run = C.createRun(state.selection);
-      const snapshot = await pageCall(state.tab_id, "snapshot", run);
+      const snapshot = await pageCall(state.tab_id, "snapshot", run, state.actor);
       C.checkSnapshot(run, snapshot);
       if (snapshot.page !== state.job.next_page) throw Error("page_changed");
       if (!["next", "end"].includes(snapshot.next)) throw Error("unsupported_pagination");
@@ -345,7 +376,7 @@ importScripts("collection/core.js");
         const queryKey = `tin.linkedin.collection.query.${state.tab_id}`;
         let queryId = (await chrome.storage.local.get(queryKey))[queryKey];
         if (!queryId) {
-          const evidence = await pageCall(state.tab_id, "searchContract");
+          const evidence = await pageCall(state.tab_id, "searchContract", null, state.actor);
           if (evidence.actor.key !== state.actor.key) throw Error("account_changed");
           queryId = evidence.query_id;
         }
