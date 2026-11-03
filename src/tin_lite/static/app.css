@@ -1009,8 +1009,7 @@ html[data-theme="dark"] .markdown-logo::before {
 .project-switcher small {
   overflow: hidden;
   color: var(--ink-muted);
-  font-family: var(--mono);
-  font-size: 11px;
+  font-size: 12px;
   font-weight: 400;
   line-height: 14px;
   text-overflow: ellipsis;
