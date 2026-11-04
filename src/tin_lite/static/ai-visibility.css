@@ -280,7 +280,7 @@ html[data-theme="dark"] .visibility-view {
 
 .visibility-row.is-head .visibility-question,
 .visibility-row.is-head .visibility-rivals {
-  align-items: flex-end;
+  align-items: flex-start;
   padding-top: 10px;
   padding-bottom: 10px;
   color: var(--ink-muted);
@@ -306,7 +306,6 @@ html[data-theme="dark"] .visibility-view {
   -webkit-line-clamp: 2;
   color: var(--ink);
   font: 600 10.5px/13px var(--sans);
-  overflow-wrap: anywhere;
 }
 
 .visibility-engine small {
@@ -318,7 +317,9 @@ html[data-theme="dark"] .visibility-view {
   white-space: nowrap;
 }
 
+/* An engine's mark, drawn like an integration's badge in Integrations. */
 .visibility-logo {
+  position: relative;
   display: inline-flex;
   width: 24px;
   height: 24px;
@@ -326,21 +327,32 @@ html[data-theme="dark"] .visibility-view {
   box-sizing: border-box;
   align-items: center;
   justify-content: center;
-  background: var(--well-ink);
-  border-radius: 7px;
-  color: var(--on-dark);
-  font: normal 600 10px/12px var(--sans);
-}
-
-/* Brand marks keep their own colours, so they sit on white in both themes. */
-.visibility-logo.has-image {
-  background: #fff;
-  border: 1px solid var(--card-border);
+  overflow: hidden;
+  background: var(--paper-card);
+  border: 1px solid rgb(var(--ink-rgb) / 16%);
+  border-radius: var(--radius-chip);
+  color: var(--ink-secondary);
+  font: normal 700 10px/12px var(--mono);
+  letter-spacing: 0.02em;
 }
 
 .visibility-logo img {
-  width: 15px;
-  height: 15px;
+  display: block;
+  width: 16px;
+  height: 16px;
+  object-fit: contain;
+}
+
+html[data-theme="dark"] .visibility-logo.is-monochrome img { opacity: 0; }
+
+html[data-theme="dark"] .visibility-logo.is-monochrome::before {
+  position: absolute;
+  width: 16px;
+  height: 16px;
+  background: var(--ink);
+  content: "";
+  mask: var(--logo-mask) center / contain no-repeat;
+  -webkit-mask: var(--logo-mask) center / contain no-repeat;
 }
 
 .visibility-cell {
@@ -388,6 +400,7 @@ html[data-theme="dark"] .visibility-view {
   padding: 9px 14px;
   color: var(--ink-secondary);
   font: 12px/17px var(--sans);
+  overflow-wrap: anywhere;
 }
 
 /* Section bands and group titles: one compact line each. */

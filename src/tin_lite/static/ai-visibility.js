@@ -9,8 +9,8 @@
 window.TinAIVisibility = (() => {
   const MONTHS = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
   const KINDS = [
-    { key: "web", label: "With web search", note: "What people see today: AI apps as they answer a logged-out user, and models with web search on." },
-    { key: "memory", label: "What models already know", note: "The same models with web search off. This moves slowly, months after the web does." },
+    { key: "web", label: "With web search" },
+    { key: "memory", label: "What models already know" },
   ];
   const OUTCOME = {
     recommended: "Recommended",
@@ -21,6 +21,8 @@ window.TinAIVisibility = (() => {
   const DASH = "–";
   // Marks shipped in /assets/ai-engines/; any other engine shows its initials.
   const ICONS = new Set(["openai", "claude", "gemini", "google", "perplexity", "kimi", "zai"]);
+  // Single-colour marks are drawn in ink, so they follow the theme like Integrations' GitHub and X.
+  const MONOCHROME = new Set(["openai", "zai"]);
 
   let view = null;
 
@@ -142,24 +144,14 @@ window.TinAIVisibility = (() => {
   function page(data) {
     const kind = KINDS.find((item) => item.key === view.kind) || KINDS[0];
     const engines = data.engines.filter((engine) => engine.kind === kind.key);
-    const scored = data.questions.filter((question) => question.in_score).length;
-    const collected = data.collected_at ? day(data.collected_at.slice(0, 10)) : null;
-    const meta = [
-      `${scored} questions`,
-      `${engines.length} engines`,
-      `${data.takes} ${data.takes === 1 ? "answer" : "answers"} each`,
-      collected ? `asked ${short(collected)}` : "",
-    ].filter(Boolean).join(" · ");
     return `<div class="analytics-tabs">
         <div class="workflow-sections analytics-sections" role="tablist" aria-label="Which answers">
           ${KINDS.map((item) => `<button class="workflow-section ${item.key === kind.key ? "is-active" : ""}" type="button" role="tab" aria-selected="${item.key === kind.key}" data-visibility-kind="${item.key}">${item.label}</button>`).join("")}
         </div>
-        <span class="analytics-meta">${escape(meta)}</span>
       </div>
       ${tiles(data, kind.key)}
       ${data.weeks.length > 1 ? trend(data, kind.key) : ""}
       <div class="visibility-key">
-        <p>${escape(kind.note)}</p>
         <div class="visibility-legend">
           <span>${mark("recommended")}Recommended</span>
           <span>${mark("mentioned")}Mentioned or cited</span>
@@ -231,9 +223,11 @@ window.TinAIVisibility = (() => {
   }
 
   function logo(engine) {
-    return ICONS.has(engine.icon)
-      ? `<i class="visibility-logo has-image" aria-hidden="true"><img src="/assets/ai-engines/${engine.icon}.svg" alt="" /></i>`
-      : `<i class="visibility-logo" aria-hidden="true">${escape(monogram(engine))}</i>`;
+    if (!ICONS.has(engine.icon)) return `<i class="visibility-logo" aria-hidden="true">${escape(monogram(engine))}</i>`;
+    const path = `/assets/ai-engines/${engine.icon}.svg`;
+    return MONOCHROME.has(engine.icon)
+      ? `<i class="visibility-logo is-monochrome" style="--logo-mask: url('${path}')" aria-hidden="true"><img src="${path}" alt="" /></i>`
+      : `<i class="visibility-logo" aria-hidden="true"><img src="${path}" alt="" /></i>`;
   }
 
   // Two letters for an engine's mark: the first and last word's initials ("Gemini 4 Argon" GA,
@@ -245,7 +239,7 @@ window.TinAIVisibility = (() => {
   }
 
   function grid(data, engines, kind) {
-    const columns = `minmax(min(300px, 50vw), 1fr) repeat(${engines.length}, 62px) minmax(150px, 190px)`;
+    const columns = `minmax(min(300px, 50vw), 1fr) repeat(${engines.length}, 64px) minmax(150px, 190px)`;
     const head = `<div class="visibility-row is-head" style="grid-template-columns:${columns}">
         <span class="visibility-question">Question</span>
         ${engines.map((engine) => `<span class="visibility-engine" title="${escape(`${engine.name}${engine.detail ? `, ${engine.detail}` : ""}`)}">${logo(engine)}<strong>${escape(engine.name)}</strong><small>${escape(engine.detail)}</small></span>`).join("")}
@@ -274,8 +268,7 @@ window.TinAIVisibility = (() => {
         if (open) rows.push(detail());
       }
     }
-    return `<div class="visibility-table"><div class="visibility-scroll"><div class="visibility-grid" style="min-width:calc(min(300px, 50vw) + ${engines.length * 62 + 150}px)">${head}${rows.join("")}</div></div></div>
-      <p class="analytics-notes">Each engine is asked every question ${data.takes === 1 ? "once" : `${data.takes} times`} a week. A cell shows the best of its answers; select it to read what the engine said, what it searched for and which pages it cited.</p>`;
+    return `<div class="visibility-table"><div class="visibility-scroll"><div class="visibility-grid" style="min-width:calc(min(300px, 50vw) + ${engines.length * 64 + 150}px)">${head}${rows.join("")}</div></div></div>`;
   }
 
   function cell(question, engine, value) {
