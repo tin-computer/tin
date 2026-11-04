@@ -120,7 +120,7 @@ function noted(person) {
 // `analytics` answers the Analytics page and card: {pages: {today, yesterday, week}, writes: [],
 // answer(action, body) → {status, body}} for the card's requests: setup, address, the reporter's
 // value, the site builder and starting the analytics change again.
-export async function serveApp({decisionCount = 4, people = syntheticPeople(), engagers = false, visitors = false, integrations = [], removed = [], requests = null, requestWrites = [], analytics = null} = {}) {
+export async function serveApp({decisionCount = 4, people = syntheticPeople(), engagers = false, visitors = false, integrations = [], removed = [], requests = null, requestWrites = [], analytics = null, visibility = null} = {}) {
   const project = {id: "project", name: "Example Co", workspace_id: "ws", workspace_name: "Example", member_count: 1, hidden: false};
   const catalog = [{id: "wf-answer", key: "content.generate", title: "Draft planned content", description: "Draft the next planned page for review.", definition: {schedule_modes: ["weekly", "on_demand"]}}];
   // The workflow that finds people is offered only to some projects; People shows with it.
@@ -287,7 +287,14 @@ export async function serveApp({decisionCount = 4, people = syntheticPeople(), e
     if (/\/api\/projects\/[^/]+\/workflows$/.test(url.pathname)) return send(projectWorkflows);
     if (/\/api\/projects\/[^/]+\/runs$/.test(url.pathname)) return send(runs);
     if (url.pathname.endsWith("/decisions")) return send(decisions);
-    if (url.pathname.endsWith("/system")) return send({workflow_count: projectWorkflows.length, running_count: 0, waiting_count: decisions.length, runs_this_month: runs.length});
+    // AI Visibility: `visibility` is {page, answers: {"question|engine": cell}}; its week makes the tab show.
+    if (visibility && /^\/api\/projects\/[^/]+\/ai-visibility$/.test(url.pathname)) return send(visibility.page);
+    if (visibility && /^\/api\/projects\/[^/]+\/ai-visibility\/answers$/.test(url.pathname)) {
+      const cell = visibility.answers[`${url.searchParams.get("question")}|${url.searchParams.get("engine")}`];
+      if (!cell) {response.statusCode = 404; return send({detail: "No such question or engine in this week"});}
+      return send(cell);
+    }
+    if (url.pathname.endsWith("/system")) return send({workflow_count: projectWorkflows.length, running_count: 0, waiting_count: decisions.length, runs_this_month: runs.length, ai_visibility_weeks: visibility?.page.weeks.length || 0});
     if (url.pathname.endsWith("/files")) return send({revision, files: projectFiles.map(file => ({path: file}))});
     if (url.pathname.endsWith("/files/document")) {
       return send({filename: url.searchParams.get("path").split("/").at(-1), word_count: 240, reading_minutes: 1, html: documentHtml, related_documents: []});
