@@ -38,6 +38,9 @@ MAX_REPORT_BYTES = 20_000_000
 OUTCOMES = ("recommended", "mentioned", "none", "no_answer")
 RANK = {"recommended": 3, "mentioned": 2, "none": 1, "no_answer": 0}
 KINDS = ("web", "memory")
+# Engine marks shipped in static/ai-engines/; any other engine shows its initials.
+ICONS = ("openai", "claude", "gemini", "google", "perplexity", "kimi", "zai")
+MAX_ANSWER_CHARS = 60_000
 TOP_RIVALS = 3
 
 
@@ -53,6 +56,7 @@ class Engine(_Strict):
     name: str = Field(min_length=1, max_length=60)
     detail: str = Field(default="", max_length=60)
     kind: Literal["web", "memory"]
+    icon: Literal["openai", "claude", "gemini", "google", "perplexity", "kimi", "zai"] | None = None
 
 
 class Section(_Strict):
@@ -86,6 +90,8 @@ class Answer(_Strict):
     take: int = Field(ge=1, le=10)
     outcome: Literal["recommended", "mentioned", "none", "no_answer"]
     quote: str = Field(default="", max_length=2000)
+    # The whole answer as the engine wrote it (usually Markdown).
+    text: str = Field(default="", max_length=MAX_ANSWER_CHARS)
     queries: list[str] = Field(default_factory=list, max_length=100)
     cited: list[Source] = Field(default_factory=list, max_length=200)
     # Pages the engine read but didn't cite (some engines cite nothing inline).

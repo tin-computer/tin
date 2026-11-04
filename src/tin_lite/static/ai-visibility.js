@@ -19,6 +19,8 @@ window.TinAIVisibility = (() => {
     no_answer: "No answer",
   };
   const DASH = "–";
+  // Marks shipped in /assets/ai-engines/; any other engine shows its initials.
+  const ICONS = new Set(["openai", "claude", "gemini", "google", "perplexity", "kimi", "zai"]);
 
   let view = null;
 
@@ -41,7 +43,7 @@ window.TinAIVisibility = (() => {
     const fresh = !view || view.projectId !== options.projectId;
     if (fresh) {
       const week = new URLSearchParams(window.location.search).get("week");
-      view = { ...options, week: /^\d{4}-\d{2}-\d{2}$/.test(week || "") ? week : null, kind: "web", data: null, error: null, open: null, answers: null };
+      view = { ...options, week: /^\d{4}-\d{2}-\d{2}$/.test(week || "") ? week : null, kind: "web", data: null, error: null, open: null, answers: null, unfolded: new Set() };
     } else {
       Object.assign(view, options);
     }
@@ -72,12 +74,17 @@ window.TinAIVisibility = (() => {
     const key = `${current.data.week_start}|${question}|${engine}`;
     current.open = { question, engine, key };
     current.answers = null;
+    current.unfolded = new Set();
+    current.take = null;
     render();
     try {
       const query = new URLSearchParams({ week: current.data.week_start, question, engine });
       const answers = await current.api(`/api/projects/${encodeURIComponent(current.projectId)}/ai-visibility/answers?${query}`);
       if (view !== current || current.open?.key !== key) return;
       current.answers = answers;
+      // Open on the answer that went furthest for the project.
+      const rank = { recommended: 3, mentioned: 2, none: 1, no_answer: 0 };
+      current.take = answers.answers.reduce((best, item) => (!best || rank[item.outcome] > rank[best.outcome] ? item : best), null)?.take ?? null;
     } catch (error) {
       if (view !== current || current.open?.key !== key) return;
       current.answers = { error: error.message };
@@ -223,6 +230,12 @@ window.TinAIVisibility = (() => {
     return `<span class="visibility-mark is-${outcome}">${glyph}</span>`;
   }
 
+  function logo(engine) {
+    return ICONS.has(engine.icon)
+      ? `<i class="visibility-logo has-image" aria-hidden="true"><img src="/assets/ai-engines/${engine.icon}.svg" alt="" /></i>`
+      : `<i class="visibility-logo" aria-hidden="true">${escape(monogram(engine))}</i>`;
+  }
+
   // Two letters for an engine's mark: the first and last word's initials ("Gemini 4 Argon" GA,
   // "GPT-6.1 Sol" GS), or a one-word name's first two letters ("ChatGPT" CH).
   function monogram(engine) {
@@ -232,10 +245,10 @@ window.TinAIVisibility = (() => {
   }
 
   function grid(data, engines, kind) {
-    const columns = `minmax(240px, 320px) repeat(${engines.length}, 60px) minmax(160px, 1fr)`;
+    const columns = `minmax(min(300px, 50vw), 1fr) repeat(${engines.length}, 62px) minmax(150px, 190px)`;
     const head = `<div class="visibility-row is-head" style="grid-template-columns:${columns}">
         <span class="visibility-question">Question</span>
-        ${engines.map((engine) => `<span class="visibility-engine" title="${escape(`${engine.name}${engine.detail ? `, ${engine.detail}` : ""}`)}"><i aria-hidden="true">${escape(monogram(engine))}</i><strong>${escape(engine.name)}</strong><small>${escape(engine.detail)}</small></span>`).join("")}
+        ${engines.map((engine) => `<span class="visibility-engine" title="${escape(`${engine.name}${engine.detail ? `, ${engine.detail}` : ""}`)}">${logo(engine)}<strong>${escape(engine.name)}</strong><small>${escape(engine.detail)}</small></span>`).join("")}
         <span class="visibility-rivals">Recommended instead</span>
       </div>`;
     const rows = [];
@@ -254,14 +267,14 @@ window.TinAIVisibility = (() => {
         const cells = data.cells[question.id] || {};
         const open = view.open?.question === question.id && engines.some((engine) => engine.key === view.open.engine);
         rows.push(`<div class="visibility-row" style="grid-template-columns:${columns}">
-            <span class="visibility-question"><small>${escape(question.id)}</small>${escape(question.text)}</span>
+            <span class="visibility-question" title="${escape(question.text)}"><span><small>${escape(question.id)}</small>${escape(question.text)}</span></span>
             ${engines.map((engine) => cell(question, engine, cells[engine.key])).join("")}
-            <span class="visibility-rivals">${escape((data.rivals[question.id]?.[kind] || []).join(", ") || DASH)}</span>
+            <span class="visibility-rivals"><span>${escape((data.rivals[question.id]?.[kind] || []).join(", ") || DASH)}</span></span>
           </div>`);
         if (open) rows.push(detail());
       }
     }
-    return `<div class="visibility-table"><div class="visibility-scroll"><div class="visibility-grid" style="min-width:${320 + engines.length * 60 + 160}px">${head}${rows.join("")}</div></div></div>
+    return `<div class="visibility-table"><div class="visibility-scroll"><div class="visibility-grid" style="min-width:calc(min(300px, 50vw) + ${engines.length * 62 + 150}px)">${head}${rows.join("")}</div></div></div>
       <p class="analytics-notes">Each engine is asked every question ${data.takes === 1 ? "once" : `${data.takes} times`} a week. A cell shows the best of its answers; select it to read what the engine said, what it searched for and which pages it cited.</p>`;
   }
 
@@ -280,26 +293,137 @@ window.TinAIVisibility = (() => {
     if (!answers) return `<div class="visibility-detail"><p class="analytics-empty">Reading the answers…</p></div>`;
     if (answers.error) return `<div class="visibility-detail"><p class="analytics-empty">${escape(answers.error)}</p></div>`;
     const engine = answers.engine;
-    const takes = answers.answers.map((answer) => {
-
-      return `<div class="visibility-answer">
-        <div class="visibility-answer-head">${mark(answer.outcome)}<strong>Answer ${answer.take}: ${escape(OUTCOME[answer.outcome])}</strong></div>
-        ${answer.quote ? `<blockquote>${escape(answer.quote)}</blockquote>` : ""}
-        <div class="visibility-facts">
-          <div><h4>What it searched for</h4>${answer.queries.length ? `<ul>${answer.queries.slice(0, 8).map((query) => `<li><code>${escape(query)}</code></li>`).join("")}</ul>` : `<p>${engine.kind === "memory" ? "Web search was off." : "This engine doesn't show its searches, or didn't search."}</p>`}</div>
-          <div>${answer.cited.length ? sources("Sources it cited", answer.cited, 8) : sources("Pages it read", answer.read, 8)}</div>
-          <div><h4>Recommended instead</h4><p>${escape(answer.recommended_instead.slice(0, 6).join(", ") || DASH)}</p></div>
-        </div>
-      </div>`;
-    }).join("");
+    const answer = answers.answers.find((item) => item.take === view.take) || answers.answers[0];
+    const tabs = answers.answers.length > 1
+      ? `<div class="visibility-takes" role="tablist" aria-label="Answers">${answers.answers.map((item) => `<button type="button" role="tab" class="visibility-take${item === answer ? " is-active" : ""}" aria-selected="${item === answer}" data-visibility-take="${item.take}">${mark(item.outcome)}<span>Answer ${item.take}</span></button>`).join("")}</div>`
+      : "";
     return `<div class="visibility-detail">
-      <div class="visibility-detail-head"><strong>${escape(engine.name)}${engine.detail ? ` · ${escape(engine.detail)}` : ""}</strong><button type="button" class="visibility-close" data-visibility-close>Close</button></div>
-      ${takes || '<p class="analytics-empty">No answers for this cell.</p>'}
+      <div class="visibility-detail-head">
+        <span class="visibility-detail-title">${logo(engine)}<strong>${escape(engine.name)}</strong>${engine.detail ? `<small>${escape(engine.detail)}${engine.kind === "memory" ? " · web search off" : ""}</small>` : ""}</span>
+        ${tabs}
+        <button type="button" class="visibility-close" data-visibility-close>Close</button>
+      </div>
+      <p class="visibility-asked"><small>${escape(answers.question.id)}</small>${escape(answers.question.text)}</p>
+      ${answer ? one(answer, engine) : '<p class="analytics-empty">No answers for this cell.</p>'}
     </div>`;
   }
 
-  // A source as its address without the scheme, linked when it is a web address; the same page
-  // cited twice is listed once.
+  function one(answer, engine) {
+    const facts = [
+      answer.queries.length ? `${answer.queries.length} ${answer.queries.length === 1 ? "search" : "searches"}` : "",
+      answer.cited.length ? `${answer.cited.length} cited` : answer.read.length ? `${answer.read.length} pages read` : "",
+    ].filter(Boolean).join(" · ");
+    const searched = answer.queries.length
+      ? `<ul class="visibility-queries">${answer.queries.slice(0, 6).map((query) => `<li><code>${escape(query)}</code></li>`).join("")}</ul>${answer.queries.length > 6 ? `<p class="visibility-more">and ${answer.queries.length - 6} more</p>` : ""}`
+      : `<p class="visibility-quiet">${engine.kind === "memory" ? "Web search was off." : "This engine doesn't show its searches, or didn't search."}</p>`;
+    return `<div class="visibility-answer" role="tabpanel">
+        <div class="visibility-answer-head"><strong>${escape(OUTCOME[answer.outcome])}</strong>${facts ? `<small>${escape(facts)}</small>` : ""}</div>
+        ${answer.quote ? `<blockquote class="visibility-quote">${inline(answer.quote.replace(/\s+/g, " "))}</blockquote>` : ""}
+        ${fullAnswer(answer)}
+        <div class="visibility-facts">
+          <section><h4>What it searched for</h4>${searched}</section>
+          <section>${answer.cited.length ? sources("Sources it cited", answer.cited, 6) : sources("Pages it read", answer.read, 6)}</section>
+          <section><h4>Recommended instead</h4>${answer.recommended_instead.length ? `<ul class="visibility-names">${answer.recommended_instead.slice(0, 8).map((name) => `<li>${escape(name)}</li>`).join("")}</ul>` : `<p class="visibility-quiet">None named.</p>`}</section>
+        </div>
+      </div>`;
+  }
+
+  // The engine's whole answer, folded to its first line until the founder opens it.
+  function fullAnswer(answer) {
+    const text = String(answer.text || "").trim();
+    if (!text) return "";
+    const open = view.unfolded.has(answer.take);
+    const first = plain(text.split("\n").find((line) => plain(line)) || "");
+    const id = `visibility-answer-${answer.take}`;
+    return `<div class="visibility-full${open ? " is-open" : ""}">
+        <button type="button" class="visibility-fold" data-visibility-fold="${answer.take}" aria-expanded="${open}" aria-controls="${id}">
+          <svg aria-hidden="true" viewBox="0 0 16 16"><path d="${open ? "M3.5 10 8 5.5l4.5 4.5" : "M3.5 6 8 10.5 12.5 6"}" /></svg>
+          ${open ? "Hide the full answer" : "Read the full answer"}
+        </button>
+        ${open
+          ? `<div class="visibility-text" id="${id}">${markdown(text)}</div>`
+          : `<p class="visibility-first" id="${id}">${escape(first)}…</p>`}
+      </div>`;
+  }
+
+  // A line as plain words: Markdown marks and links' addresses dropped.
+  function plain(line) {
+    return line.replace(/^\s*(?:#{1,6}\s+|[-*+]\s+|\d+[.)]\s+|>\s*|\|)/, "")
+      .replace(/\[([^\]]*)\]\([^)]*\)/g, "$1").replace(/[*_`|]+/g, "").replace(/\s+/g, " ").trim();
+  }
+
+  // A small Markdown reader for answers: headings, lists, quotes, tables, paragraphs, bold,
+  // italics, code and http(s) links. Every piece of text is escaped first, so nothing in an
+  // answer becomes markup of its own.
+  function markdown(source) {
+    const lines = source.replace(/\r\n?/g, "\n").split("\n");
+    const out = [];
+    let list = null;
+    let paragraph = [];
+    const flushParagraph = () => {
+      if (paragraph.length) out.push(`<p>${paragraph.map(inline).join("<br />")}</p>`);
+      paragraph = [];
+    };
+    const flushList = () => {
+      if (list) out.push(`<${list.tag}>${list.items.map((item) => `<li>${inline(item)}</li>`).join("")}</${list.tag}>`);
+      list = null;
+    };
+    for (let index = 0; index < lines.length; index += 1) {
+      const line = lines[index];
+      const heading = line.match(/^\s*(#{1,6})\s+(.*)$/);
+      const bullet = line.match(/^\s*[-*+]\s+(.*)$/);
+      const numbered = line.match(/^\s*\d+[.)]\s+(.*)$/);
+      if (!line.trim()) { flushParagraph(); flushList(); continue; }
+      if (/^\s*```/.test(line)) {
+        flushParagraph(); flushList();
+        const code = [];
+        for (index += 1; index < lines.length && !/^\s*```/.test(lines[index]); index += 1) code.push(lines[index]);
+        out.push(`<pre><code>${escape(code.join("\n"))}</code></pre>`);
+        continue;
+      }
+      if (/^\s*\|.*\|\s*$/.test(line)) {
+        flushParagraph(); flushList();
+        const rows = [];
+        for (; index < lines.length && /^\s*\|.*\|\s*$/.test(lines[index]); index += 1) rows.push(lines[index]);
+        index -= 1;
+        const cells = (row) => row.trim().replace(/^\||\|$/g, "").split("|").map((cell) => cell.trim());
+        const body = rows.filter((row) => !/^\s*\|[\s:|-]+\|\s*$/.test(row));
+        const [head, ...rest] = body;
+        out.push(`<div class="visibility-text-table"><table>${head ? `<thead><tr>${cells(head).map((cell) => `<th>${inline(cell)}</th>`).join("")}</tr></thead>` : ""}<tbody>${rest.map((row) => `<tr>${cells(row).map((cell) => `<td>${inline(cell)}</td>`).join("")}</tr>`).join("")}</tbody></table></div>`);
+        continue;
+      }
+      if (heading) { flushParagraph(); flushList(); out.push(`<h5>${inline(heading[2])}</h5>`); continue; }
+      if (/^\s*(?:-{3,}|\*{3,}|_{3,})\s*$/.test(line)) { flushParagraph(); flushList(); out.push("<hr />"); continue; }
+      if (bullet || numbered) {
+        flushParagraph();
+        const tag = bullet ? "ul" : "ol";
+        if (!list || list.tag !== tag) { flushList(); list = { tag, items: [] }; }
+        list.items.push((bullet || numbered)[1]);
+        continue;
+      }
+      if (/^\s*>/.test(line)) { flushParagraph(); flushList(); out.push(`<blockquote>${inline(line.replace(/^\s*>\s?/, ""))}</blockquote>`); continue; }
+      if (list && /^\s{2,}\S/.test(line)) { list.items[list.items.length - 1] += ` ${line.trim()}`; continue; }
+      flushList();
+      paragraph.push(line.trim());
+    }
+    flushParagraph();
+    flushList();
+    return out.join("");
+  }
+
+  function inline(text) {
+    const links = [];
+    let html = escape(text).replace(/\[([^\]]+)\]\((https?:\/\/[^\s)]+)\)/g, (_match, label, href) => {
+      links.push(`<a href="${href}" target="_blank" rel="noopener noreferrer">${label}</a>`);
+      return `\u0000${links.length - 1}\u0000`;
+    });
+    html = html
+      .replace(/`([^`]+)`/g, "<code>$1</code>")
+      .replace(/\*\*([^*]+)\*\*/g, "<strong>$1</strong>")
+      .replace(/(^|[^*])\*([^*\s][^*]*)\*/g, "$1<em>$2</em>");
+    return html.replace(/\u0000(\d+)\u0000/g, (_match, index) => links[Number(index)]);
+  }
+
   function sources(title, all, limit) {
     const seen = new Set();
     const pages = [];
@@ -309,9 +433,9 @@ window.TinAIVisibility = (() => {
       seen.add(shown.text);
       pages.push({ ...shown, domain: source.domain });
     }
-    if (!pages.length) return `<h4>Sources it cited</h4><p>None.</p>`;
+    if (!pages.length) return `<h4>Sources it cited</h4><p class="visibility-quiet">None.</p>`;
     const more = pages.length - limit;
-    return `<h4>${title}</h4><ul>${pages.slice(0, limit).map((page) => `<li${yours(page.domain) ? ' class="is-yours"' : ""}>${page.href ? `<a href="${escape(page.href)}" target="_blank" rel="noopener noreferrer">${escape(page.text)}</a>` : escape(page.text)}</li>`).join("")}</ul>${more > 0 ? `<p>and ${more} more</p>` : ""}`;
+    return `<h4>${title}</h4><ul>${pages.slice(0, limit).map((page) => `<li${yours(page.domain) ? ' class="is-yours"' : ""}>${page.href ? `<a href="${escape(page.href)}" target="_blank" rel="noopener noreferrer">${escape(page.text)}</a>` : escape(page.text)}</li>`).join("")}</ul>${more > 0 ? `<p class="visibility-more">and ${more} more</p>` : ""}`;
   }
 
   function place(source) {
@@ -350,6 +474,18 @@ window.TinAIVisibility = (() => {
       } else {
         loadAnswers(question, engine);
       }
+    }));
+    main.querySelectorAll("[data-visibility-take]").forEach((button) => button.addEventListener("click", () => {
+      view.take = Number(button.dataset.visibilityTake);
+      render();
+      main.querySelector(`[data-visibility-take="${view.take}"]`)?.focus();
+    }));
+    main.querySelectorAll("[data-visibility-fold]").forEach((button) => button.addEventListener("click", () => {
+      const take = Number(button.dataset.visibilityFold);
+      if (view.unfolded.has(take)) view.unfolded.delete(take);
+      else view.unfolded.add(take);
+      render();
+      main.querySelector(`[data-visibility-fold="${take}"]`)?.focus();
     }));
     main.querySelector("[data-visibility-close]")?.addEventListener("click", () => {
       const { question, engine } = view.open || {};

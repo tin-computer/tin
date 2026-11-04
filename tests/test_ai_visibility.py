@@ -91,6 +91,9 @@ def test_a_report_must_be_consistent() -> None:
         "unknown group": report(questions=[{"id": "x", "group": "C99", "text": "?"}]),
         "unique": report(engines=report()["engines"] * 2),
         "Extra": report(colour="green"),
+        "icon": report(
+            engines=[{**report()["engines"][0], "icon": "somebody"}, report()["engines"][1]]
+        ),
     }
     for expected, data in cases.items():
         with pytest.raises(ValueError, match=expected):
@@ -135,6 +138,14 @@ def test_the_page_shows_each_cells_best_answer_and_the_trend() -> None:
 
 def test_answers_for_one_cell() -> None:
     parsed = parse_report(raw(report()))
+    with_text = report(
+        engines=[{**report()["engines"][0], "icon": "openai"}, report()["engines"][1]],
+        answers=[{**answer("7d", "chatgpt_app", 1, "none"), "text": "## Options\n- HubSpot"}],
+    )
+    shown = answers_for(parse_report(raw(with_text)), "7d", "chatgpt_app")
+    assert shown["engine"]["icon"] == "openai" and shown["answers"][0]["text"].startswith(
+        "## Options"
+    )
     cell = answers_for(parsed, "7d", "chatgpt_app")
     assert [a["take"] for a in cell["answers"]] == [1, 2]
     assert cell["answers"][0]["queries"] == ["marketing MCP servers Claude Code"]

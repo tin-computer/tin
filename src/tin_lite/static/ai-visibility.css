@@ -220,7 +220,7 @@ html[data-theme="dark"] .visibility-view {
 }
 
 /* Questions down the left, an engine in each column, rivals on the right; the question column
-   stays put while the engines scroll. */
+   takes the spare width and stays put while the engines scroll. */
 .visibility-table {
   min-width: 0;
   background: var(--paper-card);
@@ -237,79 +237,126 @@ html[data-theme="dark"] .visibility-view {
   border-bottom: 1px solid var(--card-hairline);
 }
 
-.visibility-row.is-head { border-bottom-color: var(--card-border); }
+.visibility-row:last-child { border-bottom: 0; }
+.visibility-row:not(.is-head):hover > * { background-color: rgb(var(--ink-rgb) / 2%); }
+.visibility-row:not(.is-head):hover > .visibility-question { background-color: var(--paper-input-focus); }
+
+.visibility-row.is-head {
+  position: sticky;
+  top: 0;
+  z-index: 2;
+  background: var(--paper-card);
+  border-bottom-color: var(--card-border);
+}
 
 .visibility-question {
   position: sticky;
   left: 0;
   z-index: 1;
-  padding: 12px 16px 12px 18px;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 9px 14px 9px 16px;
   background: var(--paper-card);
   border-right: 1px solid var(--card-hairline);
   color: var(--ink);
-  font: 13.5px/19px var(--sans);
+  font: 13px/18px var(--sans);
 }
 
 .visibility-question small {
-  margin-right: 6px;
+  margin-right: 8px;
   color: var(--ink-muted);
-  font: 11px/16px var(--mono);
+  font: 11px/18px var(--mono);
+}
+
+/* Three lines at most; the whole question is in its title and at the top of an opened cell. */
+.visibility-question > span,
+.visibility-rivals > span {
+  display: -webkit-box;
+  overflow: hidden;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 3;
 }
 
 .visibility-row.is-head .visibility-question,
 .visibility-row.is-head .visibility-rivals {
-  display: flex;
   align-items: flex-end;
+  padding-top: 10px;
+  padding-bottom: 10px;
   color: var(--ink-muted);
   font: 600 12px/16px var(--sans);
 }
 
 .visibility-engine {
   display: flex;
+  min-width: 0;
   flex-direction: column;
   align-items: center;
-  gap: 5px;
-  padding: 12px 2px 10px;
+  justify-content: flex-start;
+  gap: 4px;
+  padding: 10px 2px 9px;
   text-align: center;
 }
 
-.visibility-engine i {
+.visibility-engine strong {
+  display: -webkit-box;
+  max-width: 100%;
+  overflow: hidden;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 2;
+  color: var(--ink);
+  font: 600 10.5px/13px var(--sans);
+  overflow-wrap: anywhere;
+}
+
+.visibility-engine small {
+  max-width: 100%;
+  overflow: hidden;
+  color: var(--ink-muted);
+  font: 10.5px/12px var(--sans);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.visibility-logo {
   display: inline-flex;
-  width: 26px;
-  height: 26px;
+  width: 24px;
+  height: 24px;
+  flex: 0 0 24px;
+  box-sizing: border-box;
   align-items: center;
   justify-content: center;
   background: var(--well-ink);
   border-radius: 7px;
   color: var(--on-dark);
-  font: normal 600 10.5px/12px var(--sans);
+  font: normal 600 10px/12px var(--sans);
 }
 
-.visibility-engine strong {
-  color: var(--ink);
-  font: 600 11.5px/14px var(--sans);
+/* Brand marks keep their own colours, so they sit on white in both themes. */
+.visibility-logo.has-image {
+  background: #fff;
+  border: 1px solid var(--card-border);
 }
 
-.visibility-engine small {
-  color: var(--ink-muted);
-  font: 10.5px/13px var(--sans);
+.visibility-logo img {
+  width: 15px;
+  height: 15px;
 }
 
 .visibility-cell {
   display: flex;
   align-items: center;
   justify-content: center;
-  padding: 6px 4px;
+  padding: 4px 2px;
 }
 
 .visibility-button {
+  position: relative;
   display: flex;
-  width: 44px;
-  height: 44px;
-  flex-direction: column;
+  width: 40px;
+  height: 40px;
   align-items: center;
   justify-content: center;
-  gap: 1px;
   padding: 0;
   background: transparent;
   border: 1px solid transparent;
@@ -317,21 +364,33 @@ html[data-theme="dark"] .visibility-view {
   cursor: pointer;
 }
 
-.visibility-button .visibility-mark { width: 30px; height: 30px; }
-
+.visibility-button .visibility-mark { width: 28px; height: 28px; flex-basis: 28px; }
+.visibility-button .visibility-mark.is-none { opacity: 0.45; }
 .visibility-button:hover { border-color: var(--card-border); }
+.visibility-button:hover .visibility-mark.is-none { opacity: 1; }
 .visibility-button.is-selected { border-color: var(--ink); }
-.visibility-button:has(.is-recommended) { color: var(--visibility-recommended-ink); }
-.visibility-button:has(.is-mentioned) { color: var(--visibility-mentioned-ink); }
+
+/* "1/2" sits in the cell's corner, so every mark stays centred. */
+.visibility-button .visibility-frac {
+  position: absolute;
+  right: -2px;
+  bottom: -3px;
+  padding: 1px 3px;
+  background: var(--paper-card);
+  border-radius: 4px;
+  color: var(--ink-secondary);
+  font-size: 9.5px;
+}
 
 .visibility-rivals {
   display: flex;
   align-items: center;
-  padding: 12px 16px;
+  padding: 9px 14px;
   color: var(--ink-secondary);
-  font: 12.5px/18px var(--sans);
+  font: 12px/17px var(--sans);
 }
 
+/* Section bands and group titles: one compact line each. */
 .visibility-band,
 .visibility-group {
   position: sticky;
@@ -343,43 +402,79 @@ html[data-theme="dark"] .visibility-view {
 }
 
 .visibility-band {
-  padding: 16px 18px 8px;
+  padding: 10px 16px;
   background: var(--paper-well);
 }
 
-.visibility-band strong { color: var(--ink); font: 700 13px/18px var(--sans); }
-.visibility-band small { color: var(--ink-secondary); font: 12.5px/16px var(--sans); }
+.visibility-band strong { color: var(--ink); font: 700 12.5px/16px var(--sans); }
+.visibility-band small { color: var(--ink-secondary); font: 12px/16px var(--sans); }
 
-.visibility-group { padding: 12px 18px 6px; }
+.visibility-group { padding: 10px 16px 4px; border-bottom: 0; }
 .visibility-group strong { color: var(--ink); font: 600 12.5px/16px var(--sans); }
 .visibility-group small { color: var(--ink-muted); font: 12px/16px var(--sans); }
 
-/* One engine's answers to one question, opened under its row. */
+/* One engine's answers to one question, opened under its row: the engine and a tab per
+   answer, then the answer's verdict, the passage that names the project, the full answer
+   folded to its first line, and what the engine searched, read and recommended. */
 .visibility-detail {
   position: sticky;
   left: 0;
   display: flex;
-  max-width: min(100%, 1080px);
   box-sizing: border-box;
   flex-direction: column;
   gap: 14px;
-  padding: 16px 18px 20px;
+  padding: 16px 20px 20px;
   background: var(--paper-task);
+  border-top: 1px solid var(--card-border);
   border-bottom: 1px solid var(--card-border);
+  box-shadow: inset 3px 0 0 var(--accent-deep);
 }
 
 .visibility-detail-head {
   display: flex;
+  flex-wrap: wrap;
   align-items: center;
-  justify-content: space-between;
-  gap: 12px;
+  gap: 12px 16px;
 }
 
-.visibility-detail-head strong { color: var(--ink); font: 700 14px/18px var(--sans); }
+.visibility-detail-title {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.visibility-detail-title strong { color: var(--ink); font: 700 14px/18px var(--sans); }
+.visibility-detail-title small { color: var(--ink-muted); font: 12.5px/16px var(--sans); }
+
+.visibility-takes {
+  display: inline-flex;
+  gap: 4px;
+  padding: 3px;
+  background: var(--paper-well);
+  border-radius: 9px;
+}
+
+.visibility-take {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  min-height: 32px;
+  padding: 3px 10px 3px 4px;
+  background: transparent;
+  border-radius: 7px;
+  color: var(--ink-secondary);
+  font: 600 12.5px/16px var(--sans);
+  cursor: pointer;
+}
+
+.visibility-take .visibility-mark { width: 22px; height: 22px; flex-basis: 22px; }
+.visibility-take .visibility-mark svg { width: 13px; height: 13px; }
+.visibility-take.is-active { background: var(--paper-card); color: var(--ink); box-shadow: 0 0 0 1px var(--card-border); }
 
 .visibility-close {
   min-height: 32px;
-  padding: 6px 10px;
+  margin-left: auto;
+  padding: 6px 12px;
   background: var(--paper-card);
   border: 1px solid var(--card-border);
   border-radius: 7px;
@@ -388,44 +483,135 @@ html[data-theme="dark"] .visibility-view {
   cursor: pointer;
 }
 
+.visibility-asked {
+  display: flex;
+  max-width: 780px;
+  gap: 8px;
+  margin: -4px 0 0;
+  color: var(--ink-secondary);
+  font: 13px/19px var(--sans);
+}
+
+.visibility-asked small { flex: 0 0 auto; color: var(--ink-muted); font: 11px/19px var(--mono); }
+
 .visibility-answer {
   display: flex;
   flex-direction: column;
-  gap: 10px;
-}
-
-.visibility-answer + .visibility-answer {
-  padding-top: 14px;
-  border-top: 1px solid var(--card-hairline);
+  gap: 12px;
 }
 
 .visibility-answer-head {
   display: flex;
-  align-items: center;
+  align-items: baseline;
   gap: 10px;
 }
 
-.visibility-answer-head strong { color: var(--ink); font: 600 13px/18px var(--sans); }
+.visibility-answer-head strong { color: var(--ink); font: 700 15px/20px var(--sans); }
+.visibility-answer-head small { color: var(--ink-muted); font: 12.5px/16px var(--sans); }
 
-.visibility-answer blockquote {
-  max-width: 820px;
+.visibility-quote {
+  max-width: 780px;
   margin: 0;
   padding: 10px 14px;
+  background: var(--paper-card);
+  border-left: 3px solid var(--accent-deep);
+  border-radius: 0 var(--radius-card) var(--radius-card) 0;
+  color: var(--ink);
+  font: 14px/21px var(--sans);
+}
+
+.visibility-full {
+  display: flex;
+  max-width: 780px;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.visibility-fold {
+  display: inline-flex;
+  align-self: flex-start;
+  align-items: center;
+  gap: 6px;
+  min-height: 32px;
+  padding: 4px 0;
+  background: transparent;
+  color: var(--accent-text);
+  font: 600 12.5px/16px var(--sans);
+  cursor: pointer;
+}
+
+.visibility-fold:hover { color: var(--ink); }
+
+.visibility-fold svg {
+  width: 14px;
+  height: 14px;
+  fill: none;
+  stroke: currentColor;
+  stroke-width: 1.6;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+}
+
+.visibility-first {
+  margin: 0;
+  overflow: hidden;
+  color: var(--ink-secondary);
+  font: 13px/19px var(--sans);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.visibility-text {
+  max-height: 480px;
+  overflow: auto;
+  padding: 14px 18px;
   background: var(--paper-card);
   border: 1px solid var(--card-hairline);
   border-radius: var(--radius-card);
   color: var(--ink);
-  font: 13px/19px var(--sans);
+  font: 13.5px/21px var(--sans);
 }
+
+.visibility-text > :first-child { margin-top: 0; }
+.visibility-text > :last-child { margin-bottom: 0; }
+.visibility-text p,
+.visibility-text ul,
+.visibility-text ol,
+.visibility-text blockquote,
+.visibility-text pre { margin: 0 0 10px; }
+.visibility-text ul,
+.visibility-text ol { padding-left: 20px; }
+.visibility-text li + li { margin-top: 4px; }
+.visibility-text h5 { margin: 16px 0 6px; font: 700 14px/20px var(--sans); }
+.visibility-text blockquote { padding-left: 10px; border-left: 2px solid var(--card-border); color: var(--ink-secondary); }
+.visibility-text code { font: 12px/18px var(--mono); }
+.visibility-text pre { overflow-x: auto; padding: 8px 10px; background: var(--paper-well); border-radius: 6px; }
+.visibility-text hr { margin: 14px 0; border: 0; border-top: 1px solid var(--card-hairline); }
+.visibility-text a { color: var(--accent-text); }
+.visibility-text-table { margin: 0 0 10px; overflow-x: auto; }
+.visibility-text table { border-collapse: collapse; font: 12.5px/17px var(--sans); }
+.visibility-text th,
+.visibility-text td { padding: 5px 8px; border: 1px solid var(--card-hairline); text-align: left; vertical-align: top; }
+.visibility-text th { background: var(--paper-well); font-weight: 600; }
 
 .visibility-facts {
   display: grid;
   grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
-  gap: 16px;
+  gap: 1px;
+  overflow: hidden;
+  background: var(--card-hairline);
+  border: 1px solid var(--card-hairline);
+  border-radius: var(--radius-card);
+}
+
+.visibility-facts section {
+  min-width: 0;
+  padding: 12px 14px;
+  background: var(--paper-card);
 }
 
 .visibility-facts h4 {
-  margin: 0 0 6px;
+  margin: 0 0 8px;
   color: var(--ink-secondary);
   font: 600 12px/16px var(--sans);
 }
@@ -433,7 +619,7 @@ html[data-theme="dark"] .visibility-view {
 .visibility-facts ul {
   display: flex;
   flex-direction: column;
-  gap: 4px;
+  gap: 5px;
   margin: 0;
   padding: 0;
   list-style: none;
@@ -450,10 +636,16 @@ html[data-theme="dark"] .visibility-view {
 .visibility-facts code { font: 12px/17px var(--mono); }
 .visibility-facts a { color: inherit; text-decoration: none; }
 .visibility-facts a:hover { text-decoration: underline; }
-.visibility-tiles .analytics-tile.is-name strong { font-size: 20px; line-height: 26px; letter-spacing: -0.01em; }
 .visibility-facts li.is-yours { color: var(--accent-text); font-weight: 700; }
+.visibility-facts .visibility-more,
+.visibility-facts .visibility-quiet { margin-top: 6px; color: var(--ink-muted); }
+.visibility-facts .visibility-quiet { margin-top: 0; }
+.visibility-names { gap: 4px; }
+
+.visibility-tiles .analytics-tile.is-name strong { font-size: 20px; line-height: 26px; letter-spacing: -0.01em; }
 
 @media (max-width: 760px) {
   .visibility-view .workspace-header { flex-wrap: wrap; }
   .visibility-key { flex-direction: column; align-items: flex-start; }
+  .visibility-close { margin-left: 0; }
 }
