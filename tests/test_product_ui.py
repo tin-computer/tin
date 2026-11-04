@@ -236,6 +236,7 @@ async def test_product_ui_reads_projects_runs_and_activity_from_postgres() -> No
         "timezone": "America/Los_Angeles",
         "last_mcp_used_at": None,
         "last_mcp_tool_name": None,
+        "ai_visibility_weeks": 0,
     }
     assert runs.headers["X-Tin-Read-Source"] == "postgres"
     assert runs.json()[0]["artifact_path"] == "reports/SCAN.md"

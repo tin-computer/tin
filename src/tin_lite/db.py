@@ -1977,7 +1977,9 @@ class Database:
                     WHERE project_id = projects.id AND executor = 'growth.onboarding'
                       AND status = 'succeeded') AS set_up_at,
                    usage.used_at AS last_mcp_used_at,
-                   usage.tool_name AS last_mcp_tool_name
+                   usage.tool_name AS last_mcp_tool_name,
+                   (SELECT count(*) FROM ai_visibility_weeks
+                    WHERE project_id = projects.id)::integer AS ai_visibility_weeks
             FROM projects
             LEFT JOIN project_mcp_usage AS usage ON usage.project_id = projects.id
             WHERE projects.id = $1
