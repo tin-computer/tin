@@ -7025,6 +7025,8 @@ class Database:
             # until the service accepts them, after the project is gone.
             "DELETE FROM agent_traffic_reports WHERE project_id = $1",
             "DELETE FROM agent_traffic_sites WHERE project_id = $1",
+            # AI Visibility's stored weeks.
+            "DELETE FROM ai_visibility_weeks WHERE project_id = $1",
             # Failed-payment recovery keeps Stripe and mailbox evidence in its run receipts and
             # one send receipt per invoice, keyed payment_recovery:<run or project>:...
             "DELETE FROM effect_receipts WHERE operation = 'revenue.payment_recovery' AND "
