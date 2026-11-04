@@ -29,6 +29,11 @@ The browser bundle at `src/tin_lite/static/diagram-renderer.js` includes:
 
 Their license texts are preserved in `third_party/licenses/`.
 
+The AI Visibility page's engine marks in `src/tin_lite/static/ai-engines/` are unmodified SVGs
+from `@lobehub/icons-static-svg` 1.102.0 (MIT). Its license text is preserved in
+`third_party/licenses/lobe-icons-LICENSE.txt`. The marks themselves are their owners'
+trademarks, shown only to name each answer engine.
+
 The studio sandbox image (`sandbox/studio/`) ships:
 
 - Montserrat Bold and ExtraBold (OFL-1.1), caption font for rendered demo videos
