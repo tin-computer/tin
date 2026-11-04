@@ -486,7 +486,7 @@ class PinnedCodexProcedure:
     sandbox: SandboxProfile = SandboxProfile()
     identity: TestIdentityPolicy = TestIdentityPolicy()
     output_section: OutputSection | None = None
-    # Article drafts that may write figures and embeds into their assets folder.
+    # A Markdown document that may write the files it refers to into its assets folder.
     output_assets: AssetPolicy | None = None
     workspace_capabilities: tuple[str, ...] = ()
     allow_no_change: bool = False
@@ -1029,7 +1029,7 @@ def validate_codex_procedure_definition(definition: dict[str, Any]) -> CodexProc
     output_section: OutputSection | None = None
     output_assets: AssetPolicy | None = None
     if result_kind != PROJECT_ARTIFACT_RESULT and output.get("assets") is not None:
-        raise ValueError("Only article drafts carry an assets folder")
+        raise ValueError("Only a Markdown document in project Files carries an assets folder")
     if result_kind == PROJECT_ARTIFACT_RESULT:
         if workspace_kind == GITHUB_REPOSITORY_WORKSPACE and workspace_capabilities != (
             "contents.read",
@@ -1163,10 +1163,17 @@ def validate_codex_procedure_definition(definition: dict[str, Any]) -> CodexProc
         if documents or output_validator in content_draft.CLEAN_VALIDATORS:
             output_max_files = 2
         if output.get("assets") is not None:
-            if output_validator not in content_draft.CLEAN_VALIDATORS or not resolved_path.endswith(
-                ".md"
+            # A document and the files it refers to; a memory section or a reviewed document
+            # pair writes into fixed paths, which have no folder of their own.
+            if (
+                output_media_type != "text/markdown"
+                or not resolved_path.endswith(".md")
+                or documents is not None
+                or output.get("section") is not None
             ):
-                raise ValueError("Only article drafts carry an assets folder")
+                raise ValueError(
+                    "Only a Markdown document in project Files carries an assets folder"
+                )
             output_assets = AssetPolicy.load(output["assets"])
         if output_validator == CHARACTER_SVG_VALIDATOR and (
             output_media_type != CHARACTER_SVG_MEDIA_TYPE

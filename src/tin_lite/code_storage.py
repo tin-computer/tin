@@ -40,7 +40,6 @@ _PUBLICATION_TEXT_MAX_BYTES = 1_000_000
 # A pull-request patch saved as JSON may reach twice its procedure's 2 MB ceiling.
 _CHECKPOINT_TEXT_MAX_BYTES = 4_000_000
 _PUBLICATION_BINARY_MAX_BYTES = 16_000_000
-_BINARY_MEDIA_TYPES = frozenset({"video/mp4"})
 # Reads addressed by a full commit SHA are immutable, so one process keeps a bounded copy.
 # Workflow runs reload the same pinned package several times per run; see _PinnedReadCache.
 _PINNED_CACHE_MAX_BYTES = 48_000_000
@@ -52,7 +51,7 @@ _REPO_HANDLE_MAX_ENTRIES = 1024
 
 
 def _publication_limit(checkpoint: OutputCheckpoint) -> int:
-    if checkpoint.media_type in _BINARY_MEDIA_TYPES:
+    if checkpoint.binary:
         return _PUBLICATION_BINARY_MAX_BYTES
     return _PUBLICATION_TEXT_MAX_BYTES
 
@@ -642,7 +641,10 @@ class CodeStorage:
         files = {checkpoint.artifact_path: content}
         for item in (*checkpoint.companions, *checkpoint.assets):
             raw = await self.read_procedure_checkpoint(
-                repo_id=repo_id, revision=item.ephemeral_commit_sha, path=item.artifact_path
+                repo_id=repo_id,
+                revision=item.ephemeral_commit_sha,
+                path=item.artifact_path,
+                binary=item.binary,
             )
             item.validate_content(raw)
             files[item.artifact_path] = raw

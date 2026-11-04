@@ -4243,9 +4243,11 @@ class TinActivities:
             raise StaleGenerationError("procedure lease no longer owns the session")
 
     async def _procedure_assets(self, run, project, procedure, revision, content):
-        """The article's figures and embeds: the files it refers to that Tin can keep.
+        """The document's files: the ones it refers to that Tin can keep.
 
-        A missing, oversized or unsafe file is left out with its reason; it never fails a run.
+        A missing, oversized or unsafe file, a kind the workflow doesn't keep, or one that holds
+        the test account's password or the run's card is left out with its reason; it never
+        fails a run.
         """
         from tin_lite import page_assets
 
@@ -4259,18 +4261,27 @@ class TinActivities:
         kept, dropped, total = [], [], 0
         for path in page_assets.referenced(article, procedure.output_path):
             if len(kept) == policy.max_files:
-                dropped.append({"path": path, "reason": "the article refers to too many files"})
+                dropped.append({"path": path, "reason": "the document refers to too many files"})
                 continue
             try:
                 raw = await self._storage.read_procedure_checkpoint(
-                    repo_id=project.state_repo_id, revision=revision, path=path
+                    repo_id=project.state_repo_id,
+                    revision=revision,
+                    path=path,
+                    binary=page_assets.is_binary(path),
                 )
             except (ValueError, OutputConflictError):
                 dropped.append({"path": path, "reason": "the file is missing"})
                 continue
-            reason = page_assets.problem(path, raw)
+            reason = page_assets.problem(path, raw, policy.kinds)
             if reason is None and total + len(raw) > policy.max_bytes:
                 reason = "the files together are larger than their limit"
+            if reason is None and procedure.identity:
+                try:
+                    await self._reject_identity_leak(run_id=run.id, content=raw)
+                    await self._reject_card_leak(run_id=run.id, procedure=procedure, content=raw)
+                except RuntimeError:
+                    reason = "it contains the test account's secret or the run's card"
             if reason is not None:
                 dropped.append({"path": path, "reason": reason})
                 continue
@@ -4394,7 +4405,7 @@ class TinActivities:
             checkpoint.assets
             != (await self._procedure_assets(run, project, procedure, revision, content))[0]
         ):
-            raise ValueError("Saved assets differ from the article they belong to.")
+            raise ValueError("Saved assets differ from the document they belong to.")
         from tin_lite import content_draft
         from tin_lite.content_editorial_judgment import (
             NO_DRAFT,

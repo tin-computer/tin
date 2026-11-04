@@ -180,7 +180,7 @@ def character_variant_svg(
     return ET.tostring(root, encoding="utf-8", xml_declaration=True)
 
 
-def _iter_boxes(data: bytes, start: int, end: int):
+def _iter_boxes(data: bytes, start: int, end: int, name: str = "video"):
     position = start
     while position + 8 <= end:
         size = int.from_bytes(data[position : position + 4], "big")
@@ -188,45 +188,46 @@ def _iter_boxes(data: bytes, start: int, end: int):
         header = 8
         if size == 1:
             if position + 16 > end:
-                raise ValueError("demo video has a truncated large box")
+                raise ValueError(f"{name} has a truncated large box")
             size = int.from_bytes(data[position + 8 : position + 16], "big")
             header = 16
         elif size == 0:
             size = end - position
         if size < header or position + size > end:
-            raise ValueError("demo video has an invalid box layout")
+            raise ValueError(f"{name} has an invalid box layout")
         yield kind, position + header, position + size, position
         position += size
 
 
-def _find_box(data: bytes, start: int, end: int, kind: bytes) -> tuple[int, int] | None:
-    for found, payload_start, payload_end, _offset in _iter_boxes(data, start, end):
+def _find_box(
+    data: bytes, start: int, end: int, kind: bytes, name: str = "video"
+) -> tuple[int, int] | None:
+    for found, payload_start, payload_end, _offset in _iter_boxes(data, start, end, name):
         if found == kind:
             return payload_start, payload_end
     return None
 
 
-def validate_demo_video(content: bytes) -> DemoVideo:
-    """Check an MP4 structurally: fast-start layout, one portrait video track, one audio track,
-    and a duration inside the short-form window. No decoder runs on the switchboard."""
-    if not content or len(content) > MAX_DEMO_VIDEO_BYTES:
-        raise ValueError(f"demo video must contain 1-{MAX_DEMO_VIDEO_BYTES} bytes")
+def inspect_mp4(content: bytes, *, name: str = "video") -> DemoVideo:
+    """Read an MP4's layout without a decoder: the moov box before mdat (fast start, so it
+    plays while it loads), its video track's size, whether it has sound, and its length.
+    `name` is what the errors call the file."""
     if len(content) < 64 or content[4:8] != b"ftyp":
-        raise ValueError("demo video must be an MP4 file starting with an ftyp box")
+        raise ValueError(f"{name} must be an MP4 file starting with an ftyp box")
     offsets: dict[bytes, int] = {}
     spans: dict[bytes, tuple[int, int]] = {}
-    for kind, payload_start, payload_end, offset in _iter_boxes(content, 0, len(content)):
+    for kind, payload_start, payload_end, offset in _iter_boxes(content, 0, len(content), name):
         if kind in {b"moov", b"mdat"} and kind not in offsets:
             offsets[kind] = offset
             spans[kind] = (payload_start, payload_end)
     if b"moov" not in offsets or b"mdat" not in offsets:
-        raise ValueError("demo video must contain moov and mdat boxes")
+        raise ValueError(f"{name} must contain moov and mdat boxes")
     if offsets[b"moov"] > offsets[b"mdat"]:
-        raise ValueError("demo video must be written with the moov box first (faststart)")
+        raise ValueError(f"{name} must be written with the moov box first (faststart)")
     moov_start, moov_end = spans[b"moov"]
-    mvhd = _find_box(content, moov_start, moov_end, b"mvhd")
+    mvhd = _find_box(content, moov_start, moov_end, b"mvhd", name)
     if mvhd is None:
-        raise ValueError("demo video has no movie header")
+        raise ValueError(f"{name} has no movie header")
     version = content[mvhd[0]]
     if version == 1:
         timescale = int.from_bytes(content[mvhd[0] + 20 : mvhd[0] + 24], "big")
@@ -235,35 +236,44 @@ def validate_demo_video(content: bytes) -> DemoVideo:
         timescale = int.from_bytes(content[mvhd[0] + 12 : mvhd[0] + 16], "big")
         duration = int.from_bytes(content[mvhd[0] + 16 : mvhd[0] + 20], "big")
     if timescale <= 0:
-        raise ValueError("demo video has an invalid timescale")
+        raise ValueError(f"{name} has an invalid timescale")
     seconds = duration / timescale
-    if not DEMO_VIDEO_MIN_SECONDS <= seconds <= DEMO_VIDEO_MAX_SECONDS:
-        raise ValueError(
-            f"demo video must run {DEMO_VIDEO_MIN_SECONDS:g}-{DEMO_VIDEO_MAX_SECONDS:g} seconds"
-        )
     width = height = 0
     has_video = has_audio = False
-    for kind, trak_start, trak_end, _offset in _iter_boxes(content, moov_start, moov_end):
+    for kind, trak_start, trak_end, _offset in _iter_boxes(content, moov_start, moov_end, name):
         if kind != b"trak":
             continue
-        mdia = _find_box(content, trak_start, trak_end, b"mdia")
-        hdlr = _find_box(content, *mdia, b"hdlr") if mdia is not None else None
+        mdia = _find_box(content, trak_start, trak_end, b"mdia", name)
+        hdlr = _find_box(content, *mdia, b"hdlr", name) if mdia is not None else None
         handler = content[hdlr[0] + 8 : hdlr[0] + 12] if hdlr is not None else b""
         if handler == b"soun":
             has_audio = True
         if handler != b"vide":
             continue
-        tkhd = _find_box(content, trak_start, trak_end, b"tkhd")
+        tkhd = _find_box(content, trak_start, trak_end, b"tkhd", name)
         if tkhd is None:
-            raise ValueError("demo video track has no header")
+            raise ValueError(f"{name} track has no header")
         base = tkhd[0] + (88 if content[tkhd[0]] == 1 else 76)
         width = int.from_bytes(content[base : base + 4], "big") >> 16
         height = int.from_bytes(content[base + 4 : base + 8], "big") >> 16
         has_video = True
     if not has_video:
-        raise ValueError("demo video has no video track")
-    if (width, height) != (DEMO_VIDEO_WIDTH, DEMO_VIDEO_HEIGHT):
-        raise ValueError(f"demo video must be {DEMO_VIDEO_WIDTH}x{DEMO_VIDEO_HEIGHT} portrait")
-    if not has_audio:
-        raise ValueError("demo video must carry a voice track")
+        raise ValueError(f"{name} has no video track")
     return DemoVideo(duration_seconds=seconds, width=width, height=height, has_audio=has_audio)
+
+
+def validate_demo_video(content: bytes) -> DemoVideo:
+    """Check an MP4 structurally: fast-start layout, one portrait video track, one audio track,
+    and a duration inside the short-form window. No decoder runs on the switchboard."""
+    if not content or len(content) > MAX_DEMO_VIDEO_BYTES:
+        raise ValueError(f"demo video must contain 1-{MAX_DEMO_VIDEO_BYTES} bytes")
+    video = inspect_mp4(content, name="demo video")
+    if not DEMO_VIDEO_MIN_SECONDS <= video.duration_seconds <= DEMO_VIDEO_MAX_SECONDS:
+        raise ValueError(
+            f"demo video must run {DEMO_VIDEO_MIN_SECONDS:g}-{DEMO_VIDEO_MAX_SECONDS:g} seconds"
+        )
+    if (video.width, video.height) != (DEMO_VIDEO_WIDTH, DEMO_VIDEO_HEIGHT):
+        raise ValueError(f"demo video must be {DEMO_VIDEO_WIDTH}x{DEMO_VIDEO_HEIGHT} portrait")
+    if not video.has_audio:
+        raise ValueError("demo video must carry a voice track")
+    return video
