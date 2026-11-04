@@ -239,7 +239,7 @@ window.TinAIVisibility = (() => {
   }
 
   function grid(data, engines, kind) {
-    const columns = `minmax(min(300px, 50vw), 1fr) repeat(${engines.length}, 64px) minmax(150px, 190px)`;
+    const columns = `minmax(min(300px, 50vw), 1fr) repeat(${engines.length}, 64px) minmax(160px, 200px)`;
     const head = `<div class="visibility-row is-head" style="grid-template-columns:${columns}">
         <span class="visibility-question">Question</span>
         ${engines.map((engine) => `<span class="visibility-engine" title="${escape(`${engine.name}${engine.detail ? `, ${engine.detail}` : ""}`)}">${logo(engine)}<strong>${escape(engine.name)}</strong><small>${escape(engine.detail)}</small></span>`).join("")}
@@ -261,14 +261,14 @@ window.TinAIVisibility = (() => {
         const cells = data.cells[question.id] || {};
         const open = view.open?.question === question.id && engines.some((engine) => engine.key === view.open.engine);
         rows.push(`<div class="visibility-row" style="grid-template-columns:${columns}">
-            <span class="visibility-question" title="${escape(question.text)}"><span><small>${escape(question.id)}</small>${escape(question.text)}</span></span>
+            <span class="visibility-question" title="${escape(question.text)}"><span>${escape(question.text)}</span></span>
             ${engines.map((engine) => cell(question, engine, cells[engine.key])).join("")}
             <span class="visibility-rivals"><span>${escape((data.rivals[question.id]?.[kind] || []).join(", ") || DASH)}</span></span>
           </div>`);
         if (open) rows.push(detail());
       }
     }
-    return `<div class="visibility-table"><div class="visibility-scroll"><div class="visibility-grid" style="min-width:calc(min(300px, 50vw) + ${engines.length * 64 + 150}px)">${head}${rows.join("")}</div></div></div>`;
+    return `<div class="visibility-table"><div class="visibility-scroll"><div class="visibility-grid" style="min-width:calc(min(300px, 50vw) + ${engines.length * 64 + 160}px)">${head}${rows.join("")}</div></div></div>`;
   }
 
   function cell(question, engine, value) {

@@ -256,18 +256,13 @@ html[data-theme="dark"] .visibility-view {
   display: flex;
   align-items: center;
   gap: 8px;
-  padding: 9px 14px 9px 16px;
+  padding: 12px 16px 12px 18px;
   background: var(--paper-card);
   border-right: 1px solid var(--card-hairline);
   color: var(--ink);
-  font: 13px/18px var(--sans);
+  font: 14px/21px var(--sans);
 }
 
-.visibility-question small {
-  margin-right: 8px;
-  color: var(--ink-muted);
-  font: 11px/18px var(--mono);
-}
 
 /* Three lines at most; the whole question is in its title and at the top of an opened cell. */
 .visibility-question > span,
@@ -397,9 +392,9 @@ html[data-theme="dark"] .visibility-logo.is-monochrome::before {
 .visibility-rivals {
   display: flex;
   align-items: center;
-  padding: 9px 14px;
+  padding: 12px 16px;
   color: var(--ink-secondary);
-  font: 12px/17px var(--sans);
+  font: 13px/19px var(--sans);
   overflow-wrap: anywhere;
 }
 
@@ -415,16 +410,17 @@ html[data-theme="dark"] .visibility-logo.is-monochrome::before {
 }
 
 .visibility-band {
-  padding: 10px 16px;
+  padding: 12px 18px;
   background: var(--paper-well);
 }
 
-.visibility-band strong { color: var(--ink); font: 700 12.5px/16px var(--sans); }
-.visibility-band small { color: var(--ink-secondary); font: 12px/16px var(--sans); }
+.visibility-band strong { color: var(--ink); font: 700 14px/20px var(--sans); }
+.visibility-band small { color: var(--ink-secondary); font: 13px/20px var(--sans); }
 
-.visibility-group { padding: 10px 16px 4px; border-bottom: 0; }
-.visibility-group strong { color: var(--ink); font: 600 12.5px/16px var(--sans); }
-.visibility-group small { color: var(--ink-muted); font: 12px/16px var(--sans); }
+/* A group's title opens its questions: a little air above, a hairline below. */
+.visibility-group { padding: 16px 18px 8px; }
+.visibility-group strong { color: var(--ink); font: 700 13.5px/19px var(--sans); }
+.visibility-group small { color: var(--ink-muted); font: 13px/19px var(--sans); }
 
 /* One engine's answers to one question, opened under its row: the engine and a tab per
    answer, then the answer's verdict, the passage that names the project, the full answer
