@@ -6,7 +6,7 @@
 import fs from "node:fs";
 import path from "node:path";
 import {chromium} from "playwright";
-import {FORMATS, stage} from "./film.js";
+import {FORMATS, encodeStills, stage} from "./film.js";
 import {openRecording} from "./recording.js";
 
 // Runs in the page: the outline, with a selector for each entry that matches only it.
@@ -101,8 +101,10 @@ export async function inspect(url, {dir, format = "16:9"} = {}) {
     await page.waitForLoadState("networkidle", {timeout: 10_000}).catch(() => {});
     await page.waitForTimeout(1000);
     const found = await page.evaluate(outline);
-    await page.screenshot({path: path.join(dir, "screen.png")});
-    await page.screenshot({path: path.join(dir, "page.png"), fullPage: true, clip: {x: 0, y: 0, width: screen.width, height: Math.min(found.height, 6000)}});
+    // JPEGs a reader can afford to open: the first screen at up to 960 px wide, the page at 720.
+    const shot = async (options, width, file) => encodeStills([await page.screenshot(options)], ["-vf", `scale='min(${width},iw)':-2:flags=lanczos`, "-q:v", "4", "-frames:v", "1", path.join(dir, file)]);
+    await shot({}, 960, "screen.jpg");
+    await shot({fullPage: true, clip: {x: 0, y: 0, width: screen.width, height: Math.min(found.height, 6000)}}, 720, "page.jpg");
     const report = {...found, format, screen, recording: recording.close()};
     fs.writeFileSync(path.join(dir, "inspect.json"), `${JSON.stringify(report, null, 1)}\n`);
     const spec = path.join(dir, "film.json");

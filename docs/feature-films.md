@@ -20,7 +20,7 @@ Each format lands in `.films/<film>/<format>/`:
 | `film.mp4` | H.264, yuv420p, fast start, 30 fps, no audio track |
 | `film.gif` | 15 fps, palette per film, under X's 15 MB |
 | `poster.png` | The frame the script marks `poster`, at full size |
-| `marks/`, `sheet.png` | Every marked frame, and a contact sheet of them for review |
+| `marks/`, `sheet.png` | Every marked frame, and a contact sheet of them for review (a rehearsal's are half-size JPEGs) |
 | `motion/` | Every camera move, click and cut as a strip of every other frame (66ms apart), for reviewing the motion itself |
 | `captions.srt`, `captions.vtt` | The captions with their times, for platforms that take a caption file and for the browser's video track |
 | `report.json` | Frames, length, sizes, frame hashes and the checks below |

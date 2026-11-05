@@ -1027,7 +1027,7 @@ export async function shoot(film, {format = "4:5", theme = film.theme || "dark",
     if (encoder) {
       encoder.child.stdin.end();
       await encoder.done;
-      await stills(director, size, dir, {gif});
+      await stills(director, size, dir, {gif, light: rehearse});
       if (!rehearse) await motionStrips(director, size, dir);
       fs.writeFileSync(path.join(dir, "captions.srt"), srt(director.captions, director.n));
       fs.writeFileSync(path.join(dir, "captions.vtt"), vtt(director.captions, director.n));
@@ -1053,21 +1053,26 @@ export async function shoot(film, {format = "4:5", theme = film.theme || "dark",
 }
 
 // Each mark at full size (the poster among them), a contact sheet of them, and a GIF small
-// enough for X (15 MB).
-export async function stills(director, size, dir, {gif = true} = {}) {
+// enough for X (15 MB). A rehearsal's stills (`light`) are JPEGs at the half size it was shot
+// at: whoever looks at them, an agent with a bounded context among them, reads a tenth of the
+// bytes.
+export async function stills(director, size, dir, {gif = true, light = false} = {}) {
   fs.mkdirSync(path.join(dir, "marks"));
+  const kind = light ? "jpg" : "png";
+  const scale = light ? 0.5 : 1;
+  const quality = light ? ["-q:v", "3"] : [];
   // A mark in a scene played dry has no frame to show.
   const marks = Object.entries(director.marks).filter(([, mark]) => mark.png).sort(([, a], [, b]) => a.frame - b.frame);
   const files = [];
   for (const [index, [name, mark]] of marks.entries()) {
-    const file = path.join(dir, "marks", `${String(index + 1).padStart(2, "0")}-${name}.png`);
-    await encodeStills([mark.png], ["-vf", `scale=${size.width}:${size.height}:flags=lanczos`, "-frames:v", "1", file]);
+    const file = path.join(dir, "marks", `${String(index + 1).padStart(2, "0")}-${name}.${kind}`);
+    await encodeStills([mark.png], ["-vf", `scale=${size.width * scale}:${size.height * scale}:flags=lanczos`, ...quality, "-frames:v", "1", file]);
     files.push(file);
-    if (name === "poster") fs.copyFileSync(file, path.join(dir, "poster.png"));
+    if (name === "poster") fs.copyFileSync(file, path.join(dir, `poster.${kind}`));
   }
   // Every still is the same size by now: ffmpeg's tile starts over whenever the size changes.
   const columns = Math.min(3, files.length);
-  await encodeStills(files.map(file => fs.readFileSync(file)), ["-vf", `scale=${Math.round(size.width / 2.5)}:-2:flags=lanczos,tile=${columns}x${Math.ceil(files.length / columns)}:padding=24:margin=24:color=0x44403a`, "-frames:v", "1", path.join(dir, "sheet.png")]);
+  await encodeStills(marks.map(([, mark]) => mark.png), ["-vf", `scale=${Math.round(size.width / 2.5)}:-2:flags=lanczos,tile=${columns}x${Math.ceil(files.length / columns)}:padding=24:margin=24:color=0x44403a`, ...quality, "-frames:v", "1", path.join(dir, `sheet.${kind}`)]);
   if (!gif) return;
   const width = Math.round(size.width * (size.width > size.height ? 0.5 : 0.6) / 2) * 2;
   await ffmpeg(["-i", path.join(dir, "film.mp4"), "-vf", `fps=15,scale=${width}:-2:flags=lanczos,split[a][b];[a]palettegen=stats_mode=diff[p];[b][p]paletteuse=dither=bayer:bayer_scale=4`, path.join(dir, "film.gif")]).done;

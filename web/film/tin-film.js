@@ -41,7 +41,8 @@ async function take(kind, file, options) {
   if (blocked.length) console.log(`  blocked: ${blocked.join(", ")}`);
   for (const line of report.summary ?? []) console.log(`  check: ${line}`);
   if (report.recording) console.log(`  recording: ${report.recording.entries} answers, ${report.recording.added} new this take`);
-  console.log(`  look at: ${path.join(dir, "sheet.png")} and ${path.join(dir, "marks")}/`);
+  const sheet = ["sheet.jpg", "sheet.png"].map(name => path.join(dir, name)).find(file => fs.existsSync(file));
+  if (sheet) console.log(`  look at: ${sheet} (each still is in ${path.join(dir, "marks")}/)`);
   if (errors.length) process.exitCode = 1;
 }
 
@@ -125,7 +126,7 @@ async function main(argv) {
     for (const item of report.headings) console.log(`  h${item.level} at ${item.top}: ${item.text}  →  ${item.selector}`);
     for (const item of report.controls) console.log(`  ${item.kind} at ${item.top}: ${item.text || "(no text)"}${item.href ? ` [${item.href}]` : ""}  →  ${item.selector}`);
     if (report.recording.stopped.length) console.log(`  stopped (never sent): ${report.recording.stopped.join(", ")}`);
-    console.log(`wrote ${path.join(dir, "inspect.json")}, screen.png, page.png and, if it was missing, film.json`);
+    console.log(`wrote ${path.join(dir, "inspect.json")}, screen.jpg, page.jpg and, if it was missing, film.json`);
     return;
   }
   if (TAKES[command] && args.length === 1) return take(command, args[0], options);

@@ -17,6 +17,10 @@ take and replayed from the recording after that, so every take shows the same fr
 live site is visited once. Every rehearsal measures each frame and reports what moves badly,
 what is cut off and what can't be read.
 
+Every image you open stays in your context for the rest of the run, and a request has a fixed
+size limit: a run that keeps opening images ends without its film. Open each image once, open
+the contact sheet before any single still, and never reopen an earlier take's.
+
 ## 1. Choose the feature and its story
 
 1. Read `wiki/INDEX.md`: `### Feature map` under `## Product`, positioning, and what the product
@@ -31,9 +35,9 @@ what is cut off and what can't be read.
 
 1. Run `tin-film inspect <product_url> --dir WORK/film --format <format>`. It prints the page's
    headings and controls, each with a selector that matches it alone and where it sits (`at`
-   is px from the top of the page), and writes `screen.png` (the first screen at the film's
-   width), `page.png` (the page, down to 6,000 px) and a starter `film.json`.
-2. Open `screen.png` and `page.png` with your image viewer. Note where the feature is, what is
+   is px from the top of the page), and writes `screen.jpg` (the first screen at the film's
+   width), `page.jpg` (the page, down to 6,000 px, at half width) and a starter `film.json`.
+2. Open `screen.jpg` and `page.jpg` with your image viewer. Note where the feature is, what is
    on the first screen and what is in the way (a cookie banner, a popup).
 3. Inspect another page the story needs the same way, with its own `--dir` (for example
    `WORK/pricing`), to read its selectors; the film itself stays in `WORK/film`.
@@ -65,9 +69,10 @@ words, the thing itself. Follow the project's writing style skill when it is the
    trackers get an empty answer. Run it again whenever the film visits something new.
 2. `tin-film rehearse WORK/film/film.json` plays it from the recording at low resolution with
    every check on. It prints errors, warnings and check findings, and writes the takes' stills.
-3. Open `sheet.png` and every still in `marks/` with your image viewer. Check that each page
-   loaded, the caption reads, the camera frames what the caption names, nothing covers the
-   feature, and the hand points at what it says.
+3. Open the take's `sheet.jpg` with your image viewer: every marked frame, small. Check that
+   each page loaded, the caption reads, the camera frames what the caption names, nothing
+   covers the feature, and the hand points at what it says. Open a single still in `marks/`
+   only for a detail the sheet is too small to show.
 4. Fix the film from what you saw and what was printed, then rehearse again:
    - "has no answer for N requests": record again.
    - "Nothing on screen matches": the selector is wrong or the element isn't there yet; take a
@@ -85,7 +90,7 @@ words, the thing itself. Follow the project's writing style skill when it is the
 ## 5. Render and deliver
 
 1. `tin-film render WORK/film/film.json` makes the final take at full resolution. Look at its
-   `sheet.png` once more.
+   `sheet.png` once.
 2. `tin-film deliver WORK/film/film.json /home/user/project/films/<slug>.md` copies the film,
    its poster, its captions and `film.json` into `films/<slug>.assets/`, writes the note and
    checks both as Tin will. It must print `OK`. Never edit the note by hand: change `film.json`
