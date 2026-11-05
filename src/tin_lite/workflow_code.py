@@ -18,7 +18,14 @@ POLICY = "bounded-code-v1"
 MODEL_POLICY = "managed-code-model-v1"
 # Explicit supported routes, using the existing trusted adapters and price card.
 # A configured provider credential alone never admits an unpriced model.
-MODEL_TARGETS = frozenset({("openai", "gpt-6-luna"), ("openai", "gpt-6-sol")})
+MODEL_TARGETS = frozenset(
+    {
+        ("openai", "gpt-6-luna"),
+        ("openai", "gpt-6-sol"),
+        ("openai", "gpt-6.1-sol"),
+        ("openai", "gpt-6-astra"),
+    }
+)
 ROUTE_KEYS = ("provider", "model", "max_calls", "max_input_bytes", "max_output_tokens")
 MAX_FILE_BYTES = 64_000
 MAX_PACKAGE_BYTES = 256_000

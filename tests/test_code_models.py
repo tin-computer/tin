@@ -131,13 +131,15 @@ def test_model_route_errors_say_whether_the_shape_or_the_model_is_wrong():
     with pytest.raises(
         ValueError,
         match="unsupported or unpriced model; supported provider/model pairs: "
-        "openai/gpt-6-luna, openai/gpt-6-sol",
+        "openai/gpt-6-astra, openai/gpt-6-luna, openai/gpt-6-sol, openai/gpt-6.1-sol",
     ):
         validate_code_definition(unknown)
     guide = authoring_guide(settings=SimpleNamespace(), project_id=uuid4())
     assert guide["code_contract"]["models"]["routes"] == [
+        {"provider": "openai", "model": "gpt-6-astra"},
         {"provider": "openai", "model": "gpt-6-luna"},
         {"provider": "openai", "model": "gpt-6-sol"},
+        {"provider": "openai", "model": "gpt-6.1-sol"},
     ]
 
 
@@ -238,12 +240,38 @@ def test_the_run_maximum_reserves_three_bytes_per_token_for_every_declared_call(
     assert full["maximum_nanos"] == cents(priced(full, "gpt-6-sol", [256_000] * 16, 32_000))
 
 
-@pytest.mark.parametrize("model", ["gpt-6-luna", "gpt-6-sol"])
+@pytest.mark.parametrize("model", ["gpt-6-luna", "gpt-6-sol", "gpt-6.1-sol", "gpt-6-astra"])
 def test_every_admissible_sequence_of_calls_fits_the_pinned_run_maximum(model):
     limits = {"max_calls": 16, "max_input_bytes": 256_000, "max_output_tokens": 32_000}
     terms = model_terms(routes_definition(a=(model, limits), b=(model, limits)))
     # Every call at its full allowance, past the run's input warning, is still reserved.
     assert priced(terms, model, [256_000] * 32, 32_000) <= terms["maximum_nanos"]
+
+
+def test_card_prices_every_supported_route_at_the_openai_list_price():
+    from tin_lite.service_pricing import CARD
+    from tin_lite.workflow_code import MODEL_TARGETS
+
+    assert {model for _, model in MODEL_TARGETS} <= set(CARD["models"])
+    # USD per million tokens: input, cached input, 30-minute cache write, output (2026-11-04).
+    per_million = {
+        model: tuple(
+            rates["standard"][k] / 1000 for k in ("input", "cached_input", "cache_write", "output")
+        )
+        for model, rates in CARD["models"].items()
+    }
+    assert per_million == {
+        "gpt-6-luna": (0.1, 0.01, 0.125, 0.5),
+        "gpt-6-sol": (2, 0.2, 2.5, 10),
+        "gpt-6.1-sol": (2, 0.1, 2.5, 10),
+        "gpt-6-astra": (10, 1, 12.5, 50),
+    }
+    assert CARD["models"]["gpt-6-astra"]["long_context"] == {
+        "input": 20_000,
+        "cached_input": 2000,
+        "cache_write": 25_000,
+        "output": 75_000,
+    }
 
 
 def sdk_router(f, *, invalid=False, uncertain=False, calls=None, outputs=None):

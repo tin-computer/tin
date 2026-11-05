@@ -10,8 +10,12 @@ from decimal import Decimal, InvalidOperation
 
 from tin_lite.billing_contracts import NANOS_PER_DOLLAR, BillingError, digest, token_charge
 
+# OpenAI's standard-tier list prices, checked against the pricing page on 2026-11-04. A run
+# pins this card in its terms, so a price change is a new card id and earlier runs keep theirs.
+# gpt-6-sol stays for runs and native routes that name it; gpt-6.1-sol is the same price with a
+# cheaper cached read. Cache writes are the 30-minute write price.
 CARD = {
-    "id": "tin-native-supplier-2026-09-23-v1",
+    "id": "tin-native-supplier-2026-11-04-v2",
     "source": "https://developers.openai.com/api/docs/pricing",
     "provider": "openai",
     "service_tier": "default",
@@ -28,6 +32,29 @@ CARD = {
                 "cached_input": 400,
                 "cache_write": 5000,
                 "output": 15_000,
+            },
+        },
+        "gpt-6.1-sol": {
+            "standard": {"input": 2000, "cached_input": 100, "cache_write": 2500, "output": 10_000},
+            "long_context": {
+                "input": 4000,
+                "cached_input": 200,
+                "cache_write": 5000,
+                "output": 15_000,
+            },
+        },
+        "gpt-6-astra": {
+            "standard": {
+                "input": 10_000,
+                "cached_input": 1000,
+                "cache_write": 12_500,
+                "output": 50_000,
+            },
+            "long_context": {
+                "input": 20_000,
+                "cached_input": 2000,
+                "cache_write": 25_000,
+                "output": 75_000,
             },
         },
     },

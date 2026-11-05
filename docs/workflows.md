@@ -100,7 +100,7 @@ Tin ships 44 built-in workflows. Every workflow also takes a `project_id`; requi
 
 # Registry packages
 
-29 contributed packages from `workflow_packages/` are selected in `src/tin_lite/public_workflows.py` and published with the next catalog sync. [The package guide](../workflow_packages/README.md#how-the-packages-fit-together) shows how they build on the built-ins.
+30 contributed packages from `workflow_packages/` are selected in `src/tin_lite/public_workflows.py` and published with the next catalog sync. [The package guide](../workflow_packages/README.md#how-the-packages-fit-together) shows how they build on the built-ins.
 
 ## Organic traffic system
 
@@ -165,3 +165,4 @@ Tin ships 44 built-in workflows. Every workflow also takes a `project_id`; requi
 |---|---|---|---|
 | Announce a new release (human review)<br>`content.release_announce` | Turn a changelog or release notes into posts written for X, LinkedIn, Reddit and Hacker News, plus a newsletter email for people who already follow the product, mentioning only what actually shipped. Drafts only: Tin never posts, sends or publishes them. | **`changelog`**, **`product_name`**, `release_url`, `audience`, `tone`, `voice_notes` | `content/releases/{date}-{slug}.md` |
 | Add a starter developers can clone<br>`growth.framework_starter` | For a product developers build on: find the SDK, API, webhook or embed a developer calls first in your connected repository, pick the framework its users build with, and open an unmerged PR adding a small runnable starter under examples/ with a five-minute README. Says no when there is nothing a developer integrates, and never repeats a starter. Never merges, deploys, publishes a package or creates a repository. | `framework`, `use_case` | Unmerged GitHub PR, receipt `reports/framework-starter/{run_id}/RESULT.md` |
+| Write a blog post from notes, a PR or a draft (human review)<br>`content.seed_post` | Turn material you already have (meeting notes, a merged pull request, a draft or a record of work) into a guide for your site's readers: it finds the question your material answers, plans the post, drafts it, reviews and revises it, and checks the copy. The draft waits in Decisions with the claims to confirm; Tin never publishes it. | `seed_path`, `seed_text`, `direction`, `style_path`, `revise_path`, `feedback` | `content/drafts/{date}-{slug}.md` |

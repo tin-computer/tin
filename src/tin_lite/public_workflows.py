@@ -178,6 +178,7 @@ PUBLIC_WORKFLOWS: tuple[PublicWorkflow, ...] = (
     PublicWorkflow(UUID("4cfd20c4-6aaa-46d7-a5c1-1f67032a4358"), "growth.framework_starter"),
     PublicWorkflow(UUID("cf62caaa-fc6f-4a32-b0bd-8babceec534d"), "organic.traffic_snapshot"),
     PublicWorkflow(UUID("51b9959f-3f5c-4df3-b417-f6fbf12d19fc"), "organic.content_efficacy"),
+    PublicWorkflow(UUID("79b63cd7-4e6e-4448-bc2d-f82d9160333d"), "content.seed_post"),
     # Retired for new work (run_service.RETIRED): the audit and page decisions cover the page
     # tree's findings, and website.change adds each article to the site's own index. Kept
     # registered so past runs keep their definitions.
