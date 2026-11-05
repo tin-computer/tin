@@ -14,6 +14,7 @@ import fs from "node:fs";
 import path from "node:path";
 import {pathToFileURL} from "node:url";
 import {chromium} from "playwright";
+import {player} from "./spec.js";
 import {installVirtualClock} from "./clock.js";
 import {BACKDROP, Director, FPS, ffmpeg, loadFonts, motionStrips, quiet, srt, stills} from "./film.js";
 import {installScreen, installStage} from "./overlay.js";
@@ -247,6 +248,10 @@ class Terminal {
       await this.paint();
       await this.f.hold(per);
     }
+  }
+  // A fresh screen, as when Claude Code starts; the next line paints it.
+  clear() {
+    this.lines = [];
   }
   async paste(text) {
     this.input.text += text;
@@ -522,7 +527,7 @@ export async function shootDesk(film, {pace = {}, theme = "dark", out = ".films"
     await motionStrips(director, DESK, dir);
     fs.writeFileSync(path.join(dir, "captions.srt"), srt(director.captions, director.n));
     const scenes = director.scenes.map(item => ({...item, seconds: Math.round(((item.end - item.start) / FPS) * 10) / 10}));
-    const report = {film: film.name, title: film.title, size: DESK, frames: director.n, seconds: director.n / FPS, scenes, captions: director.captions, issues};
+    const report = {film: film.name, title: film.title, size: DESK, frames: director.n, seconds: director.n / FPS, scenes, captions: director.captions, hashes: director.hashes, issues};
     fs.writeFileSync(path.join(dir, "report.json"), `${JSON.stringify(report, null, 2)}\n`);
     return {dir, report};
   } catch (error) {
@@ -553,7 +558,10 @@ async function main(argv) {
   const fonts = await loadFonts(options.fonts);
   for (const name of names) {
     const file = path.resolve("web/film/films", `${name}.js`);
-    const film = {name, ...(await import(pathToFileURL(file)))};
+    const module = await import(pathToFileURL(file));
+    // Each scene is code (`play`) or data (`beats`, with the film's named `values`).
+    const scenes = module.scenes.map(scene => ({...scene, play: player(scene, module.values, `scene ${scene.name}`)}));
+    const film = {name, ...module, scenes};
     const {dir, report} = await shootDesk(film, {pace, out: options.out, fonts, until: options.until || null});
     console.log(`${film.name}: ${report.frames} frames, ${report.seconds.toFixed(1)}s → ${dir}`);
     for (const scene of report.scenes) console.log(`  ${scene.name} (${scene.pace}): ${scene.seconds}s`);

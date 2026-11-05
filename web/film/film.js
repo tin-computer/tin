@@ -9,6 +9,7 @@ import fs from "node:fs";
 import path from "node:path";
 import {pathToFileURL} from "node:url";
 import {chromium} from "playwright";
+import {player} from "./spec.js";
 import {serveApp} from "../app-fixture.js";
 import {installVirtualClock} from "./clock.js";
 import {bezier} from "./ease.js";
@@ -953,7 +954,9 @@ export async function motionStrips(director, size, dir) {
 export async function loadFilm(name) {
   const file = path.resolve("web/film/films", `${name}.js`);
   if (!fs.existsSync(file)) throw new Error(`No film named ${name} in web/film/films.`);
-  return {name, ...(await import(pathToFileURL(file)))};
+  const film = await import(pathToFileURL(file));
+  // A film is code (`play`) or data (`beats`, with its named `values`); either way it plays here.
+  return {name, ...film, play: player(film, film.values)};
 }
 
 async function main(argv) {
