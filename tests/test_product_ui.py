@@ -236,6 +236,7 @@ async def test_product_ui_reads_projects_runs_and_activity_from_postgres() -> No
         "timezone": "America/Los_Angeles",
         "last_mcp_used_at": None,
         "last_mcp_tool_name": None,
+        "ai_visibility_weeks": 0,
     }
     assert runs.headers["X-Tin-Read-Source"] == "postgres"
     assert runs.json()[0]["artifact_path"] == "reports/SCAN.md"
@@ -425,6 +426,8 @@ def test_product_ui_assets_are_packaged_beside_the_application() -> None:
     assert 'connected ? "Configure" : "Details"' not in script
     assert '"analytics.gsc": "/assets/integrations/google-search-console.svg"' in script
     assert '"infra.github": "/assets/integrations/github.svg"' in script
+    assert '"social.x": "/assets/integrations/x.svg"' in script
+    assert 'src="/assets/integrations/linkedin.svg"' in script
     assert '"workspace.google": "/assets/integrations/google-workspace.svg"' in script
     assert "write access for only the repositories granted in GitHub" in script
     assert 'url.pathname.startsWith("/integrations/callback/")' in script

@@ -1,0 +1,660 @@
+/* AI Visibility: the week picker, score tiles, trend and the questions-by-engines table. Tiles,
+   tabs, the chart card and notes reuse Analytics' classes (analytics.css). Marks keep apart by
+   shape as well as colour: a tick, a dot, a cross. */
+
+.visibility-view {
+  --visibility-recommended: rgb(var(--accent-deep-rgb) / 18%);
+  --visibility-recommended-ink: var(--accent-text);
+  --visibility-mentioned: #f4d97c;
+  --visibility-mentioned-ink: #5c4300;
+  --visibility-mentioned-line: #c99a06;
+  display: flex;
+  flex-direction: column;
+  gap: 22px;
+}
+
+html[data-theme="dark"] .visibility-view {
+  --visibility-recommended: rgb(153 175 98 / 26%);
+  --visibility-recommended-ink: #c9dc97;
+  --visibility-mentioned: rgb(244 217 124 / 26%);
+  --visibility-mentioned-ink: #f4d97c;
+  --visibility-mentioned-line: #e3b93a;
+}
+
+.visibility-view .workspace-header { margin-bottom: 0; }
+
+.visibility-body {
+  display: flex;
+  min-width: 0;
+  flex-direction: column;
+  gap: 22px;
+}
+
+/* < Nov 2 – Nov 8 > */
+.visibility-weeks {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.visibility-arrow {
+  display: inline-flex;
+  width: 36px;
+  height: 36px;
+  align-items: center;
+  justify-content: center;
+  padding: 0;
+  background: var(--paper-card);
+  border: 1px solid var(--card-border);
+  border-radius: var(--radius-card);
+  color: var(--ink);
+  cursor: pointer;
+}
+
+.visibility-arrow:hover:not(:disabled) { border-color: var(--paper-border-strong); }
+.visibility-arrow:disabled { color: var(--status-idle); cursor: default; }
+
+.visibility-arrow svg {
+  width: 16px;
+  height: 16px;
+  fill: none;
+  stroke: currentColor;
+  stroke-width: 1.6;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+}
+
+.visibility-week {
+  display: flex;
+  min-width: 132px;
+  flex-direction: column;
+  align-items: center;
+  gap: 2px;
+}
+
+.visibility-week strong {
+  color: var(--ink);
+  font: 600 14px/18px var(--sans);
+}
+
+.visibility-week small {
+  color: var(--ink-muted);
+  font: 12px/16px var(--sans);
+}
+
+/* Week by week. */
+.visibility-trend .analytics-legend i.is-mentioned { background: var(--visibility-mentioned-line); }
+.visibility-trend .analytics-legend i.is-recommended { background: var(--accent-deep); }
+
+.visibility-plot {
+  display: flex;
+  gap: 10px;
+}
+
+.visibility-scale {
+  display: flex;
+  height: 140px;
+  flex: 0 0 34px;
+  flex-direction: column;
+  justify-content: space-between;
+  color: var(--ink-muted);
+  font: 11px/12px var(--mono);
+  text-align: right;
+}
+
+.visibility-plot svg {
+  width: 100%;
+  height: 140px;
+  overflow: visible;
+}
+
+.visibility-rule {
+  stroke: rgb(var(--ink-rgb) / 8%);
+  stroke-width: 1;
+  vector-effect: non-scaling-stroke;
+}
+
+.visibility-rule.is-base { stroke: rgb(var(--ink-rgb) / 16%); }
+
+.visibility-line {
+  fill: none;
+  stroke-width: 2.5;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+  vector-effect: non-scaling-stroke;
+}
+
+.visibility-line.is-mentioned { stroke: var(--visibility-mentioned-line); }
+.visibility-line.is-recommended { stroke: var(--accent-deep); }
+.visibility-dot { stroke: var(--paper-card); stroke-width: 2; vector-effect: non-scaling-stroke; }
+.visibility-dot.is-mentioned { fill: var(--visibility-mentioned-line); }
+.visibility-dot.is-recommended { fill: var(--accent-deep); }
+
+.visibility-axis {
+  display: flex;
+  justify-content: space-between;
+  padding-left: 44px;
+}
+
+.visibility-axis button {
+  min-height: 32px;
+  padding: 4px 6px;
+  background: transparent;
+  border-radius: 6px;
+  color: var(--ink-muted);
+  font: 12px/16px var(--mono);
+  cursor: pointer;
+}
+
+.visibility-axis button:hover { color: var(--ink); }
+.visibility-axis button.is-current { color: var(--ink); font-weight: 700; }
+
+/* The kind's note and the key to the marks. */
+.visibility-key {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px 24px;
+}
+
+.visibility-key p {
+  max-width: 560px;
+  margin: 0;
+  color: var(--ink-secondary);
+  font: 13px/18px var(--sans);
+}
+
+.visibility-legend {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 16px;
+}
+
+.visibility-legend > span {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  color: var(--ink-secondary);
+  font: 13px/16px var(--sans);
+}
+
+.visibility-mark {
+  display: inline-flex;
+  width: 26px;
+  height: 26px;
+  flex: 0 0 26px;
+  align-items: center;
+  justify-content: center;
+  border-radius: 7px;
+}
+
+.visibility-mark svg {
+  width: 15px;
+  height: 15px;
+  fill: none;
+  stroke: currentColor;
+  stroke-width: 2;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+}
+
+.visibility-mark.is-recommended { background: var(--visibility-recommended); color: var(--visibility-recommended-ink); }
+.visibility-mark.is-mentioned { background: var(--visibility-mentioned); color: var(--visibility-mentioned-ink); }
+.visibility-mark.is-mentioned svg circle { fill: currentColor; stroke: none; }
+.visibility-mark.is-none { color: var(--ink-muted); }
+.visibility-mark.is-none svg { stroke-width: 1.6; }
+.visibility-mark.is-no_answer { color: var(--status-idle); font: 13px/16px var(--mono); }
+
+.visibility-frac {
+  color: currentColor;
+  font: 10px/10px var(--mono);
+}
+
+.visibility-frac.is-key {
+  padding: 4px 6px;
+  background: var(--paper-well);
+  border-radius: 5px;
+  color: var(--ink-secondary);
+  font-size: 11px;
+}
+
+/* Questions down the left, an engine in each column, rivals on the right; the question column
+   takes the spare width and stays put while the engines scroll. */
+.visibility-table {
+  min-width: 0;
+  background: var(--paper-card);
+  border: 1px solid var(--card-border);
+  border-radius: var(--radius-card);
+  overflow: hidden;
+}
+
+.visibility-scroll { overflow-x: auto; }
+
+.visibility-row {
+  display: grid;
+  align-items: stretch;
+  border-bottom: 1px solid var(--card-hairline);
+}
+
+.visibility-row:last-child { border-bottom: 0; }
+.visibility-row:not(.is-head):hover > * { background-color: rgb(var(--ink-rgb) / 2%); }
+.visibility-row:not(.is-head):hover > .visibility-question { background-color: var(--paper-input-focus); }
+
+.visibility-row.is-head {
+  position: sticky;
+  top: 0;
+  z-index: 2;
+  background: var(--paper-card);
+  border-bottom-color: var(--card-border);
+}
+
+.visibility-question {
+  position: sticky;
+  left: 0;
+  z-index: 1;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 12px 16px 12px 18px;
+  background: var(--paper-card);
+  border-right: 1px solid var(--card-hairline);
+  color: var(--ink);
+  font: 14px/21px var(--sans);
+}
+
+
+/* Three lines at most; the whole question is in its title and at the top of an opened cell. */
+.visibility-question > span,
+.visibility-rivals > span {
+  display: -webkit-box;
+  overflow: hidden;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 3;
+}
+
+.visibility-row.is-head .visibility-question,
+.visibility-row.is-head .visibility-rivals {
+  align-items: flex-start;
+  padding-top: 10px;
+  padding-bottom: 10px;
+  color: var(--ink-muted);
+  font: 600 12px/16px var(--sans);
+}
+
+.visibility-engine {
+  display: flex;
+  min-width: 0;
+  flex-direction: column;
+  align-items: center;
+  justify-content: flex-start;
+  gap: 4px;
+  padding: 10px 2px 9px;
+  text-align: center;
+}
+
+.visibility-engine strong {
+  display: -webkit-box;
+  max-width: 100%;
+  overflow: hidden;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 2;
+  color: var(--ink);
+  font: 600 10.5px/13px var(--sans);
+}
+
+.visibility-engine small {
+  max-width: 100%;
+  overflow: hidden;
+  color: var(--ink-muted);
+  font: 10.5px/12px var(--sans);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* An engine's mark, drawn like an integration's badge in Integrations. */
+.visibility-logo {
+  position: relative;
+  display: inline-flex;
+  width: 24px;
+  height: 24px;
+  flex: 0 0 24px;
+  box-sizing: border-box;
+  align-items: center;
+  justify-content: center;
+  overflow: hidden;
+  background: var(--paper-card);
+  border: 1px solid rgb(var(--ink-rgb) / 16%);
+  border-radius: var(--radius-chip);
+  color: var(--ink-secondary);
+  font: normal 700 10px/12px var(--mono);
+  letter-spacing: 0.02em;
+}
+
+.visibility-logo img {
+  display: block;
+  width: 16px;
+  height: 16px;
+  object-fit: contain;
+}
+
+html[data-theme="dark"] .visibility-logo.is-monochrome img { opacity: 0; }
+
+html[data-theme="dark"] .visibility-logo.is-monochrome::before {
+  position: absolute;
+  width: 16px;
+  height: 16px;
+  background: var(--ink);
+  content: "";
+  mask: var(--logo-mask) center / contain no-repeat;
+  -webkit-mask: var(--logo-mask) center / contain no-repeat;
+}
+
+.visibility-cell {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 4px 2px;
+}
+
+.visibility-button {
+  position: relative;
+  display: flex;
+  width: 40px;
+  height: 40px;
+  align-items: center;
+  justify-content: center;
+  padding: 0;
+  background: transparent;
+  border: 1px solid transparent;
+  border-radius: 9px;
+  cursor: pointer;
+}
+
+.visibility-button .visibility-mark { width: 28px; height: 28px; flex-basis: 28px; }
+.visibility-button .visibility-mark.is-none { opacity: 0.45; }
+.visibility-button:hover { border-color: var(--card-border); }
+.visibility-button:hover .visibility-mark.is-none { opacity: 1; }
+.visibility-button.is-selected { border-color: var(--ink); }
+
+/* "1/2" sits in the cell's corner, so every mark stays centred. */
+.visibility-button .visibility-frac {
+  position: absolute;
+  right: -2px;
+  bottom: -3px;
+  padding: 1px 3px;
+  background: var(--paper-card);
+  border-radius: 4px;
+  color: var(--ink-secondary);
+  font-size: 9.5px;
+}
+
+.visibility-rivals {
+  display: flex;
+  align-items: center;
+  padding: 12px 16px;
+  color: var(--ink-secondary);
+  font: 13px/19px var(--sans);
+  overflow-wrap: anywhere;
+}
+
+/* Section bands and group titles: one compact line each. */
+.visibility-band,
+.visibility-group {
+  position: sticky;
+  left: 0;
+  display: flex;
+  align-items: baseline;
+  gap: 10px;
+  border-bottom: 1px solid var(--card-hairline);
+}
+
+.visibility-band {
+  padding: 12px 18px;
+  background: var(--paper-well);
+}
+
+.visibility-band strong { color: var(--ink); font: 700 14px/20px var(--sans); }
+.visibility-band small { color: var(--ink-secondary); font: 13px/20px var(--sans); }
+
+/* A group's title opens its questions: a little air above, a hairline below. */
+.visibility-group { padding: 16px 18px 8px; }
+.visibility-group strong { color: var(--ink); font: 700 13.5px/19px var(--sans); }
+.visibility-group small { color: var(--ink-muted); font: 13px/19px var(--sans); }
+
+/* One engine's answers to one question, opened under its row: the engine and a tab per
+   answer, then the answer's verdict, the passage that names the project, the full answer
+   folded to its first line, and what the engine searched, read and recommended. */
+.visibility-detail {
+  position: sticky;
+  left: 0;
+  display: flex;
+  box-sizing: border-box;
+  flex-direction: column;
+  gap: 14px;
+  padding: 16px 20px 20px;
+  background: var(--paper-task);
+  border-top: 1px solid var(--card-border);
+  border-bottom: 1px solid var(--card-border);
+  box-shadow: inset 3px 0 0 var(--accent-deep);
+}
+
+.visibility-detail-head {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 12px 16px;
+}
+
+.visibility-detail-title {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.visibility-detail-title strong { color: var(--ink); font: 700 14px/18px var(--sans); }
+.visibility-detail-title small { color: var(--ink-muted); font: 12.5px/16px var(--sans); }
+
+.visibility-takes {
+  display: inline-flex;
+  gap: 4px;
+  padding: 3px;
+  background: var(--paper-well);
+  border-radius: 9px;
+}
+
+.visibility-take {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  min-height: 32px;
+  padding: 3px 10px 3px 4px;
+  background: transparent;
+  border-radius: 7px;
+  color: var(--ink-secondary);
+  font: 600 12.5px/16px var(--sans);
+  cursor: pointer;
+}
+
+.visibility-take .visibility-mark { width: 22px; height: 22px; flex-basis: 22px; }
+.visibility-take .visibility-mark svg { width: 13px; height: 13px; }
+.visibility-take.is-active { background: var(--paper-card); color: var(--ink); box-shadow: 0 0 0 1px var(--card-border); }
+
+.visibility-close {
+  min-height: 32px;
+  margin-left: auto;
+  padding: 6px 12px;
+  background: var(--paper-card);
+  border: 1px solid var(--card-border);
+  border-radius: 7px;
+  color: var(--ink);
+  font: 12.5px/16px var(--sans);
+  cursor: pointer;
+}
+
+.visibility-asked {
+  display: flex;
+  max-width: 780px;
+  gap: 8px;
+  margin: -4px 0 0;
+  color: var(--ink-secondary);
+  font: 13px/19px var(--sans);
+}
+
+.visibility-asked small { flex: 0 0 auto; color: var(--ink-muted); font: 11px/19px var(--mono); }
+
+.visibility-answer {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.visibility-answer-head {
+  display: flex;
+  align-items: baseline;
+  gap: 10px;
+}
+
+.visibility-answer-head strong { color: var(--ink); font: 700 15px/20px var(--sans); }
+.visibility-answer-head small { color: var(--ink-muted); font: 12.5px/16px var(--sans); }
+
+.visibility-quote {
+  max-width: 780px;
+  margin: 0;
+  padding: 10px 14px;
+  background: var(--paper-card);
+  border-left: 3px solid var(--accent-deep);
+  border-radius: 0 var(--radius-card) var(--radius-card) 0;
+  color: var(--ink);
+  font: 14px/21px var(--sans);
+}
+
+.visibility-full {
+  display: flex;
+  max-width: 780px;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.visibility-fold {
+  display: inline-flex;
+  align-self: flex-start;
+  align-items: center;
+  gap: 6px;
+  min-height: 32px;
+  padding: 4px 0;
+  background: transparent;
+  color: var(--accent-text);
+  font: 600 12.5px/16px var(--sans);
+  cursor: pointer;
+}
+
+.visibility-fold:hover { color: var(--ink); }
+
+.visibility-fold svg {
+  width: 14px;
+  height: 14px;
+  fill: none;
+  stroke: currentColor;
+  stroke-width: 1.6;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+}
+
+.visibility-first {
+  margin: 0;
+  overflow: hidden;
+  color: var(--ink-secondary);
+  font: 13px/19px var(--sans);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.visibility-text {
+  max-height: 480px;
+  overflow: auto;
+  padding: 14px 18px;
+  background: var(--paper-card);
+  border: 1px solid var(--card-hairline);
+  border-radius: var(--radius-card);
+  color: var(--ink);
+  font: 13.5px/21px var(--sans);
+}
+
+.visibility-text > :first-child { margin-top: 0; }
+.visibility-text > :last-child { margin-bottom: 0; }
+.visibility-text p,
+.visibility-text ul,
+.visibility-text ol,
+.visibility-text blockquote,
+.visibility-text pre { margin: 0 0 10px; }
+.visibility-text ul,
+.visibility-text ol { padding-left: 20px; }
+.visibility-text li + li { margin-top: 4px; }
+.visibility-text h5 { margin: 16px 0 6px; font: 700 14px/20px var(--sans); }
+.visibility-text blockquote { padding-left: 10px; border-left: 2px solid var(--card-border); color: var(--ink-secondary); }
+.visibility-text code { font: 12px/18px var(--mono); }
+.visibility-text pre { overflow-x: auto; padding: 8px 10px; background: var(--paper-well); border-radius: 6px; }
+.visibility-text hr { margin: 14px 0; border: 0; border-top: 1px solid var(--card-hairline); }
+.visibility-text a { color: var(--accent-text); }
+.visibility-text-table { margin: 0 0 10px; overflow-x: auto; }
+.visibility-text table { border-collapse: collapse; font: 12.5px/17px var(--sans); }
+.visibility-text th,
+.visibility-text td { padding: 5px 8px; border: 1px solid var(--card-hairline); text-align: left; vertical-align: top; }
+.visibility-text th { background: var(--paper-well); font-weight: 600; }
+
+.visibility-facts {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+  gap: 1px;
+  overflow: hidden;
+  background: var(--card-hairline);
+  border: 1px solid var(--card-hairline);
+  border-radius: var(--radius-card);
+}
+
+.visibility-facts section {
+  min-width: 0;
+  padding: 12px 14px;
+  background: var(--paper-card);
+}
+
+.visibility-facts h4 {
+  margin: 0 0 8px;
+  color: var(--ink-secondary);
+  font: 600 12px/16px var(--sans);
+}
+
+.visibility-facts ul {
+  display: flex;
+  flex-direction: column;
+  gap: 5px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.visibility-facts li,
+.visibility-facts p {
+  margin: 0;
+  color: var(--ink);
+  font: 12.5px/17px var(--sans);
+  overflow-wrap: anywhere;
+}
+
+.visibility-facts code { font: 12px/17px var(--mono); }
+.visibility-facts a { color: inherit; text-decoration: none; }
+.visibility-facts a:hover { text-decoration: underline; }
+.visibility-facts li.is-yours { color: var(--accent-text); font-weight: 700; }
+.visibility-facts .visibility-more,
+.visibility-facts .visibility-quiet { margin-top: 6px; color: var(--ink-muted); }
+.visibility-facts .visibility-quiet { margin-top: 0; }
+.visibility-names { gap: 4px; }
+
+.visibility-tiles .analytics-tile.is-name strong { font-size: 20px; line-height: 26px; letter-spacing: -0.01em; }
+
+@media (max-width: 760px) {
+  .visibility-view .workspace-header { flex-wrap: wrap; }
+  .visibility-key { flex-direction: column; align-items: flex-start; }
+  .visibility-close { margin-left: 0; }
+}

@@ -24,6 +24,16 @@
 .review-version-row { display: flex; align-items: center; flex-wrap: wrap; gap: 16px; margin-bottom: 16px; color: var(--ink-secondary); font-size: 13px; }
 .review-version-notice { padding: 16px 0; color: var(--ink-secondary); }
 .review-change-summary { white-space: pre-wrap; margin: 0 0 20px; color: var(--ink-secondary); font-size: 14px; line-height: 22px; }
+/* What changed, folded into the version row (Paper WC-A): open, the item turns to the ink and its
+   chevron points up, and the note's height and words ease in under the row together. */
+.review-change-toggle { display: inline-flex; align-items: center; gap: 6px; }
+.review-change-toggle svg { width: 10px; height: 6px; fill: none; stroke: currentColor; stroke-width: 1.4; stroke-linecap: round; stroke-linejoin: round; transition: transform 220ms cubic-bezier(0.22, 1, 0.36, 1); }
+.review-change-toggle[aria-expanded="true"] { color: var(--ink); }
+.review-change-toggle[aria-expanded="true"] svg { transform: rotate(180deg); }
+.review-change-fold { display: grid; grid-template-rows: 0fr; opacity: 0; transition: grid-template-rows 260ms cubic-bezier(0.22, 1, 0.36, 1), opacity 200ms ease; }
+.review-change-fold.is-open { grid-template-rows: 1fr; opacity: 1; }
+.review-change-fold > div { min-height: 0; overflow: hidden; }
+@media (prefers-reduced-motion: reduce) { .review-change-fold, .review-change-toggle svg { transition: none; } }
 .markdown-reader-layout.is-review-comparison { display: block; width: min(860px, 100%); transform: none; }
 .review-comparison { border: 1px solid var(--paper-border); border-radius: 8px; overflow: hidden; }
 .review-comparison > header { display: flex; flex-wrap: wrap; justify-content: space-between; gap: 12px; padding: 16px; border-bottom: 1px solid var(--paper-border); font-size: 13px; }

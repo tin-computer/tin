@@ -155,6 +155,15 @@ for (const hidden of [false, true]) for (const theme of ["light", "dark"]) test(
     await page.getByRole("button", {name: "Open", exact: true}).click();
     await page.getByRole("heading", {name: "An article with a purpose", exact: true}).waitFor();
     assert.equal(await page.locator(".review-composer").count(), 0);
+    // What changed folds into the version row and opens under it (Paper WC-A).
+    const changes = page.getByRole("button", {name: "What changed", exact: true});
+    assert.equal(await changes.getAttribute("aria-expanded"), "false");
+    assert.equal(await page.locator(".review-change-fold").evaluate(fold => Math.round(fold.getBoundingClientRect().height)), 0);
+    await changes.click();
+    await page.waitForTimeout(400);
+    assert.equal(await changes.getAttribute("aria-expanded"), "true");
+    assert.equal(await page.locator(".review-change-summary").innerText(), "Kept the opening and replaced the list with a useful mechanism.");
+    assert.ok(await page.locator(".review-change-fold").evaluate(fold => fold.getBoundingClientRect().height > 20));
     await page.getByRole("button", {name: "Compare", exact: true}).click();
     await page.getByText("Previous version → Revised version", {exact: true}).waitFor();
     assert.doesNotMatch(await page.locator(".review-comparison").innerText(), /Keep current|Use saved result|would be removed/);

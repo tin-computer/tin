@@ -1,6 +1,8 @@
-"""An article draft's figures and embeds: kept, approved and published with the article."""
+"""A document's files: figures, embeds and videos kept, approved and published with it."""
 
 import hashlib
+import struct
+from copy import deepcopy
 from dataclasses import replace
 from types import SimpleNamespace
 from unittest.mock import AsyncMock
@@ -20,6 +22,28 @@ from tin_lite.workflow_reviews import WorkflowReviews
 GOOD_SVG = b'<svg xmlns="http://www.w3.org/2000/svg"><use href="#a"/><rect fill="#c33"/></svg>'
 EMBED = b"<!doctype html><canvas id=c></canvas><script>draw(c)</script>"
 UNSAFE_SVG = b'<svg xmlns="http://www.w3.org/2000/svg"><script>steal()</script></svg>'
+PNG = b"\x89PNG\r\n\x1a\n" + struct.pack(">I", 13) + b"IHDR" + bytes(17)
+JPEG = b"\xff\xd8\xff\xe0" + bytes(16) + b"\xff\xd9"
+CAPTIONS = b"WEBVTT\n\n00:00.000 --> 00:02.000\nTwelve invoices overdue\n"
+
+
+def _box(kind, payload):
+    return struct.pack(">I", 8 + len(payload)) + kind + payload
+
+
+def mp4(*, faststart=True):
+    """A structurally valid MP4: an ftyp box, the movie header and one video track."""
+    mvhd = _box(b"mvhd", bytes(12) + struct.pack(">II", 1000, 24_000) + bytes(80))
+    tkhd = _box(b"tkhd", bytes(76) + struct.pack(">II", 1080 << 16, 1350 << 16))
+    trak = _box(b"trak", tkhd + _box(b"mdia", _box(b"hdlr", bytes(8) + b"vide" + bytes(12))))
+    moov, mdat = _box(b"moov", mvhd + trak), _box(b"mdat", bytes(64))
+    ftyp = _box(b"ftyp", b"isom" + bytes(4) + b"isomiso2mp41")
+    return ftyp + (moov + mdat if faststart else mdat + moov)
+
+
+FILM_KINDS = page_assets.AssetPolicy(
+    max_files=6, max_bytes=40_000_000, kinds=("mp4", "png", "jpeg", "vtt", "json")
+)
 
 
 def article(folder_name):
@@ -57,7 +81,55 @@ def test_the_article_declares_its_assets():
     assert page_assets.problem("a.html", b"\xff\xfe")
 
 
-def test_only_article_drafts_declare_an_assets_folder():
+def test_each_kind_of_file_is_checked_before_it_is_kept():
+    path = "films/reminders.md"
+    text = (
+        "```tin-video\nsrc: ./reminders.assets/film.mp4\nposter: ./reminders.assets/poster.png\n"
+        "captions: ./reminders.assets/captions.vtt\n```\n"
+        "![Key frames](./reminders.assets/sheet.jpg) [Spec](./reminders.assets/film.json) "
+        "./reminders.assets/film.mp4.bak ./reminders.assets/setup.exe"
+    )
+    assert page_assets.referenced(text, path) == [
+        f"films/reminders.assets/{name}"
+        for name in ("film.mp4", "poster.png", "captions.vtt", "sheet.jpg", "film.json")
+    ]
+    kinds = FILM_KINDS.kinds
+    for name, content in (
+        ("film.mp4", mp4()),
+        ("poster.png", PNG),
+        ("sheet.jpg", JPEG),
+        ("sheet.jpeg", JPEG),
+        ("captions.vtt", CAPTIONS),
+        ("captions.vtt", b"\xef\xbb\xbf" + CAPTIONS),
+        ("film.json", b'{"scenes": []}'),
+    ):
+        assert page_assets.problem(name, content, kinds) is None, name
+    assert [page_assets.media_type(f"a.{e}") for e in ("mp4", "png", "jpg", "vtt", "json")] == [
+        "video/mp4",
+        "image/png",
+        "image/jpeg",
+        "text/vtt",
+        "application/json",
+    ]
+    assert page_assets.is_binary("a.mp4") and not page_assets.is_binary("a.vtt")
+    # A wrong file is left out with a reason the founder can read.
+    for name, content, reason in (
+        ("film.mp4", mp4(faststart=False), "the video must be written with the moov box first"),
+        ("film.mp4", PNG, "the video must be an MP4 file"),
+        ("poster.png", JPEG, "it is not a PNG image"),
+        ("sheet.jpg", PNG, "it is not a JPEG image"),
+        ("captions.vtt", b"1\n00:00:00,000 --> 00:00:02,000\nHi\n", "don't start with WEBVTT"),
+        ("film.json", b"{", "it is not valid JSON"),
+        ("film.mp4", bytes(16_000_001), "larger than 16 MB"),
+        ("poster.png", b"", "it is empty"),
+    ):
+        assert reason in page_assets.problem(name, content, kinds), name
+    # A kind the workflow didn't declare is never kept; article drafts keep only SVG and HTML.
+    assert page_assets.problem("poster.png", PNG) == "this workflow doesn't keep PNG images"
+    assert page_assets.problem("a.svg", GOOD_SVG, kinds) == "this workflow doesn't keep SVG images"
+
+
+def test_a_markdown_document_declares_an_assets_folder():
     spec = next(w for w in BUILTIN_WORKFLOWS if w.key == content_draft.KEY)
     policy = page_assets.AssetPolicy(max_files=12, max_bytes=2_000_000)
     definition, _ = replace(
@@ -77,8 +149,28 @@ def test_only_article_drafts_declare_an_assets_folder():
     other = next(w for w in BUILTIN_WORKFLOWS if w.key == "content.diagram")
     diagram, _ = other.definition_and_resource_files()
     diagram["procedure"]["output"]["assets"] = {"max_files": 1, "max_bytes": 1}
-    with pytest.raises(ValueError, match="Only article drafts"):
+    with pytest.raises(ValueError, match="Only a Markdown document"):
         validate_codex_procedure_definition(diagram)
+    # Any other Markdown document may carry files, of the kinds it names.
+    audit = next(w for w in BUILTIN_WORKFLOWS if w.key == "qa.product_audit")
+    report, _ = replace(
+        audit, procedure=replace(audit.procedure, output_assets=FILM_KINDS)
+    ).definition_and_resource_files()
+    assert report["procedure"]["output"]["assets"] == {
+        "max_files": 6,
+        "max_bytes": 40_000_000,
+        "kinds": ["mp4", "png", "jpeg", "vtt", "json"],
+    }
+    assert validate_codex_procedure_definition(report).output_assets == FILM_KINDS
+    for kinds in ([], ["exe"], ["png", "png"], "png"):
+        broken = deepcopy(report)
+        broken["procedure"]["output"]["assets"]["kinds"] = kinds
+        with pytest.raises(ValueError, match="assets kinds"):
+            validate_codex_procedure_definition(broken)
+    too_big = deepcopy(report)
+    too_big["procedure"]["output"]["assets"]["max_bytes"] = 64_000_001
+    with pytest.raises(ValueError, match="assets limits"):
+        validate_codex_procedure_definition(too_big)
     # Definitions without assets are unchanged, so pinned runs keep their exact contract.
     plain, _ = replace(
         spec, procedure=replace(spec.procedure, output_assets=None)
@@ -100,11 +192,53 @@ def test_only_article_drafts_declare_an_assets_folder():
         "max_bytes": 2_000_000,
     }
     assert "assets" not in replace(pinned, output_assets=None).sandbox_context(inputs={})["output"]
+    assert replace(pinned, output_assets=FILM_KINDS).sandbox_context(inputs={})["output"]["assets"][
+        "kinds"
+    ] == ["mp4", "png", "jpeg", "vtt", "json"]
 
 
-async def drafted(db, monkeypatch):
+def test_the_agent_hears_which_files_its_document_may_carry(monkeypatch):
+    import importlib.util
+    import sys
+    from pathlib import Path
+
+    monkeypatch.setenv("TIN_PROCEDURE_STATE_DIR", "/home/user/project")
+    source = Path(__file__).parents[1] / "sandbox" / "procedure_app_server.py"
+    spec = importlib.util.spec_from_file_location("procedure_app_server_assets", source)
+    server = importlib.util.module_from_spec(spec)
+    monkeypatch.setitem(sys.modules, spec.name, server)
+    spec.loader.exec_module(server)
+    folder = {"folder": "films/reminders.assets", "max_files": 6, "max_bytes": 40_000_000}
+    # Article drafts keep the words their runs have always had.
+    assert "figures and embeds" in server._assets_instruction({"assets": folder})
+    told = server._assets_instruction({"assets": {**folder, "kinds": ["mp4", "png", "vtt"]}})
+    assert "(MP4 videos, PNG images or WebVTT captions)" in told
+    assert "`./reminders.assets/<file name>`" in told and "article" not in told
+
+
+def film_article(folder_name):
+    return (
+        "# Documented messaging setup\n\n"
+        + ("Follow the published API reference for the supported request fields. " * 6).rstrip()
+        + f"\n\n```tin-video\nsrc: ./{folder_name}/film.mp4\nposter: ./{folder_name}/poster.png\n"
+        f"captions: ./{folder_name}/captions.vtt\ntitle: Reminders\n```\n\n"
+        f"![Key frames](./{folder_name}/sheet.jpg)\n\n![Old figure](./{folder_name}/flow.svg)\n"
+    ).encode()
+
+
+FILM = mp4()
+FILM_FILES = {
+    "film.mp4": FILM,
+    "poster.png": PNG,
+    "captions.vtt": CAPTIONS,
+    "sheet.jpg": PNG,
+    "flow.svg": GOOD_SVG,
+}
+
+
+async def drafted(db, monkeypatch, *, assets=True, body=article, files=None):
     monkeypatch.setattr("tin_lite.activities.activity.heartbeat", lambda *args: None)
-    f = await fixture(db, monkeypatch, clean=True, assets=True)
+    f = await fixture(db, monkeypatch, clean=True, assets=assets)
     run = await start(f)
     sandboxes = SimpleNamespace(create=AsyncMock(return_value="sandbox-test"), kill=AsyncMock())
     f.activities = TinActivities(
@@ -118,14 +252,18 @@ async def drafted(db, monkeypatch):
     folder = page_assets.folder(path)
     name = folder.rsplit("/", 1)[-1]
     base = f.storage.repo.head
+    if files is None:
+        files = {
+            "flow.svg": GOOD_SVG,
+            "field.html": EMBED,
+            "unsafe.svg": UNSAFE_SVG,
+            "unused.svg": GOOD_SVG,
+        }
     revision = f.storage.repo.edit(
         {
-            path: article(name),
+            path: body(name),
             content_draft.notes_path(path): notes(ctx),
-            f"{folder}/flow.svg": GOOD_SVG,
-            f"{folder}/field.html": EMBED,
-            f"{folder}/unsafe.svg": UNSAFE_SVG,
-            f"{folder}/unused.svg": GOOD_SVG,
+            **{f"{folder}/{file}": content for file, content in files.items()},
         },
         parent=run.expected_head_sha,
     )
@@ -185,6 +323,148 @@ async def test_a_draft_keeps_approves_and_publishes_the_files_its_article_uses(
     changed = f.storage.repo.edit({f"{folder}/flow.svg": UNSAFE_SVG})
     with pytest.raises(ValueError, match="differs from what was approved"):
         await page_assets.verified(f.storage, repo_id=repo_id, revision=changed, binding=bound)
+
+
+async def test_a_document_keeps_and_publishes_its_video_poster_and_captions(
+    publication_db, monkeypatch
+):
+    f, run, sandboxes, path, folder = await drafted(
+        publication_db, monkeypatch, assets=FILM_KINDS, body=film_article, files=FILM_FILES
+    )
+    await f.activities.persist_codex_procedure_artifact(str(run.id))
+    receipt = await f.db.get_effect(f"{run.id}:procedure_artifact_persist")
+    checkpoint = OutputCheckpoint.load(receipt.result["checkpoint"], run=run)
+    assert [(item.artifact_path, item.media_type) for item in checkpoint.assets] == [
+        (f"{folder}/film.mp4", "video/mp4"),
+        (f"{folder}/poster.png", "image/png"),
+        (f"{folder}/captions.vtt", "text/vtt"),
+    ]
+    assert receipt.result["dropped_assets"] == [
+        {"path": f"{folder}/sheet.jpg", "reason": "it is not a JPEG image"},
+        {"path": f"{folder}/flow.svg", "reason": "this workflow doesn't keep SVG images"},
+    ]
+
+    # The binary files publish byte for byte, in the same commit as the document.
+    await f.activities.commit_codex_procedure_artifact(str(run.id))
+    tree = f.storage.repo.trees[f.storage.repo.head]
+    assert tree[f"{folder}/film.mp4"][1] == FILM and tree[f"{folder}/poster.png"][1] == PNG
+    assert tree[f"{folder}/captions.vtt"][1] == CAPTIONS
+    assert f"{folder}/sheet.jpg" not in tree and f"{folder}/flow.svg" not in tree
+
+    # Approval binds every file with the document, and Decisions says what it carries.
+    assert await f.activities.request_codex_procedure_review(str(run.id))
+    run = await f.db.get_run(run.id)
+    _, artifact = await WorkflowReviews(runtime=f.runtime, settings=f.settings).artifact(run)
+    assert artifact["assets"] == [
+        {"path": f"{folder}/{name}", "sha256": hashlib.sha256(FILM_FILES[name]).hexdigest()}
+        for name in ("film.mp4", "poster.png", "captions.vtt")
+    ]
+    assert (
+        page_assets.attachments_line(
+            receipt.result["checkpoint"], film_article("x.assets").decode()
+        )
+        == "With 1 video."
+    )
+
+
+async def test_a_file_holding_the_test_accounts_password_is_left_out():
+    files = {
+        "films/r.assets/spec.json": b'{"password": "hunter2-password"}',
+        "films/r.assets/poster.png": PNG,
+    }
+    reads = []
+
+    async def read(*, path, binary, **_):
+        reads.append((path, binary))
+        return files[path]
+
+    async def identity_leak(*, run_id, content):
+        if b"hunter2-password" in content:
+            raise RuntimeError("procedure artifact contains the test identity secret")
+
+    owner = SimpleNamespace(
+        _storage=SimpleNamespace(read_procedure_checkpoint=read),
+        _reject_identity_leak=identity_leak,
+        _reject_card_leak=AsyncMock(),
+    )
+    run = SimpleNamespace(
+        id="00000000-0000-4000-8000-0000000000aa",
+        project_id="00000000-0000-4000-8000-0000000000bb",
+        generation=1,
+        definition_commit_sha="a" * 40,
+        expected_head_sha="b" * 40,
+    )
+    procedure = SimpleNamespace(
+        output_assets=FILM_KINDS,
+        assets_folder="films/r.assets",
+        output_path="films/r.md",
+        identity=True,
+    )
+    kept, dropped = await TinActivities._procedure_assets(
+        owner,
+        run,
+        SimpleNamespace(state_repo_id="repo"),
+        procedure,
+        "c" * 40,
+        b"![Poster](./r.assets/poster.png) [Spec](./r.assets/spec.json)",
+    )
+    assert [item.artifact_path for item in kept] == ["films/r.assets/poster.png"]
+    assert dropped == [
+        {
+            "path": "films/r.assets/spec.json",
+            "reason": "it contains the test account's secret or the run's card",
+        }
+    ]
+    # Images and videos are read as bytes, text as text.
+    assert reads == [("films/r.assets/poster.png", True), ("films/r.assets/spec.json", False)]
+
+
+def test_a_saved_checkpoint_carries_images_videos_and_captions():
+    run = SimpleNamespace(
+        id="00000000-0000-4000-8000-0000000000aa",
+        project_id="00000000-0000-4000-8000-0000000000bb",
+        generation=1,
+        definition_commit_sha="a" * 40,
+        expected_head_sha="b" * 40,
+    )
+
+    def item(name, content, media_type):
+        return OutputCheckpoint.create(
+            run=run,
+            revision="c" * 40,
+            path=f"films/r.assets/{name}",
+            media_type=media_type,
+            content=content,
+        )
+
+    files = (
+        item("film.mp4", FILM, "video/mp4"),
+        item("poster.png", PNG, "image/png"),
+        item("captions.vtt", CAPTIONS, "text/vtt"),
+    )
+    saved = OutputCheckpoint.create(
+        run=run,
+        revision="c" * 40,
+        path="films/r.md",
+        media_type="text/markdown",
+        content=b"# R\n",
+        assets=files,
+    )
+    assert OutputCheckpoint.load(saved.to_dict(), run=run) == saved
+    assert [item.binary for item in saved.assets] == [True, True, False]
+    value = saved.to_dict()
+    value["assets"][0]["byte_count"] = 16_000_001
+    with pytest.raises(ValueError):
+        OutputCheckpoint.load(value, run=run)
+    with pytest.raises(ValueError, match="assets"):
+        OutputCheckpoint.create(
+            run=run,
+            revision="c" * 40,
+            path="films/r.md",
+            media_type="text/markdown",
+            content=b"# R\n",
+            assets=(item("poster.png", PNG, "image/jpeg"),),
+        )
 
 
 def test_a_saved_checkpoint_keeps_assets_inside_the_articles_folder():
@@ -374,6 +654,8 @@ def test_the_reader_renders_figures_embeds_videos_and_callouts():
         "```tin-embed\nsrc: ../../secrets.html\n```\n\n"
         "```tin-video\nurl: https://www.youtube.com/watch?v=dQw4w9WgXcQ\ntitle: Trailer\n```\n\n"
         "```tin-video\nurl: javascript:alert(1)\n```\n\n"
+        "```tin-video\nsrc: ./a.assets/film.mp4\nposter: ./a.assets/poster.png\n"
+        "captions: ../captions.vtt\ntitle: Our film\n```\n\n"
         "> [!WARNING]\n> Mind the gate.\n\n> A plain quote.\n"
     )
     html = render_markdown(markdown, asset_folder="content/articles/a.assets").html
@@ -383,7 +665,12 @@ def test_the_reader_renders_figures_embeds_videos_and_callouts():
     assert 'data-height="1600" data-title="Try &lt;b&gt;it&lt;/b&gt;"' in html
     # A path outside the folder and a script URL stay plain code.
     assert "src: ../../secrets.html" in html and "javascript:alert" in html
-    assert html.count('class="md-embed"') == 1 and html.count('class="md-video"') == 1
+    assert html.count('class="md-embed"') == 1 and html.count('class="md-video"') == 2
+    # A video the document carries loads like its figures; captions outside the folder don't.
+    assert (
+        '<figure class="md-video" data-asset="content/articles/a.assets/film.mp4" '
+        'data-title="Our film" data-poster-asset="content/articles/a.assets/poster.png"></figure>'
+    ) in html
     assert '<aside class="md-callout" data-kind="warning">' in html
     assert "<blockquote>\n<p>A plain quote.</p>" in html
     # Any other document renders as before.

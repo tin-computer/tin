@@ -137,10 +137,32 @@
         });
         region.append(versions);
         if (review.change_summary) {
+          // What changed folds into the version row (Paper WC-A): one more item there, and the
+          // whole note under the row once it's opened. It stays open across redraws of this review.
+          const fold = document.createElement("div");
+          fold.className = "review-change-fold";
+          fold.id = `review-changes-${runId}`;
+          const note = document.createElement("div");
           const summary = document.createElement("p");
           summary.className = "review-change-summary";
-          summary.textContent = `What changed: ${review.change_summary}`;
-          region.append(summary);
+          summary.textContent = review.change_summary;
+          note.append(summary);
+          fold.append(note);
+          const toggle = document.createElement("button");
+          toggle.type = "button";
+          toggle.className = "system-action review-change-toggle";
+          toggle.setAttribute("aria-controls", fold.id);
+          toggle.innerHTML = 'What changed<svg viewBox="0 0 10 6" aria-hidden="true"><path d="M1 1l4 4 4-4" /></svg>';
+          const show = open => {
+            draft.changes = open;
+            toggle.setAttribute("aria-expanded", String(open));
+            fold.classList.toggle("is-open", open);
+            fold.inert = !open;
+          };
+          show(Boolean(draft.changes));
+          toggle.onclick = () => show(!draft.changes);
+          versions.append(toggle);
+          region.append(fold);
         }
       }
       if (!draft.open) return;

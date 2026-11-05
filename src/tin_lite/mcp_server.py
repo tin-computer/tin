@@ -31,7 +31,6 @@ from tin_lite.campaign_revisions import request_email_campaign_revision
 from tin_lite.capture_revisions import ProposalFile
 from tin_lite.connection_collection import NOT_YOURS, owns, viewed_by
 from tin_lite.connection_collection import validate_inputs as validate_collection_inputs
-from tin_lite.connection_collection import visible as collection_visible
 from tin_lite.content_delivery import DRAFT_WORKFLOW_ID, DeliverySettings
 from tin_lite.content_delivery_api import (
     SaveDelivery,
@@ -2416,8 +2415,7 @@ def create_mcp_app(
         workflows = [
             workflow
             for workflow in await services.database.list_workflows(project_id=parsed_project_id)
-            if collection_visible(settings, workflow, parsed_project_id)
-            and linkedin_visible(settings, workflow, parsed_project_id)
+            if linkedin_visible(settings, workflow, parsed_project_id)
             and workflow.status.value == "active"
             and (workflow.definition or {}).get("public_discovery", True)
             and (

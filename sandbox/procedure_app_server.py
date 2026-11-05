@@ -344,19 +344,42 @@ def _identity_instruction(context: dict) -> str:
     )
 
 
+# How the instruction names the kinds of file a document may carry (page_assets.KINDS).
+_KIND_WORDS = {
+    "svg": "SVG images",
+    "html": "self-contained HTML files",
+    "png": "PNG images",
+    "jpeg": "JPEG images",
+    "mp4": "MP4 videos",
+    "vtt": "WebVTT captions",
+    "json": "JSON files",
+}
+
+
 def _assets_instruction(output: dict[str, Any]) -> str:
-    """The one exception to "modify no other project file": the article's assets folder."""
+    """The one exception to "modify no other project file": the document's assets folder."""
     assets = output.get("assets")
     if not isinstance(assets, dict):
         return ""
     folder = str(assets["folder"])
     name = folder.rsplit("/", 1)[-1]
+    kinds = assets.get("kinds")
+    if not kinds:
+        # Article drafts: figures and embeds, in the words their runs have always had.
+        return (
+            f" The article may also use figures and embeds: write them as files directly in "
+            f"`{STATE_DIR / folder}` (SVG images, or self-contained HTML files for interactive "
+            f"pieces), at most {assets['max_files']} files and {assets['max_bytes']} bytes "
+            f"together, and refer to each one from the article as `./{name}/<file name>`. Tin "
+            "keeps only the files the article refers to."
+        )
+    words = [_KIND_WORDS.get(str(kind), f"{str(kind).upper()} files") for kind in kinds]
+    listed = words[0] if len(words) == 1 else f"{', '.join(words[:-1])} or {words[-1]}"
     return (
-        f" The article may also use figures and embeds: write them as files directly in "
-        f"`{STATE_DIR / folder}` (SVG images, or self-contained HTML files for interactive "
-        f"pieces), at most {assets['max_files']} files and {assets['max_bytes']} bytes "
-        f"together, and refer to each one from the article as `./{name}/<file name>`. Tin "
-        "keeps only the files the article refers to."
+        f" The document may also carry files: write them directly in `{STATE_DIR / folder}` "
+        f"({listed}), at most {assets['max_files']} files and {assets['max_bytes']} bytes "
+        f"together, and refer to each one from the document as `./{name}/<file name>`. Tin "
+        "keeps only the files the document refers to."
     )
 
 

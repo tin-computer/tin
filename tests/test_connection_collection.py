@@ -98,7 +98,7 @@ async def seed(db):
         name="Synthetic collection", state_repo_id="projects/" + uuid4().hex
     )
     await db.grant_project_membership(project_id=project.id, clerk_user_id=USER)
-    settings = SimpleNamespace(connection_collection_projects=[str(project.id)])
+    settings = SimpleNamespace()
     store = CollectionStore(db, settings)
     grant = await store.grant(project.id, USER)
     await store.pair(grant["grant"], token_hash(TOKEN), ACTOR)

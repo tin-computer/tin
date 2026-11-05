@@ -54,8 +54,8 @@ class StaleOutputComparisonError(RuntimeError):
     """The reviewed project revision moved; no replacement was applied by this attempt."""
 
 
-# The demo video is the one declared binary output; every other checkpoint is UTF-8 text.
-BINARY_MEDIA_TYPES = frozenset({"video/mp4"})
+# A demo video, and the images and videos a document carries; everything else is UTF-8 text.
+BINARY_MEDIA_TYPES = frozenset({"video/mp4", *page_assets.BINARY_MEDIA_TYPES})
 MAX_TEXT_OUTPUT_BYTES = 1_000_000
 MAX_BINARY_OUTPUT_BYTES = 16_000_000
 
@@ -74,7 +74,7 @@ class OutputCheckpoint:
     byte_count: int
     version: int = 1
     companions: tuple[OutputCheckpoint, ...] = ()
-    # An article's figures and embeds (page_assets): only the files the article refers to.
+    # A document's files (page_assets): only the files the document refers to.
     assets: tuple[OutputCheckpoint, ...] = ()
 
     def to_dict(self) -> dict[str, Any]:
@@ -180,6 +180,9 @@ class OutputCheckpoint:
                 "image/svg+xml",
                 "text/html",
                 "video/mp4",
+                "image/png",
+                "image/jpeg",
+                "text/vtt",
             }
             or not isinstance(result.sha256, str)
             or _DIGEST.fullmatch(result.sha256) is None
@@ -205,11 +208,12 @@ class OutputCheckpoint:
                     or not item.artifact_path.startswith(folder)
                     or not page_assets.NAME.fullmatch(item.artifact_path[len(folder) :])
                     or item.media_type != page_assets.media_type(item.artifact_path)
-                    or item.byte_count > page_assets.FILE_MAX_BYTES
+                    or item.byte_count
+                    > page_assets.KINDS[page_assets.kind(item.artifact_path)].max_bytes
                     for item in result.assets
                 )
             ):
-                raise ValueError("saved assets do not belong to the same article revision")
+                raise ValueError("saved assets do not belong to the same document revision")
         return result
 
     @property

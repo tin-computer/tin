@@ -34,6 +34,11 @@ Stageshow's virtual clock, cursor and cursor timing from `benjitaylor/skills` co
 `802057409787133703c56001080169e347305572`, `stageshow/kit/` (MIT, Copyright (c) 2026 Benji
 Taylor). Its license is in `third_party/licenses/stageshow-LICENSE.txt`.
 
+The AI Visibility page's engine marks in `src/tin_lite/static/ai-engines/` are unmodified SVGs
+from `@lobehub/icons-static-svg` 1.102.0 (MIT). Its license text is preserved in
+`third_party/licenses/lobe-icons-LICENSE.txt`. The marks themselves are their owners'
+trademarks, shown only to name each answer engine.
+
 The studio sandbox image (`sandbox/studio/`) ships:
 
 - Montserrat Bold and ExtraBold (OFL-1.1), caption font for rendered demo videos

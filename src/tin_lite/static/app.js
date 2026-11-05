@@ -62,11 +62,11 @@ const MCP_URL = document.documentElement.dataset.mcpUrl?.startsWith("http")
 function configuredOrigin(value) {
   return value && !value.startsWith("{{") ? new URL(value).origin : window.location.origin;
 }
-const ALLOWED_VIEWS = new Set(["workflows", "activity", "decisions", "people", "analytics", "files", "integrations"]);
+const ALLOWED_VIEWS = new Set(["workflows", "activity", "decisions", "people", "analytics", "ai-visibility", "files", "integrations"]);
 if (BILLING_ENABLED) ALLOWED_VIEWS.add("billing");
 // One small History API router. Legacy bookmarks are input-only compatibility;
 // new links use paths. Document heading fragments are not application routes.
-const DASHBOARD_ROUTE = /^(?:system|workflows|chat|activity|decisions|people|analytics|files|integrations|connect|billing|file|(?:document|task|compare)\/[^/?]+)(?:\?|$)/;
+const DASHBOARD_ROUTE = /^(?:system|workflows|chat|activity|decisions|people|analytics|ai-visibility|files|integrations|connect|billing|file|(?:document|task|compare)\/[^/?]+)(?:\?|$)/;
 // `carry` names the only current query parameters that survive; null keeps the rest.
 function routeUrl(route, base = window.location.href, carry = null) {
   const url = new URL(base);
@@ -1334,6 +1334,9 @@ function updateRail() {
   // Analytics shows once the project has set it up; before that its card in Integrations leads.
   document.querySelector('.nav-item[data-view="analytics"]').hidden =
     state.view !== "analytics" && !state.integrations.some((item) => item.key === ANALYTICS_KEY && item.connection_id);
+  // AI Visibility shows once the project has a stored week; it is read from Postgres, not set up.
+  document.querySelector('.nav-item[data-view="ai-visibility"]').hidden =
+    state.view !== "ai-visibility" && !state.systemSummary?.ai_visibility_weeks;
   updateAgentRail();
 }
 
@@ -1928,6 +1931,7 @@ function render() {
   }
   if (state.view !== "people" || state.projectAccess !== "ready") window.TinPeople?.close();
   if (state.view !== "analytics" || state.projectAccess !== "ready") window.TinAnalytics?.close();
+  if (state.view !== "ai-visibility" || state.projectAccess !== "ready") window.TinAIVisibility?.close();
   state.comparePage?.destroy();
   state.comparePage = null;
   disposeDocument();
@@ -1959,6 +1963,7 @@ function render() {
   if (state.view === "decisions") renderDecisions();
   if (state.view === "people") renderPeople();
   if (state.view === "analytics") renderAnalytics();
+  if (state.view === "ai-visibility") renderAIVisibility();
   if (state.view === "files") renderFiles();
   if (state.view === "integrations") renderIntegrations();
   if (state.view === "billing") window.TinBilling.mount(main, {
@@ -1987,6 +1992,14 @@ function renderPeople() {
     requests: () => state.linkedInRequests,
     openLinkedInCard: requests.openLinkedInCard,
     refreshRequests: requests.refresh,
+  });
+}
+
+function renderAIVisibility() {
+  window.TinAIVisibility.mount(main, {
+    api,
+    projectId: state.project.id,
+    brand: state.project.name,
   });
 }
 
@@ -6898,6 +6911,9 @@ function renderIntegrations() {
   bindIntegrationCardControls();
 }
 
+// Black marks that take the ink colour in the dark theme.
+const MONOCHROME_LOGOS = new Set(["infra.github", "infra.github_user", "social.x"]);
+
 function renderIntegrationCard(integration) {
   if (integration.merged) return renderLinkedInCard(integration);
   if (integration.key === ANALYTICS_KEY) return renderAnalyticsCard(integration);
@@ -6914,6 +6930,7 @@ function renderIntegrationCard(integration) {
     "payments.stripe": "/assets/integrations/stripe.svg",
     "analytics.posthog": "/assets/integrations/posthog.svg",
     "messaging.slack": "/assets/integrations/slack.svg",
+    "social.x": "/assets/integrations/x.svg",
   };
   const logo = logoPaths[integration.key]
     ? `<img src="${logoPaths[integration.key]}" alt="" />`
@@ -6945,7 +6962,7 @@ function renderIntegrationCard(integration) {
   const unlocks = (integration.unlocks || []).join(" · ");
   return `<article class="integration-card ${connected ? "is-connected" : "is-available"} ${needsResource ? "is-needs-setup" : ""} ${expanded ? "is-expanded" : ""}">
     <div class="integration-card-row">
-      <span class="integration-badge ${["infra.github", "infra.github_user"].includes(integration.key) ? "is-monochrome" : ""}" aria-hidden="true">${logo}</span>
+      <span class="integration-badge ${MONOCHROME_LOGOS.has(integration.key) ? "is-monochrome" : ""}" ${MONOCHROME_LOGOS.has(integration.key) ? `style="--logo-mask: url('${logoPaths[integration.key]}')"` : ""} aria-hidden="true">${logo}</span>
       <span class="integration-identity">
         <strong class="integration-name">${escapeHtml(integration.name)}</strong>
         <code class="integration-key">${escapeHtml(integration.key)}</code>
@@ -7528,7 +7545,7 @@ function renderLinkedInCard(card) {
     : `<button class="integration-connect" type="button" data-integration-expand="linkedin" aria-expanded="${expanded}">Connect</button>`;
   return `<article class="integration-card linkedin-card ${connected ? "is-connected" : "is-available"} ${readingSetup ? "is-needs-setup" : ""} ${expanded ? "is-expanded" : ""}">
     <div class="integration-card-row">
-      <span class="integration-badge" aria-hidden="true">in</span>
+      <span class="integration-badge" aria-hidden="true"><img src="/assets/integrations/linkedin.svg" alt="" /></span>
       <span class="integration-identity">
         <strong class="integration-name">LinkedIn</strong>
         <code class="integration-key">${escapeHtml(kinds)}</code>

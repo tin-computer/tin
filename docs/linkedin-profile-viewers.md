@@ -11,9 +11,7 @@ demand.
 ## Who can run it
 
 The same as engagers:
-- **Projects:** the [connection collection](connection-collection.md) allowlist
-  (`TIN_LITE_CONNECTION_COLLECTION_PROJECTS`). The workflow is hidden elsewhere, and a start is
-  refused.
+- **Projects:** every project, as for [connection collection](connection-collection.md).
 - **Runtime:** the LinkedIn cloud runtime, with an image that includes the viewers reads, and
   the native model service.
 - **Member:** each member runs it with their own LinkedIn connection, with cloud reading on and

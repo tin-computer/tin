@@ -170,6 +170,29 @@ async def _record_invoice_payment(workspace_id: UUID, amount_usd: str, *, refere
     print(f"{action} ${amount_usd} for {reference}; still unpaid: ${result['used_usd']}")
 
 
+async def _import_ai_visibility(project_id: UUID, path: Path) -> None:
+    """Operator-only: store a week's AI Visibility report for a project, replacing that week's
+    report if one is stored. The project's AI Visibility tab shows once it has one."""
+    from tin_lite.ai_visibility import AIVisibilityStore, parse_report
+
+    try:
+        report = parse_report(await asyncio.to_thread(path.read_bytes))
+    except (OSError, ValueError) as error:
+        raise SystemExit(f"{path}: {error}") from None
+    settings = get_settings()
+    database = Database(settings.runtime_dsn)
+    await database.connect()
+    try:
+        if await database.pool.fetchval("SELECT 1 FROM projects WHERE id = $1", project_id) is None:
+            raise SystemExit(f"project {project_id} does not exist")
+        replaced = await AIVisibilityStore(database).save(project_id, report)
+    finally:
+        await database.close()
+    answers = len(report.answers)
+    action = "replaced" if replaced else "stored"
+    print(f"{action} the week of {report.week_start} for project {project_id}: {answers} answers")
+
+
 async def _rollouts(run_id: UUID, *, out: Path | None, trace: bool, max_output_chars: int) -> None:
     """Operator-only read path for captured Codex rollouts; never a product surface."""
     settings = get_settings()
@@ -327,6 +350,12 @@ def main() -> None:
     invoice.add_argument("--workspace-id", required=True, type=UUID)
     invoice.add_argument("--amount-usd", required=True, help="such as 412.50")
     invoice.add_argument("--reference", required=True, help="the invoice number; one entry each")
+    visibility = commands.add_parser(
+        "import-ai-visibility",
+        help="store a week's AI Visibility report for a project (replaces that week's)",
+    )
+    visibility.add_argument("--project-id", required=True, type=UUID)
+    visibility.add_argument("--file", required=True, type=Path, help="the week's report JSON")
     rollouts = commands.add_parser(
         "rollouts", help="list, export, or print the Codex rollouts captured for a run"
     )
@@ -361,6 +390,8 @@ def main() -> None:
         asyncio.run(
             _record_invoice_payment(args.workspace_id, args.amount_usd, reference=args.reference)
         )
+    elif args.command == "import-ai-visibility":
+        asyncio.run(_import_ai_visibility(args.project_id, args.file))
     elif args.command == "rollouts":
         asyncio.run(
             _rollouts(

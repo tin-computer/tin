@@ -82,6 +82,8 @@ your own accounts before use; ordinary contributor tests need no production cred
 - [Analytics (Agent Traffic)](agent-traffic-connection.md): the pilot connection to Agent
   Traffic's edge service, its card, the Analytics page, durable removals, workflow reads and
   MCP's report.
+- [AI Visibility](ai-visibility.md): the weekly page of how often AI answer engines name and
+  recommend a project, its stored reports and the operator import.
 - [Failed-payment recovery](payment-recovery.md): the Revenue system's first workflow, from
   Stripe's failed payments to approved emails sent from the founder's Gmail.
 - [Paid ads assessment](paid-ads-assessment-implementation.md): the native LLM flow that decides

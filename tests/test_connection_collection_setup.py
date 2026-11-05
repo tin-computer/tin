@@ -37,7 +37,6 @@ async def harness(db, monkeypatch):
         definition=builtin.definition,
     )
     settings = SimpleNamespace(
-        connection_collection_projects=[str(project.id)],
         task_queue="test-collection",
         billing_enabled=False,
         switchboard_public_url="https://tin.test",

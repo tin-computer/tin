@@ -217,13 +217,65 @@
         });
     });
     article.querySelectorAll("figure.md-video").forEach((figure) => {
-      const url = figure.dataset.url || "";
       const title = figure.dataset.title || "";
+      if (figure.dataset.asset) {
+        bundleVideo(figure, assets, loadAsset, title);
+        return;
+      }
+      const url = figure.dataset.url || "";
       const player = videoPlayer(url, figure.dataset.poster, title);
       if (!player) return; // The link the server rendered stays.
       figure.replaceChildren(player);
       if (title) figure.append(makeElement("figcaption", "", title));
     });
+  }
+
+  // A video the draft carries: the file, its poster and its captions load with the member's
+  // session, like its figures, once the video comes near the screen.
+  function bundleVideo(figure, assets, loadAsset, title) {
+    if (!assets.has(figure.dataset.asset) || !loadAsset) {
+      figure.append(makeElement("div", "md-embed-missing", "This video isn't available."));
+      return;
+    }
+    const load = (path) =>
+      assets.has(path)
+        ? loadAsset(path).then((bytes) => URL.createObjectURL(new Blob([bytes], { type: assets.get(path) })))
+        : Promise.resolve(null);
+    const optional = (path) => load(path).catch(() => null);
+    const show = () =>
+      Promise.all([load(figure.dataset.asset), optional(figure.dataset.posterAsset), optional(figure.dataset.captionsAsset)])
+        .then(([src, poster, captions]) => {
+          const video = document.createElement("video");
+          video.className = "md-video-file";
+          video.controls = true;
+          video.preload = "metadata";
+          video.playsInline = true;
+          video.src = src;
+          if (poster) video.poster = poster;
+          if (captions) {
+            const track = document.createElement("track");
+            track.kind = "captions";
+            track.label = "Captions";
+            track.default = true;
+            track.src = captions;
+            video.append(track);
+          }
+          figure.replaceChildren(video);
+          if (title) figure.append(makeElement("figcaption", "", title));
+        })
+        .catch(() => {
+          figure.append(makeElement("div", "md-embed-missing", "This video couldn't load."));
+        });
+    if (!("IntersectionObserver" in window)) {
+      show();
+      return;
+    }
+    const watch = new IntersectionObserver((entries) => {
+      if (!entries.some((entry) => entry.isIntersecting)) return;
+      watch.disconnect();
+      show();
+    }, { rootMargin: "600px 0px" });
+    watch.observe(figure);
   }
 
   function wrapFigure(image) {

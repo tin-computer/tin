@@ -27,13 +27,13 @@ from pydantic import (
 )
 
 from tin_lite import analytics, project_task_control
+from tin_lite.ai_visibility import AIVisibilityStore
 from tin_lite.auth import AuthContext, require_user
 from tin_lite.billing_contracts import BillingError
 from tin_lite.campaign_revisions import request_email_campaign_revision
 from tin_lite.capture_revisions import ProposalFile
 from tin_lite.codex_api_relay import router as codex_api_router
 from tin_lite.connection_collection import validate_inputs as validate_collection_inputs
-from tin_lite.connection_collection import visible as collection_visible
 from tin_lite.connection_collection_api import router as collection_router
 from tin_lite.content_delivery_api import router as content_delivery_router
 from tin_lite.content_draft_api import router as content_draft_router
@@ -518,6 +518,7 @@ def _static_page(filename: str, request: Request) -> Response:
                 "/decisions",
                 "/people",
                 "/analytics",
+                "/ai-visibility",
                 "/files",
                 "/integrations",
                 "/billing",
@@ -978,6 +979,8 @@ class ProjectSystemView(BaseModel):
     timezone: str
     last_mcp_used_at: datetime | None = None
     last_mcp_tool_name: str | None = None
+    # Stored AI Visibility weeks; the dashboard shows the AI Visibility tab once there is one.
+    ai_visibility_weeks: int = 0
 
 
 class WeekRunView(BaseModel):
@@ -1555,6 +1558,7 @@ class GoogleAdsLinkRequest(BaseModel):
 @router.api_route("/decisions", methods=["GET", "HEAD"], include_in_schema=False)
 @router.api_route("/people", methods=["GET", "HEAD"], include_in_schema=False)
 @router.api_route("/analytics", methods=["GET", "HEAD"], include_in_schema=False)
+@router.api_route("/ai-visibility", methods=["GET", "HEAD"], include_in_schema=False)
 @router.api_route("/files", methods=["GET", "HEAD"], include_in_schema=False)
 @router.api_route("/integrations", methods=["GET", "HEAD"], include_in_schema=False)
 @router.api_route("/billing", methods=["GET", "HEAD"], include_in_schema=False)
@@ -2509,6 +2513,46 @@ async def analytics_page(
         raise _integration_http_error(exc) from None
 
 
+@router.get("/api/projects/{project_id}/ai-visibility")
+async def ai_visibility_page(
+    project_id: UUID,
+    request: Request,
+    response: Response,
+    week: date | None = None,
+    user: AuthContext = AUTHENTICATED_USER,
+) -> dict:
+    """The AI Visibility page for one week (any day in it; the latest when left out): its
+    questions by answer engines, the week's score and every stored week's totals."""
+    await _require_project_access(project_id, request, user)
+    response.headers["X-Tin-Read-Source"] = "postgres"
+    try:
+        return await AIVisibilityStore(request.app.state.runtime.database).page(project_id, week)
+    except LookupError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from None
+
+
+@router.get("/api/projects/{project_id}/ai-visibility/answers")
+async def ai_visibility_answers(
+    project_id: UUID,
+    request: Request,
+    response: Response,
+    week: date,
+    question: str = Query(min_length=1, max_length=64),
+    engine: str = Query(min_length=1, max_length=64),
+    user: AuthContext = AUTHENTICATED_USER,
+) -> dict:
+    """Every answer one engine gave to one question that week: the outcome, the quote, the
+    engine's search queries, the sources it cited and who it recommended instead."""
+    await _require_project_access(project_id, request, user)
+    response.headers["X-Tin-Read-Source"] = "postgres"
+    try:
+        return await AIVisibilityStore(request.app.state.runtime.database).answers(
+            project_id, week, question, engine
+        )
+    except LookupError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from None
+
+
 @router.post(
     "/api/projects/{project_id}/integrations/social.linkedin/refresh",
     response_model=IntegrationView,
@@ -2735,8 +2779,7 @@ async def list_workflows(
         item
         for item in workflows
         # Agent-only workflows (start here) run through the MCP; the catalog does not list them.
-        if collection_visible(request.app.state.settings, item, project_id)
-        and linkedin_visible(request.app.state.settings, item, project_id)
+        if linkedin_visible(request.app.state.settings, item, project_id)
         and not (item.definition or {}).get("agent_only")
         and (item.definition or {}).get("public_discovery", True)
         and (

@@ -75,18 +75,6 @@ def profile_url(value: str) -> str:
     return "https://www.linkedin.com/in/" + quote(identifier, safe="-._~")
 
 
-def enabled(settings, project_id: UUID | None) -> bool:
-    if project_id is None:
-        return False
-    values = getattr(settings, "connection_collection_projects", ())
-    return str(project_id) in {str(value) for value in values}
-
-
-def require_enabled(settings, project_id: UUID):
-    if not enabled(settings, project_id):
-        raise CollectionError("collection_unavailable")
-
-
 class ClosedModel(BaseModel):
     model_config = ConfigDict(extra="forbid", strict=True)
 
@@ -334,10 +322,6 @@ SESSION_EXECUTORS = frozenset(
         "social.linkedin_requests",
     }
 )
-
-
-def visible(settings, workflow, project_id):
-    return workflow.executor not in SESSION_EXECUTORS or enabled(settings, project_id)
 
 
 def personal(workflow) -> bool:
