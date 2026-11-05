@@ -100,7 +100,8 @@ test("a change shown in place rolls the word that changed, with no cut", {timeou
       const chloe = f.world.people.find(item => item.id === "p-chloe");
       chloe.fields.linkedin_relationship.value = "connected";
       chloe.requestable = false;
-      await f.open("/people", {ready: '.people-table tr[data-person="p-chloe"] td.is-name'});
+      // Wait for the new answer itself: the row is already there from before the reload.
+      await f.open("/people", {ready: '.people-table tr[data-person="p-chloe"] td.is-linkedin span:text-is("Connected")'});
     });
     await f.hold(0.8);
     await f.mark("poster");
