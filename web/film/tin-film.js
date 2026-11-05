@@ -88,9 +88,12 @@ export function note({film, report, folder, format}) {
 // printed and kept beside the take. A run has a few reviews; each costs a model call.
 export function reviewRequest(file, dir) {
   const report = JSON.parse(fs.readFileSync(path.join(dir, "report.json"), "utf8"));
-  const marks = fs.readdirSync(path.join(dir, "marks")).filter(name => name.endsWith(".png")).sort().slice(0, 11);
-  const images = [path.join(dir, "sheet.png"), ...marks.map(name => path.join(dir, "marks", name))]
-    .map(still => ({media_type: "image/png", data_base64: fs.readFileSync(still).toString("base64")}));
+  // A rehearsal's stills are JPEGs, a final take's PNGs.
+  const still = name => /\.(png|jpg)$/.test(name);
+  const marks = fs.readdirSync(path.join(dir, "marks")).filter(still).sort().slice(0, 11);
+  const sheet = fs.readdirSync(dir).find(name => name.startsWith("sheet.") && still(name));
+  const images = [path.join(dir, sheet), ...marks.map(name => path.join(dir, "marks", name))]
+    .map(file => ({media_type: file.endsWith(".jpg") ? "image/jpeg" : "image/png", data_base64: fs.readFileSync(file).toString("base64")}));
   const checks = [...report.issues.errors, ...report.issues.warnings, ...(report.summary ?? [])].join("\n");
   const spec = fs.readFileSync(file, "utf8");
   const request_id = crypto.createHash("sha256").update(spec).update(checks).update(images.map(image => image.data_base64).join("")).digest("hex").slice(0, 32);

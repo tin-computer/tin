@@ -249,11 +249,12 @@ test("a second look sends the take's sheet and marked stills with the spec and w
   fs.mkdirSync(path.join(take, "marks"), {recursive: true});
   const png = Buffer.from("89504e470d0a1a0a0000000049484452", "hex");
   fs.writeFileSync(path.join(take, "sheet.png"), png);
-  for (const name of ["01-poster.png", "02-how.png", "notes.txt"]) fs.writeFileSync(path.join(take, "marks", name), png);
+  for (const name of ["01-poster.png", "02-how.jpg", "notes.txt"]) fs.writeFileSync(path.join(take, "marks", name), png);
   fs.writeFileSync(path.join(take, "report.json"), JSON.stringify({issues: {errors: [], warnings: ["Text under 22px."]}, summary: ["0.5s jump"]}));
   const request = reviewRequest(file, take);
   assert.equal(request.images.length, 3, "the sheet and the two marked stills");
-  assert.ok(request.images.every(image => image.media_type === "image/png" && image.data_base64 === png.toString("base64")));
+  assert.deepEqual(request.images.map(image => image.media_type), ["image/png", "image/png", "image/jpeg"]);
+  assert.ok(request.images.every(image => image.data_base64 === png.toString("base64")));
   assert.equal(request.checks, "Text under 22px.\n0.5s jump");
   assert.equal(request.spec, fs.readFileSync(file, "utf8"));
   assert.match(request.request_id, /^[0-9a-f]{32}$/);
