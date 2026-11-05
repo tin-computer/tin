@@ -96,6 +96,9 @@ class Settings(BaseSettings):
     )
     dataforseo_login: SecretStr | None = Field(default=None, alias="DATAFORSEO_LOGIN")
     dataforseo_password: SecretStr | None = Field(default=None, alias="DATAFORSEO_PASSWORD")
+    # Optional cloro key for the chatgpt_cloro, gemini_cloro and google_ai_mode_cloro AI answer
+    # engines.
+    cloro_api_key: SecretStr | None = Field(default=None, alias="CLORO_API_KEY")
     # Operator-run Google Ads Keyword Planner service (gak). An HTTPS origin, or plain HTTP on
     # loopback only when the private-address flag is set explicitly.
     gak_url: str | None = Field(default=None, alias="TIN_LITE_GAK_URL")

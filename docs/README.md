@@ -101,7 +101,7 @@ your own accounts before use; ordinary contributor tests need no production cred
 - [Writing style capture](writing-style-capture.md) and [editorial judgment](content-editorial-judgment.md).
 - [Brand and design capture](brand-capture.md) and [reviewed document pairs](reviewed-project-documents.md).
 - [Organic system execution](organic-system-execution.md) and [content continuation](organic-content-continuation.md).
-- [AI answers through DataForSEO](ai-answers-dataforseo.md): what each answer engine measures,
+- [AI answers through DataForSEO and cloro](ai-answers-dataforseo.md): what each answer engine measures,
   vendor prices and how the organic audit calls it.
 - [Refreshing existing pages](content-refresh.md): the weekly page refresh and its exact source patch.
 - [Technical repair](technical-fix.md): site-fix-v5, the rules website.change applies to the latest audit.
