@@ -78,9 +78,9 @@ How a run goes:
    json; every file leak-scanned), and the review shows the note with the film playing.
    Approval binds the note and every file's checksum. Tin posts nothing.
 
-Version 1.0.0 films public pages only, captions only, one format a run. Signed-in features as
-Tin's test account, a second model's look at the stills, keeping the recording for re-renders,
-and video on LinkedIn drafts come next.
+Version 1.0.0 stages what Tin holds about the product in its public look and signs in nowhere;
+captions only, one format a run. A second model's look at the stills and video on LinkedIn drafts
+come next.
 
 ## How a character run works (no sandbox)
 
