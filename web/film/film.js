@@ -125,6 +125,8 @@ export class Director {
     this.findings = [];
     // Frames shot while the camera followed the hand: it crops through the screen as it goes.
     this.followed = [];
+    // Where each frame's time goes (ms by stage), for the report: a slow scene says why.
+    this.timing = {};
     this.wide = size.width > size.height;
     this.n = 0;
     this.recording = true;
@@ -604,6 +606,10 @@ export class Director {
 
   // Keep the frame just shot: the poster, and the stills of the contact sheet.
   async mark(name) {
+    if (this.dry) {
+      this.marks[name] = {frame: this.n - 1, png: null};
+      return;
+    }
     if (!this.last) throw new Error(`Mark ${name} before any frame was shot.`);
     this.marks[name] = {frame: this.n - 1, png: this.last};
     // A following camera crops through the screen as it goes, as Screen Studio's does; a framed
@@ -667,9 +673,22 @@ export class Director {
   // One frame: the tracks move on, the pointer goes where the cursor is drawn (on a trip, onto the
   // caption band, which hides it from the page), time moves 1/30 s, every request lands, the
   // overlay is drawn and the frame is shot.
+  // Time a stage of the shot.
+  async timed(label, work) {
+    const start = performance.now();
+    try {
+      return await work();
+    } finally {
+      this.timing[label] = (this.timing[label] ?? 0) + performance.now() - start;
+    }
+  }
+
   async shoot() {
-    for (const track of [...this.tracks]) if (await track()) this.tracks.delete(track);
-    if (this.follower) await this.track();
+    const start = performance.now();
+    await this.timed("director", async () => {
+      for (const track of [...this.tracks]) if (await track()) this.tracks.delete(track);
+      if (this.follower) await this.track();
+    });
     // On a trip the page sees the pointer only once the hand is over what it's going to, so a
     // hover starts as it enters, not when it stops.
     const {x, y} = this.cursor;
@@ -684,15 +703,27 @@ export class Director {
     // Inside the screen: its marks, and which cursor it would show at the hand. Then the stage.
     const state = this.state();
     const point = state.cursor.visible ? this.onScreen({x: state.cursor.x, y: state.cursor.y}) : null;
-    state.cursor.kind = await this.app.evaluate(work => window.__film.frame(work),
-      {highlights: state.highlights.map(mark => this.onScreen(mark)), cursor: point});
-    await this.page.evaluate(state => window.__film.render(state), state);
+    await this.timed("draw", async () => {
+      state.cursor.kind = await this.app.evaluate(work => window.__film.frame(work),
+        {highlights: state.highlights.map(mark => this.onScreen(mark)), cursor: point});
+      await this.page.evaluate(state => window.__film.render(state), state);
+    });
+    if (this.dry) {
+      // A frame played and drawn but not shot (a desk's scenes before `from`): every count, path
+      // and transform moves on as in a full take, so what follows is filmed exactly as it would be.
+      const shown = this.picture;
+      this.lens.push([shown.x + shown.width / 2, shown.y + shown.height / 2, shown.width].map(value => Math.round(value * 10) / 10));
+      this.trail.push(state.cursor.visible ? [(state.cursor.x - shown.x) / shown.width, (state.cursor.y - shown.y) / shown.height] : null);
+      this.hashes.push(null);
+      this.n++;
+      return;
+    }
     // The page is the shot, at the output's size.
-    const png = await this.page.screenshot({type: "png"});
+    const png = await this.timed("screenshot", () => this.page.screenshot({type: "png"}));
     this.hashes.push(crypto.createHash("sha1").update(png).digest("hex").slice(0, 12));
     if (this.checking) {
       const cursor = state.cursor.visible ? await this.page.evaluate(([frame, point]) => window.__film.toView(frame, point), [this.frame, {x: state.cursor.x, y: state.cursor.y}]) : null;
-      this.measured.push(await measureFrame(this.page, this.pages(), {f: this.n, cursor, products: this.products()}));
+      this.measured.push(await this.timed("probe", () => measureFrame(this.page, this.pages(), {f: this.n, cursor, products: this.products()})));
       this.followed[this.n] = Boolean(this.follower);
     }
     const shown = this.picture;
@@ -701,8 +732,10 @@ export class Director {
     // Where the hand was, in the picture's own terms (0 to 1 across and down), for the path check.
     this.trail.push(state.cursor.visible ? [(state.cursor.x - shown.x) / shown.width, (state.cursor.y - shown.y) / shown.height] : null);
     this.last = png;
-    await this.sink(png);
+    await this.timed("encode", () => this.sink(png));
     this.n++;
+    this.timing.frames = (this.timing.frames ?? 0) + 1;
+    this.timing.total = (this.timing.total ?? 0) + performance.now() - start;
   }
 
   // The pages the stage shows, by their iframe's id, for the probe.
@@ -727,8 +760,10 @@ export class Director {
 
   // Time moves 1/30 s in the window, and every request it made lands.
   async tick() {
-    await this.app.evaluate(() => window.__film.clock.step(1));
-    await quiet(this.app);
+    await this.timed("tick", async () => {
+      await this.app.evaluate(() => window.__film.clock.step(1));
+      await quiet(this.app);
+    });
   }
 
   state() {
@@ -842,7 +877,10 @@ function stagePage({screen, margin: m, room, view, backdrop, theme, fonts, start
 }
 
 // Film one format: serve the world, open the dashboard under the virtual clock, play the script.
-export async function shoot(film, {format = "4:5", theme = film.theme || "dark", out, fonts = null, encode = true, check = false} = {}) {
+// A rehearsal (`rehearse`) shoots the same layout at one device px per CSS px instead of two, a
+// quarter of the pixels, encodes fast and skips the GIF and the motion strips: for working out a
+// film, with every check on. The final take is shot at two.
+export async function shoot(film, {format = "4:5", theme = film.theme || "dark", out, fonts = null, encode = true, check = false, rehearse = false} = {}) {
   const size = FORMATS[format];
   if (!size) throw new Error(`Unknown format ${format}; use ${Object.keys(FORMATS).join(", ")}.`);
   const world = film.world();
@@ -856,7 +894,7 @@ export async function shoot(film, {format = "4:5", theme = film.theme || "dark",
   fs.mkdirSync(dir, {recursive: true});
   const mp4 = path.join(dir, "film.mp4");
   const encoder = encode && ffmpeg(["-f", "image2pipe", "-framerate", String(FPS), "-c:v", "png", "-i", "-",
-    "-vf", `scale=${size.width}:${size.height}:flags=lanczos,format=yuv420p`, "-c:v", "libx264", "-preset", "slow", "-crf", "18",
+    "-vf", `scale=${size.width}:${size.height}:flags=lanczos,format=yuv420p`, "-c:v", "libx264", ...(rehearse ? ["-preset", "ultrafast", "-crf", "23"] : ["-preset", "slow", "-crf", "18"]),
     "-movflags", "+faststart", "-an", mp4]);
   try {
     // A number, or one per format: a tall film that closes in on a panel needs more pixels.
@@ -864,7 +902,7 @@ export async function shoot(film, {format = "4:5", theme = film.theme || "dark",
     // the room inside it, so text is drawn at whatever scale the camera needs.
     const deviceScale = 2;
     const view = {width: size.width / deviceScale, height: size.height / deviceScale};
-    const context = await browser.newContext({viewport: view, deviceScaleFactor: deviceScale, colorScheme: theme, timezoneId: film.timezone || "UTC", locale: "en-US"});
+    const context = await browser.newContext({viewport: view, deviceScaleFactor: rehearse ? 1 : deviceScale, colorScheme: theme, timezoneId: film.timezone || "UTC", locale: "en-US"});
     const backdrop = BACKDROP[theme] || BACKDROP.dark;
     await context.route("**/*", async route => {
       const url = route.request().url();
@@ -937,8 +975,8 @@ export async function shoot(film, {format = "4:5", theme = film.theme || "dark",
     if (encoder) {
       encoder.child.stdin.end();
       await encoder.done;
-      await stills(director, size, dir);
-      await motionStrips(director, size, dir);
+      await stills(director, size, dir, {gif: !rehearse});
+      if (!rehearse) await motionStrips(director, size, dir);
       fs.writeFileSync(path.join(dir, "captions.srt"), srt(director.captions, director.n));
       report.bytes = Object.fromEntries(fs.readdirSync(dir).filter(name => name.includes(".")).map(name => [name, fs.statSync(path.join(dir, name)).size]));
       if (report.bytes["film.gif"] > 15 * 1024 * 1024) issues.warnings.push("The GIF is over X's 15 MB.");
@@ -963,9 +1001,10 @@ export async function shoot(film, {format = "4:5", theme = film.theme || "dark",
 
 // Each mark at full size (the poster among them), a contact sheet of them, and a GIF small
 // enough for X (15 MB).
-export async function stills(director, size, dir) {
+export async function stills(director, size, dir, {gif = true} = {}) {
   fs.mkdirSync(path.join(dir, "marks"));
-  const marks = Object.entries(director.marks).sort(([, a], [, b]) => a.frame - b.frame);
+  // A mark in a scene played dry has no frame to show.
+  const marks = Object.entries(director.marks).filter(([, mark]) => mark.png).sort(([, a], [, b]) => a.frame - b.frame);
   const files = [];
   for (const [index, [name, mark]] of marks.entries()) {
     const file = path.join(dir, "marks", `${String(index + 1).padStart(2, "0")}-${name}.png`);
@@ -976,6 +1015,7 @@ export async function stills(director, size, dir) {
   // Every still is the same size by now: ffmpeg's tile starts over whenever the size changes.
   const columns = Math.min(3, files.length);
   await encodeStills(files.map(file => fs.readFileSync(file)), ["-vf", `scale=${Math.round(size.width / 2.5)}:-2:flags=lanczos,tile=${columns}x${Math.ceil(files.length / columns)}:padding=24:margin=24:color=0x44403a`, "-frames:v", "1", path.join(dir, "sheet.png")]);
+  if (!gif) return;
   const width = Math.round(size.width * (size.width > size.height ? 0.5 : 0.6) / 2) * 2;
   await ffmpeg(["-i", path.join(dir, "film.mp4"), "-vf", `fps=15,scale=${width}:-2:flags=lanczos,split[a][b];[a]palettegen=stats_mode=diff[p];[b][p]paletteuse=dither=bayer:bayer_scale=4`, path.join(dir, "film.gif")]).done;
 }
@@ -1005,7 +1045,7 @@ export async function loadFilm(name) {
 }
 
 async function main(argv) {
-  const options = {format: "4:5,16:9", theme: "dark", out: ".films", fonts: process.env.TIN_FILM_FONTS || null, check: "off"};
+  const options = {format: "4:5,16:9", theme: "dark", out: ".films", fonts: process.env.TIN_FILM_FONTS || null, check: "off", rehearse: "off"};
   const names = [];
   for (let i = 0; i < argv.length; i++) {
     if (argv[i].startsWith("--")) options[argv[i].slice(2)] = argv[++i];
@@ -1017,7 +1057,9 @@ async function main(argv) {
   for (const name of names) {
     const film = await loadFilm(name);
     for (const format of options.format.split(",")) {
-      const {dir, report} = await shoot(film, {format, theme: options.theme, out: options.out, fonts, check: options.check === "on"});
+      // A rehearsal is for working a film out, so its checks are always on.
+      const rehearse = options.rehearse === "on";
+      const {dir, report} = await shoot(film, {format, theme: options.theme, out: options.out, fonts, check: rehearse || options.check === "on", rehearse});
       const {errors, warnings, blocked} = report.issues;
       console.log(`${film.name} ${format}: ${report.frames} frames, ${report.seconds.toFixed(1)}s → ${dir}`);
       for (const line of errors) console.log(`  error: ${line}`);

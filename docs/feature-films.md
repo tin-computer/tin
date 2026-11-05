@@ -185,7 +185,22 @@ is the example.
 npm run film:desk -- accelerator-demo                              # one take at full pace
 npm run film:desk -- accelerator-demo --pace brisk
 npm run film:desk -- accelerator-demo --pace site=brisk,people=full --until files
+npm run film:desk -- accelerator-demo --rehearse on                # quick, every check on
+npm run film:desk -- accelerator-demo --from decisions --until decisions
 ```
+
+- **Rehearsing.** `--rehearse on` (also for `npm run film`) shoots the same layout at one device px
+  per CSS px instead of two, a quarter of the pixels, encodes fast, skips the GIF and the motion
+  strips, and turns every check on. The brisk accelerator demo rehearses in about 2 minutes 15
+  seconds; film 1's two formats in about a minute. Take the final film without it.
+- **One scene.** `--from <scene>` plays the scenes before it dry: every step, wait and draw happens
+  and the frame count moves on, but nothing is shot or encoded, a few ms a frame. The scenes from
+  it on are filmed exactly as in a full take (the Decisions scene matched a full take on all 531
+  frames), and the video, marks and captions start there. With `--until` it films a single scene.
+- **Where the time goes.** Each scene in the output and `report.json` gives its render cost in ms a
+  frame and its three slowest stages: the screenshot (about 50 ms of a final frame, 20 of a
+  rehearsal), the probe with checks on, and each window's step. Stepping a window nobody sees costs
+  about a millisecond.
 
 - **Scenes and paces.** Each scene has a full and a brisk pace. Brisk cuts holds, types faster
   and leaves out the beats and captions marked optional. A caption stays up for its reading

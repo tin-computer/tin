@@ -196,23 +196,29 @@ export class DeskDirector extends Director {
   }
 
   async tick() {
-    for (const frame of new Set(Object.values(this.frames))) {
-      await frame.evaluate(() => window.__film?.clock?.step(1));
-      await quiet(frame);
+    for (const [pane, frame] of Object.entries(this.frames)) {
+      await this.timed(`tick ${pane}`, async () => {
+        await frame.evaluate(() => window.__film?.clock?.step(1));
+        await quiet(frame);
+      });
     }
-    await this.page.evaluate(windows => window.__desk.windows(windows), this.windows);
+    await this.timed("windows", () => this.page.evaluate(windows => window.__desk.windows(windows), this.windows));
   }
 
   // A scene: a name for the sheet and the segments, its pace, and its own camera rules.
   async scene(name, pace, play) {
     this.pace = pace;
     const start = this.n;
+    const timing = {...this.timing};
     const moves = this.moves.length, journeys = this.journeys.length;
     await play();
     await this.read();
     this.caption(null);
     this.check(name, start);
-    this.scenes.push({name, pace, start, end: this.n});
+    // What this scene's frames cost to render, by stage, in ms per frame.
+    const frames = Math.max(1, (this.timing.frames ?? 0) - (timing.frames ?? 0));
+    const cost = Object.fromEntries(Object.entries(this.timing).filter(([label]) => label !== "frames").map(([label, ms]) => [label, Math.round((ms - (timing[label] ?? 0)) / frames)]));
+    this.scenes.push({name, pace, start, end: this.n, cost});
     // Stageshow's rules hold per scene: one push-in, a few moves, no detours.
     const film = {moves: this.moves, journeys: this.journeys};
     this.moves = this.moves.slice(moves);
@@ -432,7 +438,9 @@ function cached(dir) {
 }
 
 // Film a desk film: serve its world, open the desk, play its scenes in order, encode.
-export async function shootDesk(film, {pace = {}, theme = "dark", out = ".films", fonts = null, until = null, check = false} = {}) {
+// `from` plays the scenes before it unfilmed, so a rehearsal of one scene starts at once; `until`
+// stops after a scene; `rehearse` shoots at one device px per CSS px and encodes fast (film.js).
+export async function shootDesk(film, {pace = {}, theme = "dark", out = ".films", fonts = null, from = null, until = null, check = false, rehearse = false} = {}) {
   const {serve, siteUrl, start, member = "Avery", ready = "main"} = film.desk;
   const now = Date.parse(film.now);
   const served = await serve({now: () => new Date(now)});
@@ -446,12 +454,12 @@ export async function shootDesk(film, {pace = {}, theme = "dark", out = ".films"
   fs.mkdirSync(path.join(dir, "segments"), {recursive: true});
   const mp4 = path.join(dir, "film.mp4");
   const encode = file => ffmpeg(["-f", "image2pipe", "-framerate", String(FPS), "-c:v", "png", "-i", "-",
-    "-vf", `scale=${DESK.width}:${DESK.height}:flags=lanczos,format=yuv420p`, "-c:v", "libx264", "-preset", "slow", "-crf", "18", "-movflags", "+faststart", "-an", file]);
+    "-vf", `scale=${DESK.width}:${DESK.height}:flags=lanczos,format=yuv420p`, "-c:v", "libx264", ...(rehearse ? ["-preset", "ultrafast", "-crf", "23"] : ["-preset", "slow", "-crf", "18"]), "-movflags", "+faststart", "-an", file]);
   let encoder = encode(mp4);
   try {
     const deviceScale = 2;
     const view = {width: DESK.width / deviceScale, height: DESK.height / deviceScale};
-    const context = await browser.newContext({viewport: view, deviceScaleFactor: deviceScale, colorScheme: theme, timezoneId: film.timezone || "UTC", locale: "en-US"});
+    const context = await browser.newContext({viewport: view, deviceScaleFactor: rehearse ? 1 : deviceScale, colorScheme: theme, timezoneId: film.timezone || "UTC", locale: "en-US"});
     const local = new URL(served.base).origin;
     const site = new URL(siteUrl).origin;
     await context.grantPermissions(["clipboard-read", "clipboard-write"], {origin: site});
@@ -511,7 +519,18 @@ export async function shootDesk(film, {pace = {}, theme = "dark", out = ".films"
     director.recording = true;
 
     const paceOf = name => pace[name] || pace.all || "full";
+    if (from && !film.scenes.some(scene => scene.name === from)) throw new Error(`No scene called ${from}: ${film.scenes.map(scene => scene.name).join(", ")}.`);
+    let filming = !from;
+    let first = 0;
     for (const [index, scene] of film.scenes.entries()) {
+      if (!filming && scene.name === from) first = director.n;
+      filming ||= scene.name === from;
+      director.dry = !filming;
+      if (!filming) {
+        // Played, not shot: time passes and the world moves on as in a full take, a few ms a frame.
+        await director.scene(scene.name, paceOf(scene.name), () => scene.play(director));
+        continue;
+      }
       segment = encode(path.join(dir, "segments", `${String(index + 1).padStart(2, "0")}-${scene.name}-${paceOf(scene.name)}.mp4`));
       await director.scene(scene.name, paceOf(scene.name), () => scene.play(director));
       segment.child.stdin.end();
@@ -530,11 +549,15 @@ export async function shootDesk(film, {pace = {}, theme = "dark", out = ".films"
     encoder.child.stdin.end();
     await encoder.done;
     encoder = null;
-    await stills(director, DESK, dir);
-    await motionStrips(director, DESK, dir);
-    fs.writeFileSync(path.join(dir, "captions.srt"), srt(director.captions, director.n));
+    await stills(director, DESK, dir, {gif: !rehearse});
+    if (!rehearse && !from) await motionStrips(director, DESK, dir);
+    // From a later scene, the video starts there, and so do its captions.
+    const shown = director.captions.filter(item => (item.end ?? director.n) > first).map(item => ({...item, start: Math.max(0, item.start - first), end: item.end === null ? null : item.end - first}));
+    fs.writeFileSync(path.join(dir, "captions.srt"), srt(shown, director.n - first));
     const scenes = director.scenes.map(item => ({...item, seconds: Math.round(((item.end - item.start) / FPS) * 10) / 10}));
     const report = {film: film.name, title: film.title, size: DESK, frames: director.n, seconds: director.n / FPS, scenes, captions: director.captions, hashes: director.hashes, issues};
+    // Filmed from a later scene: the video holds frames `first` on.
+    if (from) report.from = {scene: from, frame: first};
     if (director.checking) report.checks = director.findings.map(describe);
     if (director.checking) report.summary = summary(director.findings);
     fs.writeFileSync(path.join(dir, "report.json"), `${JSON.stringify(report, null, 2)}\n`);
@@ -571,9 +594,17 @@ async function main(argv) {
     // Each scene is code (`play`) or data (`beats`, with the film's named `values`).
     const scenes = module.scenes.map(scene => ({...scene, play: player(scene, module.values, `scene ${scene.name}`)}));
     const film = {name, ...module, scenes};
-    const {dir, report} = await shootDesk(film, {pace, out: options.out, fonts, until: options.until || null, check: options.check === "on"});
+    const rehearse = options.rehearse === "on";
+    const {dir, report} = await shootDesk(film, {pace, out: options.out, fonts, from: options.from || null, until: options.until || null, check: rehearse || options.check === "on", rehearse});
     console.log(`${film.name}: ${report.frames} frames, ${report.seconds.toFixed(1)}s → ${dir}`);
-    for (const scene of report.scenes) console.log(`  ${scene.name} (${scene.pace}): ${scene.seconds}s`);
+    for (const scene of report.scenes) {
+      if (!scene.cost.total) {
+        console.log(`  ${scene.name} (${scene.pace}): ${scene.seconds}s, played, not shot`);
+        continue;
+      }
+      const slowest = Object.entries(scene.cost).filter(([label]) => label !== "total").sort((a, b) => b[1] - a[1]).slice(0, 3).map(([label, ms]) => `${label} ${ms}`).join(", ");
+      console.log(`  ${scene.name} (${scene.pace}): ${scene.seconds}s, ${scene.cost.total} ms a frame (${slowest})`);
+    }
     for (const line of report.issues.errors) console.log(`  error: ${line}`);
     for (const line of report.issues.warnings) console.log(`  warning: ${line}`);
     if (report.issues.blocked.length) console.log(`  blocked: ${report.issues.blocked.join(", ")}`);
