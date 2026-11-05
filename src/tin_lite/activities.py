@@ -3372,10 +3372,13 @@ class TinActivities:
                         details={"previous_sandbox_id": previous_sandbox_id},
                         dedupe_key=f"{execution_key}:sandbox_recovered:{sandbox_id}",
                     )
+                # The push credential outlives the sandbox by a little, as its run grants do: a
+                # procedure that delivers late in its hour can still push its result.
                 remotes = self._storage.sandbox_remotes(
                     repo_id=project.state_repo_id,
                     branch=run.ephemeral_branch,
                     subject=f"run:{run.id}:procedure",
+                    ttl_seconds=max(900, procedure.sandbox.timeout_seconds + 120),
                 )
                 public_host = urlsplit(self._settings.switchboard_public_url).hostname
                 if not public_host:

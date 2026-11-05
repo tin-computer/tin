@@ -304,19 +304,23 @@ class CodeStorage:
         commits = result.get("commits", [])
         return commits[0]["sha"] if commits else None
 
-    def sandbox_remotes(self, *, repo_id: str, branch: str, subject: str) -> SandboxRemotes:
+    def sandbox_remotes(
+        self, *, repo_id: str, branch: str, subject: str, ttl_seconds: int = 900
+    ) -> SandboxRemotes:
+        """A sandbox's read and push credentials, living as long as the sandbox may (`ttl_seconds`):
+        a run that works past the default fifteen minutes can still push what it made."""
         canonical_token = self._generate_token(
             repo_id=repo_id,
             scopes=["git:read"],
             subject=f"{subject}:read",
-            ttl=900,
+            ttl=ttl_seconds,
         )
         ephemeral_ref = f"refs/namespaces/ephemeral/refs/heads/{branch}"
         ephemeral_token = self._generate_token(
             repo_id=repo_id,
             scopes=["git:read", "git:write"],
             subject=f"{subject}:write",
-            ttl=900,
+            ttl=ttl_seconds,
             refs=[
                 [ephemeral_ref, ["no-force-push"]],
                 ["*", ["no-push"]],
