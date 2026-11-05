@@ -11,6 +11,7 @@ import {pathToFileURL} from "node:url";
 import {chromium} from "playwright";
 import {checkFrames, describe, summary} from "./checks.js";
 import {measureFrame} from "./probe.js";
+import {findSecrets, openRecording} from "./recording.js";
 import {player} from "./spec.js";
 import {serveApp} from "../app-fixture.js";
 import {installVirtualClock} from "./clock.js";
@@ -880,12 +881,20 @@ function stagePage({screen, margin: m, room, view, backdrop, theme, fonts, start
 // A rehearsal (`rehearse`) shoots the same layout at one device px per CSS px instead of two, a
 // quarter of the pixels, encodes fast and skips the GIF and the motion strips: for working out a
 // film, with every check on. The final take is shot at two.
-export async function shoot(film, {format = "4:5", theme = film.theme || "dark", out, fonts = null, encode = true, check = false, rehearse = false} = {}) {
+// A film's world is Tin's dashboard on a demo world (`serve`), or a live site played from its
+// recording (`site`: {url, recording, reads, answer, secrets, session}, recording.js). `record`
+// plays the site live where its recording has no answer yet, and saves what it gets. `session` is
+// a signed-in browser's storage state (Playwright's), for a site behind sign-in: its cookies go
+// with each request and are never saved, and their values are among the secrets looked for.
+export async function shoot(film, {format = "4:5", theme = film.theme || "dark", out, fonts = null, encode = true, check = false, rehearse = false, record = false} = {}) {
   const size = FORMATS[format];
   if (!size) throw new Error(`Unknown format ${format}; use ${Object.keys(FORMATS).join(", ")}.`);
   const world = film.world();
   const now = Date.parse(film.now);
   const served = await serveApp({decisionCount: 0, ...world.serve, now: () => new Date(now)});
+  const site = world.site;
+  const recordingDir = site && path.resolve(".films/worlds", site.recording);
+  const recording = site && openRecording(recordingDir, {record, reads: site.reads, answer: site.answer});
   const {screen, margin, room, viewport} = stage(size, film.screens?.[format]);
   const browser = await chromium.launch({headless: true});
   const issues = {errors: [], warnings: [], blocked: []};
@@ -902,16 +911,17 @@ export async function shoot(film, {format = "4:5", theme = film.theme || "dark",
     // the room inside it, so text is drawn at whatever scale the camera needs.
     const deviceScale = 2;
     const view = {width: size.width / deviceScale, height: size.height / deviceScale};
-    const context = await browser.newContext({viewport: view, deviceScaleFactor: rehearse ? 1 : deviceScale, colorScheme: theme, timezoneId: film.timezone || "UTC", locale: "en-US"});
+    const context = await browser.newContext({viewport: view, deviceScaleFactor: rehearse ? 1 : deviceScale, colorScheme: theme, timezoneId: film.timezone || "UTC", locale: "en-US", ...(site?.session ? {storageState: site.session} : {})});
     const backdrop = BACKDROP[theme] || BACKDROP.dark;
     await context.route("**/*", async route => {
       const url = route.request().url();
       if (!url.startsWith(served.base)) {
+        if (recording) return recording.route(route);
         issues.blocked.push(new URL(url).origin);
         return route.abort();
       }
       const {pathname} = new URL(url);
-      if (pathname === STAGE) return route.fulfill({body: stagePage({screen, margin, room, view, backdrop, theme, fonts: Boolean(fonts), start: `${world.start || "/system"}?project=project`}), contentType: "text/html"});
+      if (pathname === STAGE) return route.fulfill({body: stagePage({screen, margin, room, view, backdrop, theme, fonts: Boolean(fonts), start: site ? site.url : `${world.start || "/system"}?project=project`}), contentType: "text/html"});
       // Clerk is stubbed (below); the fixture leaves its script address unfilled.
       if (decodeURIComponent(pathname).startsWith("/{{CLERK_FRONTEND_API_URL}}/")) return route.fulfill({body: "", contentType: "text/javascript"});
       if (pathname.startsWith("/film-fonts/") && fonts?.has(path.basename(pathname))) {
@@ -969,7 +979,14 @@ export async function shoot(film, {format = "4:5", theme = film.theme || "dark",
     issues.blocked = [...new Set(issues.blocked)];
     if (!director.marks.poster) issues.errors.push("The film never marks its poster.");
     if (director.n / FPS > 140) issues.warnings.push("Longer than X's 2 minutes 20 seconds.");
+    const recorded = recording?.close();
+    if (recorded?.misses.length) issues.errors.push(`The recording ${site.recording} has no answer for ${recorded.misses.length} request${recorded.misses.length === 1 ? "" : "s"}${record ? " (the live site didn't answer)" : "; record it again with --record on"}: ${recorded.misses.slice(0, 5).join(", ")}.`);
+    if (recorded?.stopped.length) issues.errors.push(`The film reached for ${recorded.stopped.length} outside effect${recorded.stopped.length === 1 ? "" : "s"} live, which a recording never sends; stage the answer, or name it in reads if it only reads: ${recorded.stopped.slice(0, 5).join(", ")}.`);
+    const cookies = site?.session ? JSON.parse(fs.readFileSync(site.session, "utf8")).cookies?.map(cookie => cookie.value) ?? [] : [];
+    const leaks = site ? findSecrets(recordingDir, [...(site.secrets || []), ...cookies]) : [];
+    if (leaks.length) issues.errors.push(`The recording ${site.recording} holds a secret in ${leaks.length} answer${leaks.length === 1 ? "" : "s"}: ${leaks.slice(0, 3).join(", ")}. Delete those answers and record again.`);
     const report = {film: film.name, title: film.title, format, size, frames: director.n, seconds: director.n / FPS, hashes: director.hashes, trail: director.trail, lens: director.lens, issues};
+    if (recorded) report.recording = {name: site.recording, ...recorded};
     if (director.checking) report.checks = director.findings.map(describe);
     if (director.checking) report.summary = summary(director.findings);
     if (encoder) {
@@ -1045,7 +1062,7 @@ export async function loadFilm(name) {
 }
 
 async function main(argv) {
-  const options = {format: "4:5,16:9", theme: "dark", out: ".films", fonts: process.env.TIN_FILM_FONTS || null, check: "off", rehearse: "off"};
+  const options = {format: "4:5,16:9", theme: "dark", out: ".films", fonts: process.env.TIN_FILM_FONTS || null, check: "off", rehearse: "off", record: "off"};
   const names = [];
   for (let i = 0; i < argv.length; i++) {
     if (argv[i].startsWith("--")) options[argv[i].slice(2)] = argv[++i];
@@ -1059,7 +1076,7 @@ async function main(argv) {
     for (const format of options.format.split(",")) {
       // A rehearsal is for working a film out, so its checks are always on.
       const rehearse = options.rehearse === "on";
-      const {dir, report} = await shoot(film, {format, theme: options.theme, out: options.out, fonts, check: rehearse || options.check === "on", rehearse});
+      const {dir, report} = await shoot(film, {format, theme: options.theme, out: options.out, fonts, check: rehearse || options.check === "on", rehearse, record: options.record === "on"});
       const {errors, warnings, blocked} = report.issues;
       console.log(`${film.name} ${format}: ${report.frames} frames, ${report.seconds.toFixed(1)}s → ${dir}`);
       for (const line of errors) console.log(`  error: ${line}`);
