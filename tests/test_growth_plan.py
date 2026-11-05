@@ -1088,6 +1088,8 @@ def test_definition_pins_the_contract_and_the_assets_stay_consistent():
     )
     # content.plan's planning agent runs only inside content.plan.
     hidden.add("content.plan_research")
+    # A seed post starts from material the founder's agent supplies, so the plan can't schedule it.
+    hidden.add("content.seed_post")
     assert titles == {
         key: title
         for key, title in (
