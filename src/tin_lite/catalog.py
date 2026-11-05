@@ -185,7 +185,8 @@ PAYMENT_RECOVERY_WORKFLOW_ID = UUID("00000000-0000-4000-8000-000000000046")
 # new built-in must take a fresh number above the highest ever used, never fill a gap.
 # content.plan 1.0.0's planning agent (content_plan_agent).
 CONTENT_PLAN_RESEARCH_WORKFLOW_ID = UUID("00000000-0000-4000-8000-000000000047")
-CREATIVE_FEATURE_FILM_WORKFLOW_ID = UUID("00000000-0000-4000-8000-000000000048")
+# …048 is taken on staging by an unmerged branch (codex/launch-video-integration).
+CREATIVE_FEATURE_FILM_WORKFLOW_ID = UUID("00000000-0000-4000-8000-000000000049")
 RETIRED_BUILTIN_WORKFLOW_IDS = {
     UUID("00000000-0000-4000-8000-000000000018"): "strategy.prescribe",
     UUID("00000000-0000-4000-8000-000000000019"): "strategy.wildcards",

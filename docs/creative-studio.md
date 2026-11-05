@@ -55,7 +55,7 @@ the `tin-film` command.
 | Toolkit | `web/film/tin-film.js`, `inspect.js` and the kit, in the image at `/opt/tin-lite/diagram/web/film/` | `inspect`, `record`, `rehearse`, `render`, `deliver`; runs on the diagram layer's pinned Playwright Chromium (`sandbox/tin_film.sh`) |
 | Contract | `studio_contracts.parse_feature_film`, `validate_feature_film_video` (both copies) | the note plays exactly one film from its own folder; the film is a fast-start MP4 at 1080x1350, 1080x1080 or 1920x1080, 8 to 90 s |
 | Procedure | `codex_procedures/creative.feature_film/` | prompt, skill, and `film-format.md` (the JSON film and its beats) |
-| Catalog | `src/tin_lite/catalog.py` | id `…048`, `FEATURE_FILM_REVIEW_POLICY`, on demand, inputs `slug`, `product_url`, `feature`, `angle`, `format`, `notes` |
+| Catalog | `src/tin_lite/catalog.py` | id `…049`, `FEATURE_FILM_REVIEW_POLICY`, on demand, inputs `slug`, `product_url`, `feature`, `angle`, `format`, `notes` |
 
 How a run goes:
 
