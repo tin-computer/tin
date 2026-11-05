@@ -14,9 +14,10 @@ import fs from "node:fs";
 import path from "node:path";
 import {pathToFileURL} from "node:url";
 import {chromium} from "playwright";
+import {describe, summary} from "./checks.js";
 import {player} from "./spec.js";
 import {installVirtualClock} from "./clock.js";
-import {BACKDROP, Director, FPS, ffmpeg, loadFonts, motionStrips, quiet, srt, stills} from "./film.js";
+import {BACKDROP, Director, FPS, avatar, ffmpeg, loadFonts, motionStrips, quiet, srt, stills} from "./film.js";
 import {installScreen, installStage} from "./overlay.js";
 
 const STAGE = "/__film/desk";
@@ -45,6 +46,11 @@ export class DeskDirector extends Director {
     this.scenes = [];
     this.focus("site");
   }
+
+  // Every window's page, by its iframe's id, for the probe.
+  pages() { return this.frames; }
+  // The site and the dashboard; the terminal is the film's own drawing of Claude Code.
+  products() { return ["site", "app"]; }
 
   // The window the director works in: its page's frame, where its page sits on the desk and at
   // what scale. Rects, clicks and marks go through it.
@@ -205,6 +211,7 @@ export class DeskDirector extends Director {
     await play();
     await this.read();
     this.caption(null);
+    this.check(name, start);
     this.scenes.push({name, pace, start, end: this.n});
     // Stageshow's rules hold per scene: one push-in, a few moves, no detours.
     const film = {moves: this.moves, journeys: this.journeys};
@@ -425,7 +432,7 @@ function cached(dir) {
 }
 
 // Film a desk film: serve its world, open the desk, play its scenes in order, encode.
-export async function shootDesk(film, {pace = {}, theme = "dark", out = ".films", fonts = null, until = null} = {}) {
+export async function shootDesk(film, {pace = {}, theme = "dark", out = ".films", fonts = null, until = null, check = false} = {}) {
   const {serve, siteUrl, start, member = "Avery", ready = "main"} = film.desk;
   const now = Date.parse(film.now);
   const served = await serve({now: () => new Date(now)});
@@ -477,18 +484,18 @@ export async function shootDesk(film, {pace = {}, theme = "dark", out = ".films"
     await context.addInitScript(`(${installVirtualClock})(${JSON.stringify({fps: FPS, epoch: now})});`);
     await context.addInitScript(`(${installScreen})();`);
     await context.addInitScript(`(${installStage})(${JSON.stringify({backdrop: BACKDROP.dark, path: STAGE, size: DESK, dpr: deviceScale})});`);
-    await context.addInitScript(({member, theme, local}) => {
+    await context.addInitScript(({member, theme, local, image}) => {
       if (location.origin !== local) return;
-      window.Clerk = {load: async () => {}, isSignedIn: true, user: {id: "member", firstName: member, lastName: "Lane", fullName: `${member} Lane`}, session: {getToken: async () => "synthetic"}, mountSignIn: () => {}};
+      window.Clerk = {load: async () => {}, isSignedIn: true, user: {id: "member", firstName: member, lastName: "Lane", fullName: `${member} Lane`, imageUrl: image}, session: {getToken: async () => "synthetic"}, mountSignIn: () => {}};
       localStorage.setItem("tin-lite:theme", theme);
-    }, {member, theme, local});
+    }, {member, theme, local, image: avatar(member)});
     const page = await context.newPage();
     page.on("pageerror", error => issues.errors.push(`The page threw: ${error.message}`));
     await page.goto(`${served.base}${STAGE}`, {waitUntil: "domcontentloaded"});
     const frames = {};
     for (const id of ["site", "app", "term"]) frames[id] = await (await page.waitForSelector(`#${id}`, {state: "attached"})).contentFrame();
     await Promise.all(Object.values(frames).map(frame => frame.waitForLoadState("domcontentloaded")));
-    const director = new DeskDirector({page, frames, format: "16:9", size: DESK, room: {width: DESK.width, height: PICTURE}, deviceScale, served: {...served, project: film.desk.project}, issues, ripple: false});
+    const director = new DeskDirector({page, frames, format: "16:9", size: DESK, room: {width: DESK.width, height: PICTURE}, deviceScale, served: {...served, project: film.desk.project}, issues, ripple: false, check});
     let segment = null;
     director.sink = async png => {
       for (const target of [encoder, segment].filter(Boolean)) {
@@ -528,6 +535,8 @@ export async function shootDesk(film, {pace = {}, theme = "dark", out = ".films"
     fs.writeFileSync(path.join(dir, "captions.srt"), srt(director.captions, director.n));
     const scenes = director.scenes.map(item => ({...item, seconds: Math.round(((item.end - item.start) / FPS) * 10) / 10}));
     const report = {film: film.name, title: film.title, size: DESK, frames: director.n, seconds: director.n / FPS, scenes, captions: director.captions, hashes: director.hashes, issues};
+    if (director.checking) report.checks = director.findings.map(describe);
+    if (director.checking) report.summary = summary(director.findings);
     fs.writeFileSync(path.join(dir, "report.json"), `${JSON.stringify(report, null, 2)}\n`);
     return {dir, report};
   } catch (error) {
@@ -562,12 +571,13 @@ async function main(argv) {
     // Each scene is code (`play`) or data (`beats`, with the film's named `values`).
     const scenes = module.scenes.map(scene => ({...scene, play: player(scene, module.values, `scene ${scene.name}`)}));
     const film = {name, ...module, scenes};
-    const {dir, report} = await shootDesk(film, {pace, out: options.out, fonts, until: options.until || null});
+    const {dir, report} = await shootDesk(film, {pace, out: options.out, fonts, until: options.until || null, check: options.check === "on"});
     console.log(`${film.name}: ${report.frames} frames, ${report.seconds.toFixed(1)}s → ${dir}`);
     for (const scene of report.scenes) console.log(`  ${scene.name} (${scene.pace}): ${scene.seconds}s`);
     for (const line of report.issues.errors) console.log(`  error: ${line}`);
     for (const line of report.issues.warnings) console.log(`  warning: ${line}`);
     if (report.issues.blocked.length) console.log(`  blocked: ${report.issues.blocked.join(", ")}`);
+    for (const line of report.summary ?? []) console.log(`  check: ${line}`);
     if (report.issues.errors.length) process.exitCode = 1;
   }
 }

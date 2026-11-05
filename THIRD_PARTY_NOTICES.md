@@ -34,6 +34,10 @@ Stageshow's virtual clock, cursor and cursor timing from `benjitaylor/skills` co
 `802057409787133703c56001080169e347305572`, `stageshow/kit/` (MIT, Copyright (c) 2026 Benji
 Taylor). Its license is in `third_party/licenses/stageshow-LICENSE.txt`.
 
+The film recorder's checks (`web/film/vendor/mographc/`) are mographc 0.1.1's film model,
+viewer and rules, copied from its published build, and `web/film/probe.js` adapts its probe
+(MIT, Copyright (c) 2026 Replicas). Its license is in `third_party/licenses/mographc-LICENSE.txt`.
+
 The AI Visibility page's engine marks in `src/tin_lite/static/ai-engines/` are unmodified SVGs
 from `@lobehub/icons-static-svg` 1.102.0 (MIT). Its license text is preserved in
 `third_party/licenses/lobe-icons-LICENSE.txt`. The marks themselves are their owners'

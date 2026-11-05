@@ -193,7 +193,8 @@ export const scenes = [
       {wait: 2.4},
     ]},
     {say: "When you approve a page, Tin opens a pull request on your site's repository.", brisk: true},
-    {move: '[data-apply-decision][data-delivery="github_pr"]', to: [0.5, 0.5]},
+    // Into the button's end, off its words, as the hand rests in the poster.
+    {move: '[data-apply-decision][data-delivery="github_pr"]', to: [0.95, 0.5]},
     {mark: "poster"},
     {wait: [0.6, 0.4]},
     {click: '[data-apply-decision][data-delivery="github_pr"]'},
