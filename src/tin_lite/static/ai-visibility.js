@@ -4,14 +4,14 @@
 // a time. The week's score, the trend once there are two weeks, and a table of the panel's
 // questions by engines: a tick where an engine recommended the project, yellow where it only
 // named or cited it, a cross where it did neither. Selecting a cell reads that engine's answers.
-// Engines come in two kinds, scored apart: with web search (what people see today) and without
-// (what the model already knows). Everything comes from Tin's stored report for the week.
+// The page shows the engines that answer with web search, which is what people see today; the
+// report also holds models asked without it, which the page leaves out for now. Questions kept
+// out of the score (citation probes, honesty checks, branded comparisons) sit in their own table
+// after the main one. Everything comes from Tin's stored report for the week.
 window.TinAIVisibility = (() => {
   const MONTHS = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
-  const KINDS = [
-    { key: "web", label: "With web search" },
-    { key: "memory", label: "What models already know" },
-  ];
+  // The engine kind the page shows: answers with web search.
+  const KIND = "web";
   const OUTCOME = {
     recommended: "Recommended",
     mentioned: "Mentioned or cited",
@@ -45,7 +45,7 @@ window.TinAIVisibility = (() => {
     const fresh = !view || view.projectId !== options.projectId;
     if (fresh) {
       const week = new URLSearchParams(window.location.search).get("week");
-      view = { ...options, week: /^\d{4}-\d{2}-\d{2}$/.test(week || "") ? week : null, kind: "web", data: null, error: null, open: null, answers: null, unfolded: new Set() };
+      view = { ...options, week: /^\d{4}-\d{2}-\d{2}$/.test(week || "") ? week : null, data: null, error: null, open: null, answers: null, unfolded: new Set() };
     } else {
       Object.assign(view, options);
     }
@@ -142,15 +142,9 @@ window.TinAIVisibility = (() => {
   }
 
   function page(data) {
-    const kind = KINDS.find((item) => item.key === view.kind) || KINDS[0];
-    const engines = data.engines.filter((engine) => engine.kind === kind.key);
-    return `<div class="analytics-tabs">
-        <div class="workflow-sections analytics-sections" role="tablist" aria-label="Which answers">
-          ${KINDS.map((item) => `<button class="workflow-section ${item.key === kind.key ? "is-active" : ""}" type="button" role="tab" aria-selected="${item.key === kind.key}" data-visibility-kind="${item.key}">${item.label}</button>`).join("")}
-        </div>
-      </div>
-      ${tiles(data, kind.key)}
-      ${data.weeks.length > 1 ? trend(data, kind.key) : ""}
+    const engines = data.engines.filter((engine) => engine.kind === KIND);
+    return `${tiles(data, KIND)}
+      ${data.weeks.length > 1 ? trend(data, KIND) : ""}
       <div class="visibility-key">
         <div class="visibility-legend">
           <span>${mark("recommended")}Recommended</span>
@@ -159,7 +153,7 @@ window.TinAIVisibility = (() => {
           <span><span class="visibility-frac is-key">1/${data.takes}</span>in ${data.takes === 2 ? "one of two answers" : "some of the answers"}</span>
         </div>
       </div>
-      ${grid(data, engines, kind.key)}`;
+      ${tables(data, engines, KIND)}`;
   }
 
   function tiles(data, kind) {
@@ -172,8 +166,15 @@ window.TinAIVisibility = (() => {
     };
     const tile = (label, value, detail, cls = "") => `<div class="analytics-tile${cls}"><span>${escape(label)}</span><strong>${escape(value)}</strong><small>${escape(detail || "")}</small></div>`;
     const rival = now.rivals?.[0];
+    const delta = change("recommended_rate");
+    // Recommended is the page's number: the share of answers that put the project forward.
     return `<div class="analytics-tiles visibility-tiles">
-      ${tile("Recommended", percent(now.recommended_rate), [`${now.recommended} of ${now.answers} answers`, change("recommended_rate")].filter(Boolean).join(" · "))}
+      <div class="analytics-tile is-hero">
+        <span>Recommended</span>
+        <strong>${escape(percent(now.recommended_rate))}</strong>
+        <small>${escape(`${now.recommended} of ${now.answers} answers put ${view.brand || "you"} forward`)}</small>
+        ${delta ? `<small class="visibility-delta">${escape(delta)}</small>` : ""}
+      </div>
       ${tile("Mentioned or cited", percent(now.mentioned_rate), [`${now.mentioned} of ${now.answers} answers`, change("mentioned_rate")].filter(Boolean).join(" · "))}
       ${tile(`Questions where ${view.brand || "you"} shows up`, `${now.questions_named} of ${now.questions}`, "named in at least one answer")}
       ${tile("Recommended most often instead", rival ? rival.name : DASH, rival ? `in ${rival.answers} of ${now.answers} answers` : "", " is-name")}
@@ -238,8 +239,26 @@ window.TinAIVisibility = (() => {
     return (words.length > 1 ? words[0][0] + words.at(-1)[0] : words[0].slice(0, 2)).toUpperCase();
   }
 
-  function grid(data, engines, kind) {
-    const columns = `minmax(min(300px, 50vw), 1fr) repeat(${engines.length}, 64px) minmax(160px, 200px)`;
+  // The scored questions in one table; the ones kept out of the score in a second, after a
+  // break, so they never read as part of the result.
+  function tables(data, engines, kind) {
+    const scored = data.groups.filter((group) => data.questions.some((question) => question.group === group.key && question.in_score));
+    const apart = data.groups.filter((group) => !scored.includes(group) && data.questions.some((question) => question.group === group.key));
+    return `${grid(data, engines, kind, scored, true)}
+      ${apart.length ? `<section class="visibility-apart" aria-label="Not counted in the score">
+        <div class="visibility-apart-head">
+          <h2>Not counted in the score</h2>
+          <p>These questions test something else: whether engines cite your site, whether they recommend you for something you don't offer, and how they compare you when asked by name.</p>
+        </div>
+        ${grid(data, engines, kind, apart, false)}
+      </section>` : ""}`;
+  }
+
+  function grid(data, engines, kind, groups, bands) {
+    // Ten engines still fit the dashboard's width with slightly narrower columns.
+    const width = engines.length > 8 ? 58 : 64;
+    const question = engines.length > 8 ? 270 : 300;
+    const columns = `minmax(min(${question}px, 50vw), 1fr) repeat(${engines.length}, ${width}px) minmax(160px, 200px)`;
     const head = `<div class="visibility-row is-head" style="grid-template-columns:${columns}">
         <span class="visibility-question">Question</span>
         ${engines.map((engine) => `<span class="visibility-engine" title="${escape(`${engine.name}${engine.detail ? `, ${engine.detail}` : ""}`)}">${logo(engine)}<strong>${escape(engine.name)}</strong><small>${escape(engine.detail)}</small></span>`).join("")}
@@ -247,13 +266,12 @@ window.TinAIVisibility = (() => {
       </div>`;
     const rows = [];
     let section = null;
-    for (const group of data.groups) {
+    for (const group of groups) {
       const questions = data.questions.filter((question) => question.group === group.key);
-      if (!questions.length) continue;
-      if (group.section !== section) {
+      if (bands && group.section !== section) {
         section = group.section;
         const title = data.sections.find((item) => item.key === section)?.title || "";
-        const count = data.questions.filter((question) => data.groups.find((item) => item.key === question.group)?.section === section).length;
+        const count = data.questions.filter((question) => question.in_score && data.groups.find((item) => item.key === question.group)?.section === section).length;
         rows.push(`<div class="visibility-band"><strong>${escape(title)}</strong><small>${count} ${count === 1 ? "question" : "questions"}</small></div>`);
       }
       rows.push(`<div class="visibility-group"><strong>${escape(group.title)}</strong>${group.note ? `<small>${escape(group.note)}</small>` : ""}</div>`);
@@ -268,7 +286,7 @@ window.TinAIVisibility = (() => {
         if (open) rows.push(detail());
       }
     }
-    return `<div class="visibility-table"><div class="visibility-scroll"><div class="visibility-grid" style="min-width:calc(min(300px, 50vw) + ${engines.length * 64 + 160}px)">${head}${rows.join("")}</div></div></div>`;
+    return `<div class="visibility-table"><div class="visibility-scroll"><div class="visibility-grid" style="min-width:calc(min(${question}px, 50vw) + ${engines.length * width + 160}px)">${head}${rows.join("")}</div></div></div>`;
   }
 
   function cell(question, engine, value) {
@@ -292,7 +310,7 @@ window.TinAIVisibility = (() => {
       : "";
     return `<div class="visibility-detail">
       <div class="visibility-detail-head">
-        <span class="visibility-detail-title">${logo(engine)}<strong>${escape(engine.name)}</strong>${engine.detail ? `<small>${escape(engine.detail)}${engine.kind === "memory" ? " · web search off" : ""}</small>` : ""}</span>
+        <span class="visibility-detail-title">${logo(engine)}<strong>${escape(engine.name)}</strong>${engine.detail ? `<small>${escape(engine.detail)}</small>` : ""}</span>
         ${tabs}
         <button type="button" class="visibility-close" data-visibility-close>Close</button>
       </div>
@@ -452,12 +470,6 @@ window.TinAIVisibility = (() => {
 
   function bind(main) {
     main.querySelectorAll("[data-visibility-week]").forEach((button) => button.addEventListener("click", () => goToWeek(button.dataset.visibilityWeek)));
-    main.querySelectorAll("[data-visibility-kind]").forEach((button) => button.addEventListener("click", () => {
-      view.kind = button.dataset.visibilityKind;
-      view.open = null;
-      view.answers = null;
-      render();
-    }));
     main.querySelectorAll("[data-visibility-cell]").forEach((button) => button.addEventListener("click", () => {
       const { visibilityCell: question, visibilityEngine: engine } = button.dataset;
       if (view.open?.question === question && view.open?.engine === engine) {

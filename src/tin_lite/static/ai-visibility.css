@@ -289,7 +289,7 @@ html[data-theme="dark"] .visibility-view {
   align-items: center;
   justify-content: flex-start;
   gap: 4px;
-  padding: 10px 2px 9px;
+  padding: 10px 1px 9px;
   text-align: center;
 }
 
@@ -301,6 +301,7 @@ html[data-theme="dark"] .visibility-view {
   -webkit-line-clamp: 2;
   color: var(--ink);
   font: 600 10.5px/13px var(--sans);
+  letter-spacing: -0.02em;
 }
 
 .visibility-engine small {
@@ -653,8 +654,54 @@ html[data-theme="dark"] .visibility-logo.is-monochrome::before {
 
 .visibility-tiles .analytics-tile.is-name strong { font-size: 20px; line-height: 26px; letter-spacing: -0.01em; }
 
+/* Recommended leads: twice as wide, its number the largest on the page, in the accent. */
+.visibility-tiles .analytics-tile.is-hero {
+  flex-grow: 2;
+  gap: 4px;
+  background: rgb(var(--accent-deep-rgb) / 7%);
+}
+
+.visibility-tiles .analytics-tile.is-hero > span { color: var(--ink); font-weight: 700; }
+
+.visibility-tiles .analytics-tile.is-hero strong {
+  color: var(--accent-text);
+  font-size: 48px;
+  line-height: 54px;
+}
+
+.visibility-tiles .analytics-tile.is-hero small { color: var(--ink-secondary); }
+.visibility-tiles .analytics-tile.is-hero .visibility-delta { color: var(--ink); font-weight: 600; }
+
+/* Questions kept out of the score: their own table after a clear break. */
+.visibility-apart {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  margin-top: 18px;
+  padding-top: 26px;
+  border-top: 1px dashed var(--paper-border-strong);
+}
+
+.visibility-apart-head h2 {
+  margin: 0 0 4px;
+  color: var(--ink);
+  font: 700 16px/22px var(--sans);
+}
+
+.visibility-apart-head p {
+  max-width: 680px;
+  margin: 0;
+  color: var(--ink-secondary);
+  font: 13.5px/20px var(--sans);
+}
+
+.visibility-apart .visibility-table { background: var(--paper-task); }
+.visibility-apart .visibility-question,
+.visibility-apart .visibility-row.is-head { background: var(--paper-task); }
+
 @media (max-width: 760px) {
   .visibility-view .workspace-header { flex-wrap: wrap; }
+  .visibility-tiles .analytics-tile.is-hero { flex-basis: 100%; }
   .visibility-key { flex-direction: column; align-items: flex-start; }
   .visibility-close { margin-left: 0; }
 }
