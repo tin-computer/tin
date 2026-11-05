@@ -13,7 +13,8 @@ one, adds to them and wins where the two disagree.
 - Use complete sentences. Keep articles and small linking words.
 - Connect each sentence to the one before: carry a known subject or term forward. Use "because",
   "so" or "then" only when the relationship is real.
-- One term for one thing. Keep product names exactly as the business writes them.
+- One term for one thing. Keep product names exactly as the business writes them, and call a
+  product by its name: never "the software", "the tool" or "the platform" in its place.
 
 ## Words
 

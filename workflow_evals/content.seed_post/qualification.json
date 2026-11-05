@@ -46,7 +46,7 @@
   "rubric": [
     {
       "id": "question",
-      "question": "Is the H1 a question the business's readers would really ask, and does the paragraph under it answer it in 40 to 70 words?"
+      "question": "Is the H1 a question the business's readers would really ask, and does the opening start from the reader's situation in plain sentences and end with a short answer?"
     },
     {
       "id": "argument",
@@ -66,7 +66,7 @@
     },
     {
       "id": "pull",
-      "question": "Does the post lead toward the business through its argument, naming it at most once in the body, with the offer only in the closing?"
+      "question": "Where the seed is the business's own work, does the post explain the product by name where it answers the question, without a feature tour or a pitch line, with the offer only in the closing?"
     }
   ]
 }

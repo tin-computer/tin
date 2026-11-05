@@ -3,8 +3,9 @@
 Read the draft as its reader would, once, against these questions. Quote the exact words each
 finding is about, so the reviser can find them.
 
-- Answer: does the paragraph under the H1 answer the question in 40 to 70 words, naming the
-  subject in the question's own terms?
+- Opening: does the post start from the reader's situation in plain sentences, and end its
+  opening with a short answer in the question's terms? Flag an opening that stacks
+  instructions or summarises the whole post.
 - Argument: is there a recommendation with reasons and trade-offs? Would a competitor's post
   say the same thing?
 - Section openings: read each heading with its first sentence alone. State the point they make.
@@ -17,8 +18,10 @@ finding is about, so the reviser can find them.
   and anything that overstates the seed.
 - Privacy: flag staff names, customer names, internal tools, file paths, code identifiers,
   prices and plans that the seed does not show as public.
-- Pull toward the business: does the hard, ongoing part of the answer point to the work the
-  business does? Is the business named at most once in the body? Is there a pitch line?
+- The product: where the seed is the business's own work, does the post explain how the
+  product answers the question, by name, in the sections where it does that? Flag a stand-in
+  such as "the software" or "the tool" where the product's name belongs, a section that tours
+  features the question does not need, and a pitch line.
 - Worked example: does it show the improvement with a table or numbered steps, under an -ing
   heading?
 - Checklist: three to five rows, each a title and one 15 to 30 word paragraph the reader can act
