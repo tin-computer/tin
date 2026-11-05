@@ -1,0 +1,152 @@
+{
+  "package_format": "tin-workflow-package-v1",
+  "definition": {
+    "key": "content.seed_post",
+    "title": "Write a blog post from notes, a PR or a draft",
+    "description": "Turn material you already have (meeting notes, a merged pull request, a draft or a record of work) into a guide for your site's readers: it finds the question your material answers, plans the post, drafts it, reviews and revises it, and checks the copy. The draft waits in Decisions with the claims to confirm; Tin never publishes it.",
+    "version": "1.0.0",
+    "executor": "workflow.code",
+    "schedule_modes": ["on_demand"],
+    "human_review": {
+      "eligible": true,
+      "summary": "Read the post and confirm the claims Tin lists before it goes on the site."
+    },
+    "prerequisites": [
+      {
+        "kind": "artifact",
+        "level": "recommended",
+        "path": ".agents/skills/writing-style/SKILL.md",
+        "producer": "style.capture",
+        "reason": "The writing style guide gives the post the founder's voice."
+      },
+      {
+        "kind": "artifact",
+        "level": "recommended",
+        "path": "reports/GROWTH_ONBOARDING_PLAN.md",
+        "producer": "growth.onboarding_plan",
+        "reason": "The growth plan names the readers the post is written for."
+      }
+    ],
+    "input_schema": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "project_id": {"type": "string", "format": "uuid"},
+        "seed_path": {
+          "type": "string",
+          "maxLength": 512,
+          "default": "",
+          "title": "Seed file",
+          "description": "The material to write from, as a file in project Files: meeting notes, a merged pull request's description and diff summary, a draft or a record of work. Commit it first, for example as context/notes/<date>-<topic>.md with a source line at the top. Raw material works best: Tin plans the post itself.",
+          "x-tin-ui": {"control": "project_file", "order": 10}
+        },
+        "seed_text": {
+          "type": "string",
+          "maxLength": 30000,
+          "default": "",
+          "title": "Or paste the material",
+          "description": "Material that has no file. With a seed file too, Tin reads both.",
+          "x-tin-ui": {"control": "textarea", "order": 20}
+        },
+        "direction": {
+          "type": "string",
+          "maxLength": 2000,
+          "default": "",
+          "title": "Optional direction",
+          "description": "The angle, reader or point you want, in a sentence or two. Tin treats it as decided.",
+          "x-tin-ui": {"control": "textarea", "order": 30}
+        },
+        "style_path": {
+          "type": "string",
+          "maxLength": 512,
+          "default": "",
+          "title": "Optional writing guide",
+          "description": "A writing guide in project Files to write in, such as one author's guide. Without it, Tin uses the project's writing style guide.",
+          "x-tin-ui": {"control": "project_file", "order": 40}
+        },
+        "revise_path": {
+          "type": "string",
+          "maxLength": 512,
+          "default": "",
+          "title": "Draft to revise",
+          "description": "To revise an earlier draft instead of writing a new one: its file under content/drafts. Needs feedback.",
+          "x-tin-ui": {"control": "project_file", "order": 50}
+        },
+        "feedback": {
+          "type": "string",
+          "maxLength": 4000,
+          "default": "",
+          "title": "Feedback for the revision",
+          "description": "What to change in the draft to revise. Tin applies all of it and keeps the rest.",
+          "x-tin-ui": {"control": "textarea", "order": 60}
+        }
+      },
+      "required": ["project_id"]
+    },
+    "code": {
+      "runtime": "python3.12.8-stdlib-v1",
+      "entrypoint": "main.py",
+      "files": [
+        "main.py",
+        "recipe.json",
+        "rules/guide.md",
+        "rules/style.md",
+        "rules/review.md",
+        "rules/tells.txt"
+      ],
+      "timeout_seconds": 900,
+      "model_routes": {
+        "plan": {
+          "provider": "openai",
+          "model": "gpt-6.1-sol",
+          "max_calls": 2,
+          "max_input_bytes": 200000,
+          "max_output_tokens": 16000
+        },
+        "write": {
+          "provider": "openai",
+          "model": "gpt-6.1-sol",
+          "max_calls": 4,
+          "max_input_bytes": 200000,
+          "max_output_tokens": 20000
+        },
+        "review": {
+          "provider": "openai",
+          "model": "gpt-6.1-sol",
+          "max_calls": 2,
+          "max_input_bytes": 200000,
+          "max_output_tokens": 12000
+        }
+      },
+      "output": {
+        "kind": "project.artifact",
+        "path": "content/drafts/{date}-{slug}.md",
+        "media_type": "text/markdown",
+        "max_bytes": 64000,
+        "summary": true
+      }
+    },
+    "presentation": {
+      "flow": {
+        "direction": "TD",
+        "nodes": [
+          {"id": "gather", "kind": "step", "label": "Read the seed and business files", "fact": "code, a seed with a credential is refused"},
+          {"id": "plan", "kind": "step", "label": "Find the question and plan", "fact": "one model call, headings checked in code"},
+          {"id": "covered", "kind": "ghost", "label": "Already covered or too thin", "fact": "a short note names why, no post"},
+          {"id": "draft", "kind": "step", "label": "Draft, review and revise", "fact": "three model calls in the guide shape"},
+          {"id": "check", "kind": "step", "label": "Check the copy", "fact": "code checks, one call fixes what they find"},
+          {"id": "draft_file", "kind": "store", "label": "Draft in project Files", "fact": "content/drafts, claims to confirm beside it"},
+          {"id": "review", "kind": "gate", "label": "You read and approve", "fact": "feedback runs a revision, Tin never publishes"}
+        ],
+        "edges": [
+          {"from": "gather", "to": "plan", "kind": "call"},
+          {"from": "plan", "to": "covered", "kind": "call", "label": "nothing to add"},
+          {"from": "plan", "to": "draft", "kind": "call"},
+          {"from": "draft", "to": "check", "kind": "call"},
+          {"from": "check", "to": "draft_file", "kind": "call"},
+          {"from": "draft_file", "to": "review", "kind": "signal"}
+        ]
+      }
+    }
+  }
+}

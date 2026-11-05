@@ -50,8 +50,10 @@ The response has `text` and `parsed`; without an output schema, `parsed` is `Non
 logical call across execution attempts. Repeating an identical completed request returns the
 saved result. A different request needs a distinct step and another declared call allowance.
 
-Current supported routes are explicitly `openai/gpt-6-luna` and `openai/gpt-6-sol`, through
-the existing OpenAI adapter and pinned supplier price card. Other providers/models and custom
+Current supported routes are explicitly `openai/gpt-6-luna`, `openai/gpt-6.1-sol`,
+`openai/gpt-6-astra` and the older `openai/gpt-6-sol`, through the existing OpenAI adapter and
+pinned supplier price card. Prefer `gpt-6.1-sol` to `gpt-6-sol` in new packages: the same price,
+with a cheaper cached read. Astra costs five times Sol. Other providers/models and custom
 URLs fail validation; a configured credential alone does not admit an unpriced route.
 
 Bounds: at most four route aliases, 1–16 calls per route and 32 total; 1,024–256,000 serialized

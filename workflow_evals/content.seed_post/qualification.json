@@ -1,0 +1,72 @@
+{
+  "version": 1,
+  "assumptions": [
+    "The founder's agent commits the seed as a project file (meeting notes, a merged pull request's description and changes, a draft) or pastes it; Tin reads the business files itself.",
+    "Fixture pytest covers the step order, plan and copy checks, invented links, private names, unusable drafts and failed paid steps offline; these cases judge live writing quality."
+  ],
+  "cost_drivers": [
+    "At most eight gpt-6.1-sol calls (angle and plan, one plan fix, draft, one retry, review, revision, one copy fix, final read), each with at most 200,000 input bytes; the seed's length and the business files drive input tokens, the post's length drives output."
+  ],
+  "effects": [
+    "Writes content/drafts/<date>-<slug>.md in this project, with the claims to confirm in the run summary. Nothing is published."
+  ],
+  "cases": [
+    {
+      "id": "merged_pr",
+      "description": "A merged pull request's description and changes, pasted, becomes a guide for the product's readers.",
+      "inputs": {
+        "seed_text": "Merged PR #212: Exports run on a schedule\n\nCustomers asked to stop exporting their sales report by hand every Monday. This change adds scheduled exports: pick a report, a day and a time, and the export lands in a shared folder or an email inbox as CSV. Failed exports retry three times and then email the report owner with the reason. Schedules use the workspace's time zone. Only workspace admins can create schedules; members can see them. Changes: new schedules table, a worker that runs due exports every five minutes, a settings page for schedules, retry and failure email. Internal: moved the CSV writer into its own module; Jordan from Northwind tested it on their account before release."
+      },
+      "expected_status": "succeeded",
+      "expect": {
+        "contains": ["# ", "## "],
+        "excludes": ["Jordan", "Northwind", "—", "FAQ"]
+      }
+    },
+    {
+      "id": "thin_seed",
+      "description": "A seed with no claim, decision or lesson leaves a short note instead of an invented post.",
+      "inputs": {
+        "seed_text": "Meeting notes, Tuesday. Attendees: the team. We talked about the website for a while. Some ideas came up. Next meeting is on Thursday at the usual time. Someone will send the calendar invite. Coffee was good. We will think about the blog more later and maybe write something about the product next month."
+      },
+      "expected_status": "succeeded",
+      "expect": {
+        "contains": ["Not written"]
+      }
+    },
+    {
+      "id": "credential_in_seed",
+      "description": "A seed that holds a credential is refused before any model call.",
+      "inputs": {
+        "seed_text": "Release notes for the new billing page. The new page shows invoices and payment methods in one place, and the team tested it against the access key AKIAIOSFODNN7EXAMPLE before release so customers see the same totals as before."
+      },
+      "expected_status": "failed"
+    }
+  ],
+  "rubric": [
+    {
+      "id": "question",
+      "question": "Is the H1 a question the business's readers would really ask, and does the paragraph under it answer it in 40 to 70 words?"
+    },
+    {
+      "id": "argument",
+      "question": "Does the post hold a point of view with reasons and trade-offs, grounded in the seed, that a competitor could not publish unchanged?"
+    },
+    {
+      "id": "headings",
+      "question": "Read alone and in order, do the headings tell the argument, without questions, slogans or the word example below the H1?"
+    },
+    {
+      "id": "grounding",
+      "question": "Does every fact, number and feature come from the seed or the business files, with internal names and plans left out?"
+    },
+    {
+      "id": "language",
+      "question": "Are paragraphs short, sentences plain and literal, with no em dashes, contrast formulas or stock phrases?"
+    },
+    {
+      "id": "pull",
+      "question": "Does the post lead toward the business through its argument, naming it at most once in the body, with the offer only in the closing?"
+    }
+  ]
+}

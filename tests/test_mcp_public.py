@@ -622,6 +622,8 @@ def test_reviewed_public_catalog_coverage_and_explicit_exclusions():
     assert len(entries) == 44
     assert {w.key for w in PUBLIC_WORKFLOWS if w.id not in entries} == {
         "social.x_compose",
+        # Started through start_workflow by the founder's agent, which supplies the seed.
+        "content.seed_post",
         "competitor.sunset_rescue",
         "growth.framework_starter",
         "qa.feedback_to_fix",

@@ -1,0 +1,9 @@
+{
+  "id": "seed-post.r1",
+  "pipeline": "steps",
+  "review": true,
+  "style_pass": true,
+  "copy_fix": true,
+  "final_read": true,
+  "words": [900, 1600]
+}
