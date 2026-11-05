@@ -338,6 +338,14 @@ def test_the_reporter_follows_the_repository_and_the_host():
     assert detect({"names": ["vercel.json", "astro.config.mjs"]}, "vercel") == "vercel"
     express = {"names": ["package.json"], "package.json": '{"dependencies": {"express": "4"}}'}
     assert detect(express, None) == "node"
+    # Databasin: a static site on Azure Static Web Apps. Its reporter needs Front Door and an
+    # Azure Function, which a pull request can't add, so the change carries the line alone.
+    swa = {"names": ["staticwebapp.config.json", "index.html"]}
+    assert detect(swa, host({"staticwebapp.config.json"}, "Azure Static Web Apps")) is None
+    # Every published variant has a label, a description and a file name for coding agents.
+    for table in (analytics_change.VARIANTS, analytics_change.VARIANT_FOR):
+        assert set(table) == set(analytics_change.REPORTER_NAMES)
+    assert analytics_change.REPORTER_NAMES["azure-front-door"] == ("tin-reporter.mjs",)
     assert detect({"names": ["index.html"]}, None) is None
     # The setup answer names the host when the repository doesn't.
     assert host(set(), "Next.js on Vercel") == "vercel"

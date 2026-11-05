@@ -90,6 +90,13 @@ VARIANTS: dict[str, dict[str, str]] = {
         "label": "Cloudflare Worker",
         "where": "copied unchanged and wrapped around the Worker's handler",
     },
+    # Never picked by detect_variant: it runs in an Azure Function beside Front Door, which a
+    # pull request can't create, so the founder or their engineer sets it up from a template.
+    "azure-front-door": {
+        "label": "Azure Front Door",
+        "where": "copied unchanged as tin-reporter.mjs into an Azure Function that reads "
+        "Front Door's access log",
+    },
 }
 # Who each variant is for, as the contract's table says, for a coding agent choosing one.
 VARIANT_FOR = {
@@ -98,6 +105,8 @@ VARIANT_FOR = {
     "netlify": "sites on Netlify, as an edge function",
     "node": "Node servers with Express-style middleware, such as Express and Connect",
     "cloudflare-worker": "sites served by a Cloudflare Worker",
+    "azure-front-door": "static sites on Azure (such as Static Web Apps) behind Azure Front "
+    "Door, as an Azure Function that reads Front Door's access log from an Event Hub",
 }
 # Where the founder pastes the reporter's value, by the host the repository deploys to.
 HOSTS: dict[str, dict[str, str]] = {
@@ -821,6 +830,7 @@ REPORTER_NAMES = {
     "netlify": ("netlify/edge-functions/tin-reporter.js",),
     "node": ("tin-reporter.cjs",),
     "cloudflare-worker": ("tin-reporter.js",),
+    "azure-front-door": ("tin-reporter.mjs",),
 }
 # New files a variant's wiring may add besides the copy: Next.js's middleware or proxy.
 WIRING_FILES = {
