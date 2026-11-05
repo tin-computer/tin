@@ -44,7 +44,10 @@ Edit `WORK/film/film.json` as `film-format.md` describes. The shape that works:
 
 - Open on the feature within the first second and a half; the first caption says the change.
 - Three to six captions, one idea each. A caption is at most twelve words and stays at least two
-  seconds plus a third of a second per word: hold after each one.
+  seconds plus a third of a second per word, and at most six seconds: change it or move on.
+- After the opening shot, frame part of the page, not all of it: the site's own text must read
+  on a phone, so the camera closes in on what the caption names (`camera` on that section or
+  card, or `text: true` on a heading).
 - One thing moves at a time: the camera, then the hand, then the page. Hold still before a mark.
 - `mark` `poster` on the frame that tells the story at a glance, the feature in view and nothing
   moving. Mark one or two more key moments.
@@ -75,7 +78,8 @@ words, the thing itself. Follow the project's writing style skill when it is the
      frame around it. If it is the site's own motion, leave it and say so in `notes`.
    - The font didn't load: add a `hold` of a second after the page arrives.
 5. Stop when a rehearsal has no errors and the stills are right. Findings the site causes
-   itself may stay; name each one in `notes` with why. Rehearse at most eight times; then
+   itself may stay; name each one in `notes` with why, one sentence each. `notes` is for the
+   founder reading the film: nothing about the run, its sources or its ID. Rehearse at most eight times; then
    render the best version and say what is left.
 
 ## 5. Render and deliver

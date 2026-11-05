@@ -9388,6 +9388,17 @@ html[data-theme="dark"] .md-embed-frame {
   border-radius: var(--radius-card);
 }
 
+/* A video the document carries, once its size is known: its own shape, centred, no taller than
+   the screen allows. */
+.md-video-file.is-shaped {
+  width: auto;
+  max-width: 100%;
+  height: auto;
+  max-height: min(78vh, 760px);
+  margin: 0 auto;
+  aspect-ratio: auto;
+}
+
 .md-embed-missing,
 .md-asset-notes {
   color: var(--ink-muted);

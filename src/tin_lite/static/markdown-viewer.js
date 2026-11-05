@@ -252,11 +252,13 @@
           video.playsInline = true;
           video.src = src;
           if (poster) video.poster = poster;
+          // Once its size is known, the video plays in its own shape: a portrait film stands.
+          video.addEventListener("loadedmetadata", () => video.classList.add("is-shaped"), { once: true });
           if (captions) {
+            // Off until the viewer turns it on: a film carries its captions in the picture.
             const track = document.createElement("track");
             track.kind = "captions";
             track.label = "Captions";
-            track.default = true;
             track.src = captions;
             video.append(track);
           }
