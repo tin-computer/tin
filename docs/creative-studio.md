@@ -44,32 +44,33 @@ mascot reacting in the corner. The design record is the "Creative studio outcome
 
 ## Feature films: `creative.feature_film`
 
-Added 2026-11-05. A `codex.procedure` on the same studio profile that films one feature of the
-founder's live public pages as they really move, for a LinkedIn or X post: the site's own layout,
-motion and type in a browser window, a drawn cursor, a camera and a caption band, on a virtual
-clock one frame at a time. It is the film kit (`web/film`, [feature films](feature-films.md)) as
-the `tin-film` command.
+Added 2026-11-05. A `codex.procedure` on the same studio profile that makes a short captioned
+film of one feature for a LinkedIn or X post: a staged scene in the product's own look, where one
+thing happens per beat and the result stays on screen, played on a virtual clock one frame at a
+time with a drawn cursor and a caption band. It is the film kit (`web/film`,
+[feature films](feature-films.md#staged-films)) and its stage kit as the `tin-film` command.
 
 | Piece | Where | What it does |
 |---|---|---|
-| Toolkit | `web/film/tin-film.js`, `inspect.js` and the kit, in the image at `/opt/tin-lite/diagram/web/film/` | `inspect`, `record`, `rehearse`, `render`, `deliver`; runs on the diagram layer's pinned Playwright Chromium (`sandbox/tin_film.sh`) |
+| Toolkit | `web/film/tin-film.js`, `inspect.js`, the kit and `web/film/stage/`, in the image at `/opt/tin-lite/diagram/web/film/` | `new`, `inspect`, `record`, `rehearse`, `render`, `deliver`; runs on the diagram layer's pinned Playwright Chromium (`sandbox/tin_film.sh`) |
+| Worked example | `web/film/examples/onboarding/` | Tin's own onboarding film, the bar `tin-film new` copies |
 | Contract | `studio_contracts.parse_feature_film`, `validate_feature_film_video` (both copies) | the note plays exactly one film from its own folder; the film is a fast-start MP4 at 1080x1350, 1080x1080 or 1920x1080, 8 to 90 s |
-| Procedure | `codex_procedures/creative.feature_film/` | prompt, skill, and `film-format.md` (the JSON film and its beats) |
-| Catalog | `src/tin_lite/catalog.py` | id `…049`, `FEATURE_FILM_REVIEW_POLICY`, on demand, inputs `slug`, `product_url`, `feature`, `angle`, `format`, `notes` |
+| Procedure | `codex_procedures/creative.feature_film/` | prompt, skill, `stage-kit.md` (the parts, the runtime, framing) and `film-format.md` (the JSON film and its beats) |
+| Catalog | `src/tin_lite/catalog.py` | id `…049`, `FEATURE_FILM_REVIEW_POLICY`, on demand, inputs `slug`, `feature`, `post`, `angle`, `product_url` (optional, for the look), `format`, `notes` |
 
 How a run goes:
 
-1. The agent picks the feature (the run's `feature`, or the Feature map's most visible live one)
-   and writes its story as a before and an after.
-2. `tin-film inspect <url>` reads the page at the film's screen width: headings and controls,
-   each with a selector that matches it alone, two screenshots and a starter `film.json`.
-3. The agent writes the beats; `tin-film record` plays them once against the live site and saves
-   every answer the pages get (non-GET requests stopped, trackers answered empty, no cookies or
-   request headers kept). Every take after that replays the recording, so the live site is
-   visited once and takes match frame for frame.
+1. The agent works out the feature (the run's `feature` and `post`, or the Feature map) and what
+   really happens when someone uses it, in the product's real wording; with a page, `tin-film
+   inspect` reads its look as the stage kit's tokens, its fonts and a screenshot.
+2. It writes a storyboard: the story as a before and an after, three to six shots and a payoff,
+   each with its caption, its one action and its real words, and the poster shot.
+3. `tin-film new` copies the worked example; the agent rehearses it once to see the bar, then
+   rebuilds the stage for this product (its tokens, its chrome, the kit's parts, sample content
+   only) and writes the beats.
 4. `tin-film rehearse` plays it at low resolution with every frame measured and checked
-   (mographc's rules and the kit's own); the agent looks at the stills and fixes the film until
-   it is clean, or names what the site causes itself in `notes`.
+   (mographc's rules, the kit's own and the pacing checks); the agent looks at the stills and
+   fixes the film until it is clean.
 5. `tin-film render` makes the final take, and `tin-film deliver` writes `films/{slug}.md` with
    `film.mp4`, `poster.png`, `captions.vtt` and `film.json` in `films/{slug}.assets/`, then runs
    `tin-studio check` on both.

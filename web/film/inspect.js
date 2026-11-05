@@ -1,6 +1,6 @@
-// What a live page offers a film, read at the film's own screen size: its headings and the
-// controls a hand could press, each with a selector that matches it alone, where it sits, and two
-// screenshots. The page is opened through the film's recording (recording.js) in record mode, so
+// What a live page offers a film, read at the film's own screen size: its look as the stage kit's
+// tokens, its headings and the controls a hand could press, each with a selector that matches it
+// alone, where it sits, and two screenshots. The page is opened through the film's recording (recording.js) in record mode, so
 // looking is already recording, under the same rules: trackers get an empty answer, and nothing
 // that sends, publishes or pays leaves the browser.
 import fs from "node:fs";
@@ -55,11 +55,49 @@ function outline() {
   const controls = [...document.querySelectorAll("a[href], button, [role=button], [role=tab], input:not([type=hidden]), textarea, select, summary")]
     .filter(shown).slice(0, 150)
     .map(element => ({kind: element.localName === "a" ? "link" : element.localName, text: words(element), href: element.getAttribute("href") || undefined, selector: unique(element), ...place(element)}));
-  const body = getComputedStyle(document.body);
   return {
     title: document.title, url: location.href, height: document.documentElement.scrollHeight,
-    look: {background: body.backgroundColor, color: body.color, font: body.fontFamily.split(",")[0].trim()},
-    headings, controls,
+    look: look(shown), headings, controls,
+  };
+}
+
+// Runs in the page: its look as the stage kit's tokens (stage/stage.css), read from what it
+// draws: the ground and text, a card, the main button, a muted paragraph, its type, and the
+// stylesheets that bring its fonts.
+function look(shown) {
+  const style = element => element && getComputedStyle(element);
+  const filled = value => value && value !== "transparent" && !/rgba\([^)]*,\s*0\)$/.test(value);
+  const body = style(document.body);
+  const ground = filled(body.backgroundColor) ? body.backgroundColor : style(document.documentElement).backgroundColor;
+  const first = (selector, test = () => true) => [...document.querySelectorAll(selector)].find(element => shown(element) && test(element, style(element)));
+  const button = first("button, a, [role=button]", (element, s) => filled(s.backgroundColor) && s.backgroundColor !== ground && element.getBoundingClientRect().height < 80);
+  const card = first("article, section, li, div", (element, s) => {
+    const box = element.getBoundingClientRect();
+    return box.width > 160 && box.height > 60 && box.width < innerWidth * 0.9 && filled(s.backgroundColor) && s.backgroundColor !== ground && parseFloat(s.borderRadius) > 0;
+  });
+  const heading = first("h1") || first("h2");
+  const muted = first("p", (element, s) => s.color !== body.color);
+  const code = first("code, pre, kbd");
+  const link = first("a", (element, s) => s.color !== body.color && !filled(s.backgroundColor));
+  const family = s => s?.fontFamily;
+  const tokens = {
+    "--ground": ground,
+    "--surface": ground,
+    "--card": style(card)?.backgroundColor || ground,
+    "--ink": body.color,
+    "--ink-2": style(muted)?.color || body.color,
+    "--accent": style(link)?.color || style(button)?.backgroundColor || body.color,
+    "--hot": style(button)?.backgroundColor || style(link)?.color || body.color,
+    "--on-hot": style(button)?.color || ground,
+    "--sans": family(body),
+    "--mono": family(style(code)) || "ui-monospace, monospace",
+    "--radius": style(card)?.borderRadius || style(button)?.borderRadius || "10px",
+  };
+  return {
+    background: ground, color: body.color, font: body.fontFamily.split(",")[0].trim(),
+    heading: heading && {font: style(heading).fontFamily.split(",")[0].trim(), weight: style(heading).fontWeight, letterSpacing: style(heading).letterSpacing},
+    tokens: `:root { ${Object.entries(tokens).map(([name, value]) => `${name}: ${value};`).join(" ")} }`,
+    stylesheets: [...document.querySelectorAll("link[rel=stylesheet]")].map(element => element.href).filter(href => /font/i.test(href)).slice(0, 4),
   };
 }
 
@@ -100,7 +138,7 @@ export async function inspect(url, {dir, format = "16:9"} = {}) {
     await page.goto(url, {waitUntil: "load", timeout: 60_000});
     await page.waitForLoadState("networkidle", {timeout: 10_000}).catch(() => {});
     await page.waitForTimeout(1000);
-    const found = await page.evaluate(outline);
+    const found = await page.evaluate(`(${outline.toString().replace("look(shown)", `(${look})(shown)`)})()`);
     // JPEGs a reader can afford to open: the first screen at up to 960 px wide, the page at 720.
     const shot = async (options, width, file) => encodeStills([await page.screenshot(options)], ["-vf", `scale='min(${width},iw)':-2:flags=lanczos`, "-q:v", "4", "-frames:v", "1", path.join(dir, file)]);
     await shot({}, 960, "screen.jpg");

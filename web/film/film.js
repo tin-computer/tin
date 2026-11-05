@@ -7,7 +7,7 @@ import {spawn} from "node:child_process";
 import crypto from "node:crypto";
 import fs from "node:fs";
 import path from "node:path";
-import {pathToFileURL} from "node:url";
+import {fileURLToPath, pathToFileURL} from "node:url";
 import {chromium} from "playwright";
 import {checkFrames, describe, summary} from "./checks.js";
 import {measureFrame} from "./probe.js";
@@ -19,6 +19,9 @@ import {bezier} from "./ease.js";
 import {installScreen, installStage} from "./overlay.js";
 
 export const FPS = 30;
+// The stage kit's parts and runtime (stage/), served beside a staged film's own page.
+const STAGE_KIT = fileURLToPath(new URL("./stage/", import.meta.url));
+const STAGE_TYPES = {".html": "text/html", ".css": "text/css", ".js": "text/javascript", ".json": "application/json", ".svg": "image/svg+xml", ".png": "image/png", ".jpg": "image/jpeg", ".woff2": "font/woff2"};
 // Output sizes, the caption band under the picture, and how wide a screen the dashboard is filmed
 // on. 4:5 for LinkedIn and X feeds, 16:9 for X on desktop, the site and blog posts. The tall
 // formats use a narrower screen, so the dashboard shows its own compact layouts.
@@ -222,7 +225,8 @@ export class Director {
       frame.x += shift.dx;
       frame.y += shift.dy;
     }
-    if ((box.width + pad * 2) / width > scale + 1e-6 || (box.height + pad * 2) / room > scale + 1e-6) {
+    // Half a pixel either way is a screen whose height was rounded (1080 wide in 16:9), not a cut.
+    if ((box.width + pad * 2 - 1) / width > scale + 1e-6 || (box.height + pad * 2 - 1) / room > scale + 1e-6) {
       this.warn(`The camera can't fit ${JSON.stringify(target)} in ${this.format}; it is cut.`);
     }
     if (cut || !this.n) {
@@ -605,6 +609,17 @@ export class Director {
     await this.run(() => (this.ending = to * ease(++i / frames)) >= to - 1e-9);
   }
 
+  // Call the stage's own runtime (stage/stage.js) in the screen: show a card, print a terminal's
+  // lines, tick a box. What it schedules runs on the film's clock, and a call that says how long it
+  // takes is held for that long, filmed.
+  async do(name, ...args) {
+    const seconds = await this.app.evaluate(([name, args]) => {
+      if (typeof window.stage?.[name] !== "function") throw new Error(`The stage has no ${name}; it offers ${Object.keys(window.stage || {}).join(", ")}.`);
+      return window.stage[name](...args);
+    }, [name, args]);
+    if (typeof seconds === "number" && seconds > 0) await this.hold(seconds);
+  }
+
   // Keep the frame just shot: the poster, and the stills of the contact sheet.
   async mark(name) {
     if (this.dry) {
@@ -856,6 +871,31 @@ export async function encodeStills(pngs, args) {
   await done;
 }
 
+// Pacing a viewer feels before any frame check: the first caption by a second and a half, each
+// caption long enough to read (17 characters a second, the subtitle rate) and gone by six and a
+// half seconds, and the picture never frozen for four seconds. Warnings, so a take still renders.
+export function pace(director, issues) {
+  const shown = director.captions.filter(item => item.text).map(item => ({text: item.text, start: item.start / FPS, end: Math.min(item.end ?? director.n, director.n) / FPS}));
+  const quote = text => `“${text.length > 48 ? `${text.slice(0, 47)}…` : text}”`;
+  if (shown.length && shown[0].start > 1.5) issues.warnings.push(`The first caption starts at ${shown[0].start.toFixed(1)} s; say the change within a second and a half.`);
+  for (const item of shown) {
+    const seconds = item.end - item.start;
+    const needed = Math.max(1.5, item.text.length / 17);
+    if (seconds > 6.5) issues.warnings.push(`The caption ${quote(item.text)} stays ${seconds.toFixed(1)} s; at most six, then say the next thing or move on.`);
+    else if (seconds + 0.05 < needed && item.end < director.n / FPS - 0.1) issues.warnings.push(`The caption ${quote(item.text)} shows ${seconds.toFixed(1)} s, too short to read; it needs ${needed.toFixed(1)} s, or fewer words.`);
+  }
+  // Identical frames in a row: nothing on screen changed at all.
+  let run = 0;
+  for (let i = 1; i <= director.hashes.length; i++) {
+    const same = i < director.hashes.length && director.hashes[i] && director.hashes[i] === director.hashes[i - 1];
+    if (same) run++;
+    else {
+      if (run / FPS >= 4) issues.warnings.push(`Nothing moves for ${(run / FPS).toFixed(1)} s from ${((i - 1 - run) / FPS).toFixed(1)} s; cut the hold or let the next beat start.`);
+      run = 0;
+    }
+  }
+}
+
 // The same captions as WebVTT, which a browser's video plays as a track.
 export function vtt(captions, total) {
   const time = frame => {
@@ -941,7 +981,17 @@ export async function shoot(film, {format = "4:5", theme = film.theme || "dark",
         return route.abort();
       }
       const {pathname} = new URL(url);
-      if (pathname === STAGE) return route.fulfill({body: stagePage({screen, margin, room, view, backdrop, theme, fonts: Boolean(fonts), start: site ? site.url : `${world.start || "/system"}?project=project`}), contentType: "text/html"});
+      if (pathname === STAGE) return route.fulfill({body: stagePage({screen, margin, room, view, backdrop, theme, fonts: Boolean(fonts), start: site?.url ? site.url : world.stage ? `/__stage/${world.stage.entry}` : `${world.start || "/system"}?project=project`}), contentType: "text/html"});
+      // A staged film's page and the kit's parts it uses (/__stage/kit/…); nothing outside its folder.
+      if (world.stage && pathname.startsWith("/__stage/")) {
+        const name = decodeURIComponent(pathname.slice("/__stage/".length));
+        const root = name.startsWith("kit/") ? STAGE_KIT : world.stage.dir;
+        const file = path.resolve(root, name.startsWith("kit/") ? name.slice(4) : name);
+        if (!file.startsWith(path.resolve(root) + path.sep) || !fs.existsSync(file)) return route.fulfill({status: 404, body: ""});
+        return route.fulfill({body: fs.readFileSync(file), contentType: STAGE_TYPES[path.extname(file)] || "application/octet-stream"});
+      }
+      // Without licensed fonts, a page that asks for them gets none, not a failed load.
+      if (pathname === "/film-fonts/fonts.css" && !fonts) return route.fulfill({body: "", contentType: "text/css"});
       // Clerk is stubbed (below); the fixture leaves its script address unfilled.
       if (decodeURIComponent(pathname).startsWith("/{{CLERK_FRONTEND_API_URL}}/")) return route.fulfill({body: "", contentType: "text/javascript"});
       if (pathname.startsWith("/film-fonts/") && fonts?.has(path.basename(pathname))) {
@@ -965,7 +1015,7 @@ export async function shoot(film, {format = "4:5", theme = film.theme || "dark",
     const page = await context.newPage();
     // Tin's own dashboard must film without an error; a live site's own errors are its own, so
     // they are said and the take goes on.
-    const faults = site ? issues.warnings : issues.errors;
+    const faults = site?.url ? issues.warnings : issues.errors;
     const fault = text => faults.includes(text) || faults.push(text);
     page.on("pageerror", error => fault(`The page threw: ${error.message}`));
     page.on("console", message => {
@@ -1012,6 +1062,7 @@ export async function shoot(film, {format = "4:5", theme = film.theme || "dark",
     await context.close();
 
     issues.blocked = [...new Set(issues.blocked)];
+    pace(director, issues);
     if (!director.marks.poster) issues.errors.push("The film never marks its poster.");
     if (director.n / FPS > 140) issues.warnings.push("Longer than X's 2 minutes 20 seconds.");
     const recorded = recording?.close();
@@ -1094,19 +1145,23 @@ export async function motionStrips(director, size, dir) {
   }
 }
 
-// A film written as JSON, as the feature-film workflow's agent writes one: a live site, its
-// beats and the named film's facts. Its recording and takes sit beside the file.
+// A film written as JSON, as the feature-film workflow's agent writes one: its stage (a page of
+// photogenic parts beside the file, stage/) or a live site, its beats and the named film's facts.
+// Its recording (what the page asks outside itself) and takes sit beside the file.
 export function filmFromSpec(spec, file) {
   const problems = [];
   if (!spec || typeof spec !== "object" || Array.isArray(spec)) throw new Error(`${file} is not a film: it must hold one JSON object.`);
   if (typeof spec.title !== "string" || !spec.title.trim()) problems.push("a title");
-  if (!/^https:\/\/[^\s/]+/.test(spec.site?.url ?? "")) problems.push("site.url, the https address the film opens on");
+  const here = path.dirname(path.resolve(file));
+  const stage = typeof spec.stage === "string" && path.resolve(here, spec.stage);
+  if (stage && (!stage.startsWith(here + path.sep) || !fs.existsSync(stage))) problems.push(`stage, a page beside film.json (${spec.stage} isn't there)`);
+  if (!stage && !/^https:\/\/[^\s/]+/.test(spec.site?.url ?? "")) problems.push("a stage (the page the film plays, beside film.json) or site.url, the https address it opens on");
   if (Number.isNaN(Date.parse(spec.now))) problems.push("now, the moment the page's clock shows, as an ISO time");
   if (!Array.isArray(spec.beats) || !spec.beats.length) problems.push("beats");
   if (problems.length) throw new Error(`${file} needs ${problems.join(", ")}.`);
-  const here = path.dirname(path.resolve(file));
   const site = {...spec.site, recording: path.join(here, "world")};
-  return {name: spec.name || "film", ...spec, world: () => ({site, ready: spec.ready || "body"}), play: player(spec)};
+  const world = {site, ready: spec.ready || "body", ...(stage ? {stage: {dir: path.dirname(stage), entry: path.basename(stage)}} : {})};
+  return {name: spec.name || "film", ...spec, world: () => world, play: player(spec)};
 }
 
 export async function loadFilm(name) {

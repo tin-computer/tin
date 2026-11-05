@@ -214,6 +214,7 @@ def test_concrete_procedure_packages_are_pinned_and_ui_renderable() -> None:
     }
     assert film_definition["human_review"]["eligible"] is True
     assert "procedures/creative.feature_film/skills/feature-film/film-format.md" in film_files
+    assert "procedures/creative.feature_film/skills/feature-film/stage-kit.md" in film_files
     validate_codex_procedure_definition(film_definition)
     diagram = procedures[CONTENT_DIAGRAM_WORKFLOW_NAME]
     diagram_definition, diagram_files = diagram.definition_and_resource_files()

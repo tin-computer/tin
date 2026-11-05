@@ -1,9 +1,11 @@
 // tin-film: the film kit as a command, for the feature-film workflow's agent in Tin's studio
-// sandbox (and anyone filming a live site by hand). A film is a JSON file (film.json); its
-// recording (world/) and takes (takes/) sit beside it, never in the project.
+// sandbox (and anyone making a film by hand). A film is a JSON file (film.json) that plays a stage
+// (a page of photogenic parts beside it, stage/) or a live site; its recording (world/) and takes
+// (takes/) sit beside it, never in the project.
 //
-//   tin-film inspect <url> [--dir DIR] [--format 16:9]  outline, screenshots and a starter film.json
-//   tin-film record <film.json>      play it once against the live site, saving what it loads
+//   tin-film new <dir>               a staged film to start from: the worked example, to rebuild
+//   tin-film inspect <url> [--dir DIR] [--format 16:9]  a page's look, outline and screenshots
+//   tin-film record <film.json>      play it once, saving what it loads from outside
 //   tin-film rehearse <film.json>    play it from the recording at low resolution, every frame checked
 //   tin-film render <film.json>      the final take from the recording, at full resolution, checked
 //   tin-film deliver <film.json> <note.md>   the final take beside its note, as Tin keeps films
@@ -69,9 +71,9 @@ export function note({film, report, folder, format}) {
   }
   for (const line of film.notes ?? []) lines.push("", line);
   const {width, height} = FORMATS[format];
-  const host = new URL(film.site.url).hostname;
+  const how = film.site?.url ? `filmed from a recording of ${new URL(film.site.url).hostname}` : "staged in the product's look";
   lines.push("", "## The film", "",
-    `${format}, ${width}×${height}, ${report.seconds.toFixed(1)} s, filmed from a recording of ${host}. Its spec is \`${name}/film.json\`: change it and render again for a new cut.`, "");
+    `${format}, ${width}×${height}, ${report.seconds.toFixed(1)} s, ${how}. Its spec is \`${name}/film.json\`: change it and render again for a new cut.`, "");
   return lines.join("\n");
 }
 
@@ -110,6 +112,19 @@ async function deliver(file, notePath) {
   }
 }
 
+// The worked example (examples/onboarding): a film.json and its stage, copied as the start of a
+// new staged film, the way Stageshow starts from its closest gold example.
+const EXAMPLE = fileURLToPath(new URL("./examples/onboarding/", import.meta.url));
+
+function start(dir) {
+  const target = path.resolve(dir);
+  if (fs.existsSync(path.join(target, "film.json"))) throw new Error(`${target}/film.json is already there; tin-film new starts a film in an empty folder.`);
+  fs.mkdirSync(target, {recursive: true});
+  fs.copyFileSync(path.join(EXAMPLE, "film.json"), path.join(target, "film.json"));
+  fs.cpSync(path.join(EXAMPLE, "stage"), path.join(target, "stage"), {recursive: true});
+  console.log(`wrote ${target}/film.json and ${target}/stage/: Tin's own onboarding film. Rebuild both for this product; render it as it is first to see the bar.`);
+}
+
 async function main(argv) {
   const [command, ...rest] = argv;
   const options = {};
@@ -122,16 +137,18 @@ async function main(argv) {
     const dir = path.resolve(options.dir || ".");
     const report = await inspect(args[0], {dir, format: options.format || "16:9"});
     console.log(`${report.title} (${report.url}), ${report.height}px tall, read at ${report.screen.width}×${report.screen.height}`);
-    console.log(`look: ${report.look.background} ground, ${report.look.color} text, ${report.look.font}`);
+    console.log(`look: ${report.look.background} ground, ${report.look.color} text, ${report.look.font}; as the stage kit's tokens:\n${report.look.tokens}`);
+    if (report.look.stylesheets.length) console.log(`  its font stylesheets: ${report.look.stylesheets.join(", ")}`);
     for (const item of report.headings) console.log(`  h${item.level} at ${item.top}: ${item.text}  →  ${item.selector}`);
     for (const item of report.controls) console.log(`  ${item.kind} at ${item.top}: ${item.text || "(no text)"}${item.href ? ` [${item.href}]` : ""}  →  ${item.selector}`);
     if (report.recording.stopped.length) console.log(`  stopped (never sent): ${report.recording.stopped.join(", ")}`);
     console.log(`wrote ${path.join(dir, "inspect.json")}, screen.jpg, page.jpg and, if it was missing, film.json`);
     return;
   }
+  if (command === "new" && args.length === 1) return start(args[0]);
   if (TAKES[command] && args.length === 1) return take(command, args[0], options);
   if (command === "deliver" && args.length === 2) return deliver(args[0], args[1]);
-  console.log(fs.readFileSync(fileURLToPath(import.meta.url), "utf8").split("\n").slice(0, 12).join("\n").replaceAll("// ", "").replaceAll("//", ""));
+  console.log(fs.readFileSync(fileURLToPath(import.meta.url), "utf8").split("\n").slice(0, 14).join("\n").replaceAll("// ", "").replaceAll("//", ""));
   if (command && command !== "help") process.exitCode = 64;
 }
 

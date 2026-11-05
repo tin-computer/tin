@@ -203,25 +203,59 @@ npm run film -- sheepdogs-site --format 16:9,4:5 --check on # from the recording
   simulates in a Web Worker runs on real time there, so its frames differ between takes (the
   Sheepdogs game does; its blog post, filmed next, matches frame for frame).
 
+## Staged films
+
+A staged film plays a scene built for it instead of a product or a site: one HTML page of
+photogenic parts beside `film.json`, in the product's own look, simplified to what the viewer
+needs, after [Stageshow](https://github.com/benjitaylor/skills) (MIT). It is what the
+`creative.feature_film` workflow makes: a feature shown the way a launch page shows it, where one
+thing happens per beat and the result stays on screen, rather than a camera over a landing page.
+
+- **The kit.** `web/film/stage/stage.css` holds the parts (windows, a terminal, cards, rows and
+  ranks, an app with its rail and pages, a calendar, running work, a decision, buttons, a pull
+  request) and the arrivals (`.arrive`, `.slide`, `.grow`); its tokens default to Tin's dark
+  theme and a stage sets them to its product's. `web/film/stage/stage.js` is the runtime the
+  beats call: `{"do": ["print", "#term", [...]]}` shows, prints, types, sets, ticks, swaps, fills
+  or sends a scene away on the film's clock, and the film holds while it plays. The film's own
+  clicks reach the stage, which answers through `data-go` (a page of its window) and `data-then`
+  (a button that changes its label on itself).
+- **Serving.** `"stage": "stage/index.html"` in `film.json` opens that page in the film's window;
+  the page reaches its own folder (`/__stage/…`), the kit (`/__stage/kit/…`), the dashboard's
+  assets (`/assets/…`) and the licensed fonts, and nothing else unless it was recorded.
+- **Scale.** A 16:9 stage is a 1080 × 517 screen (`"screens": {"16:9": 1080}`), shown at 1.78
+  times its size, so 15px text reads as 27px on a phone; the camera stays on the whole stage.
+- **The worked example.** `web/film/examples/onboarding/` is Tin's own onboarding, from "Set up
+  Tin" in Claude Code to a pull request opened from Decisions, 33 seconds: the bar the workflow
+  copies (`tin-film new`) and rebuilds for each product.
+
+```
+TIN_FILM_FONTS=https://fonts.tin.computer/v1/private-fonts.css node web/film/tin-film.js render web/film/examples/onboarding/film.json
+```
+
 ## tin-film: a film as a JSON file
 
-`web/film/tin-film.js` is the kit as one command, for a live site filmed from a JSON file. It is
-what the `creative.feature_film` workflow's agent runs in Tin's studio sandbox
+`web/film/tin-film.js` is the kit as one command, for a staged film or a live site filmed from a
+JSON file. It is what the `creative.feature_film` workflow's agent runs in Tin's studio sandbox
 (`tin-film`, see [the creative studio](creative-studio.md#feature-films-creativefeature_film)),
 and works the same from the repository:
 
 ```
-node web/film/tin-film.js inspect https://sheepdogs.io/ --dir .films/herding   # outline, screenshots, starter film.json
-node web/film/tin-film.js record .films/herding/film.json     # once against the live site, low resolution, checked
+node web/film/tin-film.js new .films/herding                   # the worked example, to rebuild
+node web/film/tin-film.js inspect https://sheepdogs.io/ --dir .films/look   # its look as tokens, outline, screenshots
+node web/film/tin-film.js record .films/herding/film.json     # once, saving what it loads from outside
 node web/film/tin-film.js rehearse .films/herding/film.json   # from the recording, low resolution, checked
 node web/film/tin-film.js render .films/herding/film.json     # the final take, from the recording
 node web/film/tin-film.js deliver .films/herding/film.json films/herding.md
 ```
 
-- **The file.** `film.json` holds `title`, `story` (`before` and `after`), `site.url`, `now`
-  (the page's clock), `format`, `theme`, `ready`, `beats` and `notes`; the workflow's skill
-  documents every field and beat (`codex_procedures/creative.feature_film/skills/feature-film/film-format.md`).
-  A missing field or an unknown beat is refused before anything is filmed.
+- **The file.** `film.json` holds `title`, `story` (`before` and `after`), `stage` or
+  `site.url`, `screens`, `now` (the page's clock), `format`, `theme`, `ready`, `beats` and
+  `notes`; the workflow's skill documents every field and beat
+  (`codex_procedures/creative.feature_film/skills/feature-film/film-format.md` and
+  `stage-kit.md`). A missing field or an unknown beat is refused before anything is filmed.
+- **Pacing.** Every take warns when the first caption comes after 1.5 s, a caption shows for
+  less time than its words need (17 characters a second) or more than 6.5 s, or the picture
+  stands frozen for 4 s.
 - **`prepare`.** Beats played before the film starts, unfilmed, for what a visitor clears first:
   a cookie banner, a popup. The hand that did it isn't in the film.
 - **Beside the file.** Its recording is `world/` and its takes `takes/<record|rehearse|render>/`,

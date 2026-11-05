@@ -32,7 +32,9 @@ Their license texts are preserved in `third_party/licenses/`.
 The feature film recorder (`web/film/`, a development tool, not part of the package) adapts
 Stageshow's virtual clock, cursor and cursor timing from `benjitaylor/skills` commit
 `802057409787133703c56001080169e347305572`, `stageshow/kit/` (MIT, Copyright (c) 2026 Benji
-Taylor). Its license is in `third_party/licenses/stageshow-LICENSE.txt`.
+Taylor). Its license is in `third_party/licenses/stageshow-LICENSE.txt`. The stage kit
+(`web/film/stage/`) is written for Tin after Stageshow's framing, restraint and motion rules and
+its two easing curves; it copies none of Stageshow's components.
 
 The film recorder's checks (`web/film/vendor/mographc/`) are mographc 0.1.1's film model,
 viewer and rules, copied from its published build, and `web/film/probe.js` adapts its probe

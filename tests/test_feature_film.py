@@ -23,7 +23,7 @@ from tin_lite.studio_contracts import (
     parse_feature_film,
     validate_feature_film_video,
 )
-from tin_lite.workflow_inputs import normalize_workflow_inputs
+from tin_lite.workflow_inputs import WorkflowInputError, normalize_workflow_inputs
 
 ROOT = Path(__file__).parents[1]
 PROJECT_ID = UUID("00000000-0000-4000-8000-0000000000aa")
@@ -105,18 +105,36 @@ def test_the_workflow_files_its_note_with_the_film_beside_it() -> None:
     spec = validate_codex_procedure_definition(definition)
     assert spec.sandbox.studio and spec.sandbox.open_egress
     assert not spec.identity
+    # A brief, not a page to film: only the name is required, and a page is only for its look.
     assert normalize_workflow_inputs(
         schema=definition["input_schema"],
         project_id=PROJECT_ID,
-        inputs={"slug": "herding", "product_url": "https://sheepdogs.io/"},
+        inputs={"slug": "herding"},
     ) == {
         "slug": "herding",
-        "product_url": "https://sheepdogs.io/",
         "feature": "",
+        "post": "",
         "angle": "",
+        "product_url": "",
         "format": "16:9",
         "notes": "",
     }
+    for page in ("", "https://sheepdogs.io/"):
+        assert (
+            normalize_workflow_inputs(
+                schema=definition["input_schema"],
+                project_id=PROJECT_ID,
+                inputs={"slug": "herding", "product_url": page},
+            )["product_url"]
+            == page
+        )
+    for page in ("javascript:alert(1)", "sheepdogs.io", "https:// x"):
+        with pytest.raises(WorkflowInputError):
+            normalize_workflow_inputs(
+                schema=definition["input_schema"],
+                project_id=PROJECT_ID,
+                inputs={"slug": "herding", "product_url": page},
+            )
     pinned = PinnedCodexProcedure(
         workflow_key=CREATIVE_FEATURE_FILM_WORKFLOW_NAME,
         prompt="p",

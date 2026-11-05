@@ -17,13 +17,13 @@
 //   calls a hook for what no action covers, such as changing the world.
 
 const ACTIONS = new Set([
-  "address", "begin", "camera", "click", "endCard", "end", "focus", "follow", "gone", "hide",
+  "address", "begin", "camera", "click", "do", "endCard", "end", "focus", "follow", "gone", "hide",
   "highlight", "hold", "look", "mark", "move", "open", "raise", "read", "ready", "say",
   "scroll", "scrollPage", "show", "still", "type", "wait", "caption",
   "term.box", "term.clear", "term.enter", "term.paste", "term.print", "term.prompt",
   "term.type", "term.work",
 ]);
-const LISTS = new Set(["wait", "show", "scroll", "term.work"]);
+const LISTS = new Set(["wait", "show", "scroll", "term.work", "do"]);
 const CONTROLS = new Set(["when", "if"]);
 const WHEN = {
   wide: f => f.wide,

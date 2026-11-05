@@ -4059,9 +4059,9 @@ BUILTIN_WORKFLOWS = (
         public_mcp=PublicMCPExposure("start_feature_film", destructive=True, open_world=True),
         title="Film a feature",
         description=(
-            "Film one feature of the founder's product as it really moves on its live public "
-            "pages: a captioned 16:9, 4:5 or 1:1 video for a LinkedIn or X post, with every frame "
-            "checked, kept beside a note in project Files."
+            "Make a short captioned film of one feature for a LinkedIn or X post: a staged scene "
+            "in the product's own look where one thing happens per beat, 16:9, 4:5 or 1:1, with "
+            "every frame checked, kept beside a note in project Files."
         ),
         executor=CODEX_PROCEDURE_EXECUTOR,
         version_label="1.0.0",
@@ -4069,28 +4069,34 @@ BUILTIN_WORKFLOWS = (
             direction="TD",
             nodes=(
                 DiagramNode(
-                    "pages",
-                    "surface",
-                    "Your live product pages",
-                    "public only, no sign-up, forms or buying",
+                    "memory",
+                    "store",
+                    "The feature and your look",
+                    "Feature map, the post, your public page",
                 ),
                 DiagramNode(
-                    "record",
+                    "storyboard",
                     "step",
-                    "Write and record the film",
-                    "Codex, one live visit, nothing is sent",
+                    "Storyboard the film",
+                    "Codex, a few shots and a payoff",
+                ),
+                DiagramNode(
+                    "stage",
+                    "step",
+                    "Stage it in your product's look",
+                    "photogenic parts, real wording, sample data",
                 ),
                 DiagramNode(
                     "rehearse",
                     "step",
                     "Rehearse and fix it",
-                    "every frame checked, stills looked at",
+                    "every frame and its pacing checked",
                 ),
                 DiagramNode(
                     "render",
                     "step",
                     "Render and check the film",
-                    "from the recording, 8 to 90 s",
+                    "8 to 90 s, captions under the picture",
                 ),
                 DiagramNode(
                     "note",
@@ -4107,8 +4113,9 @@ BUILTIN_WORKFLOWS = (
                 ),
             ),
             edges=(
-                DiagramEdge("pages", "record"),
-                DiagramEdge("record", "rehearse"),
+                DiagramEdge("memory", "storyboard"),
+                DiagramEdge("storyboard", "stage"),
+                DiagramEdge("stage", "rehearse"),
                 DiagramEdge("rehearse", "render"),
                 DiagramEdge("render", "note"),
                 DiagramEdge("note", "review"),
@@ -4142,15 +4149,6 @@ BUILTIN_WORKFLOWS = (
                     "description": "Lowercase words separated by hyphens; the file name.",
                     "x-tin-ui": {"control": "text", "order": 10},
                 },
-                "product_url": {
-                    "type": "string",
-                    "format": "uri",
-                    "minLength": 1,
-                    "maxLength": 2048,
-                    "title": "Page",
-                    "description": "The public page the film opens on.",
-                    "x-tin-ui": {"control": "text", "order": 20},
-                },
                 "feature": {
                     "type": "string",
                     "maxLength": 1000,
@@ -4158,8 +4156,16 @@ BUILTIN_WORKFLOWS = (
                     "title": "Feature",
                     "description": (
                         "The feature to film: a Feature map line or one sentence. Leave empty "
-                        "to let Tin pick the most visible one."
+                        "to let Tin pick."
                     ),
+                    "x-tin-ui": {"control": "textarea", "order": 20},
+                },
+                "post": {
+                    "type": "string",
+                    "maxLength": 3000,
+                    "default": "",
+                    "title": "Post",
+                    "description": "The post the film goes with; the film shows what it claims.",
                     "x-tin-ui": {"control": "textarea", "order": 30},
                 },
                 "angle": {
@@ -4173,14 +4179,26 @@ BUILTIN_WORKFLOWS = (
                     ),
                     "x-tin-ui": {"control": "textarea", "order": 40},
                 },
+                "product_url": {
+                    "type": "string",
+                    # Empty, as the dashboard sends a blank field, or an http(s) address.
+                    "pattern": r"^(|https?://[^\s/]+\S*)$",
+                    "maxLength": 2048,
+                    "default": "",
+                    "title": "Page",
+                    "description": (
+                        "A public page whose look the film takes: colors, type, buttons. Leave "
+                        "empty to use the project's site."
+                    ),
+                    "x-tin-ui": {"control": "text", "order": 45},
+                },
                 "format": {
                     "type": "string",
                     "enum": ["16:9", "4:5", "1:1"],
                     "default": "16:9",
                     "title": "Format",
                     "description": (
-                        "16:9 for LinkedIn, X and the site, filmed at desktop width; 4:5 or 1:1 "
-                        "for a feed seen on phones, filmed at the site's narrower layout."
+                        "16:9 for LinkedIn, X and the site; 4:5 or 1:1 for a feed seen on phones."
                     ),
                     "x-tin-ui": {"control": "select", "order": 50},
                 },
@@ -4189,11 +4207,11 @@ BUILTIN_WORKFLOWS = (
                     "maxLength": 2000,
                     "default": "",
                     "title": "Notes",
-                    "description": "Pages to visit, claims to avoid, what to end on.",
+                    "description": "What to show or avoid, claims to leave out, what to end on.",
                     "x-tin-ui": {"control": "textarea", "order": 60},
                 },
             },
-            "required": ["project_id", "slug", "product_url"],
+            "required": ["project_id", "slug"],
         },
         procedure=CodexProcedureSource(
             root=Path(__file__).parents[2]

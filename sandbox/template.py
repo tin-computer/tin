@@ -151,6 +151,14 @@ FILM_FILES = (
         )
     ),
     "third_party/licenses/mographc-LICENSE.txt",
+    # The stage kit a staged film is built from, its worked example, and what that example uses
+    # from the dashboard's assets (the fonts come with the diagram layer).
+    "web/film/stage/stage.css",
+    "web/film/stage/stage.js",
+    "web/film/examples/onboarding/film.json",
+    "web/film/examples/onboarding/stage/index.html",
+    "src/tin_lite/static/tin-logotype-ink.png",
+    "third_party/licenses/stageshow-LICENSE.txt",
 )
 _FILM_CHECK = "tin-film help >/dev/null"
 
