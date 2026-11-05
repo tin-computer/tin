@@ -21,6 +21,11 @@ Every image you open stays in your context for the rest of the run, and a reques
 size limit: a run that keeps opening images ends without its film. Open each image once, open
 the contact sheet before any single still, and never reopen an earlier take's.
 
+A take runs one to five minutes. Each check on a running command resends the whole run to the
+model and counts toward its limits (256 requests, 8 million tokens), the same as a step of real
+work: wait with `yield_time_ms` of 30000 or more on every check, never a few seconds. Plan
+changes between takes so each take answers several questions at once.
+
 ## 1. Choose the feature and its story
 
 1. Read `wiki/INDEX.md`: `### Feature map` under `## Product`, positioning, and what the product
