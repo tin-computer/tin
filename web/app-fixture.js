@@ -119,9 +119,10 @@ function noted(person) {
 
 // `analytics` answers the Analytics page and card: {pages: {today, yesterday, week}, writes: [],
 // answer(action, body) → {status, body}} for the card's requests: setup, address, the reporter's
-// value, the site builder and starting the analytics change again.
-export async function serveApp({decisionCount = 4, people = syntheticPeople(), engagers = false, visitors = false, integrations = [], removed = [], requests = null, requestWrites = [], analytics = null, visibility = null} = {}) {
-  const project = {id: "project", name: "Example Co", workspace_id: "ws", workspace_name: "Example", member_count: 1, hidden: false};
+// value, the site builder and starting the analytics change again. Films (web/film) name the
+// project and fix the server's clock, so what it stamps matches the film's own day.
+export async function serveApp({decisionCount = 4, people = syntheticPeople(), engagers = false, visitors = false, integrations = [], removed = [], requests = null, requestWrites = [], analytics = null, visibility = null, projectName = "Example Co", now = () => new Date()} = {}) {
+  const project = {id: "project", name: projectName, workspace_id: "ws", workspace_name: "Example", member_count: 1, hidden: false};
   const catalog = [{id: "wf-answer", key: "content.generate", title: "Draft planned content", description: "Draft the next planned page for review.", definition: {schedule_modes: ["weekly", "on_demand"]}}];
   // The workflow that finds people is offered only to some projects; People shows with it.
   if (engagers) catalog.push({id: "wf-engagers", key: "social.linkedin_engagers", title: "People who engaged with your LinkedIn posts", description: "Who reacted to your LinkedIn posts.", definition: {schedule_modes: ["daily", "on_demand"]}});
@@ -163,11 +164,11 @@ export async function serveApp({decisionCount = 4, people = syntheticPeople(), e
     if (notePath) {
       const found = people.find(item => item.id === notePath[1]);
       if (!found) return refuse(404, "This person is no longer in this project.");
-      const now = new Date().toISOString();
+      const stamp = now().toISOString();
       if (request.method === "POST") {
         const {body} = await read();
         if (!body?.trim()) return refuse(422, "Write something first.");
-        found.notes.unshift({id: `n-${found.notes.length + 1}-${Date.now()}`, body: body.trim(), by: "you", mine: true, at: now, edited: false});
+        found.notes.unshift({id: `n-${found.notes.length + 1}-${now().getTime()}`, body: body.trim(), by: "you", mine: true, at: stamp, edited: false});
         noted(found);
         response.statusCode = 201;
         return send(detail(found));
@@ -190,7 +191,7 @@ export async function serveApp({decisionCount = 4, people = syntheticPeople(), e
       if (!found) return refuse(404, "This person is no longer in this project.");
       const change = await read();
       const fields = found.fields;
-      const now = new Date().toISOString();
+      const stamp = now().toISOString();
       if ("fit" in change) {
         if (change.fit === null) {
           for (const key of ["icp", "icp_fit"]) {
@@ -203,11 +204,11 @@ export async function serveApp({decisionCount = 4, people = syntheticPeople(), e
           for (const [key, value] of [["icp", picked ?? "none"], ["icp_fit", picked === null ? 0 : 1]]) {
             const before = fields[key];
             const previous = before?.by === "engagers" ? {value: before.value, reason: before.reason} : before?.previous || null;
-            fields[key] = {value, reason: "", by: "you", at: now, stale: false, stale_reason: null, definition: "", previous};
+            fields[key] = {value, reason: "", by: "you", at: stamp, stale: false, stale_reason: null, definition: "", previous};
           }
         }
       }
-      if ("customer" in change) fields.customer = {value: change.customer ? "yes" : "no", reason: "", by: "you", at: now, stale: false, stale_reason: null, definition: "", previous: null};
+      if ("customer" in change) fields.customer = {value: change.customer ? "yes" : "no", reason: "", by: "you", at: stamp, stale: false, stale_reason: null, definition: "", previous: null};
       return send(detail(found));
     }
     if (request.method === "DELETE" && personPath) {
@@ -241,8 +242,10 @@ export async function serveApp({decisionCount = 4, people = syntheticPeople(), e
       // Ticking people in People queues them at once.
       if (rest === "/send") {
         if (!requests.sending.on) return refuse(409, "Turn on sending on the LinkedIn card first.");
-        const queued = {queued_at: new Date().toISOString(), sending: false, at: requests.next_open};
+        const queued = {queued_at: now().toISOString(), sending: false, at: requests.next_open};
         for (const id of body.people) Object.assign(people.find(item => item.id === id) || {}, {requestable: false, request: "queued", queued});
+        // As the service counts them, in the week's queued.
+        if (requests.week) requests.week.queued = (requests.week.queued || 0) + body.people.length;
         return send({status: "approved", batch_id: "batch-people", queued: body.people.length, repeated: false, first_send: requests.next_open, last_send: requests.next_open});
       }
       // Taking a queued request back before it goes.
@@ -251,6 +254,7 @@ export async function serveApp({decisionCount = 4, people = syntheticPeople(), e
         const found = people.find(item => item.id === cancelled[1]);
         if (found?.request !== "queued") return refuse(404, "No request to them is waiting to go out.");
         Object.assign(found, {requestable: true, request: null, queued: null});
+        if (requests.week?.queued) requests.week.queued -= 1;
         return send({cancelled: 1});
       }
     }

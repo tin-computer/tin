@@ -13,3 +13,6 @@ __pycache__/
 node_modules/
 **/fk-grotesk*
 /private-fonts/
+
+# Feature films (npm run film)
+/.films/
