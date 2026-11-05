@@ -454,3 +454,40 @@ async def test_a_recipe_copy_changes_the_steps(tmp_path):
     assert [c["step"] for c in calls] == ["draft", "copy_fix"]
     assert result["path"].endswith("-how-do-i-tell-ai-agent-visits-from.md")
     assert re.search(r"Recipe seed-post\.single", json.dumps(result["summary"]))
+
+
+async def test_a_lab_copy_picks_an_arm_and_its_routes(tmp_path):
+    """One lab copy holds several arms; the `arm` input picks one, and an arm can send the
+    writing steps to another declared route, such as a second model."""
+    root = tmp_path / "custom.seed_post_lab"
+    shutil.copytree(PACKAGE, root)
+    manifest = json.loads((root / "workflow.json").read_text())
+    definition = manifest["definition"]
+    definition["key"] = "custom.seed_post_lab"
+    routes = definition["code"]["model_routes"]
+    routes["astra"] = {**routes["write"], "model": "gpt-6-astra", "max_calls": 3}
+    definition["input_schema"]["properties"]["arm"] = {
+        "type": "string",
+        "enum": ["steps", "astra-writes"],
+        "default": "steps",
+    }
+    (root / "workflow.json").write_text(json.dumps(manifest))
+    recipe = json.loads((root / "recipe.json").read_text())
+    recipe["arms"] = {"steps": {}, "astra-writes": {"routes": {"write": "astra"}}}
+    (root / "recipe.json").write_text(json.dumps(recipe))
+    module, definition = load(root)
+    spec = validate_code_definition(definition)
+    calls = []
+    result = await module.run(context(spec, outputs(), calls), inputs(arm="astra-writes"))
+    routes_used = {(c["step"], c["route"]) for c in calls}
+    assert routes_used == {
+        ("angle", "plan"),
+        ("draft", "astra"),
+        ("review", "review"),
+        ("revise", "astra"),
+        ("copy_fix", "astra"),
+        ("final", "review"),
+    }
+    assert "seed-post.r1/astra-writes" in json.dumps(result["summary"])
+    with pytest.raises(ValueError, match="Unknown arm"):
+        await module.run(context(spec, outputs(), []), inputs(arm="luna"))

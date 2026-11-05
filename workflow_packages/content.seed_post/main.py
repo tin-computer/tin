@@ -100,13 +100,23 @@ def _rule(name):
     return (ROOT / "rules" / name).read_text(encoding="utf-8")
 
 
-def _recipe():
+def _recipe(inputs):
+    """The steps this run takes. A lab copy's recipe.json may hold several named arms, and its
+    `arm` input picks one; each arm overrides the shared fields and may send a kind of step
+    (plan, write, review) to another declared route."""
     recipe = json.loads((ROOT / "recipe.json").read_text(encoding="utf-8"))
+    arms = recipe.pop("arms", None)
+    if arms is not None:
+        name = inputs.get("arm") or next(iter(arms))
+        if name not in arms:
+            raise ValueError(f"Unknown arm {name!r}; this recipe has {', '.join(arms)}")
+        recipe = {**recipe, **arms[name], "id": f"{recipe['id']}/{name}"}
     low, high = recipe["words"]
     if (
         recipe["pipeline"] not in {"steps", "single"}
         or not isinstance(recipe["id"], str)
         or not 300 <= low < high <= 3_000
+        or not isinstance(recipe.get("routes", {}), dict)
     ):
         raise ValueError("recipe.json is invalid")
     return recipe
@@ -288,10 +298,13 @@ class Run:
         self.notes.append(f"The {step.replace('_', ' ')} step was skipped to finish in time.")
         return False
 
-    async def call(self, route, step, instructions, data, schema=None):
-        """One model step. A failure is recorded and returned as None, never raised."""
+    async def call(self, kind, step, instructions, data, schema=None):
+        """One model step on the route the recipe gives its kind (plan, write or review).
+
+        A failure is recorded and returned as None, never raised."""
         if self.blocked:
             return None
+        route = self.recipe.get("routes", {}).get(kind, kind)
         try:
             response = await self.ctx.models.generate(
                 route=route, step=step, instructions=instructions, data=data, output_schema=schema
@@ -1003,7 +1016,7 @@ def _summary(post, plan, final, run, package, written):
 
 
 async def run(ctx, inputs):
-    recipe = _recipe()
+    recipe = _recipe(inputs)
     rules = (_rule("guide.md"), _rule("style.md"), _rule("review.md"))
     files = ctx.files
     revise_path = inputs.get("revise_path")
