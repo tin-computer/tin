@@ -220,6 +220,33 @@ or a window clips), a target the camera couldn't fit, a GIF over
 15 MB or a film over 2 minutes 20 seconds. The browser test (`web/film.browser.test.js`) films a
 short take twice and checks the frames match, and checks each of these rules.
 
+### Every frame, measured
+
+`--check on` (both `npm run film` and `npm run film:desk`) measures every element on every frame
+and checks the take with mographc's film model and rules (`web/film/vendor/mographc`, MIT,
+vendored without Remotion; see its README). `web/film/probe.js` reads each frame twice:
+
+- **Each window's own page**, in its own px, where only the product moves things: an element that
+  jumps more than 40 px in one frame, shows for a frame or two, or a panel, card, toast or line of
+  text that pops in or out, is the product's motion, whatever the camera did. Small boxes changing
+  their background in one frame (a hovered row, a ticked box) are the product changing state, and
+  containers as wide as the page resize with each route; neither is reported. A desk's terminal is
+  the film's own drawing and isn't checked as a product.
+- **The picture**, as the viewer sees it: words cut by the frame's edge (text a page or its window
+  cuts is the page's own), two windows seen through each other while one fades
+  (`staging/double-exposure`), and the key frames: one taken while something is still changing
+  (`film/mark-settled`, which ignores the film's own highlight, spinners and carets), or with the
+  cursor's tip on words (`film/mark-cursor-on-text`).
+
+Each finding says when, where (`picture`, or the window's id), what was measured and what the rule
+requires; repeats at one moment fold into one line. Findings a film means to have are accepted with
+a reason: while the camera follows the hand it crops through the screen, so words it cuts then are
+accepted. Findings don't fail the take yet: they are listed in the output and in `report.json`
+(`checks`, `summary`). Rules made for motion graphics stay off for filmed product: pace and dead
+air (a film holds still while the product is read), competing text (a product screen is full of
+it), the cursor's stretch and entrance (the hand is the system's, and hides with the window it
+works in). `web/film-checks.test.js` covers each rule on synthetic frames.
+
 Checks find what can be measured; motion still needs eyes. Before a film goes out, read the
 motion strips, then give a fresh reviewer (a person, or an agent with no part in the film)
 Stageshow's `references/review.md` and `verify.md`, the marks, the sheet and the strips, and fix

@@ -9,6 +9,8 @@ import fs from "node:fs";
 import path from "node:path";
 import {pathToFileURL} from "node:url";
 import {chromium} from "playwright";
+import {checkFrames, describe, summary} from "./checks.js";
+import {measureFrame} from "./probe.js";
 import {player} from "./spec.js";
 import {serveApp} from "../app-fixture.js";
 import {installVirtualClock} from "./clock.js";
@@ -43,6 +45,13 @@ export function stage(size, choice = size.screen) {
 
 // What the screen sits on: black under the dark theme, white under the light one.
 export const BACKDROP = {dark: "#000", light: "#fff"};
+
+// The member's picture in the sidebar, as Clerk gives every account one: their initial on a
+// muted ground. Without it the dashboard shows an empty circle where the picture goes.
+export function avatar(name) {
+  const svg = `<svg xmlns="http://www.w3.org/2000/svg" width="64" height="64"><rect width="64" height="64" fill="#6b6f5a"/><text x="32" y="42" text-anchor="middle" font-family="Helvetica, Arial, sans-serif" font-size="28" fill="#f4f1ea">${name.slice(0, 1)}</text></svg>`;
+  return `data:image/svg+xml,${encodeURIComponent(svg)}`;
+}
 // The smallest text a frame may show, as a share of its short side: about 22px at 1080.
 const SMALLEST_TEXT = 0.02;
 // The cuts' dip and the cursor's press; everything else uses the named curves in ease.js.
@@ -108,8 +117,14 @@ export function zigzags(lens) {
 export class Director {
   // `page` is the stage, `app` the dashboard's frame in it. Everything the director works in
   // (frames, the cursor, rects) is in the stage's px; the screen sits `margin` in from its corner.
-  constructor({page, app, format, size, screen, margin = {top: 0, right: 0, bottom: 0, left: 0}, room = screen, deviceScale, served, issues, ripple = false}) {
+  constructor({page, app, format, size, screen, margin = {top: 0, right: 0, bottom: 0, left: 0}, room = screen, deviceScale, served, issues, ripple = false, check = false}) {
     Object.assign(this, {page, app, format, size, screen, margin, room, deviceScale, world: served, issues, ripple});
+    // With `check`, every frame is measured (probe.js) and checked (checks.js) as the take goes.
+    this.checking = check;
+    this.measured = [];
+    this.findings = [];
+    // Frames shot while the camera followed the hand: it crops through the screen as it goes.
+    this.followed = [];
     this.wide = size.width > size.height;
     this.n = 0;
     this.recording = true;
@@ -675,6 +690,11 @@ export class Director {
     // The page is the shot, at the output's size.
     const png = await this.page.screenshot({type: "png"});
     this.hashes.push(crypto.createHash("sha1").update(png).digest("hex").slice(0, 12));
+    if (this.checking) {
+      const cursor = state.cursor.visible ? await this.page.evaluate(([frame, point]) => window.__film.toView(frame, point), [this.frame, {x: state.cursor.x, y: state.cursor.y}]) : null;
+      this.measured.push(await measureFrame(this.page, this.pages(), {f: this.n, cursor, products: this.products()}));
+      this.followed[this.n] = Boolean(this.follower);
+    }
     const shown = this.picture;
     // Where the camera looked, for the zig-zag check.
     this.lens.push([shown.x + shown.width / 2, shown.y + shown.height / 2, shown.width].map(value => Math.round(value * 10) / 10));
@@ -683,6 +703,26 @@ export class Director {
     this.last = png;
     await this.sink(png);
     this.n++;
+  }
+
+  // The pages the stage shows, by their iframe's id, for the probe.
+  pages() { return {screen: this.app}; }
+  // The pages that are the product, checked for the product's own motion.
+  products() { return Object.keys(this.pages()); }
+
+  // Check the frames measured since the last check, which start at frame `offset`.
+  check(name, offset = 0) {
+    if (!this.checking) return;
+    const marks = Object.fromEntries(Object.entries(this.marks).map(([mark, {frame}]) => [mark, frame]));
+    const accepts = [];
+    for (let n = offset; n < offset + this.measured.length; n++) {
+      if (!this.followed[n]) continue;
+      const last = accepts.at(-1);
+      if (last && last.frames[1] === n - 1) last.frames[1] = n;
+      else accepts.push({rule: "layout/text-cut", frames: [n, n], reason: "the following camera crops through the screen as it goes, as Screen Studio's does"});
+    }
+    this.findings.push(...checkFrames(this.measured, {name, fps: FPS, offset, marks, accepts}));
+    this.measured = [];
   }
 
   // Time moves 1/30 s in the window, and every request it made lands.
@@ -802,7 +842,7 @@ function stagePage({screen, margin: m, room, view, backdrop, theme, fonts, start
 }
 
 // Film one format: serve the world, open the dashboard under the virtual clock, play the script.
-export async function shoot(film, {format = "4:5", theme = film.theme || "dark", out, fonts = null, encode = true} = {}) {
+export async function shoot(film, {format = "4:5", theme = film.theme || "dark", out, fonts = null, encode = true, check = false} = {}) {
   const size = FORMATS[format];
   if (!size) throw new Error(`Unknown format ${format}; use ${Object.keys(FORMATS).join(", ")}.`);
   const world = film.world();
@@ -850,10 +890,10 @@ export async function shoot(film, {format = "4:5", theme = film.theme || "dark",
     await context.addInitScript(`(${installVirtualClock})(${JSON.stringify({fps: FPS, epoch: now})});`);
     await context.addInitScript(`(${installScreen})();`);
     await context.addInitScript(`(${installStage})(${JSON.stringify({backdrop, path: STAGE, size, dpr: deviceScale})});`);
-    await context.addInitScript(({member, theme}) => {
-      window.Clerk = {load: async () => {}, isSignedIn: true, user: {id: "member", firstName: member}, session: {getToken: async () => "synthetic"}, mountSignIn: () => {}};
+    await context.addInitScript(({member, theme, image}) => {
+      window.Clerk = {load: async () => {}, isSignedIn: true, user: {id: "member", firstName: member, imageUrl: image}, session: {getToken: async () => "synthetic"}, mountSignIn: () => {}};
       localStorage.setItem("tin-lite:theme", theme);
-    }, {member: world.member || "Avery", theme});
+    }, {member: world.member || "Avery", theme, image: avatar(world.member || "Avery")});
     const page = await context.newPage();
     page.on("pageerror", error => issues.errors.push(`The page threw: ${error.message}`));
     page.on("console", message => {
@@ -866,7 +906,7 @@ export async function shoot(film, {format = "4:5", theme = film.theme || "dark",
     await app.waitForLoadState("domcontentloaded");
     await page.evaluate(() => document.fonts.ready);
 
-    const director = new Director({page, app, format, size, screen, margin, room, deviceScale, served, issues, ripple: Boolean(film.ripple)});
+    const director = new Director({page, app, format, size, screen, margin, room, deviceScale, served, issues, ripple: Boolean(film.ripple), check});
     director.sink = async png => {
       if (!encoder) return;
       if (!encoder.child.stdin.write(png)) await new Promise(resolve => encoder.child.stdin.once("drain", resolve));
@@ -874,11 +914,14 @@ export async function shoot(film, {format = "4:5", theme = film.theme || "dark",
     // The dashboard boots without being filmed.
     director.recording = false;
     for (let i = 0; i < 20 * FPS && !(await app.locator(world.ready || "main").count()); i++) await director.shoot();
+    // A second more, unfilmed, so what the page draws once on arrival has settled, as a desk does.
+    for (let i = 0; i < FPS; i++) await director.shoot();
     await app.evaluate(() => document.fonts.ready);
     await page.evaluate(() => document.fonts.ready);
     director.recording = true;
     await film.play(director);
     director.caption(null);
+    director.check(film.name);
     director.judgeCamera();
     director.judgeHand();
     director.judgeLens();
@@ -889,6 +932,8 @@ export async function shoot(film, {format = "4:5", theme = film.theme || "dark",
     if (!director.marks.poster) issues.errors.push("The film never marks its poster.");
     if (director.n / FPS > 140) issues.warnings.push("Longer than X's 2 minutes 20 seconds.");
     const report = {film: film.name, title: film.title, format, size, frames: director.n, seconds: director.n / FPS, hashes: director.hashes, trail: director.trail, lens: director.lens, issues};
+    if (director.checking) report.checks = director.findings.map(describe);
+    if (director.checking) report.summary = summary(director.findings);
     if (encoder) {
       encoder.child.stdin.end();
       await encoder.done;
@@ -960,7 +1005,7 @@ export async function loadFilm(name) {
 }
 
 async function main(argv) {
-  const options = {format: "4:5,16:9", theme: "dark", out: ".films", fonts: process.env.TIN_FILM_FONTS || null};
+  const options = {format: "4:5,16:9", theme: "dark", out: ".films", fonts: process.env.TIN_FILM_FONTS || null, check: "off"};
   const names = [];
   for (let i = 0; i < argv.length; i++) {
     if (argv[i].startsWith("--")) options[argv[i].slice(2)] = argv[++i];
@@ -972,12 +1017,13 @@ async function main(argv) {
   for (const name of names) {
     const film = await loadFilm(name);
     for (const format of options.format.split(",")) {
-      const {dir, report} = await shoot(film, {format, theme: options.theme, out: options.out, fonts});
+      const {dir, report} = await shoot(film, {format, theme: options.theme, out: options.out, fonts, check: options.check === "on"});
       const {errors, warnings, blocked} = report.issues;
       console.log(`${film.name} ${format}: ${report.frames} frames, ${report.seconds.toFixed(1)}s → ${dir}`);
       for (const line of errors) console.log(`  error: ${line}`);
       for (const line of warnings) console.log(`  warning: ${line}`);
       if (blocked.length) console.log(`  blocked: ${blocked.join(", ")}`);
+      for (const line of report.summary ?? []) console.log(`  check: ${line}`);
       failed ||= errors.length > 0;
     }
   }
