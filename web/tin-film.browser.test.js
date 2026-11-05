@@ -46,23 +46,35 @@ const BEATS = [
 test("a film written as JSON plays its site from the recording beside it", {timeout: 180000}, async () => {
   const {dir, file, spec} = filmFolder(BEATS);
   const film = filmFromSpec(spec, file);
-  const {report} = await shoot(film, {format: "4:5", out: path.join(dir, "takes"), rehearse: true, check: true});
+  // CI has no ffmpeg, so this take is played and checked without an encoder, as film.browser does.
+  const {report} = await shoot(film, {format: "4:5", out: path.join(dir, "takes"), rehearse: true, check: true, encode: false});
   assert.deepEqual(report.issues.errors, []);
   assert.equal(report.recording.misses.length, 0);
   assert.equal(report.recording.added, 0, "a rehearsal never goes to the live site");
   assert.deepEqual(report.captions.map(item => item.text), ["One press herds every sheep."]);
-  assert.ok(fs.existsSync(path.join(dir, "takes", "film", "4x5-light", "captions.vtt")));
+  assert.ok(fs.existsSync(path.join(dir, "takes", "film", "4x5-light", "report.json")));
 });
 
 test("a spec whose click hits nothing stops at that beat", {timeout: 180000}, async () => {
   const {dir, file, spec} = filmFolder(BEATS.map(beat => (beat.click ? {click: "#send-invoices"} : beat)));
-  await assert.rejects(shoot(filmFromSpec(spec, file), {format: "4:5", out: path.join(dir, "takes"), rehearse: true}), /Nothing on screen matches "#send-invoices"/);
+  await assert.rejects(shoot(filmFromSpec(spec, file), {format: "4:5", out: path.join(dir, "takes"), rehearse: true, encode: false}), /Nothing on screen matches "#send-invoices"/);
 });
 
 test("a spec missing what a film needs is refused before anything is filmed", () => {
   assert.throws(() => filmFromSpec({title: "", site: {url: "http://film.test/"}, beats: []}, "film.json"),
     /film.json needs a title, site.url, the https address the film opens on, now, the moment the page's clock shows, as an ISO time, beats\./);
   assert.throws(() => filmFromSpec({...filmFolder(BEATS).spec, beats: [{tap: "#go"}]}, "film.json"), /starts with "tap", which is no action/);
+});
+
+test("a take whose encoder is missing stops with the reason instead of waiting", {timeout: 180000}, async () => {
+  const {dir, file, spec} = filmFolder(BEATS);
+  const missing = process.env.PATH;
+  process.env.PATH = path.join(dir, "no-ffmpeg-here");
+  try {
+    await assert.rejects(shoot(filmFromSpec(spec, file), {format: "4:5", out: path.join(dir, "takes"), rehearse: true}), /ffmpeg/);
+  } finally {
+    process.env.PATH = missing;
+  }
 });
 
 test("captions become WebVTT, and the note plays the film from its own folder", () => {

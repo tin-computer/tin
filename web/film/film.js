@@ -838,7 +838,14 @@ export function ffmpeg(args) {
   const child = spawn("ffmpeg", ["-loglevel", "error", "-y", ...args], {stdio: ["pipe", "ignore", "pipe"]});
   let stderr = "";
   child.stderr.on("data", chunk => (stderr += chunk));
-  const done = new Promise((resolve, reject) => child.on("close", code => (code ? reject(new Error(`ffmpeg: ${stderr.trim()}`)) : resolve())));
+  // A missing or failed ffmpeg is said by `done`; the pipe it leaves broken is not a second error.
+  child.stdin.on("error", () => {});
+  const done = new Promise((resolve, reject) => {
+    child.on("error", error => reject(new Error(`ffmpeg: ${error.message}`)));
+    child.on("close", code => (code ? reject(new Error(`ffmpeg: ${stderr.trim()}`)) : resolve()));
+  });
+  // Whoever awaits `done` still gets its failure; until then it is not an unhandled rejection.
+  done.catch(() => {});
   return {child, done};
 }
 
@@ -974,7 +981,11 @@ export async function shoot(film, {format = "4:5", theme = film.theme || "dark",
     const director = new Director({page, app, format, size, screen, margin, room, deviceScale, served, issues, ripple: Boolean(film.ripple), check});
     director.sink = async png => {
       if (!encoder) return;
-      if (!encoder.child.stdin.write(png)) await new Promise(resolve => encoder.child.stdin.once("drain", resolve));
+      // An encoder that has stopped never drains: its end, or its failure, stops the take.
+      if (!encoder.child.stdin.write(png)) {
+        await Promise.race([new Promise(resolve => encoder.child.stdin.once("drain", resolve)),
+          encoder.done.then(() => { throw new Error("ffmpeg stopped before the film ended"); })]);
+      }
     };
     // The dashboard boots without being filmed.
     director.recording = false;
