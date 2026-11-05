@@ -91,6 +91,19 @@ Public procedures can also [propose and adopt a reviewed document pair](reviewed
 and optionally inspect a read-only connected repository. These are explicit output/workspace
 contracts; ordinary reviewable artifacts keep their existing behavior.
 
+A procedure publishes one file. When that file is a Markdown document, it can also carry the
+files it refers to. Declare `output.assets` with `max_files`, `max_bytes` (together, at most
+64 MB) and the `kinds` the procedure may write: `svg`, `html`, `png`, `jpeg`, `mp4`, `vtt` or
+`json`. Without `kinds` it means SVG and HTML, as article drafts have. The procedure writes the
+files directly in the document's folder, `<document>.assets/`, and refers to each one from the
+Markdown: as an image, as the `src:`, `poster:` or `captions:` of a `tin-video` block, as the
+`src:` of a `tin-embed` block, or in a link. Tin keeps only the files the document refers to and
+checks each against its kind: a PNG must be a PNG, and an MP4 must have a video track and its
+index first, so it starts playing before it has loaded. A file that fails is left out with its
+reason, which never fails the run. The kept files publish in the document's commit, and
+approval binds each one's checksum. To change many files in the founder's repository instead,
+the result is an unmerged pull request.
+
 Every procedure also reads the project's connected GitHub repositories, read-only under
 `/home/user/repos/`, and its brief says where each one is. Declare `"repositories": "none"` on
 the workspace only when the job must not see code. A pull request goes to the website

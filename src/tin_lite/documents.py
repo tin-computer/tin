@@ -13,6 +13,8 @@ from mistune.renderers.html import HTMLRenderer
 from mistune.util import escape as escape_text
 from mistune.util import escape_url, safe_entity, striptags
 
+from tin_lite.page_assets import NAME as _ASSET_NAME
+
 WORDS_PER_MINUTE = 220
 _WORD = re.compile(r"[\w]+(?:['’\-][\w]+)*", re.UNICODE)
 _SLUG_SEPARATOR = re.compile(r"[^\w]+", re.UNICODE)
@@ -35,7 +37,6 @@ class RenderedMarkdown:
 
 
 _CALLOUT = re.compile(r"\s*<p>\[!(NOTE|TIP|IMPORTANT|WARNING|CAUTION)\][ \t]*(?:<br />)?\n?")
-_ASSET_NAME = re.compile(r"[A-Za-z0-9][A-Za-z0-9._-]{0,80}\.(?:svg|html)")
 _FIELD = re.compile(r"([a-z]+)[ \t]*:[ \t]*(.+)")
 # Mistune's bare-URL pattern, except a URL never ends in a backslash. Backslash escapes inside a
 # bare URL are Markdown, not part of the address: older plans escaped every dot and hyphen.
@@ -62,7 +63,7 @@ class _TinHTMLRenderer(HTMLRenderer):
         super().__init__(escape=False)
         self.headings: list[MarkdownHeading] = []
         self._slug_counts: dict[str, int] = {}
-        # An article's assets folder (page_assets): figures and embeds the reader loads itself.
+        # A document's assets folder (page_assets): files the reader loads itself.
         self.asset_folder = asset_folder
 
     def _asset(self, url: str) -> str | None:
@@ -131,6 +132,17 @@ class _TinHTMLRenderer(HTMLRenderer):
                 return (
                     f'<figure class="md-embed" data-asset="{safe_entity(asset)}" '
                     f'data-height="{height}" data-title="{title}"></figure>\n'
+                )
+            if language == "tin-video" and (asset := self._asset(fields.get("src", ""))):
+                # A video the document carries; its poster and captions come from the folder too.
+                extra = "".join(
+                    f' data-{name}-asset="{safe_entity(path)}"'
+                    for name in ("poster", "captions")
+                    if (path := self._asset(fields.get(name, "")))
+                )
+                return (
+                    f'<figure class="md-video" data-asset="{safe_entity(asset)}" '
+                    f'data-title="{title}"{extra}></figure>\n'
                 )
             url = fields.get("url", "")
             if language == "tin-video" and url.startswith(("https://", "http://")):

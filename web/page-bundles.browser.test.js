@@ -42,6 +42,8 @@ function documentData() {
       `<figure class="md-video" data-url="https://www.youtube.com/watch?v=dQw4w9WgXcQ" data-title="The standoff"><a href="https://www.youtube.com/watch?v=dQw4w9WgXcQ" rel="noreferrer">The standoff</a></figure>`,
       `<figure class="md-video" data-url="https://media.sheepdogs.io/trailers/sheepdogs-standoff.mp4" data-title="The film"><a href="https://media.sheepdogs.io/trailers/sheepdogs-standoff.mp4" rel="noreferrer">The film</a></figure>`,
       `<figure class="md-video" data-url="https://example.com/watch/1" data-title="Elsewhere"><a href="https://example.com/watch/1" rel="noreferrer">Elsewhere</a></figure>`,
+      `<figure class="md-video" data-asset="${folder}/film.mp4" data-title="Our film" data-poster-asset="${folder}/poster.png" data-captions-asset="${folder}/captions.vtt"></figure>`,
+      `<figure class="md-video" data-asset="${folder}/gone.mp4" data-title="Gone"></figure>`,
       `<p><img class="md-asset" data-asset="${folder}/missing.svg" alt="Left out" data-fallback-name="missing.svg" /></p>`,
       `<aside class="md-callout" data-kind="tip"><p class="md-callout-label">Tip</p><p>Keep the dog behind the flock.</p></aside>`,
     ].join("\n"),
@@ -49,6 +51,9 @@ function documentData() {
       { path: `${folder}/flow.svg`, media_type: "image/svg+xml" },
       { path: `${folder}/field.html`, media_type: "text/html" },
       { path: `${folder}/tall.html`, media_type: "text/html" },
+      { path: `${folder}/film.mp4`, media_type: "video/mp4" },
+      { path: `${folder}/poster.png`, media_type: "image/png" },
+      { path: `${folder}/captions.vtt`, media_type: "text/vtt" },
     ],
     asset_notes: ["unsafe.svg was left out: the SVG contains script, event handlers or outside references."],
   };
@@ -92,6 +97,7 @@ test("page bundles: figures load inert, embeds are walled off, videos are allow-
       window.TinMarkdownViewer.mount(document.getElementById("main"), data, {
         mode: "in-app",
         loadAsset: async (assetPath) => {
+          window.loadedAssets = [...(window.loadedAssets || []), assetPath];
           if (!(assetPath in files)) throw new Error("missing");
           return encoder.encode(files[assetPath]).buffer;
         },
@@ -102,6 +108,9 @@ test("page bundles: figures load inert, embeds are walled off, videos are allow-
         [`${folder}/flow.svg`]: svg,
         [`${folder}/field.html`]: embed.replaceAll("{ORIGIN}", origin),
         [`${folder}/tall.html`]: tall,
+        [`${folder}/film.mp4`]: "not really a film",
+        [`${folder}/poster.png`]: "not really a poster",
+        [`${folder}/captions.vtt`]: "WEBVTT\n\n00:00.000 --> 00:02.000\nTwelve invoices overdue\n",
       },
     });
 
@@ -143,10 +152,24 @@ test("page bundles: figures load inert, embeds are walled off, videos are allow-
     // and anything else stays a link.
     const youtube = page.locator("iframe.md-video-frame");
     assert.equal(await youtube.getAttribute("src"), "https://www.youtube-nocookie.com/embed/dQw4w9WgXcQ");
-    const film = page.locator("video.md-video-file");
+    const film = page.locator('figure[data-title="The film"] video.md-video-file');
     assert.equal(await film.getAttribute("preload"), "none");
     assert.equal(await page.locator('figure.md-video a[href="https://example.com/watch/1"]').count(), 1);
     assert.ok(!external.some((url) => url.includes("sheepdogs-standoff.mp4")), "the film must not preload");
+
+    // A video the draft carries loads with the member's session once it nears the screen, and
+    // plays from the page's own copy with its poster and captions.
+    const ours = page.locator('figure[data-title="Our film"]');
+    await ours.scrollIntoViewIfNeeded();
+    const video = ours.locator("video.md-video-file");
+    await video.waitFor();
+    assert.match(await video.getAttribute("src"), /^blob:/);
+    assert.match(await video.getAttribute("poster"), /^blob:/);
+    assert.equal(await ours.locator('track[kind="captions"]').count(), 1);
+    assert.match(await ours.locator("track").getAttribute("src"), /^blob:/);
+    assert.equal(await ours.locator("figcaption").textContent(), "Our film");
+    assert.equal(await page.locator('figure[data-title="Gone"] .md-embed-missing').textContent(), "This video isn't available.");
+    assert.ok(!(await page.evaluate(() => window.loadedAssets)).includes(`${folder}/gone.mp4`));
 
     // The callout reads as a labelled aside.
     assert.equal(await page.locator(".md-callout .md-callout-label").textContent(), "Tip");

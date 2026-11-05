@@ -47,11 +47,13 @@ outbox bridges dispatch; Temporal carries command/run identifiers, not feedback 
 article contents. Preserve historical adapter/output contracts and exact-version
 guards. Do not infer approval from a generated no-draft assessment.
 
-An article draft whose definition declares `output.assets` may carry figures and embeds in
-its assets folder (`<article>.assets/`, `src/tin_lite/page_assets.py`). The article declares
-them: Tin keeps only the files it refers to, leaves out a missing, oversized or unsafe one
-with its reason (never a failed run), and records each kept file's checksum with the
-checkpoint. The review token binds that list with the article, approved-page consumers
+A Markdown document whose definition declares `output.assets` may carry files in its assets
+folder (`<document>.assets/`, `src/tin_lite/page_assets.py`). Article drafts carry SVG figures
+and HTML embeds; another definition may name more kinds: PNG and JPEG images, MP4 videos,
+WebVTT captions and JSON. The document declares its files: Tin keeps only the ones it refers
+to, leaves out a missing, oversized, unsafe or undeclared one with its reason (never a failed
+run), and records each kept file's checksum with the checkpoint. Website delivery carries text
+files only, which is all an article draft declares. The review token binds that list with the article, approved-page consumers
 re-check it, and a revision copies the files it keeps into its own folder. Drafts without
 assets keep their exact token and contract.
 
