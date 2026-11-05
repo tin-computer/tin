@@ -21,17 +21,21 @@ const page = {
     {key: "perplexity_sonar", name: "Perplexity", detail: "Sonar", kind: "web", icon: "perplexity"},
     {key: "sol_noweb", name: "GPT-6.1 Sol", detail: "OpenAI", kind: "memory", icon: "openai"},
   ],
-  sections: [{key: "ICP2", title: "Technical founders running their own marketing"}],
-  groups: [{key: "C7", section: "ICP2", title: "Run marketing from my coding agent", note: ""}],
+  sections: [{key: "ICP2", title: "Technical founders running their own marketing"}, {key: "shared", title: "Both"}],
+  groups: [
+    {key: "C7", section: "ICP2", title: "Run marketing from my coding agent", note: ""},
+    {key: "C13", section: "shared", title: "Branded comparison", note: "Names you in the question."},
+  ],
   questions: [
     {id: "7d", group: "C7", text: "Which marketing tools can I add as an MCP server to Claude Code or Cursor?", in_score: true},
     {id: "7e", group: "C7", text: "marketing skills for claude code", in_score: true},
+    {id: "13a", group: "C13", text: "Example Co vs Okara", in_score: false},
   ],
   cells: {
     "7d": {chatgpt_app: {outcome: "recommended", count: 1, of: 2}, perplexity_sonar: {outcome: "none", count: 2, of: 2}, sol_noweb: {outcome: "none", count: 2, of: 2}},
     "7e": {chatgpt_app: {outcome: "mentioned", count: 2, of: 2}, perplexity_sonar: {outcome: "none", count: 2, of: 2}, sol_noweb: {outcome: "none", count: 2, of: 2}},
   },
-  rivals: {"7d": {web: ["HubSpot", "Ahrefs"], memory: ["Zapier"]}, "7e": {web: ["HubSpot"], memory: []}},
+  rivals: {"7d": {web: ["HubSpot", "Ahrefs"], memory: ["Zapier"]}, "7e": {web: ["HubSpot"], memory: []}, "13a": {web: ["Okara"], memory: []}},
   score: {web: latest.web, memory: latest.memory},
   previous: {web: earlier.web, memory: earlier.memory},
   weeks: [earlier, latest],
@@ -82,15 +86,23 @@ test("a week: score, trend, the table, one engine's answers and the folded full 
     const item = tab.locator('.nav-item[data-view="ai-visibility"]');
     await item.waitFor();
     await item.click();
-    await tab.locator(".visibility-grid").waitFor();
+    await tab.locator(".visibility-grid").first().waitFor();
     assert.equal(new URL(tab.url()).pathname, "/ai-visibility");
     assert.equal(await tab.locator(".visibility-week strong").innerText(), "Nov 2 – Nov 8");
     assert.equal(await tab.locator('.visibility-arrow[aria-label="Next week"]').isDisabled(), true);
     const tiles = await tab.locator(".visibility-tiles .analytics-tile strong").allInnerTexts();
     assert.deepEqual(tiles, ["25%", "50%", "1 of 2", "HubSpot"]);
+    // Recommended leads; the answers without web search aren't shown.
+    assert.equal(await tab.locator(".analytics-tile.is-hero > span").innerText(), "Recommended");
+    assert.equal(await tab.getByRole("tab", {name: "What models already know"}).count(), 0);
+    // The question that names the project sits apart, under its own heading.
+    const apart = tab.locator(".visibility-apart");
+    assert.equal(await apart.locator("h2").innerText(), "Not counted in the score");
+    assert.deepEqual(await apart.locator(".visibility-question span").allInnerTexts(), ["Example Co vs Okara"]);
+    assert.equal(await tab.locator(".visibility-table").first().getByText("Example Co vs Okara").count(), 0);
     assert.equal(await tab.locator(".visibility-trend").count(), 1);
-    assert.deepEqual(await tab.locator(".visibility-engine strong").allInnerTexts(), ["ChatGPT", "Perplexity"]);
-    assert.equal(await tab.locator('.visibility-engine img[src="/assets/ai-engines/openai.svg"]').count(), 1);
+    assert.deepEqual(await tab.locator(".visibility-table").first().locator(".visibility-engine strong").allInnerTexts(), ["ChatGPT", "Perplexity"]);
+    assert.equal(await tab.locator('.visibility-table').first().locator('.visibility-engine img[src="/assets/ai-engines/openai.svg"]').count(), 1);
     assert.equal(await tab.locator('[data-visibility-cell="7d"][data-visibility-engine="chatgpt_app"] .visibility-frac').innerText(), "1/2");
 
     await tab.locator('[data-visibility-cell="7d"][data-visibility-engine="chatgpt_app"]').click();
@@ -113,8 +125,5 @@ test("a week: score, trend, the table, one engine's answers and the folded full 
     await tab.locator('[data-visibility-take="1"]').click();
     assert.equal(await tab.locator(".visibility-answer-head strong").innerText(), "Not mentioned");
 
-    await tab.getByRole("tab", {name: "What models already know"}).click();
-    assert.deepEqual(await tab.locator(".visibility-engine strong").allInnerTexts(), ["GPT-6.1 Sol"]);
-    assert.equal(await tab.locator(".visibility-answer").count(), 0);
   });
 });
