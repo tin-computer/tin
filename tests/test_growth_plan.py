@@ -1090,6 +1090,8 @@ def test_definition_pins_the_contract_and_the_assets_stay_consistent():
     hidden.add("content.plan_research")
     # A seed post starts from material the founder's agent supplies, so the plan can't schedule it.
     hidden.add("content.seed_post")
+    # A film is made on demand for one post; the plan's systems don't schedule it yet.
+    hidden.add("creative.feature_film")
     assert titles == {
         key: title
         for key, title in (

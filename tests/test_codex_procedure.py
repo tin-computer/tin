@@ -16,6 +16,7 @@ from tin_lite.catalog import BUILTIN_WORKFLOWS, BuiltinWorkflow, HumanReviewPoli
 from tin_lite.domain import (
     CODEX_PROCEDURE_EXECUTOR,
     CONTENT_DIAGRAM_WORKFLOW_NAME,
+    CREATIVE_FEATURE_FILM_WORKFLOW_NAME,
     CREATIVE_PRODUCT_DEMO_WORKFLOW_NAME,
     EMAIL_SHORTLIST_WORKFLOW_NAME,
     PRODUCT_CODE_MAP_WORKFLOW_NAME,
@@ -190,7 +191,30 @@ def test_concrete_procedure_packages_are_pinned_and_ui_renderable() -> None:
         PRODUCT_DEEP_DIVE_WORKFLOW_NAME,
         QA_PRODUCT_AUDIT_WORKFLOW_NAME,
         CREATIVE_PRODUCT_DEMO_WORKFLOW_NAME,
+        CREATIVE_FEATURE_FILM_WORKFLOW_NAME,
     }
+    film = procedures[CREATIVE_FEATURE_FILM_WORKFLOW_NAME]
+    film_definition, film_files = film.definition_and_resource_files()
+    assert film_definition["procedure"]["output"] == {
+        "kind": "project.artifact",
+        "path_template": "films/{slug}.md",
+        "media_type": "text/markdown",
+        "max_bytes": 64_000,
+        "validator": "feature-film.v1",
+        "assets": {
+            "max_files": 6,
+            "max_bytes": 24_000_000,
+            "kinds": ["mp4", "png", "vtt", "json"],
+        },
+    }
+    assert film_definition["procedure"]["sandbox"] == {
+        "profile": "studio",
+        "timeout_seconds": 3600,
+        "egress": "open",
+    }
+    assert film_definition["human_review"]["eligible"] is True
+    assert "procedures/creative.feature_film/skills/feature-film/film-format.md" in film_files
+    validate_codex_procedure_definition(film_definition)
     diagram = procedures[CONTENT_DIAGRAM_WORKFLOW_NAME]
     diagram_definition, diagram_files = diagram.definition_and_resource_files()
     assert diagram_definition["procedure"]["output"] == {

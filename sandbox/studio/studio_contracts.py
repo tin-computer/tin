@@ -16,6 +16,7 @@ CHARACTER_SVG_MEDIA_TYPE = "image/svg+xml"
 DEMO_VIDEO_MEDIA_TYPE = "video/mp4"
 CHARACTER_SVG_VALIDATOR = "character-svg.v1"
 DEMO_VIDEO_VALIDATOR = "demo-video.v1"
+FEATURE_FILM_VALIDATOR = "feature-film.v1"
 
 SVG_NS = "http://www.w3.org/2000/svg"
 XLINK_NS = "http://www.w3.org/1999/xlink"
@@ -59,6 +60,17 @@ DEMO_VIDEO_MAX_SECONDS = 90.0
 DEMO_VIDEO_WIDTH = 1080
 DEMO_VIDEO_HEIGHT = 1920
 
+# A feature film is a note (`films/<slug>.md`) that plays the film its folder carries: one
+# `tin-video` block whose files sit in `<slug>.assets/`. The film's sizes are the film kit's
+# formats (web/film/film.js): 4:5 and 1:1 for feeds, 16:9 for desktop, the site and blogs.
+MAX_FEATURE_FILM_NOTE_BYTES = 64_000
+FEATURE_FILM_SIZES = frozenset({(1080, 1350), (1080, 1080), (1920, 1080)})
+FEATURE_FILM_MIN_SECONDS = 8.0
+FEATURE_FILM_MAX_SECONDS = 90.0
+_VIDEO_BLOCK = re.compile(r"^```tin-video[ \t]*\n(.*?)^```[ \t]*$", re.MULTILINE | re.DOTALL)
+_BLOCK_FIELD = re.compile(r"([a-z]+):[ \t]*(.*)")
+_FILM_FILE = r"[a-z0-9][a-z0-9_-]*"
+
 
 @dataclass(frozen=True)
 class CharacterSvg:
@@ -73,6 +85,14 @@ class DemoVideo:
     width: int
     height: int
     has_audio: bool
+
+
+@dataclass(frozen=True)
+class FeatureFilmNote:
+    title: str
+    video: str
+    poster: str | None
+    captions: str | None
 
 
 def _local(tag: str) -> str:
@@ -276,4 +296,57 @@ def validate_demo_video(content: bytes) -> DemoVideo:
         raise ValueError(f"demo video must be {DEMO_VIDEO_WIDTH}x{DEMO_VIDEO_HEIGHT} portrait")
     if not video.has_audio:
         raise ValueError("demo video must carry a voice track")
+    return video
+
+
+def parse_feature_film(content: bytes, *, folder: str) -> FeatureFilmNote:
+    """Check a film note: a title, then exactly one `tin-video` block whose video, and its
+    poster and captions when named, are files in the note's own folder (`folder` is that
+    folder's name, `<slug>.assets`). The files themselves are checked as they are kept."""
+    if not content or len(content) > MAX_FEATURE_FILM_NOTE_BYTES:
+        raise ValueError(f"film note must contain 1-{MAX_FEATURE_FILM_NOTE_BYTES} bytes")
+    try:
+        text = content.decode("utf-8")
+    except UnicodeDecodeError as exc:
+        raise ValueError("film note must be UTF-8") from exc
+    first = text.lstrip("\ufeff").split("\n", 1)[0]
+    title = first.removeprefix("# ").strip()
+    if not first.startswith("# ") or not title:
+        raise ValueError("film note must start with a '# ' title")
+    blocks = _VIDEO_BLOCK.findall(text)
+    if len(blocks) != 1:
+        raise ValueError("film note must play exactly one film in a tin-video block")
+    fields = {
+        match[1]: match[2].strip()
+        for line in blocks[0].splitlines()
+        if (match := _BLOCK_FIELD.fullmatch(line.strip()))
+    }
+    here = rf"(?:\./)?{re.escape(folder)}/{_FILM_FILE}"
+
+    def file(name: str, suffixes: str, label: str, *, required: bool = False) -> str | None:
+        value = fields.get(name, "")
+        if not value and not required:
+            return None
+        if not re.fullmatch(rf"{here}\.(?:{suffixes})", value):
+            raise ValueError(f"the film's {name} must be {label} file in {folder}/")
+        return value.removeprefix("./")
+
+    return FeatureFilmNote(
+        title=title,
+        video=file("src", "mp4", "an MP4", required=True) or "",
+        poster=file("poster", "png|jpg|jpeg", "a PNG or JPEG"),
+        captions=file("captions", "vtt", "a WebVTT"),
+    )
+
+
+def validate_feature_film_video(content: bytes) -> DemoVideo:
+    """The film itself: a fast-start MP4 in one of the kit's sizes, 8 to 90 seconds long."""
+    video = inspect_mp4(content, name="film")
+    if not FEATURE_FILM_MIN_SECONDS <= video.duration_seconds <= FEATURE_FILM_MAX_SECONDS:
+        raise ValueError(
+            f"film must run {FEATURE_FILM_MIN_SECONDS:g}-{FEATURE_FILM_MAX_SECONDS:g} seconds"
+        )
+    if (video.width, video.height) not in FEATURE_FILM_SIZES:
+        sizes = ", ".join(f"{w}x{h}" for w, h in sorted(FEATURE_FILM_SIZES))
+        raise ValueError(f"film must be one of {sizes}")
     return video

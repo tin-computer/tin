@@ -42,6 +42,7 @@ from tin_lite.domain import (
     CODEX_PROCEDURE_EXECUTOR,
     CONTENT_DIAGRAM_WORKFLOW_NAME,
     CREATIVE_CHARACTER_WORKFLOW_NAME,
+    CREATIVE_FEATURE_FILM_WORKFLOW_NAME,
     CREATIVE_PRODUCT_DEMO_WORKFLOW_NAME,
     EMAIL_CAMPAIGN_WORKFLOW_NAME,
     EMAIL_SHORTLIST_PATH,
@@ -122,7 +123,9 @@ from tin_lite.studio import STUDIO_VOICES
 from tin_lite.studio_contracts import (
     DEMO_VIDEO_MEDIA_TYPE,
     DEMO_VIDEO_VALIDATOR,
+    FEATURE_FILM_VALIDATOR,
     MAX_DEMO_VIDEO_BYTES,
+    MAX_FEATURE_FILM_NOTE_BYTES,
 )
 from tin_lite.system_wiki import SystemWikiRef
 from tin_lite.workflow_diagrams import (
@@ -182,6 +185,7 @@ PAYMENT_RECOVERY_WORKFLOW_ID = UUID("00000000-0000-4000-8000-000000000046")
 # new built-in must take a fresh number above the highest ever used, never fill a gap.
 # content.plan 1.0.0's planning agent (content_plan_agent).
 CONTENT_PLAN_RESEARCH_WORKFLOW_ID = UUID("00000000-0000-4000-8000-000000000047")
+CREATIVE_FEATURE_FILM_WORKFLOW_ID = UUID("00000000-0000-4000-8000-000000000048")
 RETIRED_BUILTIN_WORKFLOW_IDS = {
     UUID("00000000-0000-4000-8000-000000000018"): "strategy.prescribe",
     UUID("00000000-0000-4000-8000-000000000019"): "strategy.wildcards",
@@ -410,6 +414,17 @@ DEMO_VIDEO_REVIEW_POLICY = HumanReviewPolicy(
         "otherwise it stays safely on hold."
     ),
     queue_clause="Demo video ready to finish",
+)
+
+FEATURE_FILM_REVIEW_POLICY = HumanReviewPolicy(
+    reason="Produces a public-facing product film.",
+    review_label="Review film",
+    defer_label="Not now",
+    summary=(
+        "Your film is ready. Watch it before Tin marks the workflow complete; otherwise it "
+        "stays safely on hold."
+    ),
+    queue_clause="Film ready to finish",
 )
 
 CONTENT_DIAGRAM_REVIEW_POLICY = HumanReviewPolicy(
@@ -4030,6 +4045,167 @@ BUILTIN_WORKFLOWS = (
             output_media_type=DEMO_VIDEO_MEDIA_TYPE,
             output_validator=DEMO_VIDEO_VALIDATOR,
             output_max_bytes=MAX_DEMO_VIDEO_BYTES,
+            sandbox=SandboxProfile(
+                profile=STUDIO_SANDBOX_PROFILE,
+                timeout_seconds=3600,
+                egress=OPEN_SANDBOX_EGRESS,
+            ),
+        ),
+    ),
+    BuiltinWorkflow(
+        id=CREATIVE_FEATURE_FILM_WORKFLOW_ID,
+        key=CREATIVE_FEATURE_FILM_WORKFLOW_NAME,
+        public_mcp=PublicMCPExposure("start_feature_film", destructive=True, open_world=True),
+        title="Film a feature",
+        description=(
+            "Film one feature of the founder's product as it really moves on its live public "
+            "pages: a captioned 4:5, 16:9 or 1:1 video for a LinkedIn or X post, with every frame "
+            "checked, kept beside a note in project Files."
+        ),
+        executor=CODEX_PROCEDURE_EXECUTOR,
+        version_label="1.0.0",
+        presentation=WorkflowDiagram(
+            direction="TD",
+            nodes=(
+                DiagramNode(
+                    "pages",
+                    "surface",
+                    "Your live product pages",
+                    "public only, no sign-up, forms or buying",
+                ),
+                DiagramNode(
+                    "record",
+                    "step",
+                    "Write and record the film",
+                    "Codex, one live visit, nothing is sent",
+                ),
+                DiagramNode(
+                    "rehearse",
+                    "step",
+                    "Rehearse and fix it",
+                    "every frame checked, stills looked at",
+                ),
+                DiagramNode(
+                    "render",
+                    "step",
+                    "Render and check the film",
+                    "from the recording, 8 to 90 s",
+                ),
+                DiagramNode(
+                    "note",
+                    "store",
+                    "Film note in project Files",
+                    "films/name.md, the video beside it",
+                ),
+                DiagramNode("review", "gate", "Watch the film", "no deadline, it stays on hold"),
+                DiagramNode(
+                    "receipt",
+                    "receipt",
+                    "Approved film",
+                    "an MP4 in Files, Tin posts nothing",
+                ),
+            ),
+            edges=(
+                DiagramEdge("pages", "record"),
+                DiagramEdge("record", "rehearse"),
+                DiagramEdge("rehearse", "render"),
+                DiagramEdge("render", "note"),
+                DiagramEdge("note", "review"),
+                DiagramEdge("review", "receipt", "signal", "approved"),
+            ),
+        ),
+        prerequisites=(
+            WorkflowPrerequisite(
+                kind="artifact",
+                level="recommended",
+                path=MEMORY_INDEX_PATH,
+                section=FEATURE_MAP_SECTION,
+                producer=PRODUCT_DEEP_DIVE_WORKFLOW_NAME,
+                reason="The feature and its claims come from the Feature map.",
+            ),
+        ),
+        system=CREATIVE_STUDIO_SYSTEM,
+        review_policy=FEATURE_FILM_REVIEW_POLICY,
+        schedule_modes=("on_demand",),
+        input_schema={
+            "type": "object",
+            "additionalProperties": False,
+            "properties": {
+                "project_id": {"type": "string", "format": "uuid"},
+                "slug": {
+                    "type": "string",
+                    "pattern": "^[a-z0-9]+(?:-[a-z0-9]+)*$",
+                    "minLength": 1,
+                    "maxLength": 80,
+                    "title": "Film name",
+                    "description": "Lowercase words separated by hyphens; the file name.",
+                    "x-tin-ui": {"control": "text", "order": 10},
+                },
+                "product_url": {
+                    "type": "string",
+                    "format": "uri",
+                    "minLength": 1,
+                    "maxLength": 2048,
+                    "title": "Page",
+                    "description": "The public page the film opens on.",
+                    "x-tin-ui": {"control": "text", "order": 20},
+                },
+                "feature": {
+                    "type": "string",
+                    "maxLength": 1000,
+                    "default": "",
+                    "title": "Feature",
+                    "description": (
+                        "The feature to film: a Feature map line or one sentence. Leave empty "
+                        "to let Tin pick the most visible one."
+                    ),
+                    "x-tin-ui": {"control": "textarea", "order": 30},
+                },
+                "angle": {
+                    "type": "string",
+                    "maxLength": 1000,
+                    "default": "",
+                    "title": "Angle",
+                    "description": (
+                        "What it was like before the feature, and what it is like with it. "
+                        "Leave empty to let Tin write it from project memory."
+                    ),
+                    "x-tin-ui": {"control": "textarea", "order": 40},
+                },
+                "format": {
+                    "type": "string",
+                    "enum": ["4:5", "16:9", "1:1"],
+                    "default": "4:5",
+                    "title": "Format",
+                    "description": "4:5 for LinkedIn and X feeds, 16:9 for desktop and the site.",
+                    "x-tin-ui": {"control": "select", "order": 50},
+                },
+                "notes": {
+                    "type": "string",
+                    "maxLength": 2000,
+                    "default": "",
+                    "title": "Notes",
+                    "description": "Pages to visit, claims to avoid, what to end on.",
+                    "x-tin-ui": {"control": "textarea", "order": 60},
+                },
+            },
+            "required": ["project_id", "slug", "product_url"],
+        },
+        procedure=CodexProcedureSource(
+            root=Path(__file__).parents[2]
+            / "codex_procedures"
+            / CREATIVE_FEATURE_FILM_WORKFLOW_NAME,
+            entry_skill="feature-film",
+            output_path_template="films/{slug}.md",
+            output_validator=FEATURE_FILM_VALIDATOR,
+            output_max_bytes=MAX_FEATURE_FILM_NOTE_BYTES,
+            # The film, its poster, its captions and its spec, approved with the note.
+            output_assets=AssetPolicy(
+                max_files=6, max_bytes=24_000_000, kinds=("mp4", "png", "vtt", "json")
+            ),
+            project_skills=(
+                ProjectSkillDependency(name="writing-style", path=STYLE_PATH, required=False),
+            ),
             sandbox=SandboxProfile(
                 profile=STUDIO_SANDBOX_PROFILE,
                 timeout_seconds=3600,

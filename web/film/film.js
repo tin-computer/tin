@@ -849,6 +849,16 @@ export async function encodeStills(pngs, args) {
   await done;
 }
 
+// The same captions as WebVTT, which a browser's video plays as a track.
+export function vtt(captions, total) {
+  const time = frame => {
+    const ms = Math.round((frame / FPS) * 1000);
+    const pad = (value, size = 2) => String(value).padStart(size, "0");
+    return `${pad(Math.floor(ms / 3600000))}:${pad(Math.floor(ms / 60000) % 60)}:${pad(Math.floor(ms / 1000) % 60)}.${pad(ms % 1000, 3)}`;
+  };
+  return `WEBVTT\n\n${captions.map(item => `${time(item.start)} --> ${time(Math.min(item.end ?? total, total))}\n${item.text}\n`).join("\n")}`;
+}
+
 export function srt(captions, total) {
   const time = frame => {
     const ms = Math.round((frame / FPS) * 1000);
@@ -877,6 +887,9 @@ function stagePage({screen, margin: m, room, view, backdrop, theme, fonts, start
 </style></head><body><div id="room"><iframe id="screen" src="${start}"></iframe></div></body></html>`;
 }
 
+// Where a take goes inside its film's folder: one per format and theme.
+export const takeName = (format, theme = "dark") => `${format.replace(":", "x")}${theme === "dark" ? "" : `-${theme}`}`;
+
 // Film one format: serve the world, open the dashboard under the virtual clock, play the script.
 // A rehearsal (`rehearse`) shoots the same layout at one device px per CSS px instead of two, a
 // quarter of the pixels, encodes fast and skips the GIF and the motion strips: for working out a
@@ -886,7 +899,7 @@ function stagePage({screen, margin: m, room, view, backdrop, theme, fonts, start
 // plays the site live where its recording has no answer yet, and saves what it gets. `session` is
 // a signed-in browser's storage state (Playwright's), for a site behind sign-in: its cookies go
 // with each request and are never saved, and their values are among the secrets looked for.
-export async function shoot(film, {format = "4:5", theme = film.theme || "dark", out, fonts = null, encode = true, check = false, rehearse = false, record = false} = {}) {
+export async function shoot(film, {format = "4:5", theme = film.theme || "dark", out, fonts = null, encode = true, check = false, rehearse = false, record = false, gif = !rehearse} = {}) {
   const size = FORMATS[format];
   if (!size) throw new Error(`Unknown format ${format}; use ${Object.keys(FORMATS).join(", ")}.`);
   const world = film.world();
@@ -898,7 +911,7 @@ export async function shoot(film, {format = "4:5", theme = film.theme || "dark",
   const {screen, margin, room, viewport} = stage(size, film.screens?.[format]);
   const browser = await chromium.launch({headless: true});
   const issues = {errors: [], warnings: [], blocked: []};
-  const dir = path.join(out, film.name, `${format.replace(":", "x")}${theme === "dark" ? "" : `-${theme}`}`);
+  const dir = path.join(out, film.name, takeName(format, theme));
   fs.rmSync(dir, {recursive: true, force: true});
   fs.mkdirSync(dir, {recursive: true});
   const mp4 = path.join(dir, "film.mp4");
@@ -943,11 +956,15 @@ export async function shoot(film, {format = "4:5", theme = film.theme || "dark",
       localStorage.setItem("tin-lite:theme", theme);
     }, {member: world.member || "Avery", theme, image: avatar(world.member || "Avery")});
     const page = await context.newPage();
-    page.on("pageerror", error => issues.errors.push(`The page threw: ${error.message}`));
+    // Tin's own dashboard must film without an error; a live site's own errors are its own, so
+    // they are said and the take goes on.
+    const faults = site ? issues.warnings : issues.errors;
+    const fault = text => faults.includes(text) || faults.push(text);
+    page.on("pageerror", error => fault(`The page threw: ${error.message}`));
     page.on("console", message => {
       if (message.type() !== "error") return;
       const where = message.location()?.url;
-      issues.errors.push(`The page logged an error: ${message.text()}${where ? ` (${where.replace(served.base, "")})` : ""}`);
+      fault(`The page logged an error: ${message.text()}${where ? ` (${where.replace(served.base, "")})` : ""}`);
     });
     await page.goto(`${served.base}${STAGE}`, {waitUntil: "domcontentloaded"});
     const app = await (await page.waitForSelector("#screen")).contentFrame();
@@ -962,6 +979,13 @@ export async function shoot(film, {format = "4:5", theme = film.theme || "dark",
     // The dashboard boots without being filmed.
     director.recording = false;
     for (let i = 0; i < 20 * FPS && !(await app.locator(world.ready || "main").count()); i++) await director.shoot();
+    // What a film does before it starts, unfilmed: a site's cookie banner dismissed, a popup
+    // closed. The hand that did it is not in the film.
+    if (film.prepare) {
+      await player({beats: film.prepare}, film.values, "prepare")(director);
+      Object.assign(director, {journeys: [], events: [], moves: []});
+      director.cursor.visible = false;
+    }
     // A second more, unfilmed, so what the page draws once on arrival has settled, as a desk does.
     for (let i = 0; i < FPS; i++) await director.shoot();
     await app.evaluate(() => document.fonts.ready);
@@ -985,16 +1009,17 @@ export async function shoot(film, {format = "4:5", theme = film.theme || "dark",
     const cookies = site?.session ? JSON.parse(fs.readFileSync(site.session, "utf8")).cookies?.map(cookie => cookie.value) ?? [] : [];
     const leaks = site ? findSecrets(recordingDir, [...(site.secrets || []), ...cookies]) : [];
     if (leaks.length) issues.errors.push(`The recording ${site.recording} holds a secret in ${leaks.length} answer${leaks.length === 1 ? "" : "s"}: ${leaks.slice(0, 3).join(", ")}. Delete those answers and record again.`);
-    const report = {film: film.name, title: film.title, format, size, frames: director.n, seconds: director.n / FPS, hashes: director.hashes, trail: director.trail, lens: director.lens, issues};
+    const report = {film: film.name, title: film.title, format, size, frames: director.n, seconds: director.n / FPS, captions: director.captions.map(item => ({text: item.text, start: item.start / FPS, end: Math.min(item.end ?? director.n, director.n) / FPS})), hashes: director.hashes, trail: director.trail, lens: director.lens, issues};
     if (recorded) report.recording = {name: site.recording, ...recorded};
     if (director.checking) report.checks = director.findings.map(describe);
     if (director.checking) report.summary = summary(director.findings);
     if (encoder) {
       encoder.child.stdin.end();
       await encoder.done;
-      await stills(director, size, dir, {gif: !rehearse});
+      await stills(director, size, dir, {gif});
       if (!rehearse) await motionStrips(director, size, dir);
       fs.writeFileSync(path.join(dir, "captions.srt"), srt(director.captions, director.n));
+      fs.writeFileSync(path.join(dir, "captions.vtt"), vtt(director.captions, director.n));
       report.bytes = Object.fromEntries(fs.readdirSync(dir).filter(name => name.includes(".")).map(name => [name, fs.statSync(path.join(dir, name)).size]));
       if (report.bytes["film.gif"] > 15 * 1024 * 1024) issues.warnings.push("The GIF is over X's 15 MB.");
     }
@@ -1053,7 +1078,23 @@ export async function motionStrips(director, size, dir) {
   }
 }
 
+// A film written as JSON, as the feature-film workflow's agent writes one: a live site, its
+// beats and the named film's facts. Its recording and takes sit beside the file.
+export function filmFromSpec(spec, file) {
+  const problems = [];
+  if (!spec || typeof spec !== "object" || Array.isArray(spec)) throw new Error(`${file} is not a film: it must hold one JSON object.`);
+  if (typeof spec.title !== "string" || !spec.title.trim()) problems.push("a title");
+  if (!/^https:\/\/[^\s/]+/.test(spec.site?.url ?? "")) problems.push("site.url, the https address the film opens on");
+  if (Number.isNaN(Date.parse(spec.now))) problems.push("now, the moment the page's clock shows, as an ISO time");
+  if (!Array.isArray(spec.beats) || !spec.beats.length) problems.push("beats");
+  if (problems.length) throw new Error(`${file} needs ${problems.join(", ")}.`);
+  const here = path.dirname(path.resolve(file));
+  const site = {...spec.site, recording: path.join(here, "world")};
+  return {name: spec.name || "film", ...spec, world: () => ({site, ready: spec.ready || "body"}), play: player(spec)};
+}
+
 export async function loadFilm(name) {
+  if (name.endsWith(".json")) return filmFromSpec(JSON.parse(fs.readFileSync(name, "utf8")), name);
   const file = path.resolve("web/film/films", `${name}.js`);
   if (!fs.existsSync(file)) throw new Error(`No film named ${name} in web/film/films.`);
   const film = await import(pathToFileURL(file));

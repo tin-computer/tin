@@ -22,7 +22,7 @@ Each format lands in `.films/<film>/<format>/`:
 | `poster.png` | The frame the script marks `poster`, at full size |
 | `marks/`, `sheet.png` | Every marked frame, and a contact sheet of them for review |
 | `motion/` | Every camera move, click and cut as a strip of every other frame (66ms apart), for reviewing the motion itself |
-| `captions.srt` | The captions with their times, for platforms that take a caption file |
+| `captions.srt`, `captions.vtt` | The captions with their times, for platforms that take a caption file and for the browser's video track |
 | `report.json` | Frames, length, sizes, frame hashes and the checks below |
 
 ## Formats
@@ -202,6 +202,38 @@ npm run film -- sheepdogs-site --format 16:9,4:5 --check on # from the recording
 - **Workers.** The film's clock runs the page's own timers and frames; a game or tool that
   simulates in a Web Worker runs on real time there, so its frames differ between takes (the
   Sheepdogs game does; its blog post, filmed next, matches frame for frame).
+
+## tin-film: a film as a JSON file
+
+`web/film/tin-film.js` is the kit as one command, for a live site filmed from a JSON file. It is
+what the `creative.feature_film` workflow's agent runs in Tin's studio sandbox
+(`tin-film`, see [the creative studio](creative-studio.md#feature-films-creativefeature_film)),
+and works the same from the repository:
+
+```
+node web/film/tin-film.js inspect https://sheepdogs.io/ --dir .films/herding   # outline, screenshots, starter film.json
+node web/film/tin-film.js record .films/herding/film.json     # once against the live site, low resolution, checked
+node web/film/tin-film.js rehearse .films/herding/film.json   # from the recording, low resolution, checked
+node web/film/tin-film.js render .films/herding/film.json     # the final take, from the recording
+node web/film/tin-film.js deliver .films/herding/film.json films/herding.md
+```
+
+- **The file.** `film.json` holds `title`, `story` (`before` and `after`), `site.url`, `now`
+  (the page's clock), `format`, `theme`, `ready`, `beats` and `notes`; the workflow's skill
+  documents every field and beat (`codex_procedures/creative.feature_film/skills/feature-film/film-format.md`).
+  A missing field or an unknown beat is refused before anything is filmed.
+- **`prepare`.** Beats played before the film starts, unfilmed, for what a visitor clears first:
+  a cookie banner, a popup. The hand that did it isn't in the film.
+- **Beside the file.** Its recording is `world/` and its takes `takes/<record|rehearse|render>/`,
+  never in the project. `inspect` opens the page through the same recording rules, so looking is
+  already recording.
+- **A live site's own errors** are warnings, not errors: the take goes on. Tin's dashboard still
+  fails a take on any console error.
+- **`deliver`** copies the final take's film (re-encoded smaller when it is over 16 MB), poster,
+  WebVTT captions and `film.json` into `<note>.assets/`, writes the note (the film in a `tin-video`
+  block, the story, every caption with its time, what the checks still found, and the film's
+  facts), and checks both with `tin-studio check`, the contract Tin applies when it keeps them
+  (`feature-film.v1`).
 
 ## Desk films
 
