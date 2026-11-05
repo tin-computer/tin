@@ -104,7 +104,37 @@ Framing follows Stageshow's `references/framing.md`:
 ## Writing a film
 
 A film is a module in `web/film/films/` exporting `now` (the film's day), `timezone`, `world()`
-and `play(f)`. `people-requests.js` is the example.
+and its `beats`: the director's calls as data (`web/film/spec.js`). `people-requests.js` is the
+example; a desk film gives each scene its own `beats`. A film may still export `play(f)` instead.
+
+```js
+export const beats = [
+  {camera: "@column", cut: true, pad: 0, valign: "top", when: "tall"},
+  {caption: "Every score comes with its reason."},
+  {move: '.people-table tr[data-person="p-daniel"] td.is-fit', to: [0.95, 0.12]},
+  {hold: 2},
+  {open: "/people", ready: ".people-table"},
+  {highlight: "@linkedinRow", hold: 3.5, pad: 0, over: true, if: ACCEPTED},
+  {morph: [{run: "chloeAccepts"}, {hold: 0.3}], caption: "They accept."},
+  {mark: "poster"},
+];
+```
+
+- **A beat** is one call. Its first key is the action, named as the method below
+  (`term.paste` and the other `term.*` drive a desk's terminal). The action's value is the first
+  argument, `true` for none. Every other key is an option, even one named like an action, as
+  `ready` is in `{open: "/people", ready: …}`. For `wait`, `show`, `scroll` and `term.work`, the
+  value is the list of arguments.
+- **`when`** plays a beat only in some takes: `wide` or `tall` (the format), `full` or `brisk`
+  (a desk scene's pace). **`if`** plays it only while a selector shows. `{when, beats: […]}` groups
+  beats, and `{morph: […], caption}` plays them as one change shown in place.
+- **`values`** are the film's named values, written `"@name"` anywhere in a beat: a place on the
+  desk, a terminal's lines, or a function that measures the page when the beat plays (a panel
+  row, the content column). `{run: "name"}` calls one for what no action covers, such as moving
+  the world on or naming an element so later beats can point at it.
+- The beats are plain JSON, and the recorder checks every one before it films: an unknown action,
+  a `when` that names no take, or a missing value stops the film before its first frame, naming
+  the beat.
 
 | Call | What it does |
 | --- | --- |
