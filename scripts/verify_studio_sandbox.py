@@ -5,9 +5,9 @@ user, that the `tin-studio` toolkit is installed with ffmpeg and resvg, that it 
 capture a public page through its own Camoufox at the 9:16 phone viewport, rasterize the example
 character, and render a short silent preview that passes the demo-video contract. It also films
 the page with `tin-film` (inspect, record, render, deliver) into a note that passes the
-feature-film contract. Voice is not exercised because it needs a run-bound grant; the
-switchboard route is covered by unit tests and by a real workflow run. The sandbox is always
-killed.
+feature-film contract, and rehearses the staged worked example (`tin-film new`) without an
+error. Voice is not exercised because it needs a run-bound grant; the switchboard route is
+covered by unit tests and by a real workflow run. The sandbox is always killed.
 
     uv run python scripts/verify_studio_sandbox.py [--url https://example.com/] [--api]
         [--template <alias>]   # a freshly built alias, before the configured one is replaced
@@ -71,6 +71,9 @@ VERIFY_SCRIPT = dedent(
     mkdir -p "$work/project/films"
     tin-film deliver "$work/film/film.json" "$work/project/films/probe.md" | tail -n 1 \
       | grep -q '^OK' && echo "FILM_OK=true"
+    tin-film new "$work/staged" > /dev/null
+    tin-film rehearse "$work/staged/film.json" > "$work/staged.log" \
+      && ! grep -q '^  error:' "$work/staged.log" && echo "STAGED_OK=true"
     """
 )
 REQUIRED_MARKERS = {
@@ -79,6 +82,7 @@ REQUIRED_MARKERS = {
     "INSPECT_OK=true",
     "RENDER_OK=true",
     "FILM_OK=true",
+    "STAGED_OK=true",
 }
 
 
