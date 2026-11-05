@@ -2,7 +2,7 @@
 // sandbox (and anyone filming a live site by hand). A film is a JSON file (film.json); its
 // recording (world/) and takes (takes/) sit beside it, never in the project.
 //
-//   tin-film inspect <url> [--dir DIR] [--format 4:5]   outline, screenshots and a starter film.json
+//   tin-film inspect <url> [--dir DIR] [--format 16:9]  outline, screenshots and a starter film.json
 //   tin-film record <film.json>      play it once against the live site, saving what it loads
 //   tin-film rehearse <film.json>    play it from the recording at low resolution, every frame checked
 //   tin-film render <film.json>      the final take from the recording, at full resolution, checked
@@ -27,7 +27,7 @@ const MAX_FILM_BYTES = 16_000_000;
 
 const load = file => filmFromSpec(JSON.parse(fs.readFileSync(file, "utf8")), file);
 const here = file => path.dirname(path.resolve(file));
-const formatOf = (film, options) => options.format || film.format || "4:5";
+const formatOf = (film, options) => options.format || film.format || "16:9";
 const takeDir = (file, kind, film, format) => path.join(here(file), "takes", kind, film.name, takeName(format, film.theme));
 
 async function take(kind, file, options) {
@@ -119,7 +119,7 @@ async function main(argv) {
   }
   if (command === "inspect" && args.length === 1) {
     const dir = path.resolve(options.dir || ".");
-    const report = await inspect(args[0], {dir, format: options.format || "4:5"});
+    const report = await inspect(args[0], {dir, format: options.format || "16:9"});
     console.log(`${report.title} (${report.url}), ${report.height}px tall, read at ${report.screen.width}×${report.screen.height}`);
     console.log(`look: ${report.look.background} ground, ${report.look.color} text, ${report.look.font}`);
     for (const item of report.headings) console.log(`  h${item.level} at ${item.top}: ${item.text}  →  ${item.selector}`);

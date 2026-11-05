@@ -4060,7 +4060,7 @@ BUILTIN_WORKFLOWS = (
         title="Film a feature",
         description=(
             "Film one feature of the founder's product as it really moves on its live public "
-            "pages: a captioned 4:5, 16:9 or 1:1 video for a LinkedIn or X post, with every frame "
+            "pages: a captioned 16:9, 4:5 or 1:1 video for a LinkedIn or X post, with every frame "
             "checked, kept beside a note in project Files."
         ),
         executor=CODEX_PROCEDURE_EXECUTOR,
@@ -4175,10 +4175,13 @@ BUILTIN_WORKFLOWS = (
                 },
                 "format": {
                     "type": "string",
-                    "enum": ["4:5", "16:9", "1:1"],
-                    "default": "4:5",
+                    "enum": ["16:9", "4:5", "1:1"],
+                    "default": "16:9",
                     "title": "Format",
-                    "description": "4:5 for LinkedIn and X feeds, 16:9 for desktop and the site.",
+                    "description": (
+                        "16:9 for LinkedIn, X and the site, filmed at desktop width; 4:5 or 1:1 "
+                        "for a feed seen on phones, filmed at the site's narrower layout."
+                    ),
                     "x-tin-ui": {"control": "select", "order": 50},
                 },
                 "notes": {

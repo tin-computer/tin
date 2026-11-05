@@ -114,7 +114,7 @@ def test_the_workflow_files_its_note_with_the_film_beside_it() -> None:
         "product_url": "https://sheepdogs.io/",
         "feature": "",
         "angle": "",
-        "format": "4:5",
+        "format": "16:9",
         "notes": "",
     }
     pinned = PinnedCodexProcedure(

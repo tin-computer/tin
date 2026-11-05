@@ -86,7 +86,7 @@ export function starter({url, title, format}) {
   };
 }
 
-export async function inspect(url, {dir, format = "4:5"} = {}) {
+export async function inspect(url, {dir, format = "16:9"} = {}) {
   const size = FORMATS[format];
   if (!size) throw new Error(`Unknown format ${format}; use ${Object.keys(FORMATS).join(", ")}.`);
   fs.mkdirSync(dir, {recursive: true});

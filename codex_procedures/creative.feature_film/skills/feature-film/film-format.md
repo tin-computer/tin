@@ -11,7 +11,7 @@ A film is one JSON object. `tin-film inspect` writes a starter; keep its `site.u
   },
   "site": {"url": "https://example.com/"},
   "now": "2026-11-05T10:00:00Z",
-  "format": "4:5",
+  "format": "16:9",
   "theme": "dark",
   "ready": "h1",
   "prepare": [
@@ -45,7 +45,8 @@ A film is one JSON object. `tin-film inspect` writes a starter; keep its `site.u
   (regular expressions) for requests that are not GETs but only read, such as a search that
   posts its query. A request that sends, publishes or pays never goes in it.
 - `now`: the time the page's clock shows in every take. Keep the starter's.
-- `format`: `4:5` (LinkedIn and X feeds), `16:9` (desktop, the site, blogs) or `1:1`. Use the
+- `format`: `16:9` (LinkedIn, X, the site and blogs; the site is filmed at desktop width), `4:5`
+  or `1:1` (feeds seen on phones; the site is filmed at its narrower layout). Use the
   run's `format`.
 - `theme`: `dark` puts the window on black with white captions; `light` on white with dark ones.
   Pick the one closest to the site's own ground.

@@ -49,7 +49,7 @@ Tin ships 45 built-in workflows. Every workflow also takes a `project_id`; requi
 |---|---|---|---|
 | Design a brand character (human review)<br>`creative.character` | Use when the founder has an explicit brand-design need. Design a vector mascot as an animatable SVG character in project Files (three mouth shapes, a blink, and a payoff expression), ready to narrate demo videos and appear in marketing. Tin reads the product page and project memory itself and asks one model for the drawing; about two minutes, no sandbox. | **`slug`**, `brief`, `product_url`, `notes` | — |
 | Make a product demo video (human review)<br>`creative.product_demo` | Capture the founder's live product at phone size and render a smooth 9:16 short-form demo video (TikTok, Reels, Shorts) with a pain hook, voiceover, word-synced captions, tap and scroll motion, and an optional narrating character from project Files. | **`slug`**, **`product_url`**, `angle`, `character`, `voice`, `backdrop`, `language`, `notes` | `demos/{slug}.mp4` |
-| Film a feature (human review)<br>`creative.feature_film` | Film one feature of the founder's product as it really moves on its live public pages: a captioned 4:5, 16:9 or 1:1 video for a LinkedIn or X post, with every frame checked, kept beside a note in project Files. | **`slug`**, **`product_url`**, `feature`, `angle`, `format`, `notes` | `films/{slug}.md` |
+| Film a feature (human review)<br>`creative.feature_film` | Film one feature of the founder's product as it really moves on its live public pages: a captioned 16:9, 4:5 or 1:1 video for a LinkedIn or X post, with every frame checked, kept beside a note in project Files. | **`slug`**, **`product_url`**, `feature`, `angle`, `format`, `notes` | `films/{slug}.md` |
 
 ## Paid ads system
 
