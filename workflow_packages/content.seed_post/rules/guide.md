@@ -21,22 +21,26 @@ post answers a question those readers already ask.
   A function label (reporting, dashboards, an integration) describes a tool; the case is the
   work that changes.
 
-## Leading toward the business without a pitch
+## The product in the answer
 
+- When the seed is the business's own work (a feature, a release, a decision), the product is
+  how the answer works. Explain it where it answers part of the question: what it shows, what
+  it does for the reader and what the reader still decides. Name it there, by the name the
+  business uses, as often as the reader needs to follow.
+- Every section serves the reader's question. A feature belongs in the section where it answers
+  part of that question. Leave out features the question does not need.
 - The argument shows which part of the answer is hard to keep true in practice: the ongoing,
   cross-team or specialist part. That part is the work the business does.
 - The worked example and the checklist follow the way the business works, so a reader who acts
   on them already works that way.
-- Name the business at most once in the body, in passing, where the reader's question meets what
-  the business does. The closing makes the offer.
-- No section about the business and no lone sales line.
+- No pitch line, no praise for the business and no section that only promotes it. The closing
+  makes the offer.
 
 ## Shape
 
 ```text
 # <the reader's question, 6 to 14 words>
-<the answer: 40 to 70 words, no heading above it>
-<the situation the reader recognises: one or two short paragraphs>
+<the opening: the reader's situation, then the short answer; 50 to 110 words, no heading>
 ## <section heading>            as many sections as the argument needs
 ## <-ing heading naming the improvement>    the worked example: a table or numbered steps
 ## <checklist heading>          3 to 5 rows, each "### <title>" and one 15 to 30 word paragraph
@@ -47,8 +51,9 @@ post answers a question those readers already ask.
 
 - The body sections, worked example and checklist together come to the length band the
   recipe names, usually 900 to 1,600 words.
-- The answer under the H1 names the subject and repeats the question's terms, so it still reads
-  as an answer when quoted alone. Keep its sentences short.
+- The opening starts from what the reader sees or wants to know, in plain sentences. It ends
+  with the short answer in one or two sentences, in the question's terms. It never stacks
+  instructions or summarises every step of the post: the sections carry the steps.
 - No byline, FAQ, audience line ("for operations leads"), "In short", "Key takeaways" or summary
   block, and no section numbers.
 - Leave out the Sources and related sections when there is nothing real to put in them. Never
