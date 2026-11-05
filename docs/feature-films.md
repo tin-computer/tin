@@ -174,6 +174,35 @@ How a good film reads, after Stageshow's guidance (its `references/motion.md` an
 - the poster is the decision moment, the frame that tells the story alone;
 - everyone and everything in the demo world is made up.
 
+## A live site, from its recording
+
+A film can film any site instead of Tin's dashboard: its `world()` returns
+`{site: {url, recording}, ready}`, and its screen opens the site. The first take with
+`--record on` plays the live site and saves every answer its pages ask for in
+`.films/worlds/<recording>/` (`index.json` and `bodies/`, out of git); every take after that is
+played from the recording alone (`web/film/recording.js`). `films/sheepdogs-site.js` films
+sheepdogs.io, one of Tin's test projects, as beats alone.
+
+```
+npm run film -- sheepdogs-site --format 16:9 --record on    # once, against the live site
+npm run film -- sheepdogs-site --format 16:9,4:5 --check on # from the recording
+```
+
+- **Strict replay.** A request the recording doesn't hold is refused, and the take fails naming
+  it, so a gap never reaches the screen as an empty pane. Record again to fill it.
+- **No outside effect, live.** While recording, a request other than a GET goes out only when the
+  film names it as a read (`site.reads`, patterns such as a GraphQL endpoint). Anything else, a
+  send, a publish, a payment, is stopped and named, and the take fails until the film stages its
+  answer (`site.answer(method, url, body)`). Trackers and Tin Analytics' `/ingest/` reporter get an
+  empty answer.
+- **No secrets.** Request headers are never saved, and a response's cookies and framing rules are
+  dropped. `site.secrets` (a test account's password, a token) and the cookie values of
+  `site.session`, a signed-in browser's storage state for a site behind sign-in, are looked for in
+  every saved answer, and the take fails naming the answer that holds one.
+- **Workers.** The film's clock runs the page's own timers and frames; a game or tool that
+  simulates in a Web Worker runs on real time there, so its frames differ between takes (the
+  Sheepdogs game does; its blog post, filmed next, matches frame for frame).
+
 ## Desk films
 
 A desk film puts several windows on one desktop: a browser that shows a website or the
