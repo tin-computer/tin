@@ -104,7 +104,7 @@ export function zigzags(lens) {
   return found;
 }
 
-class Director {
+export class Director {
   // `page` is the stage, `app` the dashboard's frame in it. Everything the director works in
   // (frames, the cursor, rects) is in the stage's px; the screen sits `margin` in from its corner.
   constructor({page, app, format, size, screen, margin = {top: 0, right: 0, bottom: 0, left: 0}, room = screen, deviceScale, served, issues, ripple = false}) {
@@ -134,6 +134,8 @@ class Director {
     // Text under the smallest size, by what it says: the least size and the marks it shows at.
     this.small = new Map();
     this.inside = null;
+    // CSS px of the stage per CSS px of the window the director works in (a desk scales its windows).
+    this.windowScale = 1;
     this.frame = {x: 0, y: 0, width: screen.width, height: screen.width * size.height / size.width};
     this.last = null;
   }
@@ -593,7 +595,7 @@ class Director {
     const cut = this.follower ? [] : await this.app.evaluate(picture => window.__film.sliced(picture), this.onScreen(this.picture));
     if (cut.length) this.warn(`At ${name}, the crop cuts ${cut.slice(0, 3).map(text => `“${text}”`).join(", ")}.`);
     const sizes = (await this.app.evaluate(frame => window.__film.textSizes(frame), this.onScreen(this.picture)))
-      .map(item => ({...item, size: Math.round((item.size / this.scale) * 10) / 10}));
+      .map(item => ({...item, size: Math.round((item.size * this.windowScale / this.scale) * 10) / 10}));
     const floor = SMALLEST_TEXT * Math.min(this.size.width, this.size.height);
     for (const item of sizes.filter(run => run.size < floor)) {
       const seen = this.small.get(item.text);
@@ -661,8 +663,7 @@ class Director {
         : await this.page.evaluate(([frame, point]) => window.__film.toView(frame, point), [this.frame, {x, y}]);
       await this.page.mouse.move(spot.x, spot.y);
     }
-    await this.app.evaluate(() => window.__film.clock.step(1));
-    await quiet(this.app);
+    await this.tick();
     if (!this.recording) return;
     // Inside the screen: its marks, and which cursor it would show at the hand. Then the stage.
     const state = this.state();
@@ -681,6 +682,12 @@ class Director {
     this.last = png;
     await this.sink(png);
     this.n++;
+  }
+
+  // Time moves 1/30 s in the window, and every request it made lands.
+  async tick() {
+    await this.app.evaluate(() => window.__film.clock.step(1));
+    await quiet(this.app);
   }
 
   state() {
@@ -716,7 +723,7 @@ class Director {
 }
 
 // Wait until no request is in flight and the work it started has run, twice in a row.
-async function quiet(page) {
+export async function quiet(page) {
   for (let calm = 0, i = 0; calm < 2; i++) {
     if (i > 500) throw new Error("A request never finished.");
     const pending = await page.evaluate(async () => {
@@ -730,7 +737,7 @@ async function quiet(page) {
 
 // A licensed font stylesheet (the hosted product's), fetched here and served from the film's own
 // origin, so nothing proprietary lands in the repository and the page makes no outside request.
-async function loadFonts(stylesheet) {
+export async function loadFonts(stylesheet) {
   if (!stylesheet) return null;
   const get = async url => {
     const response = await fetch(url, {signal: AbortSignal.timeout(20000)});
@@ -750,7 +757,7 @@ async function loadFonts(stylesheet) {
   return files;
 }
 
-function ffmpeg(args) {
+export function ffmpeg(args) {
   const child = spawn("ffmpeg", ["-loglevel", "error", "-y", ...args], {stdio: ["pipe", "ignore", "pipe"]});
   let stderr = "";
   child.stderr.on("data", chunk => (stderr += chunk));
@@ -758,14 +765,14 @@ function ffmpeg(args) {
   return {child, done};
 }
 
-async function encodeStills(pngs, args) {
+export async function encodeStills(pngs, args) {
   const {child, done} = ffmpeg(["-f", "image2pipe", "-c:v", "png", "-i", "-", ...args]);
   for (const png of pngs) child.stdin.write(png);
   child.stdin.end();
   await done;
 }
 
-function srt(captions, total) {
+export function srt(captions, total) {
   const time = frame => {
     const ms = Math.round((frame / FPS) * 1000);
     const pad = (value, size = 2) => String(value).padStart(size, "0");
@@ -910,7 +917,7 @@ export async function shoot(film, {format = "4:5", theme = film.theme || "dark",
 
 // Each mark at full size (the poster among them), a contact sheet of them, and a GIF small
 // enough for X (15 MB).
-async function stills(director, size, dir) {
+export async function stills(director, size, dir) {
   fs.mkdirSync(path.join(dir, "marks"));
   const marks = Object.entries(director.marks).sort(([, a], [, b]) => a.frame - b.frame);
   const files = [];
@@ -929,7 +936,7 @@ async function stills(director, size, dir) {
 
 // Every camera move, click and cut as a strip of every other frame, for looking at the motion
 // itself (Stageshow's rehearse: film each beat at 40 to 80ms and look). Stills never show it.
-async function motionStrips(director, size, dir) {
+export async function motionStrips(director, size, dir) {
   fs.mkdirSync(path.join(dir, "motion"));
   for (const [index, event] of director.events.entries()) {
     const first = Math.max(0, event.start);

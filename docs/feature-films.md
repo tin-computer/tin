@@ -144,6 +144,36 @@ How a good film reads, after Stageshow's guidance (its `references/motion.md` an
 - the poster is the decision moment, the frame that tells the story alone;
 - everyone and everything in the demo world is made up.
 
+## Desk films
+
+A desk film puts several windows on one desktop: a browser that shows a website or the
+dashboard, and a terminal with a shell and Claude Code. `web/film/desk.js` films them in one
+take, scene by scene, with the same camera, cursor and captions; `web/film/films/accelerator-demo.js`
+is the example.
+
+```
+npm run film:desk -- accelerator-demo                              # one take at full pace
+npm run film:desk -- accelerator-demo --pace brisk
+npm run film:desk -- accelerator-demo --pace site=brisk,people=full --until files
+```
+
+- **Scenes and paces.** Each scene has a full and a brisk pace. Brisk cuts holds, types faster
+  and leaves out the beats and captions marked optional. A caption stays up for its reading
+  time, 0.8 s plus a second for every 15 characters, and each scene ends its own caption.
+  Every scene's frames also land in their own segment, so the sheet shows each scene's length.
+- **Windows.** Each window is an iframe with its own document and clock. The dashboard is laid
+  out at 1440 px and shown at 1.25x, so its text reads at 1080p. A window comes forward opaque,
+  and the one in front leaves by fading.
+- **The terminal** recreates Claude Code from its real output: the prompt and its box, typing
+  and pasting, printed lines, and a time-lapse while it works. It scrolls by whole lines.
+- **Websites.** A live site, such as tin.computer, is fetched once and cached in `.films/cache/`.
+- **Recorded worlds.** `web/film/replay.js` serves the dashboard from a recorded world: every
+  answer the dashboard asked for while a demo project was open, scrubbed of member IDs, the
+  workspace's name and its billing. A film stages its own changes on top
+  (`web/film/worlds/aupilot-stage.js` and `aupilot-film.js`). A world recorded from a live
+  project stays out of git, in `.films/worlds/<name>.json`; the accelerator demo needs
+  `.films/worlds/aupilot.json`.
+
 ## Checks
 
 `report.json` and the command's output list what the film got wrong. The camera is held to
