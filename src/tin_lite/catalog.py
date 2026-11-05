@@ -4075,16 +4075,10 @@ BUILTIN_WORKFLOWS = (
                     "Feature map, the post, your public page",
                 ),
                 DiagramNode(
-                    "storyboard",
-                    "step",
-                    "Storyboard the film",
-                    "Codex, a few shots and a payoff",
-                ),
-                DiagramNode(
                     "stage",
                     "step",
-                    "Stage it in your product's look",
-                    "photogenic parts, real wording, sample data",
+                    "Storyboard and stage it",
+                    "Codex, your product's look, sample data",
                 ),
                 DiagramNode(
                     "rehearse",
@@ -4119,8 +4113,7 @@ BUILTIN_WORKFLOWS = (
                 ),
             ),
             edges=(
-                DiagramEdge("memory", "storyboard"),
-                DiagramEdge("storyboard", "stage"),
+                DiagramEdge("memory", "stage"),
                 DiagramEdge("stage", "rehearse"),
                 DiagramEdge("rehearse", "look"),
                 DiagramEdge("look", "render"),
