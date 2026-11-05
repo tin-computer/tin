@@ -654,9 +654,9 @@ html[data-theme="dark"] .visibility-logo.is-monochrome::before {
 
 .visibility-tiles .analytics-tile.is-name strong { font-size: 20px; line-height: 26px; letter-spacing: -0.01em; }
 
-/* Recommended leads: twice as wide, its number the largest on the page, in the accent. */
+/* Recommended leads: its number the largest on the page, in the accent, on a light wash. */
 .visibility-tiles .analytics-tile.is-hero {
-  flex-grow: 2;
+  flex-grow: 1.15;
   gap: 4px;
   background: rgb(var(--accent-deep-rgb) / 7%);
 }
