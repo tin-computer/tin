@@ -149,7 +149,17 @@ in the storyboard's order, and a poster.
    right. Rehearse at most eight times; then render the best version and say what is left in
    `notes`, one sentence each, for the founder: nothing about the run, its sources or its ID.
 
-## 7. Render and deliver
+## 7. A second look
+
+1. `tin-film review WORK/film/film.json` sends the newest take's contact sheet and marked
+   stills, `film.json` and what the checks still report to a model that didn't make the film.
+   It prints a verdict (`ready` or `fix`) and findings, each with where, what and a fix.
+2. Fix what it found and rehearse again. Ask for a second review only after real changes:
+   reviewing an unchanged take replays the same answer, and a run has four reviews.
+3. A finding you judge wrong stays out of the film; say in `notes` what it was and why you
+   left it.
+
+## 8. Render and deliver
 
 1. `tin-film render WORK/film/film.json` makes the final take at full resolution. Look at its
    `sheet.png` once.
@@ -158,7 +168,8 @@ in the storyboard's order, and a poster.
    checks both as Tin will. It must print `OK`. Never edit the note by hand: change `film.json`
    and deliver again.
 3. The final message: the feature you filmed and where its facts came from, the story, each
-   caption with its time, the length, and every finding left with its reason.
+   caption with its time, the length, the second look's verdict, and every finding left with its
+   reason.
 
 ## Rules
 

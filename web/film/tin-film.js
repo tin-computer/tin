@@ -10,6 +10,7 @@
 //   tin-film record <film.json>      play it once, saving what it loads from outside
 //   tin-film rehearse <film.json>    play it from the recording at low resolution, every frame checked
 //   tin-film render <film.json>      the final take from the recording, at full resolution, checked
+//   tin-film review <film.json>      a second look at the latest take's stills by a model that didn't make it
 //   tin-film deliver <film.json> <note.md>   the final take beside its note, as Tin keeps films
 //
 // Every take prints what went wrong, the checks' findings and the files to look at; a take with
@@ -80,6 +81,43 @@ export function note({film, report, folder, format}) {
   lines.push("", "## The film", "",
     `${format}, ${width}×${height}, ${report.seconds.toFixed(1)} s, ${how}. Its spec is \`${name}/film.json\`: change it and render again for a new cut.`, "");
   return lines.join("\n");
+}
+
+// A second look: the latest take's contact sheet and marked stills, the spec and what the checks
+// still report go to Tin's review route with the run's grant (film_review.py); the findings are
+// printed and kept beside the take. A run has a few reviews; each costs a model call.
+export function reviewRequest(file, dir) {
+  const report = JSON.parse(fs.readFileSync(path.join(dir, "report.json"), "utf8"));
+  const marks = fs.readdirSync(path.join(dir, "marks")).filter(name => name.endsWith(".png")).sort().slice(0, 11);
+  const images = [path.join(dir, "sheet.png"), ...marks.map(name => path.join(dir, "marks", name))]
+    .map(still => ({media_type: "image/png", data_base64: fs.readFileSync(still).toString("base64")}));
+  const checks = [...report.issues.errors, ...report.issues.warnings, ...(report.summary ?? [])].join("\n");
+  const spec = fs.readFileSync(file, "utf8");
+  const request_id = crypto.createHash("sha256").update(spec).update(checks).update(images.map(image => image.data_base64).join("")).digest("hex").slice(0, 32);
+  return {request_id, spec, checks, images};
+}
+
+async function review(file) {
+  const film = load(file);
+  const format = formatOf(film, {});
+  // The newest take, whichever kind it was.
+  const dir = ["render", "rehearse", "record"].map(kind => takeDir(file, kind, film, format)).filter(candidate => fs.existsSync(path.join(candidate, "report.json")))
+    .sort((a, b) => fs.statSync(path.join(b, "report.json")).mtimeMs - fs.statSync(path.join(a, "report.json")).mtimeMs)[0];
+  if (!dir) throw new Error(`No take to review: run tin-film rehearse ${file} first.`);
+  const url = process.env.TIN_RUN_TOOLS_URL || "";
+  const grant = process.env.TIN_RUN_TOOLS_GRANT || "";
+  if (!url || !grant) throw new Error("This run has no studio grant (TIN_RUN_TOOLS_URL and TIN_RUN_TOOLS_GRANT): a review runs inside Tin's studio sandbox.");
+  const response = await fetch(`${url.replace(/\/mcp$/, "").replace(/\/$/, "")}/studio/review`, {
+    method: "POST",
+    headers: {"authorization": `Bearer ${grant}`, "content-type": "application/json"},
+    body: JSON.stringify(reviewRequest(file, dir)),
+  });
+  const answer = await response.json().catch(() => ({error: `the review route answered ${response.status}`}));
+  if (!response.ok) throw new Error(`Review refused: ${answer.error || response.status}`);
+  fs.writeFileSync(path.join(dir, "review.json"), `${JSON.stringify(answer, null, 2)}\n`);
+  console.log(`review of ${dir}: ${answer.verdict}${answer.replayed ? " (already bought; replayed)" : ""}`);
+  if (answer.summary) console.log(`  ${answer.summary}`);
+  for (const item of answer.findings) console.log(`  - ${item.where}: ${item.what} Fix: ${item.fix}`);
 }
 
 // Copy the final take beside the note (re-encoded smaller when it is over Tin's limit), write the
@@ -256,6 +294,7 @@ async function main(argv) {
   if (command === "sketch" && args.length === 1) return sketch(args[0], options);
   if (command === "new" && args.length === 1) return start(args[0], options.from);
   if (TAKES[command] && args.length === 1) return take(command, args[0], options);
+  if (command === "review" && args.length === 1) return review(args[0]);
   if (command === "deliver" && args.length === 2) return deliver(args[0], args[1]);
   const header = fs.readFileSync(fileURLToPath(import.meta.url), "utf8").split("\n");
   console.log(header.slice(0, header.findIndex(line => !line.startsWith("//"))).join("\n").replaceAll("// ", "").replaceAll("//", ""));

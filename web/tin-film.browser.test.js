@@ -8,7 +8,7 @@ import path from "node:path";
 import test from "node:test";
 import {filmFromSpec, shoot, vtt} from "./film/film.js";
 import {recordingKey} from "./film/recording.js";
-import {boardIssues, note, sketch} from "./film/tin-film.js";
+import {boardIssues, note, reviewRequest, sketch} from "./film/tin-film.js";
 import {FAMILIES, STRUCTURES, deal} from "./film/directions.js";
 
 const SITE = "https://film.test/";
@@ -241,4 +241,21 @@ test("sketches are filmed for a moment and put side by side, each in its poster 
   }
   await sketch(dir);
   assert.ok(fs.statSync(path.join(dir, "sketches.jpg")).size > 5_000);
+});
+
+test("a second look sends the take's sheet and marked stills with the spec and what the checks found", () => {
+  const {dir, file} = filmFolder(BEATS);
+  const take = path.join(dir, "takes", "rehearse", "film", "4x5");
+  fs.mkdirSync(path.join(take, "marks"), {recursive: true});
+  const png = Buffer.from("89504e470d0a1a0a0000000049484452", "hex");
+  fs.writeFileSync(path.join(take, "sheet.png"), png);
+  for (const name of ["01-poster.png", "02-how.png", "notes.txt"]) fs.writeFileSync(path.join(take, "marks", name), png);
+  fs.writeFileSync(path.join(take, "report.json"), JSON.stringify({issues: {errors: [], warnings: ["Text under 22px."]}, summary: ["0.5s jump"]}));
+  const request = reviewRequest(file, take);
+  assert.equal(request.images.length, 3, "the sheet and the two marked stills");
+  assert.ok(request.images.every(image => image.media_type === "image/png" && image.data_base64 === png.toString("base64")));
+  assert.equal(request.checks, "Text under 22px.\n0.5s jump");
+  assert.equal(request.spec, fs.readFileSync(file, "utf8"));
+  assert.match(request.request_id, /^[0-9a-f]{32}$/);
+  assert.equal(reviewRequest(file, take).request_id, request.request_id, "an unchanged take asks the same question");
 });

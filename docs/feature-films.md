@@ -269,6 +269,7 @@ node web/film/tin-film.js inspect https://sheepdogs.io/ --dir .films/look   # it
 node web/film/tin-film.js record .films/herding/film.json     # once, saving what it loads from outside
 node web/film/tin-film.js rehearse .films/herding/film.json   # from the recording, low resolution, checked
 node web/film/tin-film.js render .films/herding/film.json     # the final take, from the recording
+node web/film/tin-film.js review .films/herding/film.json     # a second model's look (in Tin's sandbox)
 node web/film/tin-film.js deliver .films/herding/film.json films/herding.md
 ```
 
@@ -294,6 +295,10 @@ node web/film/tin-film.js deliver .films/herding/film.json films/herding.md
   already recording.
 - **A live site's own errors** are warnings, not errors: the take goes on. Tin's dashboard still
   fails a take on any console error.
+- **`review`** sends the newest take's contact sheet, marked stills, spec and check summary to
+  Tin's review route with the run's grant, and prints a verdict and findings with fixes (see
+  [the creative studio](creative-studio.md#feature-films-creativefeature_film)). It needs the
+  run-bound grant, so it runs only in Tin's studio sandbox.
 - **`deliver`** copies the final take's film (re-encoded smaller when it is over 16 MB), poster,
   WebVTT captions and `film.json` into `<note>.assets/`, writes the note (the film in a `tin-video`
   block, the story, every caption with its time, what the checks still found, and the film's

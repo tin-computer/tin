@@ -38,6 +38,8 @@ from tin_lite.content_plan_activities import ContentPlanActivities
 from tin_lite.db import Database
 from tin_lite.e2b_runtime import E2BRuntime
 from tin_lite.failure_interceptor import FailureClassificationInterceptor
+from tin_lite.film_review import ROUTE as FILM_REVIEW_ROUTE
+from tin_lite.film_review import FilmReview
 from tin_lite.growth_onboarding_activities import GrowthOnboardingActivities
 from tin_lite.growth_plan_activities import GrowthPlanActivities
 from tin_lite.integrations import IntegrationService
@@ -100,6 +102,7 @@ class RuntimeServices:
     output_resolution: OutputResolutionService
     studio: StudioService
     codex_api: CodexAPIRelay | None = None
+    film_review: FilmReview | None = None
 
 
 async def build_runtime(settings: Settings) -> RuntimeServices:
@@ -143,6 +146,7 @@ async def build_runtime(settings: Settings) -> RuntimeServices:
         (
             SITE_HEALTH_MODEL_ROUTE,
             CHARACTER_MODEL_ROUTE,
+            FILM_REVIEW_ROUTE,
             style_capture.ROUTE,
             x_feedback.ROUTE,
             linkedin_engagers.ROUTE,
@@ -638,6 +642,10 @@ async def build_runtime(settings: Settings) -> RuntimeServices:
         project_files=project_files,
         output_resolution=OutputResolutionService(database=database, storage=storage),
         studio=StudioService(settings=settings, database=database),
+        film_review=FilmReview(
+            database=database,
+            router=model_router if settings.luna_api_key is not None else None,
+        ),
         codex_api=CodexAPIRelay(database=database, api_key=settings.luna_api_key.get_secret_value())
         if settings.luna_api_key is not None
         else None,

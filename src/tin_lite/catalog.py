@@ -4064,7 +4064,7 @@ BUILTIN_WORKFLOWS = (
             "every frame checked, kept beside a note in project Files."
         ),
         executor=CODEX_PROCEDURE_EXECUTOR,
-        version_label="1.0.0",
+        version_label="1.1.0",
         presentation=WorkflowDiagram(
             direction="TD",
             nodes=(
@@ -4093,6 +4093,12 @@ BUILTIN_WORKFLOWS = (
                     "every frame and its pacing checked",
                 ),
                 DiagramNode(
+                    "look",
+                    "step",
+                    "A second look",
+                    "a model that didn't make it reads the stills",
+                ),
+                DiagramNode(
                     "render",
                     "step",
                     "Render and check the film",
@@ -4116,7 +4122,8 @@ BUILTIN_WORKFLOWS = (
                 DiagramEdge("memory", "storyboard"),
                 DiagramEdge("storyboard", "stage"),
                 DiagramEdge("stage", "rehearse"),
-                DiagramEdge("rehearse", "render"),
+                DiagramEdge("rehearse", "look"),
+                DiagramEdge("look", "render"),
                 DiagramEdge("render", "note"),
                 DiagramEdge("note", "review"),
                 DiagramEdge("review", "receipt", "signal", "approved"),
