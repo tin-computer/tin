@@ -619,8 +619,10 @@ test("a film a coding agent uploaded: its directions to pick from, then the cut 
     await page.locator(".film-directions .film-direction-name", {hasText: "Orbit"}).waitFor();
     assert.match(await page.locator(".film-direction-reason").innerText(), /What Orbit shows/);
     await page.locator("[data-film-note]").fill("End on the 96 who fit.");
+    const waiting = Number(await page.locator("#decision-count").textContent());
     await page.getByRole("button", {name: "Build Orbit"}).click();
     await page.locator("[data-decision-id='film:funnel:1']").waitFor({state: "detached"});
+    assert.equal(await page.locator("#decision-count").textContent(), String(waiting - 1));
     const pick = writes.find(item => item.path === "/api/projects/project-1/films/funnel/versions/1/decision");
     assert.deepEqual(pick.body, {decision: "pick", direction: 4, note: "End on the 96 who fit."});
     assert.match(await page.locator(".toast").innerText(), /Picked Orbit\. Your coding agent builds it next\./);

@@ -5680,7 +5680,7 @@ async function decideFilm(decision, button) {
     card.urls.forEach((url) => URL.revokeObjectURL(url));
     filmCards.delete(decision.id);
     state.decisionId = null;
-    renderDecisions();
+    render();
     const name = direction ? film.directions.sketches.find((item) => item.n === direction)?.name : "";
     showToast({
       pick: `Picked ${name}. Your coding agent builds it next.`,
