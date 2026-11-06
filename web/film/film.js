@@ -118,11 +118,42 @@ export function zigzags(lens) {
   return found;
 }
 
+// In a staged page: its largest painted part on show, when that part sits wholly inside the stage.
+function floating() {
+  const stage = document.querySelector(".stage") || document.body;
+  const frame = stage.getBoundingClientRect();
+  const whole = frame.width * frame.height;
+  let hero = null;
+  for (const el of stage.querySelectorAll("*")) {
+    const box = el.getBoundingClientRect();
+    const shown = Math.max(0, Math.min(box.right, frame.right) - Math.max(box.left, frame.left)) * Math.max(0, Math.min(box.bottom, frame.bottom) - Math.max(box.top, frame.top));
+    if (shown < 0.15 * whole || shown > 0.95 * whole || (hero && shown <= hero.shown)) continue;
+    const style = getComputedStyle(el);
+    if (/rgba\(0, 0, 0, 0\)|transparent/.test(style.backgroundColor) && style.boxShadow === "none") continue;
+    let seen = true;
+    for (let at = el; at && at !== stage; at = at.parentElement) if (Number(getComputedStyle(at).opacity) < 0.5) seen = false;
+    if (seen) hero = {shown, box, label: el.id ? `#${el.id}` : `.${[...el.classList].join(".") || el.tagName.toLowerCase()}`};
+  }
+  if (!hero) return null;
+  const {box} = hero;
+  const air = [box.left - frame.left, box.top - frame.top, frame.right - box.right, frame.bottom - box.bottom];
+  return air.every(gap => gap > 1) ? {label: hero.label, width: Math.round(box.width), height: Math.round(box.height)} : null;
+}
+
+// In a staged page: parts that draw a cursor of their own, beside the one the film draws.
+function drawnCursors() {
+  return [...document.querySelectorAll(".stage *, body > *")].filter(el => {
+    const names = [el.id, typeof el.className === "string" ? el.className : el.className?.baseVal, el.getAttribute("aria-label"), el.getAttribute("alt"), el.getAttribute("src")].join(" ");
+    const own = [...el.childNodes].filter(node => node.nodeType === 3).map(node => node.textContent).join("").trim();
+    return /cursor|pointer|mouse/i.test(names) || /^[➤➜↖⬉🖱👆☝]$/u.test(own);
+  }).map(el => (el.id ? `#${el.id}` : el.tagName.toLowerCase()));
+}
+
 export class Director {
   // `page` is the stage, `app` the dashboard's frame in it. Everything the director works in
   // (frames, the cursor, rects) is in the stage's px; the screen sits `margin` in from its corner.
-  constructor({page, app, format, size, screen, margin = {top: 0, right: 0, bottom: 0, left: 0}, room = screen, deviceScale, served, issues, ripple = false, check = false}) {
-    Object.assign(this, {page, app, format, size, screen, margin, room, deviceScale, world: served, issues, ripple});
+  constructor({page, app, format, size, screen, margin = {top: 0, right: 0, bottom: 0, left: 0}, room = screen, deviceScale, served, issues, ripple = false, check = false, staged = false}) {
+    Object.assign(this, {page, app, format, size, screen, margin, room, deviceScale, world: served, issues, ripple, staged});
     // With `check`, every frame is measured (probe.js) and checked (checks.js) as the take goes.
     this.checking = check;
     this.measured = [];
@@ -628,6 +659,12 @@ export class Director {
     }
     if (!this.last) throw new Error(`Mark ${name} before any frame was shot.`);
     this.marks[name] = {frame: this.n - 1, png: this.last};
+    // A staged film's hero runs off an edge of the stage; whole, with air on every side, it floats
+    // like a screenshot pasted on black.
+    if (this.staged) {
+      const hero = await this.app.evaluate(floating);
+      if (hero) this.warn(`At ${name}, the hero ${hero.label} (${hero.width}×${hero.height}) sits whole on the stage with air on every side: inset it a gutter from the top and left and let it run off the right or the foot.`);
+    }
     // A following camera crops through the screen as it goes, as Screen Studio's does; a framed
     // shot shouldn't.
     const cut = this.follower ? [] : await this.app.evaluate(picture => window.__film.sliced(picture), this.onScreen(this.picture));
@@ -1028,7 +1065,7 @@ export async function shoot(film, {format = "4:5", theme = film.theme || "dark",
     await app.waitForLoadState("domcontentloaded");
     await page.evaluate(() => document.fonts.ready);
 
-    const director = new Director({page, app, format, size, screen, margin, room, deviceScale, served, issues, ripple: Boolean(film.ripple), check});
+    const director = new Director({page, app, format, size, screen, margin, room, deviceScale, served, issues, ripple: Boolean(film.ripple), check, staged: Boolean(world.stage)});
     director.sink = async png => {
       if (!encoder) return;
       // An encoder that has stopped never drains: its end, or its failure, stops the take.
@@ -1051,6 +1088,10 @@ export async function shoot(film, {format = "4:5", theme = film.theme || "dark",
     for (let i = 0; i < FPS; i++) await director.shoot();
     await app.evaluate(() => document.fonts.ready);
     await page.evaluate(() => document.fonts.ready);
+    if (world.stage) {
+      const drawn = [...new Set(await app.evaluate(drawnCursors))];
+      if (drawn.length) issues.warnings.push(`The stage draws a cursor of its own (${drawn.slice(0, 3).join(", ")}); the film draws the hand, so take it out.`);
+    }
     director.recording = true;
     await film.play(director);
     director.caption(null);

@@ -120,6 +120,9 @@ in the storyboard's order, and a poster.
      and only to parts already on stage.
    - Text under 22px: the stage is too large for its screen; make the parts bigger, not the
      screen.
+   - The hero sits whole with air on every side: inset it a gutter from the top and left and
+     make it larger, so it runs off the right or the foot, as in the examples.
+   - The stage draws a cursor of its own: delete it; the film's hand is the only one.
    - `storyboard:` lines: the film and the storyboard disagree. Change whichever is wrong; the
      storyboard is the plan, so change it only for a better shot.
 5. Stop when a rehearsal has no errors, no warnings, no storyboard lines and the stills are

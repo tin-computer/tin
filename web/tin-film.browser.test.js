@@ -79,10 +79,10 @@ const STAGE = `<!doctype html><html><head><link rel="stylesheet" href="/__stage/
     <div class="card-foot"><button class="button primary" id="go" data-then="Herding|All in"><span class="label">Herd them</span></button></div></div>
 </div><script src="/__stage/kit/stage.js"></script></body></html>`;
 
-function stagedFolder(beats) {
+function stagedFolder(beats, page = STAGE) {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), "tin-film-stage-"));
   fs.mkdirSync(path.join(dir, "stage"));
-  fs.writeFileSync(path.join(dir, "stage", "index.html"), STAGE);
+  fs.writeFileSync(path.join(dir, "stage", "index.html"), page);
   const file = path.join(dir, "film.json");
   const spec = {title: "Every sheep, back in the fold", story: {before: "Sheep wander.", after: "One press herds them."}, stage: "stage/index.html", screens: {"16:9": 1080}, now: "2026-11-05T10:00:00Z", format: "16:9", ready: ".stage", beats};
   fs.writeFileSync(file, JSON.stringify(spec));
@@ -111,6 +111,14 @@ test("a staged film plays its page of the kit's parts, offline, through the stag
   assert.deepEqual(report.issues.blocked, [], "a stage reaches nothing outside its folder and the kit");
   assert.equal(report.recording.misses.length, 0);
   assert.deepEqual(report.captions.map(item => item.text), ["One press herds every sheep."]);
+});
+
+test("a stage whose hero floats whole, or that draws its own cursor, is told so", {timeout: 180000}, async () => {
+  const page = STAGE.replace("height: 520px;", "height: 300px;").replace('<div class="stage">', '<div class="stage"><svg id="pointer" width="18" height="24"><path d="M0 0L0 20L5 15L9 24L12 23L8 14L15 14Z" fill="#fff"/></svg>');
+  const {dir, file, spec} = stagedFolder(STAGED, page);
+  const {report} = await shoot(filmFromSpec(spec, file), {format: "16:9", out: path.join(dir, "takes"), rehearse: true, encode: false});
+  assert.ok(report.issues.warnings.includes("The stage draws a cursor of its own (#pointer); the film draws the hand, so take it out."), report.issues.warnings.join("\n"));
+  assert.ok(report.issues.warnings.some(line => /^At poster, the hero #terminal \(780×300\) sits whole on the stage with air on every side/.test(line)), report.issues.warnings.join("\n"));
 });
 
 test("a beat that calls what the stage's runtime lacks names what it offers", {timeout: 180000}, async () => {

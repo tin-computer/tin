@@ -230,6 +230,8 @@ thing happens per beat and the result stays on screen, rather than a camera over
   satellite, real words and what moves. The film marks every shot, so a take's contact sheet is
   the storyboard drawn, one still per shot; every take of a staged film says where the film and
   its storyboard disagree (a shot's mark or caption missing, marks in another order, no poster).
+  It also warns when a mark's hero (its largest painted part) sits whole on the stage with air
+  on every side, and when the stage draws a cursor of its own beside the film's hand.
 - **The worked examples.** `web/film/examples/` holds the bar the workflow copies (`tin-film new
   --from <name>`) and rebuilds for each product, one per shape of feature:
   - `onboarding`: Tin's own onboarding, from "Set up Tin" in Claude Code to a pull request opened
