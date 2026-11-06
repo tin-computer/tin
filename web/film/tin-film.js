@@ -433,6 +433,7 @@ async function main(argv) {
     const report = await inspect(args[0], {dir, format: options.format || "16:9"});
     console.log(`${report.title} (${report.url}), ${report.height}px tall, read at ${report.screen.width}×${report.screen.height}`);
     console.log(`look: ${report.look.background} ground, ${report.look.color} text, ${report.look.font}; as the stage kit's tokens:\n${report.look.tokens}`);
+    if (report.look.dark) console.log(`its dark theme: ${report.look.dark.background} ground, ${report.look.dark.color} text; as tokens:\n${report.look.dark.tokens}`);
     for (const item of report.look.fonts || []) {
       const kept = item.kept.length ? `kept (${item.kept.join(", ")}) in look's fonts.css` : "no font file: a system font, or one the page didn't load";
       console.log(`  type: ${item.family}${item.mono ? " (mono)" : item.heading ? ", in its headings" : ""}, “${item.sample}”: ${kept}`);

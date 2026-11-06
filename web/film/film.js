@@ -204,6 +204,36 @@ function fallbackType() {
   return [...found.values()];
 }
 
+// Runs in the stage: eyebrows, the small label set above a title, a card's words or a number
+// (uppercase, letter-spaced or mono: "HOW IT WORKS", "MENTIONS"). Tin never uses them
+// (design_rules.py). A table's column headers are not eyebrows.
+function eyebrows() {
+  const own = element => [...element.childNodes].filter(node => node.nodeType === 3).map(node => node.textContent).join("").replace(/\s+/g, " ").trim();
+  const parts = [...document.querySelectorAll(".stage *")].flatMap(element => {
+    const text = own(element);
+    if (!text || element.closest("th, thead, .thead, [role=columnheader]")) return [];
+    const box = element.getBoundingClientRect();
+    const style = getComputedStyle(element);
+    if (box.width < 2 || box.height < 2 || style.visibility === "hidden" || style.display === "none" || Number(style.opacity) < 0.05) return [];
+    const size = parseFloat(style.fontSize);
+    const letters = text.replace(/[^A-Za-z]/g, "");
+    return [{text, size, top: box.top, bottom: box.bottom, left: box.left, right: box.right,
+      upper: style.textTransform === "uppercase" || (letters.length >= 3 && letters === letters.toUpperCase()),
+      spaced: parseFloat(style.letterSpacing) / size >= 0.04,
+      mono: /mono|courier|consolas|menlo|monaco/i.test(style.fontFamily)}];
+  });
+  const found = [];
+  for (const label of parts) {
+    if (label.text.split(" ").length > 6 || /[.!?:]$/.test(label.text)) continue;
+    if (!(label.upper || label.spaced || label.mono)) continue;
+    const under = parts.filter(other => other !== label && other.top >= label.bottom - 2 && other.top - label.bottom <= Math.max(28, label.size * 2.6)
+      && other.left < label.right && other.right > label.left && other.size >= label.size * 1.2)
+      .sort((a, b) => a.top - b.top)[0];
+    if (under) found.push({text: label.text, under: under.text.slice(0, 40)});
+  }
+  return found;
+}
+
 function drawnCursors() {
   return [...document.querySelectorAll(".stage *, body > *")].filter(el => {
     const names = [el.id, typeof el.className === "string" ? el.className : el.className?.baseVal, el.getAttribute("aria-label"), el.getAttribute("alt"), el.getAttribute("src")].join(" ");
@@ -221,6 +251,8 @@ export class Director {
     this.checking = check;
     // Faces the stage asked for that never loaded, by family, from every mark.
     this.fallbacks = new Map();
+    // Eyebrows already reported, by their words.
+    this.eyebrowsSeen = new Set();
     this.measured = [];
     this.findings = [];
     // Frames shot while the camera followed the hand: it crops through the screen as it goes.
@@ -728,6 +760,11 @@ export class Director {
     // like a screenshot pasted on black.
     if (this.staged) {
       for (const item of await this.app.evaluate(fallbackType)) this.fallbacks.set(item.family, item);
+      for (const item of await this.app.evaluate(eyebrows)) {
+        if (this.eyebrowsSeen.has(item.text)) continue;
+        this.eyebrowsSeen.add(item.text);
+        this.issues.errors.push(`At ${name}, an eyebrow: “${item.text}” sits small above “${item.under}”. Tin never uses eyebrows: delete it, and let the title or the content say it.`);
+      }
       const hero = await this.app.evaluate(floating);
       if (hero) this.warn(`At ${name}, the hero ${hero.label} (${hero.width}×${hero.height}) sits whole on the stage with air on every side: inset it a gutter from the top and left and let it run off the right or the foot.`);
       for (const diagram of await this.app.evaluate(diagramLayout)) {

@@ -66,7 +66,9 @@ changes between takes so each take answers several questions at once.
 4. When the run gives `product_url` (or the project names its site), run
    `tin-film inspect <url> --dir WORK/look`. When the prompt lists CONNECTED REPOSITORIES,
    read the product's own type, tokens and logo there too (`stage-kit.md`, Type). Inspect
-   prints the page's look as the stage kit's tokens, the faces its text is set in (keeping
+   prints the page's look as the stage kit's tokens (and its dark theme's, when it has one: the
+   product's own ground is then either, and the founder's note or the product's app decides),
+   the faces its text is set in (keeping
    their files in `WORK/look/fonts.css` and `WORK/look/fonts/`) and its outline, and writes
    `screen.jpg`. Open `screen.jpg` once.
 5. Decide the kind of film: a product highlight (the post shows what the product does), a motion
@@ -173,6 +175,9 @@ in the storyboard's order, and a poster.
    - The hero sits whole with air on every side: inset it a gutter from the top and left and
      make it larger, so it runs off the right or the foot, as in the examples.
    - The stage draws a cursor of its own: delete it; the film's hand is the only one.
+   - An eyebrow (a small uppercase, letter-spaced or mono label above a title, a card's words
+     or a number) fails the take: delete it and let the title or the content say it. Tin
+     never uses eyebrows, in any film, for any product.
    - The stage's text is set in a system face, or asks for one that never loaded: copy
      `WORK/look/fonts.css` and `WORK/look/fonts/` beside the page, link it, and set `--sans`.
    - `storyboard:` lines: the film and the storyboard disagree. Change whichever is wrong; the

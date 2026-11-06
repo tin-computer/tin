@@ -68,7 +68,12 @@ function look(shown) {
   const style = element => element && getComputedStyle(element);
   const filled = value => value && value !== "transparent" && !/rgba\([^)]*,\s*0\)$/.test(value);
   const body = style(document.body);
-  const ground = filled(body.backgroundColor) ? body.backgroundColor : style(document.documentElement).backgroundColor;
+  // The ground is what the page paints at its margin, which a wrapper may set over the body's.
+  let margin = document.elementFromPoint(6, Math.round(innerHeight * 0.6));
+  while (margin && !filled(style(margin).backgroundColor)) margin = margin.parentElement;
+  const ground = margin ? style(margin).backgroundColor : filled(body.backgroundColor) ? body.backgroundColor : style(document.documentElement).backgroundColor;
+  // Its text colour comes from the same element: a wrapper that paints the ground sets the ink.
+  const ink = margin ? style(margin).color : body.color;
   const first = (selector, test = () => true) => [...document.querySelectorAll(selector)].find(element => shown(element) && test(element, style(element)));
   const button = first("button, a, [role=button]", (element, s) => filled(s.backgroundColor) && s.backgroundColor !== ground && element.getBoundingClientRect().height < 80);
   const card = first("article, section, li, div", (element, s) => {
@@ -76,25 +81,25 @@ function look(shown) {
     return box.width > 160 && box.height > 60 && box.width < innerWidth * 0.9 && filled(s.backgroundColor) && s.backgroundColor !== ground && parseFloat(s.borderRadius) > 0;
   });
   const heading = first("h1") || first("h2");
-  const muted = first("p", (element, s) => s.color !== body.color);
+  const muted = first("p", (element, s) => s.color !== ink);
   const code = first("code, pre, kbd");
-  const link = first("a", (element, s) => s.color !== body.color && !filled(s.backgroundColor));
+  const link = first("a", (element, s) => s.color !== ink && !filled(s.backgroundColor));
   const family = s => s?.fontFamily;
   const tokens = {
     "--ground": ground,
     "--surface": ground,
     "--card": style(card)?.backgroundColor || ground,
-    "--ink": body.color,
-    "--ink-2": style(muted)?.color || body.color,
-    "--accent": style(link)?.color || style(button)?.backgroundColor || body.color,
-    "--hot": style(button)?.backgroundColor || style(link)?.color || body.color,
+    "--ink": ink,
+    "--ink-2": style(muted)?.color || ink,
+    "--accent": style(link)?.color || style(button)?.backgroundColor || ink,
+    "--hot": style(button)?.backgroundColor || style(link)?.color || ink,
     "--on-hot": style(button)?.color || ground,
     "--sans": family(body),
     "--mono": family(style(code)) || "ui-monospace, monospace",
     "--radius": style(card)?.borderRadius || style(button)?.borderRadius || "10px",
   };
   return {
-    background: ground, color: body.color, font: body.fontFamily.split(",")[0].trim(),
+    background: ground, color: ink, font: body.fontFamily.split(",")[0].trim(),
     heading: heading && {font: style(heading).fontFamily.split(",")[0].trim(), weight: style(heading).fontWeight, letterSpacing: style(heading).letterSpacing},
     tokens: `:root { ${Object.entries(tokens).map(([name, value]) => `${name}: ${value};`).join(" ")} }`,
     stylesheets: [...document.querySelectorAll("link[rel=stylesheet]")].map(element => element.href).filter(href => /font/i.test(href)).slice(0, 4),
@@ -237,14 +242,26 @@ export async function inspect(url, {dir, format = "16:9"} = {}) {
     await page.goto(url, {waitUntil: "load", timeout: 60_000});
     await page.waitForLoadState("networkidle", {timeout: 10_000}).catch(() => {});
     await page.waitForTimeout(1000);
-    const found = await page.evaluate(`(${outline.toString().replace("look(shown)", `(${look})(shown)`)})()`);
+    const read = `(${outline.toString().replace("look(shown)", `(${look})(shown)`)})()`;
+    const found = await page.evaluate(read);
     await page.evaluate(() => document.fonts.ready);
     const use = await page.evaluate(fontUse);
     // JPEGs a reader can afford to open: the first screen at up to 960 px wide, the page at 720.
     const shot = async (options, width, file) => encodeStills([await page.screenshot(options)], ["-vf", `scale='min(${width},iw)':-2:flags=lanczos`, "-q:v", "4", "-frames:v", "1", path.join(dir, file)]);
     await shot({}, 960, "screen.jpg");
     await shot({fullPage: true, clip: {x: 0, y: 0, width: screen.width, height: Math.min(found.height, 6000)}}, 720, "page.jpg");
+    // A product with a dark theme shows it to a reader who asks for one, from the first paint:
+    // the page again, as such a reader opens it, gives that look too.
+    const night = await browser.newContext({viewport: screen, deviceScaleFactor: 1, locale: "en-US", colorScheme: "dark"});
+    await night.route("**/*", route => recording.route(route));
+    const darkPage = await night.newPage();
+    await darkPage.goto(url, {waitUntil: "load", timeout: 60_000});
+    await darkPage.waitForLoadState("networkidle", {timeout: 10_000}).catch(() => {});
+    await darkPage.waitForTimeout(500);
+    const dark = (await darkPage.evaluate(read)).look;
+    await night.close();
     const report = {...found, format, screen, recording: recording.close()};
+    if (dark.background !== found.look.background) report.look.dark = {background: dark.background, color: dark.color, tokens: dark.tokens};
     // The type the text is set in, not the body's: a page may set its face on a wrapper.
     report.look.fonts = keepFonts(dir, use);
     // The reading face is the one that sets most of the text that isn't code, preferring one
@@ -258,6 +275,8 @@ export async function inspect(url, {dir, format = "16:9"} = {}) {
       report.look.tokens = report.look.tokens.replace(/--sans: [^;]*;/, `--sans: ${quoted(sans.family)}, system-ui, sans-serif;`);
     }
     if (mono) report.look.tokens = report.look.tokens.replace(/--mono: [^;]*;/, `--mono: ${quoted(mono.family)}, ui-monospace, monospace;`);
+    // The dark theme is set in the same type.
+    if (report.look.dark) report.look.dark.tokens = report.look.dark.tokens.replace(/--sans: [^;]*;/, report.look.tokens.match(/--sans: [^;]*;/)[0]).replace(/--mono: [^;]*;/, report.look.tokens.match(/--mono: [^;]*;/)[0]);
     fs.writeFileSync(path.join(dir, "inspect.json"), `${JSON.stringify(report, null, 1)}\n`);
     const spec = path.join(dir, "film.json");
     if (!fs.existsSync(spec)) fs.writeFileSync(spec, `${JSON.stringify(starter({url: found.url, title: found.title, format}), null, 2)}\n`);

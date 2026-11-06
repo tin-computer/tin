@@ -108,6 +108,8 @@ Judge it as a viewer scrolling a feed would meet it:
 - The cursor points at what the film is about and rests on empty surface at a still.
 - The poster still tells the story on its own, with the result on screen.
 - Text in the picture is large enough to read on a phone.
+- No eyebrows: a small uppercase, letter-spaced or mono label above a title, a card's words or a
+  number is a finding; the title or the content says it.
 - Nothing looks broken or unfinished: an empty card, overlapping parts, a cut line of text,
   sample content that reads as a real customer or a real metric.
 
@@ -152,7 +154,9 @@ Choose the one a viewer scrolling a feed would understand fastest and remember:
 - it can carry fifteen to forty seconds of motion, with something changing in every shot.
 
 Judge the idea, not the sketch's polish: sketches are rough. A product highlight should still
-look like the product. Name the runner-up. Your choice is shown to the founder as the
+look like the product. A sketch with eyebrows (small uppercase or mono labels above titles or
+cards) carries a stock generated-design habit: tell the maker to drop them in `keep`.
+Name the runner-up. Your choice is shown to the founder as the
 recommendation, beside the stills, and they pick: say `why` in one or two plain sentences to
 them, about what the frame shows, never about the sketch numbers or the maker. In `keep`, tell
 the maker what the chosen one must keep or fix as it becomes a film."""

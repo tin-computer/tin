@@ -45,7 +45,8 @@ what the first second did. Nothing of theirs goes in the film. Read public pages
    built with the kit, the product's tokens and its type (copy `WORK/look/fonts.css` and
    `WORK/look/fonts/` into the folder and link it). When the poster needs more than every part
    shown (a flow drawn, a value set), define `stage.poster`. Rough is fine; the idea must read
-   in one look.
+   in one look. No eyebrows: a label above a title or a card is the first thing that makes a
+   sketch look generated, and `tin-film sketch` fails a sketch that has one.
 3. `tin-film sketch WORK/sketches` films each for a moment and puts the stills side by side, in
    order, in `WORK/sketches/sketches.jpg`. Open it once.
 4. `tin-film review --directions WORK/sketches` sends the sheet and your notes to a model that

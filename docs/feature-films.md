@@ -240,7 +240,13 @@ thing happens per beat and the result stays on screen, rather than a camera over
   the storyboard drawn, one still per shot; every take of a staged film says where the film and
   its storyboard disagree (a shot's mark or caption missing, marks in another order, no poster).
   It also warns when a mark's hero (its largest painted part) sits whole on the stage with air
-  on every side, and when the stage draws a cursor of its own beside the film's hand.
+  on every side, when the stage draws a cursor of its own beside the film's hand, and when its
+  text is set in a system face or in one that never loaded; an eyebrow (a small uppercase,
+  letter-spaced or mono label above a title, a card's words or a number) is an error.
+- **The product's type and theme.** `tin-film inspect` reads the faces the page's visible text
+  is set in (not the body's), keeps their files from its own recording as `look/fonts.css` and
+  `look/fonts/`, and reads the page's dark theme too, from a load that asks for one, so a stage
+  is set in the product's own type on its own ground.
 - **The worked examples.** `web/film/examples/` holds the bar the workflow copies (`tin-film new
   --from <name>`) and rebuilds for each product, one per shape of feature. Each keeps the contact
   sheet of its rehearsal as `sheet.jpg`, which `new` copies as `example.jpg`: after changing an

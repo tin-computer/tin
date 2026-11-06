@@ -335,6 +335,7 @@ test("inspect keeps the face a page's text is set in, with its files, not the bo
       @font-face { font-family: "__brandSans_4f5e8e"; src: url(/media/a1b2c3-s.p.woff2) format("woff2"); font-weight: 400; font-style: normal; }
       @font-face { font-family: "__brandSans_Fallback_4f5e8e"; src: local("Arial"); }
       .wrap { font-family: "__brandSans_4f5e8e", "__brandSans_Fallback_4f5e8e", sans-serif; }
+      @media (prefers-color-scheme: dark) { body { background: #141210; color: #f6f1e7; } }
     </style></head><body><div class="wrap"><h1>Herd them with a circle</h1><p>Draw round the sheep and they follow.</p><pre style="font-family: ui-monospace, monospace">$ npx sheepdog --herd the-whole-flock --circle wide --follow true</pre></div></body></html>`],
     "/site.css": ["text/css", `@font-face { font-family: "Body Face"; src: url(/fonts/body.woff2) format("woff2"); } body { font-family: "Body Face", sans-serif; margin: 0; }`],
     "/media/a1b2c3-s.p.woff2": ["font/woff2", font],
@@ -352,6 +353,9 @@ test("inspect keeps the face a page's text is set in, with its files, not the bo
     // More code than prose on the page still leaves the reading face as --sans.
     assert.deepEqual(report.look.fonts.map(item => [item.family, item.mono, item.kept]).sort(), [["Brand Sans", false, ["400"]], ["ui-monospace", true, []]]);
     assert.match(report.look.tokens, /--sans: "Brand Sans", system-ui, sans-serif;/);
+    // Its dark theme too, in the same type.
+    assert.equal(report.look.dark.background, "rgb(20, 18, 16)");
+    assert.match(report.look.dark.tokens, /--ground: rgb\(20, 18, 16\);.*--sans: "Brand Sans", system-ui, sans-serif;/);
     const css = fs.readFileSync(path.join(dir, "fonts.css"), "utf8");
     assert.match(css, /font-family: "Brand Sans"; src: url\("fonts\/brand-sans-400-[0-9a-f]{8}\.woff2"\) format\("woff2"\); font-weight: 400;/);
     const [file] = fs.readdirSync(path.join(dir, "fonts"));
@@ -370,4 +374,28 @@ test("a face's name reads as people say it, and its rules resolve against their 
   assert.equal(faceName("Inter"), "Inter");
   const [face] = fontFaces(`@font-face{font-family:'Inter';src:url(data:x) format("woff2"),url("../f/inter.woff2?v=1") format("woff2");font-weight:100 900;unicode-range:U+0000-00FF}`, "https://site.test/css/a.css");
   assert.deepEqual(face, {family: "Inter", weight: "100 900", style: "normal", range: "U+0000-00FF", sources: [{url: "https://site.test/f/inter.woff2?v=1", format: "woff2"}]});
+});
+
+test("an eyebrow fails the take; a table's column header does not", {timeout: 180000}, async () => {
+  const dir = path.join(fs.mkdtempSync(path.join(os.tmpdir(), "tin-film-eyebrow-")), "sketches");
+  const page = body => `<!doctype html><html><head><link rel="stylesheet" href="/__stage/kit/stage.css"></head><body><div class="stage"><div class="arrive" style="position: absolute; left: 48px; top: 40px;">${body}</div></div><script src="/__stage/kit/stage.js"></script></body></html>`;
+  const sketches = {
+    "1-kicker": `<div style="font-size: 11px; letter-spacing: 0.12em; text-transform: uppercase;">Mentions</div><div style="font-size: 44px;">“Sample Tool”</div>`,
+    "2-table": `<table><thead><tr><th style="font-size: 11px; letter-spacing: 0.12em; text-transform: uppercase; text-align: left;">Name</th></tr></thead><tbody><tr><td style="font-size: 30px;">Mira Tallow</td></tr></tbody></table>`,
+  };
+  for (const [name, body] of Object.entries(sketches)) {
+    fs.mkdirSync(path.join(dir, name), {recursive: true});
+    fs.writeFileSync(path.join(dir, name, "index.html"), page(body));
+    fs.writeFileSync(path.join(dir, name, "caption.txt"), "Your funnel is larger than you think.");
+  }
+  const said = [];
+  const log = console.log;
+  console.log = (...args) => { said.push(args.join(" ")); log(...args); };
+  try {
+    await sketch(dir);
+  } finally {
+    console.log = log;
+  }
+  assert.ok(said.some(line => line.includes("1. 1-kicker: error: At poster, an eyebrow: “Mentions” sits small above ““Sample Tool””")), said.join("\n"));
+  assert.ok(!said.some(line => /2-table: error/.test(line)), said.join("\n"));
 });
