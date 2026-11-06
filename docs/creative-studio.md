@@ -65,7 +65,8 @@ How a run goes:
    inspect` reads its look as the stage kit's tokens, its fonts and a screenshot.
 2. It decides the kind of film (a product highlight, a motion graphic or both), researches how
    such a claim has been shown, deals five directions with `tin-film directions`, sketches each
-   as a stage page and compares them side by side (`tin-film sketch`), and chooses one.
+   as a stage page and compares them side by side (`tin-film sketch`); from 1.1.0 the second look
+   (`tin-film review --directions`, below) chooses which one becomes the film.
 3. `tin-film new --from` copies the worked example closest to the film, with its contact sheet
    (`example.jpg`, one still per shot): the bar the agent looks at once; the chosen sketch
    becomes the stage.

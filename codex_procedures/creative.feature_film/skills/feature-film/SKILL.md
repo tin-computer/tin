@@ -56,8 +56,10 @@ changes between takes so each take answers several questions at once.
 
 Follow `directions.md`: research how such a claim has been shown, deal directions with
 `tin-film directions --kind …`, write one per card, sketch each as a stage page, put them side by
-side with `tin-film sketch`, and choose the one that carries the claim. Keep it in
-`WORK/storyboard.md` under `Kind:`, `## Research` and `## Directions`.
+side with `tin-film sketch`, and ask `tin-film review --directions WORK/sketches` which carries
+the claim: a model that didn't make them chooses, so your first taste doesn't decide alone. Keep
+it all in `WORK/storyboard.md` under `Kind:`, `## Research` and `## Directions`. A run has four
+reviews in all; this choice is one of them.
 
 ## 3. Start from the closest example
 

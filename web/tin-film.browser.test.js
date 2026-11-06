@@ -8,7 +8,7 @@ import path from "node:path";
 import test from "node:test";
 import {filmFromSpec, shoot, vtt} from "./film/film.js";
 import {recordingKey} from "./film/recording.js";
-import {boardIssues, note, reviewRequest, sketch} from "./film/tin-film.js";
+import {boardIssues, directionsRequest, note, reviewRequest, sketch} from "./film/tin-film.js";
 import {FAMILIES, STRUCTURES, deal} from "./film/directions.js";
 
 const SITE = "https://film.test/";
@@ -233,7 +233,8 @@ test("directions are dealt far apart, the same again from the same seed", () => 
 });
 
 test("sketches are filmed for a moment and put side by side, each in its poster frame", {timeout: 180000}, async () => {
-  const dir = fs.mkdtempSync(path.join(os.tmpdir(), "tin-film-sketches-"));
+  const dir = path.join(fs.mkdtempSync(path.join(os.tmpdir(), "tin-film-work-")), "sketches");
+  fs.mkdirSync(dir);
   for (const [name, words] of [["1-number", "1,140"], ["2-sentence", "Most never visit."]]) {
     fs.mkdirSync(path.join(dir, name));
     fs.writeFileSync(path.join(dir, name, "index.html"), `<!doctype html><html><head><link rel="stylesheet" href="/__stage/kit/stage.css"></head><body><div class="stage"><div class="arrive" style="position: absolute; left: 48px; top: 40px; font-size: 96px;">${words}</div></div><script src="/__stage/kit/stage.js"></script></body></html>`);
@@ -241,6 +242,14 @@ test("sketches are filmed for a moment and put side by side, each in its poster 
   }
   await sketch(dir);
   assert.ok(fs.statSync(path.join(dir, "sketches.jpg")).size > 5_000);
+  // The second look chooses among them by the maker's notes beside the folder.
+  assert.throws(() => directionsRequest(dir), /No notes to choose by/);
+  fs.writeFileSync(path.join(dir, "..", "storyboard.md"), "Kind: motion graphic\n\n## Directions\n1. A number.\n2. A sentence.\n");
+  const request = directionsRequest(dir);
+  assert.equal(request.kind, "directions");
+  assert.equal(request.sketches, 2);
+  assert.equal(request.images.length, 1);
+  assert.match(request.spec, /## Directions/);
 });
 
 test("a second look sends the take's sheet and marked stills with the spec and what the checks found", () => {

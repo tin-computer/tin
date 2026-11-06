@@ -44,9 +44,11 @@ what the first second did. Nothing of theirs goes in the film. Read public pages
    Rough is fine; the idea must read in one look.
 3. `tin-film sketch WORK/sketches` films each for a moment and puts the stills side by side, in
    order, in `WORK/sketches/sketches.jpg`. Open it once.
-4. Choose the sketch whose frame says the post's claim with no caption, that the product can
-   truthfully back, and that is least like a stock picture of the subject. Write why, and why
-   the runner-up lost. Its page grows into the film's stage.
+4. `tin-film review --directions WORK/sketches` sends the sheet and your notes to a model that
+   didn't make them. It chooses the sketch whose frame says the claim with no caption, that the
+   product can truthfully back and that is least like a stock picture of the subject, names the
+   runner-up and says what the chosen one must keep. Build its choice; if it breaks a rule here,
+   build the runner-up and say why in `notes`. The chosen page grows into the film's stage.
 
 ## Families
 

@@ -127,6 +127,51 @@ change). Leave out taste that a founder could reasonably disagree with. When not
 fixing, say `ready` with no findings."""
 
 
+# Choosing a direction: the maker's sketches, one numbered still each, before any storyboard.
+DIRECTIONS_SCHEMA: dict[str, Any] = {
+    "type": "object",
+    "additionalProperties": False,
+    "required": ["choice", "runner_up", "why", "keep"],
+    "properties": {
+        "choice": {"type": "integer", "minimum": 1, "maximum": 12},
+        "runner_up": {"type": "integer", "minimum": 1, "maximum": 12},
+        "why": {"type": "string"},
+        "keep": {"type": "string"},
+    },
+}
+
+DIRECTIONS_BRIEF = """You choose among sketches for a short film before its maker storyboards it.
+You did not make them. You get one sheet of numbered stills, each the poster frame of one
+direction with its numbered caption, and the maker's notes: the post's claim, the kind of film
+(a product highlight, a motion graphic or both), what research found and the directions.
+
+Choose the one a viewer scrolling a feed would understand fastest and remember:
+- its frame says the post's claim even without the caption;
+- it is true to what the product does, and needs no claim the notes cannot back;
+- it is least like a stock picture of its subject, and not merely the maker's first habit;
+- it can carry fifteen to forty seconds of motion, with something changing in every shot.
+
+Judge the idea, not the sketch's polish: sketches are rough. A product highlight should still
+look like the product. Name the runner-up. Say why in two or three sentences, and in `keep` what
+the chosen one must keep or fix as it becomes a film."""
+
+
+def _choice(parsed: Any, sketches: int) -> dict[str, Any]:
+    """The chosen direction as the sandbox gets it, shaped to fit the sketches sent."""
+    if not isinstance(parsed, dict) or not isinstance(parsed.get("choice"), int):
+        raise FilmReviewError("the review came back without a choice")
+    choice = min(max(parsed["choice"], 1), sketches)
+    runner = parsed.get("runner_up") if isinstance(parsed.get("runner_up"), int) else choice
+    return {
+        "verdict": "chosen",
+        "choice": choice,
+        "runner_up": min(max(runner, 1), sketches),
+        "summary": " ".join(str(parsed.get("why", "")).split())[:800],
+        "keep": " ".join(str(parsed.get("keep", "")).split())[:800],
+        "findings": [],
+    }
+
+
 class FilmReviewError(RuntimeError):
     """A bounded, user-safe review failure (quota, validation, or provider refusal)."""
 
@@ -184,7 +229,13 @@ class FilmReview:
         images: list[Any],
         storyboard: str = "",
         example: Any = None,
+        kind: str = "film",
+        sketches: int = 0,
     ) -> dict[str, Any]:
+        if kind not in {"film", "directions"}:
+            raise FilmReviewError("a review is of a film or of its directions")
+        if kind == "directions" and not 2 <= sketches <= 12:
+            raise FilmReviewError("a choice of direction needs 2-12 sketches")
         if self._router is None:
             raise FilmReviewError("the film review model is not configured")
         if not request_id.isalnum() or len(request_id) > 64:
@@ -205,6 +256,7 @@ class FilmReview:
                     checks,
                     [image.data_base64 for image in stills],
                     *([storyboard, bar.data_base64 if bar else ""] if storyboard or bar else []),
+                    *([kind, sketches] if kind != "film" else []),
                 ],
                 separators=(",", ":"),
             ).encode()
@@ -235,31 +287,37 @@ class FilmReview:
                 await self._db.save_effect_progress(
                     conn, execution_key=key, result={"request_digest": fingerprint}
                 )
+            choosing = kind == "directions"
+            content = (
+                {
+                    "notes": spec,
+                    "images": f"one sheet of {sketches} numbered sketches, in order"
+                    + (", then the worked example's contact sheet" if bar else ""),
+                }
+                if choosing
+                else {
+                    "spec": spec,
+                    "storyboard": storyboard or "(none)",
+                    "checks": checks,
+                    "images": (
+                        f"the film's contact sheet, then its {len(stills) - 1} marked stills"
+                        + (", then the worked example's contact sheet" if bar else "")
+                    ),
+                }
+            )
             request = ModelRequest(
-                system=BRIEF,
+                system=DIRECTIONS_BRIEF if choosing else BRIEF,
                 messages=(
                     ModelMessage(
                         role=MessageRole.USER,
-                        content=json.dumps(
-                            {
-                                "spec": spec,
-                                "storyboard": storyboard or "(none)",
-                                "checks": checks,
-                                "images": (
-                                    f"the film's contact sheet, then its {len(stills) - 1} "
-                                    "marked stills"
-                                    + (", then the worked example's contact sheet" if bar else "")
-                                ),
-                            },
-                            ensure_ascii=False,
-                        ),
+                        content=json.dumps(content, ensure_ascii=False),
                         images=stills + ((bar,) if bar else ()),
                     ),
                 ),
                 max_output_tokens=MAX_OUTPUT_TOKENS,
                 reasoning_effort=ReasoningEffort.MEDIUM,
-                output_schema=SCHEMA,
-                output_schema_name="film_review",
+                output_schema=DIRECTIONS_SCHEMA if choosing else SCHEMA,
+                output_schema_name="film_directions" if choosing else "film_review",
             )
             pictures = len(stills) + (1 if bar else 0)
             bound = len(BRIEF.encode()) + MAX_TEXT_BYTES + IMAGE_TOKEN_BOUND * pictures + 4096
@@ -268,7 +326,7 @@ class FilmReview:
                     run_id=run_id, step=f"studio-review:{request_id}", conn=conn, input_tokens=bound
                 ):
                     result = await self._router.generate(ROUTE.key, request)
-                review = _findings(result.parsed)
+                review = _choice(result.parsed, sketches) if choosing else _findings(result.parsed)
             except BillingError as exc:
                 await self._db.fail_effect(conn, execution_key=key, error_message=str(exc))
                 raise FilmReviewError(billing_refusal(exc).message) from exc

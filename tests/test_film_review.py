@@ -196,6 +196,38 @@ async def test_a_review_holds_its_stills_to_their_storyboard_and_the_example() -
 
 
 @pytest.mark.asyncio
+async def test_a_second_look_chooses_among_the_sketches_before_any_storyboard() -> None:
+    router = Router({"choice": 9, "runner_up": 1, "why": "It reads at once.", "keep": "The band."})
+    review = FilmReview(database=ReviewDatabase(), router=router)
+    notes = "Kind: motion graphic\n## Directions\n1. Iceberg\n2. Rings\n3. Flow\n"
+    result = await review.review(
+        run_id=RUN_ID,
+        request_id="d1",
+        spec=notes,
+        checks="",
+        images=[STILL],
+        kind="directions",
+        sketches=3,
+    )
+    assert result["verdict"] == "chosen" and result["choice"] == 3 and result["runner_up"] == 1
+    assert result["keep"] == "The band." and result["findings"] == []
+    sent = router.requests[0]
+    assert "choose among sketches" in sent.system and sent.output_schema_name == "film_directions"
+    assert json.loads(sent.messages[0].content)["notes"] == notes
+    for kind, sketches in (("storyboard", 3), ("directions", 1)):
+        with pytest.raises(FilmReviewError):
+            await review.review(
+                run_id=RUN_ID,
+                request_id="d2",
+                spec=notes,
+                checks="",
+                images=[STILL],
+                kind=kind,
+                sketches=sketches,
+            )
+
+
+@pytest.mark.asyncio
 async def test_a_review_is_refused_before_paying_when_it_cannot_be_read() -> None:
     review = FilmReview(database=ReviewDatabase(), router=Router(FINDINGS))
     for images, message in (
@@ -289,6 +321,15 @@ async def test_the_review_route_needs_the_film_grant() -> None:
                 assert film_review.calls[0]["run_id"] == RUN_ID
                 assert film_review.calls[0]["storyboard"] == ""
                 assert film_review.calls[0]["example"] is None
+                assert film_review.calls[0]["kind"] == "film"
+                chosen = await client.post(
+                    "/studio/review",
+                    json={**body, "request_id": "d1", "kind": "directions", "sketches": 4},
+                    headers={"Authorization": f"Bearer {GRANT}"},
+                )
+                assert chosen.status_code == 200
+                assert film_review.calls[-1]["kind"] == "directions"
+                assert film_review.calls[-1]["sketches"] == 4
                 refused = await client.post(
                     "/studio/review",
                     json={**body, "request_id": "boom"},
