@@ -385,14 +385,16 @@ export async function sketch(dir, options = {}) {
     const folder = path.join(root, name);
     const caption = fs.existsSync(path.join(folder, "caption.txt")) ? fs.readFileSync(path.join(folder, "caption.txt"), "utf8").trim() : name;
     const spec = {title: name, story: {before: "", after: ""}, stage: "index.html", screens: {"16:9": 1080}, now: new Date().toISOString(), format, ready: ".stage",
-      beats: [{camera: "body", cut: true, pad: 0}, {caption: `${index + 1}. ${caption}`}, {do: ["poster"]}, {begin: true}, {hold: 1.2}, {mark: "poster"}, {end: true}]};
+      // Numbered for the sheet the second look reads; the founder's still has the caption alone.
+      beats: [{camera: "body", cut: true, pad: 0}, {caption: `${index + 1}. ${caption}`}, {do: ["poster"]}, {begin: true}, {hold: 1.2}, {mark: "poster"}, {caption}, {hold: 0.8}, {mark: "still"}, {end: true}]};
     const film = filmFromSpec(spec, path.join(folder, "film.json"));
     const {dir: take, report} = await shoot(film, {format, out: path.join(folder, "takes"), rehearse: true, check: false, gif: false});
     for (const line of report.issues.errors) console.log(`  ${index + 1}. ${name}: error: ${line}`);
-    const poster = fs.readdirSync(path.join(take, "marks")).find(file => /poster\.(jpg|png)$/.test(file));
+    const marked = name => fs.readdirSync(path.join(take, "marks")).find(file => new RegExp(`${name}\\.(jpg|png)$`).test(file));
+    const poster = marked("poster");
     const still = path.join(folder, `still${path.extname(poster)}`);
-    fs.copyFileSync(path.join(take, "marks", poster), still);
-    stills.push(still);
+    fs.copyFileSync(path.join(take, "marks", marked("still") || poster), still);
+    stills.push(path.join(take, "marks", poster));
     sketches.push({n: index + 1, folder: name, name: nameOf(name), caption, still: path.relative(root, still)});
     console.log(`${index + 1}. ${name}`);
   }
