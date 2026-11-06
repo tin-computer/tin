@@ -119,7 +119,8 @@ function fontUse() {
     if (style.visibility === "hidden" || style.display === "none" || Number(style.opacity) === 0) continue;
     const families = style.fontFamily.split(",").map(clean);
     const family = families.find(name => loaded.has(name)) || families[0];
-    const entry = used.get(family) || {family, chars: 0, weights: [], loaded: loaded.has(family), heading: false, sample: text.slice(0, 48)};
+    const mono = families.some(name => /^(monospace|ui-monospace)$/i.test(name)) || Boolean(element.closest("code, pre, kbd, samp"));
+    const entry = used.get(family) || {family, chars: 0, weights: [], loaded: loaded.has(family), heading: false, mono, sample: text.slice(0, 48)};
     entry.chars += text.length;
     if (!entry.weights.includes(style.fontWeight)) entry.weights.push(style.fontWeight);
     if (element.closest("h1, h2")) entry.heading = true;
@@ -131,9 +132,10 @@ function fontUse() {
 
 // A face's name as people say it: next/font's "__fkGroteskNeue_4f5e8e" is "Fk Grotesk Neue".
 export function faceName(family) {
-  const hashed = family.match(/^__(.+?)_[0-9a-f]{5,}$/i);
-  if (!hashed) return family;
-  const words = hashed[1].replace(/_/g, " ").replace(/([a-z])([A-Z])/g, "$1 $2");
+  // next/font names a face after its variable: "__fkGroteskNeue_4f5e8e", or "fkGroteskNeue".
+  const name = family.match(/^__(.+?)_[0-9a-f]{5,}$/i)?.[1] ?? family;
+  if (/\s/.test(name) || !/^[a-z][a-z0-9]*[A-Z_]/.test(name)) return name;
+  const words = name.replace(/_/g, " ").replace(/([a-z0-9])([A-Z])/g, "$1 $2");
   return words[0].toUpperCase() + words.slice(1);
 }
 
@@ -192,7 +194,7 @@ function keepFonts(dir, use) {
   if (rules.length) fs.writeFileSync(css, `/* The product's type, from ${use.page}: link it from a stage page with fonts/ beside it. */\n${rules.join("\n")}\n`);
   else fs.rmSync(css, {force: true});
   return use.used.slice(0, 4).map(entry => ({
-    family: faceName(entry.family), heading: entry.heading, share: entry.chars,
+    family: faceName(entry.family), heading: entry.heading, mono: entry.mono, share: entry.chars,
     weights: entry.weights, sample: entry.sample,
     kept: [...(kept.get(faceName(entry.family)) || [])],
   }));
@@ -245,14 +247,17 @@ export async function inspect(url, {dir, format = "16:9"} = {}) {
     const report = {...found, format, screen, recording: recording.close()};
     // The type the text is set in, not the body's: a page may set its face on a wrapper.
     report.look.fonts = keepFonts(dir, use);
-    const text = report.look.fonts[0];
-    if (text) {
-      // The face that sets most of the text, preferring one Tin could keep the files for.
-      const sans = report.look.fonts.find(item => item.kept.length) || text;
-      const keyword = /^(-apple-system|BlinkMacSystemFont|system-ui|ui-[a-z-]+|sans-serif|serif|monospace)$/.test(sans.family);
-      report.look.font = text.family;
-      report.look.tokens = report.look.tokens.replace(/--sans: [^;]*;/, `--sans: ${keyword ? sans.family : JSON.stringify(sans.family)}, system-ui, sans-serif;`);
+    // The reading face is the one that sets most of the text that isn't code, preferring one
+    // whose files Tin kept; a mono face sets --mono instead.
+    const quoted = family => (/^(-apple-system|BlinkMacSystemFont|system-ui|ui-[a-z-]+|sans-serif|serif|monospace)$/.test(family) ? family : JSON.stringify(family));
+    const reading = report.look.fonts.filter(item => !item.mono);
+    const sans = reading.find(item => item.kept.length) || reading[0];
+    const mono = report.look.fonts.find(item => item.mono && item.kept.length);
+    if (sans) {
+      report.look.font = sans.family;
+      report.look.tokens = report.look.tokens.replace(/--sans: [^;]*;/, `--sans: ${quoted(sans.family)}, system-ui, sans-serif;`);
     }
+    if (mono) report.look.tokens = report.look.tokens.replace(/--mono: [^;]*;/, `--mono: ${quoted(mono.family)}, ui-monospace, monospace;`);
     fs.writeFileSync(path.join(dir, "inspect.json"), `${JSON.stringify(report, null, 1)}\n`);
     const spec = path.join(dir, "film.json");
     if (!fs.existsSync(spec)) fs.writeFileSync(spec, `${JSON.stringify(starter({url: found.url, title: found.title, format}), null, 2)}\n`);

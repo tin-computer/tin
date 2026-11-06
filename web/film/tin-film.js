@@ -435,7 +435,7 @@ async function main(argv) {
     console.log(`look: ${report.look.background} ground, ${report.look.color} text, ${report.look.font}; as the stage kit's tokens:\n${report.look.tokens}`);
     for (const item of report.look.fonts || []) {
       const kept = item.kept.length ? `kept (${item.kept.join(", ")}) in look's fonts.css` : "no font file: a system font, or one the page didn't load";
-      console.log(`  type: ${item.family}${item.heading ? ", in its headings" : ""}, “${item.sample}”: ${kept}`);
+      console.log(`  type: ${item.family}${item.mono ? " (mono)" : item.heading ? ", in its headings" : ""}, “${item.sample}”: ${kept}`);
     }
     if ((report.look.fonts || []).some(item => item.kept.length)) console.log(`  set the stage in it: copy ${path.join(dir, "fonts.css")} and ${path.join(dir, "fonts")}/ beside the stage page and link fonts.css`);
     if (report.look.stylesheets.length) console.log(`  its font stylesheets: ${report.look.stylesheets.join(", ")}`);
