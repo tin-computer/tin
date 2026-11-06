@@ -83,9 +83,10 @@ export function note({film, report, folder, format}) {
   return lines.join("\n");
 }
 
-// A second look: the latest take's contact sheet and marked stills, the spec and what the checks
-// still report go to Tin's review route with the run's grant (film_review.py); the findings are
-// printed and kept beside the take. A run has a few reviews; each costs a model call.
+// A second look: the latest take's contact sheet and marked stills, the spec, its storyboard,
+// the worked example's sheet and what the checks still report go to Tin's review route with the
+// run's grant (film_review.py); the findings are printed and kept beside the take. A run has a
+// few reviews; each costs a model call.
 export function reviewRequest(file, dir) {
   const report = JSON.parse(fs.readFileSync(path.join(dir, "report.json"), "utf8"));
   // A rehearsal's stills are JPEGs, a final take's PNGs.
@@ -96,8 +97,13 @@ export function reviewRequest(file, dir) {
     .map(file => ({media_type: file.endsWith(".jpg") ? "image/jpeg" : "image/png", data_base64: fs.readFileSync(file).toString("base64")}));
   const checks = [...report.issues.errors, ...report.issues.warnings, ...(report.summary ?? [])].join("\n");
   const spec = fs.readFileSync(file, "utf8");
-  const request_id = crypto.createHash("sha256").update(spec).update(checks).update(images.map(image => image.data_base64).join("")).digest("hex").slice(0, 32);
-  return {request_id, spec, checks, images};
+  // The plan the stills draw, and the worked example's sheet the film started beside: the bar.
+  const board = path.join(here(file), "storyboard.md");
+  const storyboard = fs.existsSync(board) ? fs.readFileSync(board, "utf8") : "";
+  const bar = path.join(here(file), "example.jpg");
+  const example = fs.existsSync(bar) ? {media_type: "image/jpeg", data_base64: fs.readFileSync(bar).toString("base64")} : null;
+  const request_id = crypto.createHash("sha256").update(spec).update(storyboard).update(checks).update(images.map(image => image.data_base64).join("")).update(example?.data_base64 ?? "").digest("hex").slice(0, 32);
+  return {request_id, spec, storyboard, checks, images, example};
 }
 
 async function review(file) {

@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import base64
+import json
 from contextlib import asynccontextmanager, nullcontext
 from datetime import UTC, datetime, timedelta
 from types import SimpleNamespace
@@ -173,6 +174,28 @@ async def test_a_review_reads_the_stills_once_and_replays_its_findings() -> None
 
 
 @pytest.mark.asyncio
+async def test_a_review_holds_its_stills_to_their_storyboard_and_the_example() -> None:
+    router = Router(FINDINGS)
+    review = FilmReview(database=ReviewDatabase(), router=router)
+    board = "# Ranked\n\n## 1. Ranked\n- Mark: poster\n- Caption: Tin ranks them.\n"
+    await review.review(
+        run_id=RUN_ID,
+        request_id="r1",
+        spec='{"beats": []}',
+        checks="",
+        images=[STILL, STILL],
+        storyboard=board,
+        example=STILL,
+    )
+    message = router.requests[0].messages[0]
+    content = json.loads(message.content)
+    assert content["storyboard"] == board
+    assert content["images"].endswith("then the worked example's contact sheet")
+    assert len(message.images) == 3
+    assert "the bar" in router.requests[0].system
+
+
+@pytest.mark.asyncio
 async def test_a_review_is_refused_before_paying_when_it_cannot_be_read() -> None:
     review = FilmReview(database=ReviewDatabase(), router=Router(FINDINGS))
     for images, message in (
@@ -264,6 +287,8 @@ async def test_the_review_route_needs_the_film_grant() -> None:
             if status == 200:
                 assert answer.json()["verdict"] == "ready"
                 assert film_review.calls[0]["run_id"] == RUN_ID
+                assert film_review.calls[0]["storyboard"] == ""
+                assert film_review.calls[0]["example"] is None
                 refused = await client.post(
                     "/studio/review",
                     json={**body, "request_id": "boom"},

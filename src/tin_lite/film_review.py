@@ -86,8 +86,10 @@ SCHEMA: dict[str, Any] = {
 
 BRIEF = """You review a short product film before a founder posts it on LinkedIn or X. You did
 not make it. You get the film's stills (a contact sheet of its marked frames, then each marked
-frame at full size), its spec (the beats it plays, its captions and its story) and what Tin's
-frame checks still report.
+frame at full size), its spec (the beats it plays, its captions and its story), its storyboard
+(the shots it planned, one marked still each) and what Tin's frame checks still report. Often the
+last image is the contact sheet of the worked example the film was built from: the bar, a film of
+another feature that Tin's team made and approved.
 
 The film is a staged scene in the product's own look, the way a launch page shows a feature:
 photogenic parts (a window, the product's app, a terminal, a card) where one thing happens per
@@ -109,9 +111,20 @@ Judge it as a viewer scrolling a feed would meet it:
 - Nothing looks broken or unfinished: an empty card, overlapping parts, a cut line of text,
   sample content that reads as a real customer or a real metric.
 
-Write findings the film's author can act on in its spec: where (a mark's name or a caption),
-what is wrong, and the fix (a beat to add, change or remove). Leave out taste that a founder
-could reasonably disagree with. When nothing needs fixing, say `ready` with no findings."""
+Hold it to its storyboard and to the bar:
+- Each still is the shot its storyboard describes: the hero, the satellite, the real words and
+  the change it planned. A planned move that left no trace in its still, or a shot that shows
+  less than it planned, is a finding.
+- Against the example's sheet: type as large, the hero inset a gutter and running off an edge
+  rather than floating whole, one satellite overlapping it, as few real words, as much changing
+  from shot to shot, and a scene that travels from where the founder's problem lives to the
+  product answering it. Where this film falls short of the bar, say what to change. Never ask
+  it to copy the example's content: it shows another feature.
+
+Write findings the film's author can act on in its spec or its stage: where (a mark's name or a
+caption), what is wrong, and the fix (a beat to add, change or remove, or a part of the stage to
+change). Leave out taste that a founder could reasonably disagree with. When nothing needs
+fixing, say `ready` with no findings."""
 
 
 class FilmReviewError(RuntimeError):
@@ -169,19 +182,31 @@ class FilmReview:
         spec: str,
         checks: str,
         images: list[Any],
+        storyboard: str = "",
+        example: Any = None,
     ) -> dict[str, Any]:
         if self._router is None:
             raise FilmReviewError("the film review model is not configured")
         if not request_id.isalnum() or len(request_id) > 64:
             raise FilmReviewError("request_id must be alphanumeric and at most 64 characters")
-        if len(spec.encode()) + len(checks.encode()) > MAX_TEXT_BYTES or not spec.strip():
-            raise FilmReviewError(f"the spec and checks must hold 1-{MAX_TEXT_BYTES} bytes")
+        text = len(spec.encode()) + len(checks.encode()) + len(storyboard.encode())
+        if text > MAX_TEXT_BYTES or not spec.strip():
+            raise FilmReviewError(
+                f"the spec, storyboard and checks must hold 1-{MAX_TEXT_BYTES} bytes"
+            )
         if not images or len(images) > MAX_IMAGES:
             raise FilmReviewError(f"a review reads 1-{MAX_IMAGES} stills")
         stills = tuple(_image(item) for item in images)
+        bar = _image(example) if example is not None else None
         fingerprint = hashlib.sha256(
             json.dumps(
-                [spec, checks, [image.data_base64 for image in stills]], separators=(",", ":")
+                [
+                    spec,
+                    checks,
+                    [image.data_base64 for image in stills],
+                    *([storyboard, bar.data_base64 if bar else ""] if storyboard or bar else []),
+                ],
+                separators=(",", ":"),
             ).encode()
         ).hexdigest()
         key = review_execution_key(run_id, request_id)
@@ -215,8 +240,20 @@ class FilmReview:
                 messages=(
                     ModelMessage(
                         role=MessageRole.USER,
-                        content=json.dumps({"spec": spec, "checks": checks}, ensure_ascii=False),
-                        images=stills,
+                        content=json.dumps(
+                            {
+                                "spec": spec,
+                                "storyboard": storyboard or "(none)",
+                                "checks": checks,
+                                "images": (
+                                    f"the film's contact sheet, then its {len(stills) - 1} "
+                                    "marked stills"
+                                    + (", then the worked example's contact sheet" if bar else "")
+                                ),
+                            },
+                            ensure_ascii=False,
+                        ),
+                        images=stills + ((bar,) if bar else ()),
                     ),
                 ),
                 max_output_tokens=MAX_OUTPUT_TOKENS,
@@ -224,7 +261,8 @@ class FilmReview:
                 output_schema=SCHEMA,
                 output_schema_name="film_review",
             )
-            bound = len(BRIEF.encode()) + MAX_TEXT_BYTES + IMAGE_TOKEN_BOUND * len(stills) + 4096
+            pictures = len(stills) + (1 if bar else 0)
+            bound = len(BRIEF.encode()) + MAX_TEXT_BYTES + IMAGE_TOKEN_BOUND * pictures + 4096
             try:
                 with model_usage_scope(
                     run_id=run_id, step=f"studio-review:{request_id}", conn=conn, input_tokens=bound

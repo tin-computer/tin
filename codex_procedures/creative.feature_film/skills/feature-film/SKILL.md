@@ -152,8 +152,10 @@ in the storyboard's order, and a poster.
 ## 7. A second look
 
 1. `tin-film review WORK/film/film.json` sends the newest take's contact sheet and marked
-   stills, `film.json` and what the checks still report to a model that didn't make the film.
-   It prints a verdict (`ready` or `fix`) and findings, each with where, what and a fix.
+   stills, `film.json`, `storyboard.md`, the example's sheet (`example.jpg`) and what the checks
+   still report to a model that didn't make the film. It holds each still to its shot and the
+   film to the example's bar, and prints a verdict (`ready` or `fix`) and findings, each with
+   where, what and a fix.
 2. Fix what it found and rehearse again. Ask for a second review only after real changes:
    reviewing an unchanged take replays the same answer, and a run has four reviews.
 3. A finding you judge wrong stays out of the film; say in `notes` what it was and why you

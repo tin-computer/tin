@@ -259,4 +259,13 @@ test("a second look sends the take's sheet and marked stills with the spec and w
   assert.equal(request.spec, fs.readFileSync(file, "utf8"));
   assert.match(request.request_id, /^[0-9a-f]{32}$/);
   assert.equal(reviewRequest(file, take).request_id, request.request_id, "an unchanged take asks the same question");
+  assert.equal(request.storyboard, "");
+  assert.equal(request.example, null);
+  // A film started from a worked example sends its storyboard and the example's sheet, the bar.
+  fs.writeFileSync(path.join(dir, "storyboard.md"), "# Fold\n\n## 1. Herd\n- Mark: poster\n- Caption: One press herds every sheep.\n");
+  fs.writeFileSync(path.join(dir, "example.jpg"), png);
+  const held = reviewRequest(file, take);
+  assert.match(held.storyboard, /## 1\. Herd/);
+  assert.deepEqual(held.example, {media_type: "image/jpeg", data_base64: png.toString("base64")});
+  assert.notEqual(held.request_id, request.request_id, "a new storyboard asks a new question");
 });

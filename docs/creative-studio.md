@@ -77,7 +77,8 @@ How a run goes:
    (mographc's rules, the kit's own, the pacing checks and the storyboard's); its contact sheet
    is the storyboard drawn, and the agent fixes the film until it is clean.
 6. From 1.1.0, `tin-film review` asks for a second look: the newest take's contact sheet and
-   marked stills, `film.json` and the checks' summary go to the run-bound
+   marked stills, `film.json`, its storyboard, the worked example's sheet (the bar) and the
+   checks' summary go to the run-bound
    `POST /internal/run-tools/studio/review` route (`studio.review` on the `tin.studio` grant,
    film runs only). The switchboard sends them to `creative.feature_film.review.v1`
    (`gpt-6-sol`, a different model from the run's Codex model, with image input) with the

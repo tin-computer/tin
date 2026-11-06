@@ -344,6 +344,8 @@ def create_run_tools_app(
                 spec=str(payload.get("spec", "")),
                 checks=str(payload.get("checks", "")),
                 images=payload["images"],
+                storyboard=str(payload.get("storyboard") or ""),
+                example=payload.get("example"),
             )
         except FilmReviewError as exc:
             return JSONResponse({"error": str(exc)}, status_code=422)
