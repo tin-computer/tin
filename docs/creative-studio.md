@@ -53,7 +53,7 @@ time with a drawn cursor and a caption band. It is the film kit (`web/film`,
 | Piece | Where | What it does |
 |---|---|---|
 | Toolkit | `web/film/tin-film.js`, `inspect.js`, the kit and `web/film/stage/`, in the image at `/opt/tin-lite/diagram/web/film/` | `new`, `inspect`, `record`, `rehearse`, `render`, `deliver`; runs on the diagram layer's pinned Playwright Chromium (`sandbox/tin_film.sh`) |
-| Worked example | `web/film/examples/onboarding/` | Tin's own onboarding film, the bar `tin-film new` copies |
+| Worked examples | `web/film/examples/onboarding/`, `people/` | Tin's own onboarding and People films, each a storyboard, a `film.json` and a stage: the bar `tin-film new --from` copies |
 | Contract | `studio_contracts.parse_feature_film`, `validate_feature_film_video` (both copies) | the note plays exactly one film from its own folder; the film is a fast-start MP4 at 1080x1350, 1080x1080 or 1920x1080, 8 to 90 s |
 | Procedure | `codex_procedures/creative.feature_film/` | prompt, skill, `stage-kit.md` (the parts, the runtime, framing) and `film-format.md` (the JSON film and its beats) |
 | Catalog | `src/tin_lite/catalog.py` | id `…049`, `FEATURE_FILM_REVIEW_POLICY`, on demand, inputs `slug`, `feature`, `post`, `angle`, `product_url` (optional, for the look), `format`, `notes` |
@@ -63,14 +63,15 @@ How a run goes:
 1. The agent works out the feature (the run's `feature` and `post`, or the Feature map) and what
    really happens when someone uses it, in the product's real wording; with a page, `tin-film
    inspect` reads its look as the stage kit's tokens, its fonts and a screenshot.
-2. It writes a storyboard: the story as a before and an after, three to six shots and a payoff,
-   each with its caption, its one action and its real words, and the poster shot.
-3. `tin-film new` copies the worked example; the agent rehearses it once to see the bar, then
-   rebuilds the stage for this product (its tokens, its chrome, the kit's parts, sample content
-   only) and writes the beats.
+2. `tin-film new --from` copies the worked example closest to the feature; the agent rehearses
+   it once and looks at its contact sheet, one still per shot: the bar.
+3. It rewrites the example's `storyboard.md` for this feature (the story as a before and an
+   after, three to six shots and a payoff, each with its mark, caption, hero, satellite, real
+   words and what moves), then rebuilds the stage for this product (its tokens, its chrome, the
+   kit's parts, sample content only) and writes the beats, a caption and a mark per shot.
 4. `tin-film rehearse` plays it at low resolution with every frame measured and checked
-   (mographc's rules, the kit's own and the pacing checks); the agent looks at the stills and
-   fixes the film until it is clean.
+   (mographc's rules, the kit's own, the pacing checks and the storyboard's); its contact sheet
+   is the storyboard drawn, and the agent fixes the film until it is clean.
 5. `tin-film render` makes the final take, and `tin-film deliver` writes `films/{slug}.md` with
    `film.mp4`, `poster.png`, `captions.vtt` and `film.json` in `films/{slug}.assets/`, then runs
    `tin-studio check` on both.

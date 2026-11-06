@@ -15,9 +15,9 @@ hidden until a beat shows it:
 <script src="/__stage/kit/stage.js"></script>
 ```
 
-Files beside `index.html` (an image, a font) load by their name. The worked example
-(`tin-film new`) is the reference for everything below: copy its structure, change its look and
-its words.
+Files beside `index.html` (an image, a font) load by their name. The worked examples
+(`tin-film new --from onboarding` or `people`) are the reference for everything below: copy the
+closest one's structure, change its look and its words.
 
 ## The screen
 
@@ -65,10 +65,27 @@ Each is plain HTML with the kit's classes; restyle with the tokens, not new geom
 - Decision: `.decision` with `.decision-head`, `.decision-body` and `.decision-actions`.
 - Button: `.button` (`.primary`, `.quiet`) with its words in `.label`. `data-then="Working|Done"`
   makes a click change its label in steps on itself, and `data-show="#id"` brings in a part after.
+- Table: `.table` with its columns in `--cols` (a grid template), a `.thead` part with
+  `data-view="columns"` (the column names, `.is-sorted` on one) and, when rows can be ticked,
+  `data-view="selected"` with class `.picked` (a `.tickbox.is-mixed`, the count in `<b>`, a
+  `.line` and a `.button.go`); then `.tr` rows: a `.tickbox` with `data-tick="#row-id"`, the
+  name in `.who`, `.sub` (or a `.bar`), `.num` (`.is-fit` for a value that matters) and
+  `.status` (`.queued`, `.connected`). A ticked row (`tick`) tints and its box fills.
+- Popover: `.pop` with a `<p>` and a `<code>` line, placed under the value it explains. Small
+  enough to fade in over the page.
+- Side panel: `.panel` with `.panel-head` (`.panel-title`, `.panel-sub`, a `.link` with an
+  `.out` arrow), `.field` rows (`.label`, then `<b>` and a `<p>`; `tick` lights one) and
+  `.happened` lines (what happened, then its time in `<code>`). Put it on the stage over the
+  window, not inside it, as `.arrive.slide.from-right`, running off the stage's right edge like
+  the window.
+- Social post: `.card.post` with `.post-head` (an `.avatar`, `.post-name`, `.post-sub`),
+  `.post-text`, quiet `<i class="bar">` lines, `.post-media` and `.post-foot` (`.faces` and the
+  counts). People nobody can read yet: `.face-row` (an `<i class="face">` and two bars).
 - Chip `.chip`, dot `.dot` (`.ink`, `.hot`, `.pulse`), toast `.toast`, pull request `.pull`.
 
 Arrivals: `.arrive` (hidden until shown; it fades and rises in), `.arrive.slide` (comes up from
-below the stage, opaque: a window or a result), `.arrive.grow` (opens its height in a column,
+below the stage, opaque: a window or a result), `.arrive.slide.from-right` (comes in through
+the stage's right edge, opaque: a side panel), `.arrive.grow` (opens its height in a column,
 carrying what is below it; wrap a padded card in it).
 
 ## The runtime
@@ -88,9 +105,10 @@ film's clock and the film holds for as long as it takes.
 | `["away", "#terminal, #card"]` | The scene travels up and off; pair it with `show` of an `.arrive.slide` window to bring the next one up. |
 | `["fill", "#bar", 0.4, {"seconds": 1.4}]` | Grow a bar to a share. |
 | `["page", "#app", "decisions"]` | Switch a window's page without a click. |
+| `["together", [["hide", "#a .tickbox"], ["set", "#a .status", "Queued"]]]` | Several calls as one beat; it takes as long as the longest. |
 
 Clicks are the film's own (`{"click": "#nav-decisions"}`); the stage answers them as the product
-would through `data-go` and `data-then`.
+would through `data-go`, `data-then` and `data-tick`. Never draw a cursor in the stage.
 
 ## Motion
 

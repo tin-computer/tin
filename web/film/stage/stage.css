@@ -202,3 +202,92 @@ body { background: var(--ground); color: var(--ink); font-family: var(--sans); f
 .pull .state svg { width: 14px; height: 14px; fill: currentColor; }
 .pull .title { font-size: 16px; line-height: 21px; font-weight: 700; color: #e6edf3; }
 .pull small { display: block; font-family: var(--mono); font-size: 13px; line-height: 18px; color: #8d96a0; }
+
+/* A slide from the right: a panel coming in over the page's edge, opaque all the way. */
+.arrive.slide.from-right { transform: translateX(var(--scene-x, 480px)); }
+.arrive.slide.from-right.is-on { transform: none; }
+
+/* A table of records: a header row and rows on one grid (--cols), a box to tick on each. The
+   header is a part with views (stage.swap): its columns, and the bar of what is ticked. */
+.table { font-size: 15px; line-height: 21px; }
+.thead { height: 32px; border-radius: 8px; background: var(--card); }
+.thead [data-view].is-current, .tr { display: grid; grid-template-columns: var(--cols); align-items: center; }
+.thead [data-view] { height: 32px; font-size: 13px; color: var(--ink-2); }
+.thead .is-sorted { color: var(--ink); }
+.thead .picked { display: none; }
+.thead .picked.is-current { display: flex; align-items: center; gap: 14px; padding: 0 4px 0 12px; }
+.picked b { font-size: 15px; color: var(--ink); }
+.picked .line { flex: 1; font-size: 14px; color: var(--ink-2); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+/* A ticked row's tint fades on its own layer, so the row never pops as a surface. */
+.tr { position: relative; height: 46px; border-bottom: 1px solid var(--line); }
+.tr::before { content: ""; position: absolute; inset: 0; background: rgb(153 175 98 / 6%); opacity: 0; transition: opacity 0.3s var(--arrive); pointer-events: none; }
+.tr.is-ticked::before { opacity: 1; }
+.tr .who { font-size: 17px; color: var(--ink); white-space: nowrap; }
+.tr .sub { color: var(--ink-2); white-space: nowrap; overflow: hidden; }
+.tr .num { font-family: var(--mono); color: var(--ink-2); }
+.tr .num.is-fit { color: var(--accent); }
+.tr .status { color: var(--ink-2); white-space: nowrap; }
+.tr .bar { display: inline-block; width: 140px; height: 9px; border-radius: 5px; background: var(--line-strong); vertical-align: 1px; }
+.status .queued { color: var(--accent); }
+.status .connected { color: var(--ink); }
+.tickbox { justify-self: center; position: relative; width: 14px; height: 14px; border-radius: 3px; border: 1px solid rgb(246 241 231 / 30%); transition: background 0.2s var(--arrive), border-color 0.2s var(--arrive), opacity 0.35s var(--arrive); }
+.tickbox::after { content: ""; position: absolute; left: 4px; top: 1px; width: 4px; height: 8px; border: solid #141210; border-width: 0 2px 2px 0; transform: rotate(45deg) scale(0.4); opacity: 0; transition: opacity 0.2s var(--arrive), transform 0.25s var(--arrive); }
+.is-ticked > .tickbox, .tickbox.is-mixed { border-color: transparent; background: var(--accent); }
+.is-ticked > .tickbox::after { opacity: 1; transform: rotate(45deg); }
+.tickbox.is-mixed::after { left: 3px; top: 6px; width: 8px; height: 0; border-width: 0 0 2px; transform: none; opacity: 1; }
+.arrive.tickbox:not(.is-on) { transform: none; }
+.button.go { height: 26px; padding: 0 12px; border: 0; border-radius: 999px; background: var(--accent); color: #141210; font-size: 14px; font-weight: 700; }
+.button.go.is-done { background: var(--accent-soft); color: var(--accent); }
+
+/* A line beside a page's tabs: a status the product keeps. */
+.tabs .aside { margin-left: auto; align-self: center; display: flex; align-items: center; gap: 9px; padding-bottom: 3px; font-size: 15px; color: var(--ink-2); }
+
+/* A popover: the reason under a value, where the product shows it on hover. Small: it may fade. */
+.pop { position: absolute; padding: 13px 16px 12px; border-radius: 10px; background: var(--raised); box-shadow: var(--shadow-satellite); font-size: 15px; line-height: 20px; color: var(--ink); }
+.pop p { margin: 0; }
+.pop code { display: block; margin-top: 8px; font-family: var(--mono); font-size: 13px; line-height: 18px; color: var(--accent); }
+
+/* A side panel over a page's right edge: one record's fields and what happened. Put it on the
+   stage over the window, not inside it, and bring it in with .slide.from-right: it enters
+   through the stage's edge like the window did. */
+.panel { position: absolute; padding: 24px 25px; background: var(--card); border-left: 1px solid var(--line-strong); box-shadow: -30px 0 60px rgb(0 0 0 / 35%); }
+.panel-title { font-size: 21px; line-height: 27px; font-weight: 700; letter-spacing: -0.01em; color: var(--ink); }
+.panel-sub { margin-top: 4px; font-size: 15px; color: var(--ink-2); }
+.panel .link { display: inline-block; margin-top: 8px; font-size: 15px; color: var(--accent); text-decoration: underline; text-underline-offset: 3px; text-decoration-thickness: 1px; }
+.panel .link .out { margin-left: 6px; text-decoration: none; display: inline-block; font-size: 14px; }
+.panel-head { margin: 0 -25px; padding: 0 25px 18px; border-bottom: 1px solid var(--line); }
+.field { display: flex; gap: 14px; margin: 14px -10px 0; padding: 9px 10px; border-radius: 8px; box-shadow: inset 0 0 0 1px transparent; transition: box-shadow 0.4s var(--arrive), background 0.4s var(--arrive); }
+.field.is-ticked { background: rgb(153 175 98 / 7%); box-shadow: inset 0 0 0 1px rgb(153 175 98 / 70%); }
+.field .label { width: 74px; flex-shrink: 0; font-size: 14px; color: var(--ink-3); }
+.field b { font-weight: 400; font-size: 15px; color: var(--ink); }
+.field .num { font-family: var(--mono); }
+.field p { margin: 4px 0 0; font-size: 14px; line-height: 19px; color: var(--ink-2); }
+.happened { display: flex; justify-content: space-between; align-items: baseline; gap: 12px; margin-top: 12px; font-size: 15px; color: var(--ink); }
+.happened + .happened { color: var(--ink-2); }
+.happened code { font-family: var(--mono); font-size: 13px; color: var(--ink-3); }
+
+/* A social post, as its network shows it: who wrote it, its words, quiet lines for the rest,
+   and what it drew. */
+.post { padding: 27px 32px; background: var(--surface); }
+.post-head { display: flex; align-items: center; gap: 14px; }
+.post-head .avatar { width: 43px; height: 43px; flex-shrink: 0; border-radius: 50%; display: flex; align-items: center; justify-content: center; background: var(--well); color: var(--accent); font-size: 16px; font-weight: 700; }
+.post-name { font-size: 17px; line-height: 22px; font-weight: 700; color: var(--ink); }
+.post-sub { font-size: 14px; line-height: 20px; color: var(--ink-2); }
+.post-text { margin-top: 22px; font-size: 22px; line-height: 29px; letter-spacing: -0.005em; color: var(--ink); }
+.post > .bar { display: block; height: 9px; margin-top: 10px; border-radius: 5px; background: var(--line-strong); }
+.post > .bar:first-of-type { margin-top: 20px; }
+.post-media { height: 140px; margin-top: 20px; border-radius: 8px; background: rgb(246 241 231 / 4%); }
+.post-foot { display: flex; align-items: center; gap: 12px; margin-top: 22px; font-size: 17px; color: var(--ink-2); }
+.post-foot b { font-weight: 400; color: var(--ink); }
+.faces { display: flex; }
+.faces i { width: 20px; height: 20px; margin-right: -5px; border-radius: 50%; border: 2px solid var(--surface); background: #4a443d; }
+.faces i:nth-child(2) { background: #5a524a; }
+.faces i:nth-child(3) { background: #6a6158; }
+
+/* People nobody can see yet: a face and two quiet lines. */
+.face-row { display: flex; align-items: center; gap: 13px; padding: 11px 0; border-bottom: 1px solid var(--line); }
+.face-row .face { width: 32px; height: 32px; flex-shrink: 0; border-radius: 50%; background: #3e3a35; }
+.face-row:nth-child(2n) .face { background: #4d4740; }
+.face-row:nth-child(3n) .face { background: #5c544b; }
+.face-row .bar { display: block; height: 9px; border-radius: 5px; background: var(--line-strong); }
+.face-row .bar + .bar { height: 7px; margin-top: 8px; background: var(--line); }

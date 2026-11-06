@@ -67,6 +67,12 @@
       ]
     },
     {
+      "hold": 0.5
+    },
+    {
+      "mark": "ask"
+    },
+    {
       "caption": "It reads your code, so there's no form to fill."
     },
     {
@@ -123,6 +129,12 @@
         "#v-goal",
         "More signups"
       ]
+    },
+    {
+      "hold": 0.4
+    },
+    {
+      "mark": "answers"
     },
     {
       "do": [
@@ -222,6 +234,9 @@
       "hold": 0.4
     },
     {
+      "mark": "pick"
+    },
+    {
       "caption": "A marketing system starts: research now, an article every Tuesday."
     },
     {
@@ -306,6 +321,9 @@
     },
     {
       "hold": 0.3
+    },
+    {
+      "mark": "draft"
     },
     {
       "click": "#nav-decisions",

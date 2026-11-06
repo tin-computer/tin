@@ -15,6 +15,7 @@
 // - press: a button dips, then its label changes on itself; its width holds.
 // - fill: a bar or a progress line grows to a share.
 // - page: a window switches to another of its pages.
+// - together: several of these at once, as one beat.
 (() => {
   const all = selector => [...document.querySelectorAll(selector)];
   const one = selector => {
@@ -193,12 +194,20 @@
     return 0.5;
   }
 
-  window.stage = {show, hide, away, swap, print, type, set, tick, press, fill, page};
+  // Several changes as one beat, [[name, ...args], ...]: it takes as long as the longest.
+  function together(calls) {
+    return Math.max(0, ...calls.map(([name, ...args]) => window.stage[name](...args)));
+  }
+
+  window.stage = {show, hide, away, swap, print, type, set, tick, press, fill, page, together};
 
   // The film's clicks are real clicks, so a stage answers them as the product would:
   // [data-go] opens a page of its window and marks its nav item; [data-then] is a button whose
-  // label becomes each of data-then's steps (split on |), and then shows what data-show names.
+  // label becomes each of data-then's steps (split on |), and then shows what data-show names;
+  // [data-tick] is a box that ticks or unticks what it names (its row).
   document.addEventListener("click", event => {
+    const box = event.target.closest("[data-tick]");
+    if (box) tick(box.dataset.tick, !one(box.dataset.tick).classList.contains("is-ticked"));
     const go = event.target.closest("[data-go]");
     if (go) page(`#${go.closest(".window").id}`, go.dataset.go);
     const then = event.target.closest("[data-then]");

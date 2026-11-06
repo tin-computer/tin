@@ -213,20 +213,29 @@ thing happens per beat and the result stays on screen, rather than a camera over
 
 - **The kit.** `web/film/stage/stage.css` holds the parts (windows, a terminal, cards, rows and
   ranks, an app with its rail and pages, a calendar, running work, a decision, buttons, a pull
-  request) and the arrivals (`.arrive`, `.slide`, `.grow`); its tokens default to Tin's dark
-  theme and a stage sets them to its product's. `web/film/stage/stage.js` is the runtime the
-  beats call: `{"do": ["print", "#term", [...]]}` shows, prints, types, sets, ticks, swaps, fills
-  or sends a scene away on the film's clock, and the film holds while it plays. The film's own
-  clicks reach the stage, which answers through `data-go` (a page of its window) and `data-then`
-  (a button that changes its label on itself).
+  request, a table with boxes to tick, a popover, a side panel, a social post) and the arrivals
+  (`.arrive`, `.slide`, `.slide.from-right`, `.grow`); its tokens default to Tin's dark theme and
+  a stage sets them to its product's. `web/film/stage/stage.js` is the runtime the beats call:
+  `{"do": ["print", "#term", [...]]}` shows, prints, types, sets, ticks, swaps, fills or sends a
+  scene away on the film's clock (`together` runs several at once), and the film holds while it
+  plays. The film's own clicks reach the stage, which answers through `data-go` (a page of its
+  window), `data-then` (a button that changes its label on itself) and `data-tick` (a box).
 - **Serving.** `"stage": "stage/index.html"` in `film.json` opens that page in the film's window;
   the page reaches its own folder (`/__stage/…`), the kit (`/__stage/kit/…`), the dashboard's
   assets (`/assets/…`) and the licensed fonts, and nothing else unless it was recorded.
 - **Scale.** A 16:9 stage is a 1080 × 517 screen (`"screens": {"16:9": 1080}`), shown at 1.78
   times its size, so 15px text reads as 27px on a phone; the camera stays on the whole stage.
-- **The worked example.** `web/film/examples/onboarding/` is Tin's own onboarding, from "Set up
-  Tin" in Claude Code to a pull request opened from Decisions, 33 seconds: the bar the workflow
-  copies (`tin-film new`) and rebuilds for each product.
+- **Storyboards.** A staged film keeps `storyboard.md` beside `film.json`: its title, the shape of
+  feature it suits, the story, then a `## N. Name` section per shot with its mark, caption, hero,
+  satellite, real words and what moves. The film marks every shot, so a take's contact sheet is
+  the storyboard drawn, one still per shot; every take of a staged film says where the film and
+  its storyboard disagree (a shot's mark or caption missing, marks in another order, no poster).
+- **The worked examples.** `web/film/examples/` holds the bar the workflow copies (`tin-film new
+  --from <name>`) and rebuilds for each product, one per shape of feature:
+  - `onboarding`: Tin's own onboarding, from "Set up Tin" in Claude Code to a pull request opened
+    from Decisions, 34 seconds: a terminal beside a card, then the dashboard.
+  - `people`: People ranked by your ICP, from a LinkedIn post's faceless reactions to a connection
+    accepted, 27 seconds: a ranked table, the reason under a score, ticks and a record's panel.
 
 ```
 TIN_FILM_FONTS=https://fonts.tin.computer/v1/private-fonts.css node web/film/tin-film.js render web/film/examples/onboarding/film.json
@@ -240,7 +249,7 @@ JSON file. It is what the `creative.feature_film` workflow's agent runs in Tin's
 and works the same from the repository:
 
 ```
-node web/film/tin-film.js new .films/herding                   # the worked example, to rebuild
+node web/film/tin-film.js new .films/herding --from people     # the closest worked example, to rebuild
 node web/film/tin-film.js inspect https://sheepdogs.io/ --dir .films/look   # its look as tokens, outline, screenshots
 node web/film/tin-film.js record .films/herding/film.json     # once, saving what it loads from outside
 node web/film/tin-film.js rehearse .films/herding/film.json   # from the recording, low resolution, checked

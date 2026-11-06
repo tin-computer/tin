@@ -151,12 +151,15 @@ FILM_FILES = (
         )
     ),
     "third_party/licenses/mographc-LICENSE.txt",
-    # The stage kit a staged film is built from, its worked example, and what that example uses
+    # The stage kit a staged film is built from, its worked examples, and what they use
     # from the dashboard's assets (the fonts come with the diagram layer).
     "web/film/stage/stage.css",
     "web/film/stage/stage.js",
-    "web/film/examples/onboarding/film.json",
-    "web/film/examples/onboarding/stage/index.html",
+    *(
+        f"web/film/examples/{name}/{file}"
+        for name in ("onboarding", "people")
+        for file in ("film.json", "storyboard.md", "stage/index.html")
+    ),
     "src/tin_lite/static/tin-logotype-ink.png",
     "third_party/licenses/stageshow-LICENSE.txt",
 )

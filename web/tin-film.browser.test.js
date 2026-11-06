@@ -8,7 +8,7 @@ import path from "node:path";
 import test from "node:test";
 import {filmFromSpec, shoot, vtt} from "./film/film.js";
 import {recordingKey} from "./film/recording.js";
-import {note} from "./film/tin-film.js";
+import {boardIssues, note} from "./film/tin-film.js";
 
 const SITE = "https://film.test/";
 const PAGE = `<!doctype html><html><head><title>Fold</title><style>
@@ -118,11 +118,26 @@ test("a beat that calls what the stage's runtime lacks names what it offers", {t
   await assert.rejects(shoot(filmFromSpec(spec, file), {format: "16:9", out: path.join(dir, "takes"), rehearse: true, encode: false}), /The stage has no morph; it offers show, hide, away, swap, print/);
 });
 
-test("the worked example a staged film starts from is a film", () => {
-  const file = path.join(path.dirname(new URL(import.meta.url).pathname), "film", "examples", "onboarding", "film.json");
-  const film = filmFromSpec(JSON.parse(fs.readFileSync(file, "utf8")), file);
-  assert.equal(film.world().stage.entry, "index.html");
-  assert.ok(film.beats.some(beat => beat.mark === "poster"));
+test("each worked example a staged film starts from is a film its storyboard draws", () => {
+  for (const name of ["onboarding", "people"]) {
+    const dir = path.join(path.dirname(new URL(import.meta.url).pathname), "film", "examples", name);
+    const spec = JSON.parse(fs.readFileSync(path.join(dir, "film.json"), "utf8"));
+    const film = filmFromSpec(spec, path.join(dir, "film.json"));
+    assert.equal(film.world().stage.entry, "index.html");
+    assert.deepEqual(boardIssues(fs.readFileSync(path.join(dir, "storyboard.md"), "utf8"), spec), [], name);
+  }
+});
+
+test("a storyboard the film drifted from says which shot", () => {
+  const spec = {beats: [{caption: "Tin ranks them."}, {mark: "ranked"}, {caption: "Tin asks them."}, {mark: "poster"}]};
+  const board = "# Ranked\n\nA list.\n\n## 1. Ranked\n- Mark: ranked\n- Caption: Tin ranks them.\n\n## 2. Asked\n- Mark: asked\n- Caption: Tin asks the ones who fit.\n";
+  assert.deepEqual(boardIssues(board, spec), [
+    'Shot "Asked" is marked asked, and the film never marks asked.',
+    'Shot "Asked"\'s caption is not one the film shows: “Tin asks the ones who fit.”.',
+    "The film marks poster, which no shot names.",
+    "No shot is the poster (- Mark: poster).",
+  ]);
+  assert.deepEqual(boardIssues("# Nothing yet\n", spec), ['It has no shots: a "## 1. Name" section for each, with "- Mark:" and "- Caption:" lines.']);
 });
 
 test("a take whose encoder is missing stops with the reason instead of waiting", {timeout: 180000}, async () => {

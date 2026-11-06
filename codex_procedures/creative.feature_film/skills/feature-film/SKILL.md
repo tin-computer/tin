@@ -18,7 +18,7 @@ takes (`takes/`) and any recording (`world/`) stay beside them. Only `tin-film d
 into the project checkout.
 
 Read `stage-kit.md` (the parts, the runtime and how to frame a scene) and `film-format.md` (the
-film's fields and beats) before step 3.
+film's fields and beats) before step 4.
 
 Every image you open stays in your context for the rest of the run, and a request has a fixed
 size limit: a run that keeps opening images ends without its film. Open each image once, open
@@ -43,49 +43,72 @@ changes between takes so each take answers several questions at once.
    `tin-film inspect <url> --dir WORK/look`. It prints the page's look as the stage kit's tokens,
    its font stylesheets and its outline, and writes `screen.jpg`. Open `screen.jpg` once.
 
-## 2. Storyboard
+## 2. Start from the closest example
 
-Write `WORK/storyboard.md` before any stage code:
+1. `tin-film new WORK/film --from <name>` copies a worked example: its `storyboard.md`, its
+   `film.json` and its `stage/index.html`. It lists the examples and the shape of feature each
+   suits; run it with the closest. `onboarding` is a setup through a coding agent that ends in a
+   result on a dashboard; `people` is a list of records ranked or filtered, the reason behind one,
+   a pick and a record's panel.
+2. Rehearse it unchanged (`tin-film rehearse WORK/film/film.json`) and open its `sheet.jpg` once.
+   The sheet is one still per shot: the example's storyboard, drawn. It is the bar for type size,
+   framing, restraint and how much happens in each shot.
 
-1. The story as one change, before and after, one sentence each, in the founder's words. It goes
-   in `film.json` as `story` and opens the note.
-2. Three to six shots and a payoff, 15 to 40 seconds in all. For each shot: its caption (at most
-   twelve words, one idea), what is on screen, the one thing that happens, and where the real
-   words are (three to seven strings a frame; everything else is quiet bars).
-3. One hero per shot (a window, the product's app, a terminal), with at most one satellite card
-   straddling its edge. Say which shot is the poster: the frame that tells the story at a glance,
-   with the result on screen.
-4. Every caption claim is visible in its shot or comes from a Feature map line marked
+## 3. Storyboard
+
+Rewrite `WORK/film/storyboard.md` for this feature, in the example's shape, before any stage
+code:
+
+1. A title, then one line on the shape of feature it shows.
+2. `Before:` and `After:`, one sentence each, in the founder's words: the story as one change.
+   They go in `film.json` as `story` and open the note.
+3. Three to six shots and a payoff, 15 to 40 seconds in all. Each is a `## N. Name` section with:
+   - `- Mark:` the still that draws it (`poster` for the one frame that tells the story at a
+     glance, with the result on screen; `payoff` for the last);
+   - `- Caption:` at most twelve words, one idea, exactly as the film will show it;
+   - `- Hero:` the one window, app or terminal the shot is about;
+   - `- Satellite:` at most one card straddling the hero's edge, when the shot needs it;
+   - `- Real words:` the three to seven strings a frame that the story touches, in the product's
+     real wording; everything else is quiet bars;
+   - `- Moves:` what changes on screen, in order. Never empty: a shot where nothing changes is a
+     still, and the viewer leaves.
+4. Open where the founder's problem lives (their terminal, their post, their inbox) and travel to
+   the product answering it, as both examples do; the scene changes once, with `away` and a
+   `.slide` window. A feature that lives on one page may stay in one scene, but then something
+   in it changes every shot.
+5. Every caption claim is visible in its shot or comes from a Feature map line marked
    `observed`. A wait the film compresses is labelled with its real length or with "Later".
 
-## 3. Stage it
+Every take checks `film.json` against the storyboard: each shot's mark and caption in the film,
+in the storyboard's order, and a poster.
 
-1. `tin-film new WORK/film` copies the worked example: Tin's own onboarding film, its
-   `film.json` and `stage/index.html`. Rehearse it once unchanged (`tin-film rehearse
-   WORK/film/film.json`) and open its `sheet.jpg`: that is the bar for type size, framing,
-   restraint and motion.
-2. Rebuild `stage/index.html` for this product and this storyboard, as `stage-kit.md` describes:
+## 4. Stage it
+
+1. Rebuild `stage/index.html` for this product and this storyboard, as `stage-kit.md` describes:
    the product's tokens from inspect, its chrome and its parts, drawn with the kit's classes.
    Keep the example's scale (a 1080 × 517 screen for 16:9, so 15px text reads on a phone) and
    its framing (heroes inset a gutter from the top and left, running off an edge; a satellite
    straddling the hero's edge). For 4:5 or 1:1, design a narrower stage (720 wide) with one hero.
-3. Use the product's own look, never Tin's, unless the product is Tin. Show its name; any
+2. Use the product's own look, never Tin's, unless the product is Tin. Show its name; any
    customer, person or number in the scene is made up and plainly sample content. Never show a
    real person's or company's name, a testimonial, a logo or a metric the product didn't publish.
-4. Write the beats in `film.json`: a caption per shot, `do` calls that show, print, set, tick
-   and fill the stage's parts, clicks on what the story presses, and marks. Delete what is left
-   of the example.
+3. Never draw a cursor or a hand into the stage: the film draws its own and moves it with
+   `move` and `click`. A second one stands still on screen.
+4. Write the beats in `film.json`, shot by shot: the shot's caption, the `do` calls, moves and
+   clicks its `Moves` line says, a hold, and the shot's mark. Delete what is left of the example.
 
-## 4. Rehearse and fix
+## 5. Rehearse and fix
 
 1. If the stage links anything outside its folder (the product's font stylesheet), run
    `tin-film record WORK/film/film.json` once to save it; otherwise go straight to rehearse.
 2. `tin-film rehearse WORK/film/film.json` plays it at low resolution with every check on. It
    prints errors, warnings (pacing among them) and check findings, and writes the stills.
-3. Open the take's `sheet.jpg`: every marked frame, small. Ask of each: what does the eye land on
-   first, and is it what the caption says? Is anything cut by the stage's edge, empty, crowded or
-   too small to read? Does the poster tell the story alone? Open a single still in `marks/` only
-   for a detail the sheet is too small to show.
+3. Open the take's `sheet.jpg`: your storyboard drawn, one still per shot, beside the example's
+   sheet you saw in step 2. Ask of each: is it the shot the storyboard describes? What does the eye
+   land on first, and is it what the caption says? Is the type as large as the example's, the hero
+   inset and running off an edge, the satellite overlapping it? Is anything cut by the stage's
+   edge, empty, crowded or too small to read? Does the poster tell the story alone? Open a single
+   still in `marks/` only for a detail the sheet is too small to show.
 4. Fix the largest fault first (framing, then hierarchy, then motion, then polish) and rehearse
    again. What the checks print and what to do:
    - Double exposure: a part fades over another. Bring it in by sliding (`slide`), change one
@@ -97,11 +120,13 @@ Write `WORK/storyboard.md` before any stage code:
      and only to parts already on stage.
    - Text under 22px: the stage is too large for its screen; make the parts bigger, not the
      screen.
-5. Stop when a rehearsal has no errors, no warnings and the stills are right. Rehearse at most
-   eight times; then render the best version and say what is left in `notes`, one sentence each,
-   for the founder: nothing about the run, its sources or its ID.
+   - `storyboard:` lines: the film and the storyboard disagree. Change whichever is wrong; the
+     storyboard is the plan, so change it only for a better shot.
+5. Stop when a rehearsal has no errors, no warnings, no storyboard lines and the stills are
+   right. Rehearse at most eight times; then render the best version and say what is left in
+   `notes`, one sentence each, for the founder: nothing about the run, its sources or its ID.
 
-## 5. Render and deliver
+## 6. Render and deliver
 
 1. `tin-film render WORK/film/film.json` makes the final take at full resolution. Look at its
    `sheet.png` once.

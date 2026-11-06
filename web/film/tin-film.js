@@ -3,7 +3,7 @@
 // (a page of photogenic parts beside it, stage/) or a live site; its recording (world/) and takes
 // (takes/) sit beside it, never in the project.
 //
-//   tin-film new <dir>               a staged film to start from: the worked example, to rebuild
+//   tin-film new <dir> [--from people]  a staged film to start from: a worked example, to rebuild
 //   tin-film inspect <url> [--dir DIR] [--format 16:9]  a page's look, outline and screenshots
 //   tin-film record <film.json>      play it once, saving what it loads from outside
 //   tin-film rehearse <film.json>    play it from the recording at low resolution, every frame checked
@@ -43,6 +43,7 @@ async function take(kind, file, options) {
   if (blocked.length) console.log(`  blocked: ${blocked.join(", ")}`);
   for (const line of report.summary ?? []) console.log(`  check: ${line}`);
   if (report.recording) console.log(`  recording: ${report.recording.entries} answers, ${report.recording.added} new this take`);
+  if (film.stage) for (const line of storyboardIssues(file)) console.log(`  storyboard: ${line}`);
   const sheet = ["sheet.jpg", "sheet.png"].map(name => path.join(dir, name)).find(file => fs.existsSync(file));
   if (sheet) console.log(`  look at: ${sheet} (each still is in ${path.join(dir, "marks")}/)`);
   if (errors.length) process.exitCode = 1;
@@ -112,17 +113,70 @@ async function deliver(file, notePath) {
   }
 }
 
-// The worked example (examples/onboarding): a film.json and its stage, copied as the start of a
-// new staged film, the way Stageshow starts from its closest gold example.
-const EXAMPLE = fileURLToPath(new URL("./examples/onboarding/", import.meta.url));
+// A storyboard (storyboard.md beside film.json): a title, a line saying what shape of feature it
+// suits, the story, then a "## N. Name" section per shot with its Mark and its Caption. A take's
+// contact sheet is the storyboard drawn, one still per shot, so the film marks every shot and
+// shows every caption, in the storyboard's order.
+export function shotsOf(text) {
+  return text.split(/^## /m).slice(1).map(section => {
+    const [heading, ...lines] = section.split("\n");
+    const field = name => lines.find(line => line.startsWith(`- ${name}:`))?.slice(name.length + 3).trim() || "";
+    return {name: heading.replace(/^\d+\.\s*/, "").trim(), mark: field("Mark"), caption: field("Caption")};
+  });
+}
 
-function start(dir) {
+const flat = beats => beats.flatMap(beat => (beat.beats ? flat(beat.beats) : [beat]));
+
+export function boardIssues(text, spec) {
+  const shots = shotsOf(text);
+  const beats = flat(spec.beats || []);
+  const marks = beats.filter(beat => "mark" in beat).map(beat => beat.mark);
+  const captions = beats.filter(beat => "caption" in beat).map(beat => beat.caption);
+  if (!shots.length) return ['It has no shots: a "## 1. Name" section for each, with "- Mark:" and "- Caption:" lines.'];
+  const issues = [];
+  for (const shot of shots) {
+    if (!shot.mark) issues.push(`Shot "${shot.name}" names no mark.`);
+    else if (!marks.includes(shot.mark)) issues.push(`Shot "${shot.name}" is marked ${shot.mark}, and the film never marks ${shot.mark}.`);
+    if (!shot.caption) issues.push(`Shot "${shot.name}" has no caption.`);
+    else if (!captions.includes(shot.caption)) issues.push(`Shot "${shot.name}"'s caption is not one the film shows: “${shot.caption}”.`);
+  }
+  for (const mark of marks) if (!shots.some(shot => shot.mark === mark)) issues.push(`The film marks ${mark}, which no shot names.`);
+  const order = shots.map(shot => marks.indexOf(shot.mark)).filter(index => index >= 0);
+  if (order.some((index, i) => i && index < order[i - 1])) issues.push("The film marks its shots in another order than the storyboard.");
+  if (!shots.some(shot => shot.mark === "poster")) issues.push("No shot is the poster (- Mark: poster).");
+  return issues;
+}
+
+function storyboardIssues(file) {
+  const board = path.join(here(file), "storyboard.md");
+  if (!fs.existsSync(board)) return [`There is no storyboard.md beside ${path.basename(file)}; tin-film new writes the example's to rewrite.`];
+  return boardIssues(fs.readFileSync(board, "utf8"), JSON.parse(fs.readFileSync(file, "utf8")));
+}
+
+// The worked examples (examples/<name>): a storyboard, a film.json and its stage, copied as the
+// start of a new staged film, the way Stageshow starts from its closest gold example.
+const EXAMPLES = fileURLToPath(new URL("./examples/", import.meta.url));
+
+function examples() {
+  return fs.readdirSync(EXAMPLES).filter(name => fs.existsSync(path.join(EXAMPLES, name, "storyboard.md"))).sort().map(name => {
+    const text = fs.readFileSync(path.join(EXAMPLES, name, "storyboard.md"), "utf8");
+    return {name, title: text.match(/^# (.+)$/m)?.[1] ?? name, shape: text.split(/\n\s*\n/)[1]?.trim() ?? ""};
+  });
+}
+
+function start(dir, from = "onboarding") {
+  const all = examples();
+  const example = all.find(item => item.name === from);
+  if (!example) throw new Error(`There is no worked example ${from}; there are ${all.map(item => item.name).join(", ")}.`);
   const target = path.resolve(dir);
   if (fs.existsSync(path.join(target, "film.json"))) throw new Error(`${target}/film.json is already there; tin-film new starts a film in an empty folder.`);
   fs.mkdirSync(target, {recursive: true});
-  fs.copyFileSync(path.join(EXAMPLE, "film.json"), path.join(target, "film.json"));
-  fs.cpSync(path.join(EXAMPLE, "stage"), path.join(target, "stage"), {recursive: true});
-  console.log(`wrote ${target}/film.json and ${target}/stage/: Tin's own onboarding film. Rebuild both for this product; render it as it is first to see the bar.`);
+  const source = path.join(EXAMPLES, from);
+  for (const name of ["film.json", "storyboard.md"]) fs.copyFileSync(path.join(source, name), path.join(target, name));
+  fs.cpSync(path.join(source, "stage"), path.join(target, "stage"), {recursive: true});
+  console.log(`wrote ${target}/storyboard.md, film.json and stage/: ${example.title}. Rehearse it as it is first to see the bar, then rewrite all three for this product.`);
+  console.log("The worked examples (tin-film new <dir> --from <name>):");
+  for (const item of all) console.log(`  ${item.name}: ${item.shape}`);
 }
 
 async function main(argv) {
@@ -145,7 +199,7 @@ async function main(argv) {
     console.log(`wrote ${path.join(dir, "inspect.json")}, screen.jpg, page.jpg and, if it was missing, film.json`);
     return;
   }
-  if (command === "new" && args.length === 1) return start(args[0]);
+  if (command === "new" && args.length === 1) return start(args[0], options.from);
   if (TAKES[command] && args.length === 1) return take(command, args[0], options);
   if (command === "deliver" && args.length === 2) return deliver(args[0], args[1]);
   console.log(fs.readFileSync(fileURLToPath(import.meta.url), "utf8").split("\n").slice(0, 14).join("\n").replaceAll("// ", "").replaceAll("//", ""));
