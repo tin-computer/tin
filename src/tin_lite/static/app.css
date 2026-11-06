@@ -5571,6 +5571,137 @@ p.page-url-line[hidden],
   padding-inline: 2px;
 }
 
+/* A film's directions (Paper PD-B): the recommended still at the size it plays with why under
+   it, the other sketches in a strip below; a click brings one up. */
+.film-directions .decision-detail-body {
+  gap: 16px;
+}
+
+.film-direction-still {
+  display: block;
+  width: 100%;
+  height: auto;
+  max-height: 70vh;
+  aspect-ratio: auto 16 / 9;
+  object-fit: contain;
+  background: #000;
+  border-radius: 6px;
+}
+
+.film-direction-reason {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.decision-detail-body .film-direction-reason p {
+  max-width: none;
+}
+
+.decision-detail-body .film-direction-name {
+  display: flex;
+  align-items: baseline;
+  gap: 10px;
+}
+
+.film-direction-name strong {
+  font-size: 16px;
+  font-weight: 700;
+  line-height: 22px;
+}
+
+.film-direction-name span {
+  color: var(--accent-text);
+  font-size: 13px;
+  line-height: 18px;
+}
+
+.film-direction-strip {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 12px;
+  padding-top: 4px;
+}
+
+.film-direction-strip button {
+  display: flex;
+  min-width: 0;
+  flex-direction: column;
+  gap: 6px;
+  padding: 0;
+  background: none;
+  color: var(--ink-secondary);
+  font-size: 13px;
+  line-height: 18px;
+  text-align: left;
+  cursor: pointer;
+}
+
+.film-direction-strip img {
+  display: block;
+  width: 100%;
+  aspect-ratio: 16 / 9;
+  object-fit: cover;
+  background: rgb(var(--ink-rgb) / 8%);
+  border-radius: 4px;
+  transition: opacity 120ms ease;
+}
+
+@media (hover: hover) {
+  .film-direction-strip button:hover img {
+    opacity: 0.82;
+  }
+
+  .film-direction-strip button:hover {
+    color: var(--ink);
+  }
+}
+
+.film-direction-strip button:focus-visible {
+  outline: 2px solid var(--accent-deep);
+  outline-offset: 3px;
+  border-radius: 4px;
+}
+
+.decision-detail-card > footer .film-direction-note {
+  min-width: 0;
+  height: 32px;
+  flex: 1 1 220px;
+  margin-right: auto;
+  padding: 0 12px;
+  background: transparent;
+  border: 1px solid rgb(var(--ink-rgb) / 14%);
+  border-radius: 6px;
+  color: var(--ink);
+  font-size: 13px;
+  line-height: 18px;
+}
+
+.decision-detail-card > footer .film-direction-note::placeholder {
+  color: var(--ink-muted);
+}
+
+.decision-detail-card > footer .film-direction-others {
+  align-self: center;
+  padding: 7px 2px;
+  background: transparent;
+  color: var(--bermellon-text);
+  font-size: 12.5px;
+  line-height: 16px;
+  cursor: pointer;
+}
+
+.decision-detail-card > footer .film-direction-others:disabled {
+  cursor: wait;
+  opacity: 0.55;
+}
+
+@media (max-width: 720px) {
+  .film-direction-strip {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+}
+
 /* A quiet way to turn down what is waiting, just before the approval. */
 .decision-detail-card > footer .decision-discard {
   align-self: center;

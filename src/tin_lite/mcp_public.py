@@ -57,6 +57,7 @@ SHARED_TOOLS = {
     "read_run_output": (True, False, False),
     "get_workflow_review": (True, False, False),
     "request_workflow_changes": (False, True, True),
+    "pick_film_direction": (False, True, True),
     "approve_workflow_run": (False, True, True),
     "get_run_charge": (True, False, False),
     "list_integrations": (True, False, False),

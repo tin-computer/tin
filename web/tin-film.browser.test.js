@@ -8,7 +8,7 @@ import path from "node:path";
 import test from "node:test";
 import {filmFromSpec, shoot, vtt} from "./film/film.js";
 import {recordingKey} from "./film/recording.js";
-import {boardIssues, directionsRequest, note, reviewRequest, sketch} from "./film/tin-film.js";
+import {boardIssues, deliverDirections, directionsRequest, note, restore, reviewRequest, sketch} from "./film/tin-film.js";
 import {FAMILIES, STRUCTURES, deal} from "./film/directions.js";
 
 const SITE = "https://film.test/";
@@ -242,6 +242,10 @@ test("sketches are filmed for a moment and put side by side, each in its poster 
   }
   await sketch(dir);
   assert.ok(fs.statSync(path.join(dir, "sketches.jpg")).size > 5_000);
+  // Each still and its name, for the founder's pick in Decisions.
+  const {sketches} = JSON.parse(fs.readFileSync(path.join(dir, "sketches.json"), "utf8"));
+  assert.deepEqual(sketches.map(item => [item.n, item.name, item.still]), [[1, "Number", "1-number/still.jpg"], [2, "Sentence", "2-sentence/still.jpg"]]);
+  assert.ok(sketches.every(item => fs.statSync(path.join(dir, item.still)).size > 2_000));
   // The second look chooses among them by the maker's notes beside the folder.
   assert.throws(() => directionsRequest(dir), /No notes to choose by/);
   fs.writeFileSync(path.join(dir, "..", "storyboard.md"), "Kind: motion graphic\n\n## Directions\n1. A number.\n2. A sentence.\n");
@@ -250,6 +254,35 @@ test("sketches are filmed for a moment and put side by side, each in its poster 
   assert.equal(request.sketches, 2);
   assert.equal(request.images.length, 1);
   assert.match(request.spec, /## Directions/);
+  // The second look's recommendation and each sketch go into the note the founder picks from.
+  fs.writeFileSync(path.join(dir, "review.json"), JSON.stringify({verdict: "chosen", choice: 2, runner_up: 1, summary: "A sentence says it.", keep: "", findings: []}));
+  fs.writeFileSync(path.join(dir, "2-sentence", "about.txt"), "One sentence carries the claim.\n");
+  const project = fs.mkdtempSync(path.join(os.tmpdir(), "tin-film-project-"));
+  const notePath = path.join(project, "films", "funnel.md");
+  fs.mkdirSync(path.dirname(notePath));
+  deliverDirections(dir, notePath);
+  const delivered = fs.readFileSync(notePath, "utf8");
+  assert.match(delivered, /^```tin-directions\nrecommended: 2\nrunner_up: 1\nwhy: A sentence says it\.\n```$/m);
+  assert.match(delivered, /^## 2\. Sentence\n\n!\[Sentence\]\(\.\/funnel\.assets\/2-sentence\.jpg\)\n\nOne sentence carries the claim\.$/m);
+  for (const name of ["1-number.jpg", "1-number.html", "2-sentence.jpg", "2-sentence.html", "notes.json"]) assert.ok(fs.existsSync(path.join(project, "films", "funnel.assets", name)), name);
+  assert.match(JSON.parse(fs.readFileSync(path.join(project, "films", "funnel.assets", "notes.json"), "utf8")).storyboard, /## Directions/);
+  assert.notEqual(process.exitCode, 1, "the note passes Tin's check");
+});
+
+test("a delivered film comes back as a staged film to change", () => {
+  const project = fs.mkdtempSync(path.join(os.tmpdir(), "tin-film-project-"));
+  const folder = path.join(project, "films", "funnel.assets");
+  fs.mkdirSync(folder, {recursive: true});
+  fs.writeFileSync(path.join(folder, "film.json"), JSON.stringify({title: "Funnel", stage: "elsewhere/index.html", beats: []}));
+  fs.writeFileSync(path.join(folder, "stage.html"), "<!doctype html><div class=stage></div>");
+  fs.writeFileSync(path.join(folder, "storyboard.json"), JSON.stringify({storyboard: "# Funnel\n"}));
+  const work = path.join(project, "work");
+  restore(path.join(project, "films", "funnel.md"), work);
+  assert.equal(JSON.parse(fs.readFileSync(path.join(work, "film.json"), "utf8")).stage, "stage/index.html");
+  assert.equal(fs.readFileSync(path.join(work, "stage", "index.html"), "utf8"), "<!doctype html><div class=stage></div>");
+  assert.equal(fs.readFileSync(path.join(work, "storyboard.md"), "utf8"), "# Funnel\n");
+  fs.rmSync(path.join(folder, "stage.html"));
+  assert.throws(() => restore(path.join(project, "films", "funnel.md"), work), /no stage\.html/);
 });
 
 test("a second look sends the take's sheet and marked stills with the spec and what the checks found", () => {

@@ -1062,6 +1062,18 @@ class WorkflowRevisionRequest(BaseModel):
     billing_quote_id: UUID | None = None
 
 
+class FilmDirectionPick(BaseModel):
+    """A film's direction to build, or none to sketch others, with an optional note."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    direction: int | None = Field(default=None, ge=1, le=8)
+    note: str = Field(default="", max_length=2000)
+    request_id: UUID
+    review_token: str = Field(min_length=64, max_length=64)
+    billing_quote_id: UUID | None = None
+
+
 class ProposalRevisionRequest(BaseModel):
     """A coding agent's revision of a brand or style proposal that waits in Decisions."""
 
@@ -5248,6 +5260,39 @@ async def request_workflow_changes(
             request_id=payload.request_id,
             token=payload.review_token,
             reference_files=payload.reference_files,
+            billing_quote_id=payload.billing_quote_id,
+        )
+        return RunView.model_validate(run)
+    except BillingError as exc:
+        raise HTTPException(status_code=exc.status, detail=exc.diagnostic()) from exc
+    except LookupError as exc:
+        raise HTTPException(status_code=404, detail=public_error_text(exc)) from exc
+    except (ReviewConflict, RuntimeError) as exc:
+        raise HTTPException(status_code=409, detail=public_error_text(exc)) from exc
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail=public_error_text(exc)) from exc
+
+
+@router.post("/api/workflows/runs/{run_id}/film-direction", response_model=RunView, status_code=202)
+async def pick_film_direction(
+    run_id: UUID,
+    payload: FilmDirectionPick,
+    request: Request,
+    user: AuthContext = AUTHENTICATED_USER,
+):
+    """Build one of a film's sketched directions, or sketch others."""
+    from tin_lite import film_directions
+    from tin_lite.workflow_review_store import ReviewConflict
+
+    try:
+        run = await film_directions.pick(
+            _workflow_reviews(request),
+            run_id=run_id,
+            actor=user.clerk_user_id,
+            token=payload.review_token,
+            request_id=payload.request_id,
+            direction=payload.direction,
+            note=payload.note,
             billing_quote_id=payload.billing_quote_id,
         )
         return RunView.model_validate(run)

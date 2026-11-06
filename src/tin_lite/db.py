@@ -8219,7 +8219,7 @@ class Database:
                 filename = artifact_title or artifact_path.rsplit("/", 1)[-1]
                 workflow_row = await conn.fetchrow(
                     "SELECT title, project_id IS NULL "
-                    "AND key='content.generate' "
+                    "AND key IN ('content.generate', 'creative.feature_film') "
                     "AS revision_supported FROM workflows WHERE id=$1",
                     row["workflow_id"],
                 )

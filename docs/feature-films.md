@@ -235,7 +235,7 @@ thing happens per beat and the result stays on screen, rather than a camera over
   times its size, so 15px text reads as 27px on a phone; the camera stays on the whole stage.
 - **Storyboards.** A staged film keeps `storyboard.md` beside `film.json`: its title, the shape of
   feature it suits, the story, its directions (five far-apart visual ideas from different families
-  and the one chosen, per the skill's `directions.md`), then a `## N. Name` section per shot with its mark, caption, hero,
+  and the one picked, per the skill's `directions.md`), then a `## N. Name` section per shot with its mark, caption, hero,
   satellite, real words and what moves. The film marks every shot, so a take's contact sheet is
   the storyboard drawn, one still per shot; every take of a staged film says where the film and
   its storyboard disagree (a shot's mark or caption missing, marks in another order, no poster).
@@ -300,10 +300,15 @@ node web/film/tin-film.js deliver .films/herding/film.json films/herding.md
   [the creative studio](creative-studio.md#feature-films-creativefeature_film)). It needs the
   run-bound grant, so it runs only in Tin's studio sandbox.
 - **`deliver`** copies the final take's film (re-encoded smaller when it is over 16 MB), poster,
-  WebVTT captions and `film.json` into `<note>.assets/`, writes the note (the film in a `tin-video`
-  block, the story, every caption with its time, what the checks still found, and the film's
-  facts), and checks both with `tin-studio check`, the contract Tin applies when it keeps them
-  (`feature-film.v1`).
+  WebVTT captions and `film.json`, and a staged film's stage (`stage.html`) and storyboard
+  (`storyboard.json`), into `<note>.assets/`, writes the note (the film in a `tin-video` block,
+  the story, every caption with its time, what the checks still found, and the film's facts),
+  and checks both with `tin-studio check`, the contract Tin applies when it keeps them
+  (`feature-film.v1`). **`restore <note>.md <dir>`** puts a delivered staged film back to change.
+- **`deliver --directions <dir> <note>.md`** writes the note the founder picks from, before any
+  film: each sketch's still and page (`N-name.jpg`, `N-name.html`) under a `## N. Name` heading
+  with the sentence in its `about.txt`, a `tin-directions` block naming the recommended sketch
+  and why (from `review --directions`), and `notes.json` with the maker's notes.
 
 ## Desk films
 

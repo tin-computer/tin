@@ -13,6 +13,8 @@
 //   tin-film review <film.json>      a second look at the latest take's stills by a model that didn't make it
 //   tin-film review --directions <dir>   that model chooses among the sketches in <dir>
 //   tin-film deliver <film.json> <note.md>   the final take beside its note, as Tin keeps films
+//   tin-film deliver --directions <dir> <note.md>   the sketches and the recommendation, to pick from
+//   tin-film restore <note.md> <dir>   a delivered film's spec, stage and storyboard, to change
 //
 // Every take prints what went wrong, the checks' findings and the files to look at; a take with
 // an error exits 1. See docs/feature-films.md.
@@ -80,7 +82,7 @@ export function note({film, report, folder, format}) {
   const {width, height} = FORMATS[format];
   const how = film.site?.url ? `filmed from a recording of ${new URL(film.site.url).hostname}` : "staged in the product's look";
   lines.push("", "## The film", "",
-    `${format}, ${width}×${height}, ${report.seconds.toFixed(1)} s, ${how}. Its spec is \`${name}/film.json\`: change it and render again for a new cut.`, "");
+    `${format}, ${width}×${height}, ${report.seconds.toFixed(1)} s, ${how}. Its spec is \`${name}/film.json\`${film.stage ? `, its stage \`${name}/stage.html\` and its storyboard \`${name}/storyboard.json\`` : ""}: change them and render again for a new cut.`, "");
   return lines.join("\n");
 }
 
@@ -180,10 +182,25 @@ async function deliver(file, notePath) {
   fs.copyFileSync(path.join(dir, "poster.png"), path.join(folder, "poster.png"));
   fs.copyFileSync(path.join(dir, "captions.vtt"), path.join(folder, "captions.vtt"));
   fs.copyFileSync(file, path.join(folder, "film.json"));
+  // A staged film keeps its stage and storyboard, so a later run can change the cut.
+  const kept = ["poster.png", "captions.vtt", "film.json"];
+  if (film.stage) {
+    const stage = path.resolve(here(file), film.stage);
+    const others = fs.readdirSync(path.dirname(stage)).filter(name => name !== path.basename(stage) && !name.startsWith("."));
+    if (others.length) console.log(`  only ${path.basename(stage)} is kept as the stage; inline ${others.join(", ")} to keep them`);
+    fs.copyFileSync(stage, path.join(folder, "stage.html"));
+    const board = path.join(here(file), "storyboard.md");
+    fs.writeFileSync(path.join(folder, "storyboard.json"), `${JSON.stringify({storyboard: fs.existsSync(board) ? fs.readFileSync(board, "utf8") : ""}, null, 2)}\n`);
+    kept.push("stage.html", "storyboard.json");
+  }
   fs.writeFileSync(notePath, note({film, report, folder, format}));
-  console.log(`wrote ${notePath} and ${folder}/ (film.mp4 ${(fs.statSync(video).size / 1e6).toFixed(1)} MB, poster.png, captions.vtt, film.json)`);
-  // The same contract Tin applies when it keeps the note: tin-studio in the sandbox, the
-  // repository's copy elsewhere.
+  console.log(`wrote ${notePath} and ${folder}/ (film.mp4 ${(fs.statSync(video).size / 1e6).toFixed(1)} MB, ${kept.join(", ")})`);
+  checkNote(notePath);
+}
+
+// The same contract Tin applies when it keeps the note: tin-studio in the sandbox, the
+// repository's copy elsewhere.
+function checkNote(notePath) {
   const local = fileURLToPath(new URL("../../sandbox/studio/tin_studio.py", import.meta.url));
   const command = fs.existsSync(local) ? ["python3", [local, "check", notePath]] : ["tin-studio", ["check", notePath]];
   const checked = spawnSync(command[0], command[1], {encoding: "utf8"});
@@ -192,6 +209,75 @@ async function deliver(file, notePath) {
     process.stdout.write(checked.stderr || "");
     process.exitCode = 1;
   }
+}
+
+// The directions as a note to pick from: the sketches' stills and pages beside it, each with its
+// name and what it shows, and the one the second look recommends (review --directions). The
+// founder picks in Decisions; the note's next version is the film.
+export function directionsNote({title, lede, sketches, review, folder}) {
+  const name = path.basename(folder);
+  const file = (sketch, ext) => `${sketch.n}-${slugOf(sketch.name)}${ext}`;
+  const recommended = sketches.find(sketch => sketch.n === review.choice);
+  const lines = [`# ${title}`, ""];
+  if (lede) lines.push(lede, "");
+  lines.push(`${sketches.length} ways to show it, each sketched as one frame.${recommended ? ` Tin recommends ${recommended.name}${review.summary ? `: ${review.summary.replace(/\s+/g, " ").trim()}` : "."}` : ""}`, "");
+  lines.push("```tin-directions", `recommended: ${review.choice}`);
+  if (review.runner_up && review.runner_up !== review.choice) lines.push(`runner_up: ${review.runner_up}`);
+  if (review.summary) lines.push(`why: ${review.summary.replace(/\s+/g, " ").trim()}`);
+  lines.push("```", "");
+  for (const sketch of sketches) {
+    lines.push(`## ${sketch.n}. ${sketch.name}`, "", `![${sketch.name}](./${name}/${file(sketch, path.extname(sketch.still))})`, "");
+    if (sketch.about) lines.push(sketch.about, "");
+    lines.push(`[The sketch's page](./${name}/${file(sketch, ".html")})`, "");
+  }
+  lines.push("## How they were found", "", `The kind of film, the research and the notes on each direction are in \`${name}/notes.json\`; the film is built from them and the sketch picked.`, "");
+  return lines.join("\n");
+}
+
+const slugOf = text => text.toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-|-$/g, "") || "sketch";
+
+export function deliverDirections(dir, notePath) {
+  if (!notePath?.endsWith(".md")) throw new Error("usage: tin-film deliver --directions <dir> <films/name.md>");
+  const root = path.resolve(dir);
+  const manifest = path.join(root, "sketches.json");
+  const reviewed = path.join(root, "review.json");
+  if (!fs.existsSync(manifest)) throw new Error(`No sketches in ${root}: run tin-film sketch ${dir} first.`);
+  if (!fs.existsSync(reviewed)) throw new Error(`No recommendation for ${root}: run tin-film review --directions ${dir} first.`);
+  const {sketches} = JSON.parse(fs.readFileSync(manifest, "utf8"));
+  const review = JSON.parse(fs.readFileSync(reviewed, "utf8"));
+  const board = [path.join(root, "..", "storyboard.md"), path.join(root, "..", "film", "storyboard.md")].find(item => fs.existsSync(item));
+  const notes = board ? fs.readFileSync(board, "utf8") : "";
+  const title = notes.match(/^# (.+)$/m)?.[1]?.trim() || path.basename(notePath, ".md");
+  const folder = notePath.slice(0, -".md".length) + ".assets";
+  fs.mkdirSync(folder, {recursive: true});
+  for (const sketch of sketches) {
+    const about = path.join(root, sketch.folder, "about.txt");
+    sketch.about = fs.existsSync(about) ? fs.readFileSync(about, "utf8").replace(/\s+/g, " ").trim() : "";
+    const base = path.join(folder, `${sketch.n}-${slugOf(sketch.name)}`);
+    fs.copyFileSync(path.join(root, sketch.still), base + path.extname(sketch.still));
+    fs.copyFileSync(path.join(root, sketch.folder, "index.html"), `${base}.html`);
+  }
+  // The kind, the research and the directions' notes, for the run that builds the pick.
+  fs.writeFileSync(path.join(folder, "notes.json"), `${JSON.stringify({storyboard: notes}, null, 2)}\n`);
+  fs.writeFileSync(notePath, directionsNote({title, sketches, review, folder}));
+  console.log(`wrote ${notePath} and ${folder}/ (${sketches.length} sketches, each a still and its page; recommended ${review.choice})`);
+  checkNote(notePath);
+}
+
+// A delivered film back as a staged film: its spec, stage and storyboard, from the note's folder.
+export function restore(notePath, dir) {
+  const folder = notePath.slice(0, -".md".length) + ".assets";
+  for (const name of ["film.json", "stage.html", "storyboard.json"]) {
+    if (!fs.existsSync(path.join(folder, name))) throw new Error(`${folder} has no ${name}: this film can't be restored; start it again from an example.`);
+  }
+  const root = path.resolve(dir);
+  fs.mkdirSync(path.join(root, "stage"), {recursive: true});
+  const spec = JSON.parse(fs.readFileSync(path.join(folder, "film.json"), "utf8"));
+  spec.stage = "stage/index.html";
+  fs.writeFileSync(path.join(root, "film.json"), `${JSON.stringify(spec, null, 2)}\n`);
+  fs.copyFileSync(path.join(folder, "stage.html"), path.join(root, "stage", "index.html"));
+  fs.writeFileSync(path.join(root, "storyboard.md"), JSON.parse(fs.readFileSync(path.join(folder, "storyboard.json"), "utf8")).storyboard || "");
+  console.log(`restored ${root}: film.json, stage/index.html and storyboard.md; rehearse it, change it, render and deliver to ${notePath} again`);
 }
 
 // A storyboard (storyboard.md beside film.json): a title, a line saying what shape of feature it
@@ -282,12 +368,19 @@ function directions(options) {
 // frame (the kit's shows every part). Each is
 // filmed for a moment, as a staged film is, and the stills are tiled into <dir>/sketches.jpg in
 // folder order, each caption numbered so a reader can name the one they mean.
+// A sketch's folder, as the founder reads its name: "02-zoom-out" is "Zoom out".
+const nameOf = folder => {
+  const words = folder.replace(/^\d+[-_ ]*/, "").replace(/[-_]+/g, " ").trim() || folder;
+  return words[0].toUpperCase() + words.slice(1);
+};
+
 export async function sketch(dir, options = {}) {
   const root = path.resolve(dir);
   const format = options.format || "16:9";
   const folders = fs.readdirSync(root, {withFileTypes: true}).filter(entry => entry.isDirectory() && fs.existsSync(path.join(root, entry.name, "index.html"))).map(entry => entry.name).sort();
   if (folders.length < 2) throw new Error(`Sketch at least two directions: ${root} needs a folder per direction, each with an index.html.`);
   const stills = [];
+  const sketches = [];
   for (const [index, name] of folders.entries()) {
     const folder = path.join(root, name);
     const caption = fs.existsSync(path.join(folder, "caption.txt")) ? fs.readFileSync(path.join(folder, "caption.txt"), "utf8").trim() : name;
@@ -296,17 +389,21 @@ export async function sketch(dir, options = {}) {
     const film = filmFromSpec(spec, path.join(folder, "film.json"));
     const {dir: take, report} = await shoot(film, {format, out: path.join(folder, "takes"), rehearse: true, check: false, gif: false});
     for (const line of report.issues.errors) console.log(`  ${index + 1}. ${name}: error: ${line}`);
-    const still = fs.readdirSync(path.join(take, "marks")).find(file => /poster\.(jpg|png)$/.test(file));
-    stills.push(path.join(take, "marks", still));
+    const poster = fs.readdirSync(path.join(take, "marks")).find(file => /poster\.(jpg|png)$/.test(file));
+    const still = path.join(folder, `still${path.extname(poster)}`);
+    fs.copyFileSync(path.join(take, "marks", poster), still);
+    stills.push(still);
+    sketches.push({n: index + 1, folder: name, name: nameOf(name), caption, still: path.relative(root, still)});
     console.log(`${index + 1}. ${name}`);
   }
+  fs.writeFileSync(path.join(root, "sketches.json"), `${JSON.stringify({sketches}, null, 2)}\n`);
   const tiles = fs.mkdtempSync(path.join(root, ".tiles-"));
   stills.forEach((file, i) => fs.copyFileSync(file, path.join(tiles, `${String(i + 1).padStart(2, "0")}${path.extname(file)}`)));
   const ext = path.extname(stills[0]);
   const columns = Math.min(3, stills.length);
   await ffmpeg(["-i", path.join(tiles, `%02d${ext}`), "-vf", `scale=960:-2:flags=lanczos,tile=${columns}x${Math.ceil(stills.length / columns)}:padding=24:margin=24:color=0x44403a`, "-frames:v", "1", "-q:v", "3", path.join(root, "sketches.jpg")]).done;
   fs.rmSync(tiles, {recursive: true, force: true});
-  console.log(`look at: ${path.join(root, "sketches.jpg")}, the sketches in this order`);
+  console.log(`look at: ${path.join(root, "sketches.jpg")}, the sketches in this order; each still and its name are in sketches.json`);
 }
 
 async function main(argv) {
@@ -335,7 +432,9 @@ async function main(argv) {
   if (TAKES[command] && args.length === 1) return take(command, args[0], options);
   if (command === "review" && options.directions && args.length === 0) return reviewDirections(options.directions);
   if (command === "review" && args.length === 1) return review(args[0]);
+  if (command === "deliver" && options.directions && args.length === 1) return deliverDirections(options.directions, args[0]);
   if (command === "deliver" && args.length === 2) return deliver(args[0], args[1]);
+  if (command === "restore" && args.length === 2) return restore(args[0], args[1]);
   const header = fs.readFileSync(fileURLToPath(import.meta.url), "utf8").split("\n");
   console.log(header.slice(0, header.findIndex(line => !line.startsWith("//"))).join("\n").replaceAll("// ", "").replaceAll("//", ""));
   if (command && command !== "help") process.exitCode = 64;

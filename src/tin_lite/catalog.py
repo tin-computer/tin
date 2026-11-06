@@ -426,6 +426,8 @@ FEATURE_FILM_REVIEW_POLICY = HumanReviewPolicy(
         "stays safely on hold."
     ),
     queue_clause="Film ready to finish",
+    # Picking a direction and asking for changes to the cut are both revisions of the note.
+    revision_adapter="content-revision.v1",
 )
 
 CONTENT_DIAGRAM_REVIEW_POLICY = HumanReviewPolicy(
@@ -4059,12 +4061,13 @@ BUILTIN_WORKFLOWS = (
         public_mcp=PublicMCPExposure("start_feature_film", destructive=True, open_world=True),
         title="Film a feature",
         description=(
-            "Make a short captioned film of one feature for a LinkedIn or X post: a staged scene "
-            "in the product's own look where one thing happens per beat, 16:9, 4:5 or 1:1, with "
-            "every frame checked, kept beside a note in project Files."
+            "Make a short captioned film of one feature or one idea for a LinkedIn or X post: a "
+            "few directions sketched for you to pick from, then the one you pick staged in the "
+            "product's own look, 16:9, 4:5 or 1:1, every frame checked, kept beside a note in "
+            "project Files."
         ),
         executor=CODEX_PROCEDURE_EXECUTOR,
-        version_label="1.1.0",
+        version_label="1.2.0",
         presentation=WorkflowDiagram(
             direction="TD",
             nodes=(
@@ -4075,28 +4078,28 @@ BUILTIN_WORKFLOWS = (
                     "Feature map, the post, your public page",
                 ),
                 DiagramNode(
+                    "sketch",
+                    "step",
+                    "Sketch ways to show it",
+                    "a still each, and a second look recommends one",
+                ),
+                DiagramNode(
+                    "pick",
+                    "gate",
+                    "Pick a direction",
+                    "in Decisions, with a note, or ask for others",
+                ),
+                DiagramNode(
                     "stage",
                     "step",
                     "Storyboard and stage it",
-                    "Codex, your product's look, sample data",
-                ),
-                DiagramNode(
-                    "rehearse",
-                    "step",
-                    "Rehearse and fix it",
-                    "every frame and its pacing checked",
-                ),
-                DiagramNode(
-                    "look",
-                    "step",
-                    "A second look",
-                    "a model that didn't make it reads the stills",
+                    "the sketch you picked, in your product's look",
                 ),
                 DiagramNode(
                     "render",
                     "step",
-                    "Render and check the film",
-                    "8 to 90 s, captions under the picture",
+                    "Rehearse, look again, render",
+                    "every frame checked, 8 to 90 s",
                 ),
                 DiagramNode(
                     "note",
@@ -4113,12 +4116,14 @@ BUILTIN_WORKFLOWS = (
                 ),
             ),
             edges=(
-                DiagramEdge("memory", "stage"),
-                DiagramEdge("stage", "rehearse"),
-                DiagramEdge("rehearse", "look"),
-                DiagramEdge("look", "render"),
+                DiagramEdge("memory", "sketch"),
+                DiagramEdge("sketch", "pick"),
+                DiagramEdge("pick", "sketch", "signal", "other directions"),
+                DiagramEdge("pick", "stage", "signal", "build this one"),
+                DiagramEdge("stage", "render"),
                 DiagramEdge("render", "note"),
                 DiagramEdge("note", "review"),
+                DiagramEdge("review", "stage", "signal", "request changes"),
                 DiagramEdge("review", "receipt", "signal", "approved"),
             ),
         ),
@@ -4221,9 +4226,12 @@ BUILTIN_WORKFLOWS = (
             output_path_template="films/{slug}.md",
             output_validator=FEATURE_FILM_VALIDATOR,
             output_max_bytes=MAX_FEATURE_FILM_NOTE_BYTES,
-            # The film, its poster, its captions and its spec, approved with the note.
+            # Before the film, a still and a page per sketch; then the film, its poster, its
+            # captions, its spec, its stage and its storyboard, approved with the note.
             output_assets=AssetPolicy(
-                max_files=6, max_bytes=24_000_000, kinds=("mp4", "png", "vtt", "json")
+                max_files=16,
+                max_bytes=32_000_000,
+                kinds=("mp4", "png", "jpeg", "vtt", "json", "html"),
             ),
             project_skills=(
                 ProjectSkillDependency(name="writing-style", path=STYLE_PATH, required=False),

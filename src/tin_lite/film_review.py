@@ -152,8 +152,10 @@ Choose the one a viewer scrolling a feed would understand fastest and remember:
 - it can carry fifteen to forty seconds of motion, with something changing in every shot.
 
 Judge the idea, not the sketch's polish: sketches are rough. A product highlight should still
-look like the product. Name the runner-up. Say why in two or three sentences, and in `keep` what
-the chosen one must keep or fix as it becomes a film."""
+look like the product. Name the runner-up. Your choice is shown to the founder as the
+recommendation, beside the stills, and they pick: say `why` in one or two plain sentences to
+them, about what the frame shows, never about the sketch numbers or the maker. In `keep`, tell
+the maker what the chosen one must keep or fix as it becomes a film."""
 
 
 def _choice(parsed: Any, sketches: int) -> dict[str, Any]:

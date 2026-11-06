@@ -26,6 +26,23 @@ into the project checkout.
 Read `directions.md` before step 2, and `stage-kit.md` (the parts, the runtime, framing and
 alignment) and `film-format.md` (the film's fields and beats) before step 3.
 
+## Which run this is
+
+The founder picks the direction, so a film takes at least two runs at the same note,
+`films/<slug>.md`, each one its next version:
+
+- **No revision packet**: steps 1 and 2. Deliver the directions and stop.
+- **`Build direction N, Name.`**: the founder picked sketch N. Do step 1 again briefly (the
+  feature, its wording and the look), read the previous copy and its `notes.json` (the kind, the
+  research and your notes on each direction), then steps 3 to 8 with that sketch. Words after
+  the first line are the founder's note for the film; follow them.
+- **`Sketch other directions.`**, or any other feedback on directions: step 1 briefly, then step
+  2 with a new deal. Leave out what the previous copy sketched (its headings) unless the
+  feedback asks for one, and follow the feedback.
+- **Feedback on a film**: `tin-film restore /home/user/project/films/<slug>.md WORK/film` puts
+  its spec, stage and storyboard back. Change what the feedback asks and keep the rest, then
+  steps 6 to 8.
+
 Every image you open stays in your context for the rest of the run, and a request has a fixed
 size limit: a run that keeps opening images ends without its film. Open each image once, open
 the contact sheet before any single still, and never reopen an earlier take's.
@@ -57,9 +74,14 @@ changes between takes so each take answers several questions at once.
 Follow `directions.md`: research how such a claim has been shown, deal directions with
 `tin-film directions --kind …`, write one per card, sketch each as a stage page, put them side by
 side with `tin-film sketch`, and ask `tin-film review --directions WORK/sketches` which carries
-the claim: a model that didn't make them chooses, so your first taste doesn't decide alone. Keep
-it all in `WORK/storyboard.md` under `Kind:`, `## Research` and `## Directions`. A run has four
-reviews in all; this choice is one of them.
+the claim: a model that didn't make them recommends one, so your first taste doesn't decide
+alone. Keep it all in `WORK/storyboard.md`, under a `# ` title (the film's claim, in the post's
+words), `Kind:`, `## Research` and `## Directions`. A run has four reviews in all.
+
+Then `tin-film deliver --directions WORK/sketches /home/user/project/films/<slug>.md`: it writes
+the note the founder picks from, a still and the page of each sketch, the recommendation and
+your notes as `notes.json`, and checks it as Tin will. It must print `OK`. This run ends here;
+the final message names each direction and the recommended one.
 
 ## 3. Start from the closest example
 
@@ -71,7 +93,9 @@ reviews in all; this choice is one of them.
 2. Read its `storyboard.md` and open `example.jpg` once. The sheet is one still per shot: the
    example's storyboard, drawn. It is the bar for type size, framing, restraint and how much
    happens in each shot. Copy its craft, not its idea: the idea is the direction you chose.
-3. The chosen sketch's page becomes `WORK/film/stage/index.html`; build the film from it.
+3. The picked sketch's page (its section in the previous copy links it, in
+   `films/<slug>.assets/` in the checkout) becomes `WORK/film/stage/index.html`; build the film
+   from it, keeping what made its frame work.
 
 ## 4. Storyboard
 
@@ -168,9 +192,10 @@ in the storyboard's order, and a poster.
 1. `tin-film render WORK/film/film.json` makes the final take at full resolution. Look at its
    `sheet.png` once.
 2. `tin-film deliver WORK/film/film.json /home/user/project/films/<slug>.md` copies the film,
-   its poster, its captions and `film.json` into `films/<slug>.assets/`, writes the note and
-   checks both as Tin will. It must print `OK`. Never edit the note by hand: change `film.json`
-   and deliver again.
+   its poster, its captions, `film.json`, the stage and the storyboard into
+   `films/<slug>.assets/`, writes the note and checks both as Tin will. It must print `OK`.
+   Keep the stage one page (inline what it needs) so a later run can restore it. Never edit
+   the note by hand: change `film.json` and deliver again.
 3. The final message: the feature you filmed and where its facts came from, the story, each
    caption with its time, the length, the second look's verdict, and every finding left with its
    reason.

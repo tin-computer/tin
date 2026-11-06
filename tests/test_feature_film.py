@@ -21,6 +21,8 @@ from tin_lite.procedures import (
 from tin_lite.studio_contracts import (
     FEATURE_FILM_VALIDATOR,
     parse_feature_film,
+    parse_film_directions,
+    parse_film_output,
     validate_feature_film_video,
 )
 from tin_lite.workflow_inputs import WorkflowInputError, normalize_workflow_inputs
@@ -41,6 +43,40 @@ title: Draw a circle, and the sheep follow
 ## What it says
 
 - 0:00 Draw a circle round the sheep, and they follow it.
+"""
+
+
+DIRECTIONS = b"""# Your funnel is larger than you think
+
+3 ways to show it, each sketched as one frame. Tin recommends Flow: its frame says the claim.
+
+```tin-directions
+recommended: 2
+runner_up: 1
+why: Its frame says the claim without the caption.
+```
+
+## 1. Iceberg
+
+![Iceberg](./herding.assets/1-iceberg.jpg)
+
+What you measure is the tip; the people who engaged sit below the line.
+
+[The sketch's page](./herding.assets/1-iceberg.html)
+
+## 2. Flow
+
+![Flow](./herding.assets/2-flow.jpg)
+
+A Sankey of where the people who engaged went.
+
+[The sketch's page](./herding.assets/2-flow.html)
+
+## 3. One person
+
+![One person](./herding.assets/3-one-person.png)
+
+One founder's month, from the first reaction to the visit.
 """
 
 
@@ -85,6 +121,47 @@ def test_a_film_note_names_its_title_and_the_files_it_plays() -> None:
 def test_a_film_note_that_does_not_carry_its_film_is_refused(note: bytes, message: str) -> None:
     with pytest.raises(ValueError, match=message):
         parse_feature_film(note, folder="herding.assets")
+
+
+def test_a_directions_note_offers_each_sketch_and_the_recommended_one() -> None:
+    directions = parse_film_directions(DIRECTIONS, folder="herding.assets")
+    assert directions.title == "Your funnel is larger than you think"
+    assert (directions.recommended, directions.runner_up) == (2, 1)
+    assert directions.why == "Its frame says the claim without the caption."
+    assert [(item.n, item.name, item.still, item.page) for item in directions.sketches] == [
+        (1, "Iceberg", "herding.assets/1-iceberg.jpg", "herding.assets/1-iceberg.html"),
+        (2, "Flow", "herding.assets/2-flow.jpg", "herding.assets/2-flow.html"),
+        (3, "One person", "herding.assets/3-one-person.png", None),
+    ]
+    assert directions.sketches[1].about == "A Sankey of where the people who engaged went."
+    # What follows the last sketch is not part of it.
+    tail = DIRECTIONS + b"\n## How these were found\n\nIn `herding.assets/notes.json`.\n"
+    assert parse_film_directions(tail, folder="herding.assets").sketches[2].about == (
+        "One founder's month, from the first reaction to the visit."
+    )
+    # The same note path holds either shape: the directions first, then the film.
+    assert parse_film_output(DIRECTIONS, folder="herding.assets") == directions
+    assert parse_film_output(NOTE, folder="herding.assets").video == "herding.assets/film.mp4"
+
+
+@pytest.mark.parametrize(
+    ("note", "message"),
+    [
+        # Plausible model results Tin can't offer: a sketch with no still or two, numbers out
+        # of order, a recommendation that isn't one of the sketches, a film and directions in
+        # one note, or a single direction, which is no choice.
+        (DIRECTIONS.replace(b"![Flow](./herding.assets/2-flow.jpg)", b""), "one still"),
+        (DIRECTIONS.replace(b"## 3. One", b"## 4. One"), "numbered 1, 2, 3"),
+        (DIRECTIONS.replace(b"recommended: 2", b"recommended: 7"), "recommended must be"),
+        (DIRECTIONS.replace(b"recommended: 2", b"recommended: Flow"), "recommended must be"),
+        (DIRECTIONS.replace(b"./herding.assets/2-flow.jpg", b"./other.assets/2-flow.jpg"), "one"),
+        (DIRECTIONS + b"\n```tin-video\nsrc: herding.assets/film.mp4\n```\n", "plays no film"),
+        (DIRECTIONS.split(b"## 2. Flow")[0], "2 to 8 sketches"),
+    ],
+)
+def test_a_directions_note_that_offers_no_real_choice_is_refused(note: bytes, message: str) -> None:
+    with pytest.raises(ValueError, match=message):
+        parse_film_directions(note, folder="herding.assets")
 
 
 def test_the_film_is_a_fast_start_mp4_in_a_kit_size_and_length() -> None:
@@ -147,6 +224,7 @@ def test_the_workflow_files_its_note_with_the_film_beside_it() -> None:
         output_assets=AssetPolicy(max_files=6, max_bytes=24_000_000, kinds=("mp4", "png")),
     )
     validate_procedure_artifact(NOTE, spec=pinned)
+    validate_procedure_artifact(DIRECTIONS, spec=pinned)
     with pytest.raises(ValueError, match="src must be an MP4"):
         validate_procedure_artifact(NOTE.replace(b"herding.assets", b"x.assets"), spec=pinned)
 
@@ -238,3 +316,21 @@ def test_tin_studio_checks_a_delivered_film_as_tin_keeps_it(tmp_path: Path) -> N
     assert "REJECTED: film must run 8-90 seconds" in checked.stdout
     (folder / "film.mp4").unlink()
     assert "REJECTED:" in _check(note).stdout
+
+
+def test_tin_studio_checks_delivered_directions_as_tin_keeps_them(tmp_path: Path) -> None:
+    folder = tmp_path / "herding.assets"
+    folder.mkdir()
+    for name in ("1-iceberg.jpg", "2-flow.jpg"):
+        (folder / name).write_bytes(b"\xff\xd8\xff" + bytes(16))
+    (folder / "3-one-person.png").write_bytes(b"\x89PNG\r\n\x1a\n" + bytes(8) + b"IHDR")
+    for name in ("1-iceberg.html", "2-flow.html"):
+        (folder / name).write_text("<!doctype html><div class=stage></div>")
+    note = tmp_path / "herding.md"
+    note.write_bytes(DIRECTIONS)
+    checked = _check(note)
+    assert checked.returncode == 0, checked.stdout
+    assert "directions" in checked.stdout
+    (folder / "2-flow.jpg").write_bytes(b"GIF89a")
+    checked = _check(note)
+    assert "REJECTED: sketch 2's still must be a PNG or JPEG image" in checked.stdout

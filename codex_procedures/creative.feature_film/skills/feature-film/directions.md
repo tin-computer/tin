@@ -39,16 +39,20 @@ what the first second did. Nothing of theirs goes in the film. Read public pages
    shape that carries the claim), its one move, and its caption. You may swap one card for a
    way you found in research, with a reason.
 2. Sketch each as a stage page: `WORK/sketches/<n>-<name>/index.html`, its caption in
-   `caption.txt`. Only its poster frame, built with the kit and the product's tokens. When the
-   poster needs more than every part shown (a flow drawn, a value set), define `stage.poster`.
-   Rough is fine; the idea must read in one look.
+   `caption.txt` and, in `about.txt`, one sentence for the founder on what this way of showing
+   it is (they pick from the stills and these sentences; the folder's name is the direction's
+   name, so name it as they would read it: `2-flow`, `4-one-person`). Only its poster frame,
+   built with the kit and the product's tokens. When the poster needs more than every part
+   shown (a flow drawn, a value set), define `stage.poster`. Rough is fine; the idea must read
+   in one look.
 3. `tin-film sketch WORK/sketches` films each for a moment and puts the stills side by side, in
    order, in `WORK/sketches/sketches.jpg`. Open it once.
 4. `tin-film review --directions WORK/sketches` sends the sheet and your notes to a model that
    didn't make them. It chooses the sketch whose frame says the claim with no caption, that the
    product can truthfully back and that is least like a stock picture of the subject, names the
-   runner-up and says what the chosen one must keep. Build its choice; if it breaks a rule here,
-   build the runner-up and say why in `notes`. The chosen page grows into the film's stage.
+   runner-up and says why, in a sentence the founder reads beside it. Its choice is Tin's
+   recommendation; the founder picks, and the picked page grows into the film's stage in the
+   next run.
 
 ## Families
 

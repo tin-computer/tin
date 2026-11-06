@@ -202,9 +202,9 @@ def test_concrete_procedure_packages_are_pinned_and_ui_renderable() -> None:
         "max_bytes": 64_000,
         "validator": "feature-film.v1",
         "assets": {
-            "max_files": 6,
-            "max_bytes": 24_000_000,
-            "kinds": ["mp4", "png", "vtt", "json"],
+            "max_files": 16,
+            "max_bytes": 32_000_000,
+            "kinds": ["mp4", "png", "jpeg", "vtt", "json", "html"],
         },
     }
     assert film_definition["procedure"]["sandbox"] == {
@@ -213,6 +213,8 @@ def test_concrete_procedure_packages_are_pinned_and_ui_renderable() -> None:
         "egress": "open",
     }
     assert film_definition["human_review"]["eligible"] is True
+    # Picking a direction and asking for changes to the film are revisions of the note.
+    assert film_definition["human_review"]["revision_adapter"] == "content-revision.v1"
     assert "procedures/creative.feature_film/skills/feature-film/film-format.md" in film_files
     assert "procedures/creative.feature_film/skills/feature-film/stage-kit.md" in film_files
     assert "procedures/creative.feature_film/skills/feature-film/directions.md" in film_files
