@@ -478,7 +478,8 @@ async function main(argv) {
   if (command && command !== "help") process.exitCode = 64;
 }
 
-if (import.meta.url === pathToFileURL(process.argv[1]).href) {
+// npx runs the kit through a link in node_modules/.bin, so compare the file the link points to.
+if (process.argv[1] && import.meta.url === pathToFileURL(fs.realpathSync(process.argv[1])).href) {
   main(process.argv.slice(2)).catch(error => {
     console.error(error.message);
     process.exitCode = 1;
