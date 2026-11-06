@@ -64,10 +64,11 @@ changes between takes so each take answers several questions at once.
    see at each step, how long each wait is and what the result is. Take the product's real
    wording (buttons, labels, statuses, messages) from its pages, its docs and the Feature map.
 4. When the run gives `product_url` (or the project names its site), run
-   `tin-film inspect <url> --dir WORK/look`. It prints the page's look as the stage kit's tokens,
-   the faces its text is set in (keeping their files in `WORK/look/fonts.css` and
-   `WORK/look/fonts/`; `stage-kit.md`, Type) and its outline, and writes `screen.jpg`. Open
-   `screen.jpg` once.
+   `tin-film inspect <url> --dir WORK/look`. When the prompt lists CONNECTED REPOSITORIES,
+   read the product's own type, tokens and logo there too (`stage-kit.md`, Type). Inspect
+   prints the page's look as the stage kit's tokens, the faces its text is set in (keeping
+   their files in `WORK/look/fonts.css` and `WORK/look/fonts/`) and its outline, and writes
+   `screen.jpg`. Open `screen.jpg` once.
 5. Decide the kind of film: a product highlight (the post shows what the product does), a motion
    graphic (the post argues an idea bigger than one screen) or both (an idea that lands on the
    product). It decides which directions are dealt.
