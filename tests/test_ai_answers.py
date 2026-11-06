@@ -14,6 +14,7 @@ import pytest
 from tin_lite.ai_answers import (
     API_MODEL_ANSWER,
     CONSUMER_APP_ANSWER,
+    DEFAULT_ENGINES,
     ENGINES,
     LIMITS,
     AIAnswersClient,
@@ -29,7 +30,7 @@ from tin_lite.ai_answers import (
 
 BRAND = {"name": "Acme Forms", "domain": "https://www.acmeforms.io/", "aliases": ["Acme"]}
 PROMPTS = ["best form builder for startups", "typeform alternatives with logic"]
-ALL = list(ENGINES)
+ALL = list(DEFAULT_ENGINES)
 
 
 def inputs(**overrides):
@@ -261,6 +262,9 @@ def test_every_engine_is_labelled_as_one_of_two_measurements():
         "google_ai_overview": CONSUMER_APP_ANSWER,
         "claude": API_MODEL_ANSWER,
         "perplexity": API_MODEL_ANSWER,
+        "chatgpt_cloro": CONSUMER_APP_ANSWER,
+        "gemini_cloro": CONSUMER_APP_ANSWER,
+        "google_ai_mode_cloro": CONSUMER_APP_ANSWER,
     }
 
 
@@ -500,3 +504,271 @@ async def test_malformed_provider_answers_fail_only_their_row():
         ("answered", None),
         ("failed", "unreadable_result"),
     ]
+
+
+def cloro_error(status, code):
+    envelope = {"code": code, "message": "x", "timestamp": "2026-11-05T12:00:00.000Z"}
+    return httpx.Response(status, json={"success": False, "error": envelope})
+
+
+CLORO = ["chatgpt_cloro", "gemini_cloro", "google_ai_mode_cloro"]
+
+
+class FakeCloro:
+    """Answers cloro's sync monitor endpoints; anything else goes to FakeDataForSEO."""
+
+    CREDITS = {"chatgpt_cloro": "7", "gemini_cloro": "6", "google_ai_mode_cloro": "6"}
+
+    def __init__(self, dataforseo=None) -> None:
+        self.dataforseo = dataforseo or FakeDataForSEO(pending_rounds=0)
+        self.requests: list[httpx.Request] = []
+        self.answer: dict[str, httpx.Response] = {}
+
+    def __call__(self, request: httpx.Request) -> httpx.Response:
+        if request.url.host != "api.cloro.dev":
+            assert request.headers["Authorization"].startswith("Basic ")
+            assert request.extensions["timeout"]["read"] == 150
+            return self.dataforseo(request)
+        self.requests.append(request)
+        engine = next(k for k, s in ENGINES.items() if request.url.path == f"/{s.post}")
+        if engine in self.answer:
+            return self.answer[engine]
+        body = json.loads(request.content)
+        result = {
+            "text": "Acme Forms, Formly",
+            "markdown": f"1. **Acme Forms** for {body['prompt']}\n2. Formly",
+            "sources": [
+                {"position": 1, "url": "https://www.acmeforms.io/", "footnote": False},
+                {"position": 2, "url": "https://review.example/best", "footnote": False},
+                # A footnote source still counts; a link cloro has not resolved does not.
+                {"position": 3, "url": "https://footnote.example/", "footnote": True},
+                {"position": 4, "url": "https://www.google.com/goto?url=CAES", "label": "x"},
+            ],
+        }
+        if engine == "chatgpt_cloro":
+            result["model"] = "gpt-5-3"
+        return httpx.Response(
+            200,
+            json={"success": True, "result": result},
+            headers={"X-Credits-Charged": self.CREDITS[engine], "X-Request-ID": f"req-{engine}"},
+        )
+
+
+def cloro_client(fake, key="cloro-key"):
+    return AIAnswersClient(
+        "login", "password", cloro_api_key=key, transport=httpx.MockTransport(fake)
+    )
+
+
+async def run_cloro(fake, request, *, key="cloro-key", ledger=None):
+    return await measure(
+        cloro_client(fake, key), request, ledger=ledger or MemoryLedger(), tag="test-run"
+    )
+
+
+async def test_cloro_engines_ask_chatgpt_gemini_and_ai_mode_with_a_bearer_key():
+    assert not set(CLORO) & set(DEFAULT_ENGINES)
+    fake = FakeCloro()
+    request = AIAnswersRequest.from_inputs(inputs(engines=["chatgpt", *CLORO]))
+    # 2 x (0.0012 + 7, 6 and 6 credits at $0.0008).
+    assert estimate_cost(request) == Decimal("0.0328")
+    ledger = MemoryLedger()
+    result = await run_cloro(fake, request, ledger=ledger)
+    assert ledger.reserved["live:chatgpt_cloro:0"] == Decimal("0.0056")
+    assert ledger.reserved["live:gemini_cloro:0"] == Decimal("0.0048")
+
+    def body(path, prompt):
+        if path == "/v1/monitor/chatgpt":
+            return {"prompt": prompt, "country": "US", "disableWebSearch": True}
+        if path == "/v1/monitor/aimode":
+            return {"prompt": prompt, "country": "US", "hl": "en", "device": "desktop"}
+        return {"prompt": prompt, "country": "US"}
+
+    def by_prompt(item):
+        return item[0], item[1]["prompt"]
+
+    sent = [(r.url.path, json.loads(r.content)) for r in fake.requests]
+    assert sorted(sent, key=by_prompt) == sorted(
+        (
+            [
+                (path, {**body(path, p), "include": {"markdown": True}})
+                for path in ("/v1/monitor/chatgpt", "/v1/monitor/gemini", "/v1/monitor/aimode")
+                for p in PROMPTS
+            ]
+        ),
+        key=by_prompt,
+    )
+    for request_sent in fake.requests:
+        assert request_sent.headers["Authorization"] == "Bearer cloro-key"
+        assert request_sent.extensions["timeout"]["read"] == 310
+    rows = {(r["engine"], r["prompt_index"]): r for r in result["rows"]}
+    for engine in CLORO:
+        row = rows[(engine, 0)]
+        assert row["measurement"] == CONSUMER_APP_ANSWER and row["status"] == "answered"
+        assert row["answer"].startswith("1. **Acme Forms**")
+        assert row["cited_urls"] == [
+            "https://www.acmeforms.io/",
+            "https://review.example/best",
+            "https://footnote.example/",
+        ]
+        assert row["brand"] == {"mentioned": True, "cited": True, "recommended_first": True}
+        assert row["provider_task_id"] == f"req-{engine}"
+    assert rows[("chatgpt_cloro", 1)]["cost_usd"] == "0.0056"
+    assert rows[("google_ai_mode_cloro", 1)]["cost_usd"] == "0.0048"
+    assert rows[("chatgpt_cloro", 0)]["model"] == "gpt-5-3"
+    assert rows[("gemini_cloro", 0)]["model"] is None
+    assert result["summary"]["complete"]
+    assert result["summary"]["by_engine"]["chatgpt_cloro"]["cost_usd"] == "0.0112"
+
+
+def live_shaped(engine, result):
+    """A trimmed copy of a live cloro response (2026-11-05), with example domains."""
+    return httpx.Response(
+        200,
+        json={"success": True, "result": result},
+        headers={
+            "x-credits-charged": FakeCloro.CREDITS[engine],
+            "x-request-id": "d7714ba6-9e0c-4fb4-a0fe-97b80e023210",
+        },
+    )
+
+
+async def test_cloro_rows_read_live_response_shapes():
+    text = "There are several good options.\n\n1. Rival Track for agencies\n2. Acme Forms"
+    fake = FakeCloro()
+    fake.answer = {
+        # No markdown (not asked for), no model, no citation pills, and every source marked
+        # footnote: true. They still count: live answers link footnote pages inline.
+        "chatgpt_cloro": live_shaped(
+            "chatgpt_cloro",
+            {
+                "model": None,
+                "text": text,
+                "sources": [
+                    {
+                        "position": 1,
+                        "label": "Website",
+                        "url": "https://acmeforms.io/",
+                        "footnote": True,
+                    },
+                    {
+                        "position": 2,
+                        "label": "",
+                        "url": "https://logos.example/a",
+                        "footnote": True,
+                    },
+                ],
+                "entities": [{"type": "software", "name": "Acme Forms"}],
+                "map": [],
+                "followUpForm": None,
+                "citationPills": [],
+            },
+        ),
+        # One page linked once per quoted passage.
+        "gemini_cloro": live_shaped(
+            "gemini_cloro",
+            {
+                "text": text,
+                "sources": [
+                    {
+                        "position": 1,
+                        "label": "Pricing",
+                        "url": "https://acmeforms.io/pricing#:~:text=Core",
+                    },
+                    {
+                        "position": 2,
+                        "label": "Best",
+                        "url": "https://review.example/best#:~:text=1.%20Rival",
+                    },
+                    {
+                        "position": 3,
+                        "label": "Best",
+                        "url": "https://review.example/best#:~:text=Acme",
+                    },
+                ],
+                "citationPills": [
+                    {
+                        "label": "Best",
+                        "citationPillId": 1,
+                        "url": "https://review.example/best",
+                        "domain": "review.example",
+                        "position": 2,
+                    }
+                ],
+            },
+        ),
+        # A resolved link keeps Google's redirect beside it.
+        "google_ai_mode_cloro": live_shaped(
+            "google_ai_mode_cloro",
+            {
+                "text": text,
+                "sources": [
+                    {
+                        "position": 1,
+                        "label": "Best",
+                        "url": "https://review.example/best",
+                        "redirectLink": "https://www.google.com/goto?url=CAESewHEIkXX",
+                    }
+                ],
+                "citationPills": [],
+            },
+        ),
+    }
+    request = AIAnswersRequest.from_inputs(inputs(engines=CLORO, prompts=PROMPTS[:1]))
+    rows = {r["engine"]: r for r in (await run_cloro(fake, request))["rows"]}
+    assert {r["status"] for r in rows.values()} == {"answered"}
+    assert {r["answer"] for r in rows.values()} == {text}
+    assert {r["model"] for r in rows.values()} == {None}
+    assert rows["chatgpt_cloro"]["cited_urls"] == [
+        "https://acmeforms.io/",
+        "https://logos.example/a",
+    ]
+    assert rows["chatgpt_cloro"]["brand"]["cited"]
+    assert rows["gemini_cloro"]["cited_urls"] == [
+        "https://acmeforms.io/pricing",
+        "https://review.example/best",
+    ]
+    assert rows["gemini_cloro"]["brand"]["cited"]
+    assert rows["google_ai_mode_cloro"]["cited_urls"] == ["https://review.example/best"]
+    assert rows["chatgpt_cloro"]["cost_usd"] == "0.0056"
+    assert rows["chatgpt_cloro"]["provider_task_id"] == "d7714ba6-9e0c-4fb4-a0fe-97b80e023210"
+
+
+@pytest.mark.parametrize(
+    ("answer", "outcome"),
+    [
+        (cloro_error(400, "VALIDATION_ERROR"), REJECTED),
+        (cloro_error(401, "INVALID_API_KEY_FORMAT"), REJECTED),
+        (cloro_error(403, "INSUFFICIENT_CREDITS"), REJECTED),
+        (cloro_error(429, "CONCURRENCY_LIMIT_EXCEEDED"), REJECTED),
+        # cloro charges nothing for an error response, retries included.
+        (cloro_error(500, "INTERNAL_SERVER_ERROR"), REJECTED),
+        # Not cloro's envelope, or no credit count: the outcome is unknown.
+        (httpx.Response(502, text="Bad gateway"), UNKNOWN),
+        (httpx.Response(200, json={"success": True, "result": {"text": "x"}}), UNKNOWN),
+        (
+            httpx.Response(200, text="not json", headers={"X-Credits-Charged": "6"}),
+            ("failed", "unreadable_result"),
+        ),
+    ],
+)
+async def test_cloro_errors_fail_only_their_engine(answer, outcome):
+    fake = FakeCloro()
+    fake.answer["gemini_cloro"] = answer
+    request = AIAnswersRequest.from_inputs(
+        inputs(engines=["chatgpt_cloro", "gemini_cloro"], prompts=PROMPTS[:1])
+    )
+    rows = {r["engine"]: r for r in (await run_cloro(fake, request))["rows"]}
+    assert (rows["gemini_cloro"]["status"], rows["gemini_cloro"]["reason"]) == outcome
+    assert rows["chatgpt_cloro"]["status"] == "answered"
+
+
+async def test_cloro_engines_without_a_key_fail_without_a_request():
+    fake = FakeCloro()
+    request = AIAnswersRequest.from_inputs(inputs(engines=["chatgpt", "chatgpt_cloro"]))
+    rows = (await run_cloro(fake, request, key=None))["rows"]
+    assert {(r["engine"], r["status"], r["reason"]) for r in rows} == {
+        ("chatgpt", "answered", None),
+        ("chatgpt_cloro", *REJECTED),
+    }
+    assert fake.requests == []
