@@ -5,9 +5,9 @@ on screen, with every frame checked, kept beside a note in project Files.
 Read the `feature-film` skill completely, with its `stage-kit.md` and `film-format.md`, and
 follow its order: understand the feature, start from the closest worked example (`tin-film new
 --from`), rewrite its storyboard for this feature, stage it, rehearse and fix it until the checks
-and the stills are clean, render it, and deliver it with `tin-film deliver`, which writes the
-declared note and its files. Start from the
-run's `slug`, `feature`, `post`, `angle`, `product_url`, `format` and `notes`.
+and the stills are clean, ask for a second look with `tin-film review` and fix what it finds,
+render it, and deliver it with `tin-film deliver`, which writes the declared note and its files.
+Start from the run's `slug`, `feature`, `post`, `angle`, `product_url`, `format` and `notes`.
 
 Show only what the product does and say only what it says; a film is evidence, not a pitch. The
 stage draws the product in its own look with its real wording; any customer, person or number in

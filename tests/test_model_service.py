@@ -51,7 +51,8 @@ ROUTE = ModelRoute(
     key="test-explicit-route",
     provider=ProviderName.OPENROUTER,
     model="vendor/test-model",
-    capabilities=frozenset(ModelCapability),
+    # Everything a text route can do; reading images is OpenAI's alone.
+    capabilities=frozenset(ModelCapability) - {ModelCapability.IMAGE_INPUT},
 )
 
 

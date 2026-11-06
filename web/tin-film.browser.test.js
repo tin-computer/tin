@@ -8,7 +8,7 @@ import path from "node:path";
 import test from "node:test";
 import {filmFromSpec, shoot, vtt} from "./film/film.js";
 import {recordingKey} from "./film/recording.js";
-import {boardIssues, note, sketch} from "./film/tin-film.js";
+import {boardIssues, directionsRequest, note, reviewRequest, sketch} from "./film/tin-film.js";
 import {FAMILIES, STRUCTURES, deal} from "./film/directions.js";
 
 const SITE = "https://film.test/";
@@ -233,7 +233,8 @@ test("directions are dealt far apart, the same again from the same seed", () => 
 });
 
 test("sketches are filmed for a moment and put side by side, each in its poster frame", {timeout: 180000}, async () => {
-  const dir = fs.mkdtempSync(path.join(os.tmpdir(), "tin-film-sketches-"));
+  const dir = path.join(fs.mkdtempSync(path.join(os.tmpdir(), "tin-film-work-")), "sketches");
+  fs.mkdirSync(dir);
   for (const [name, words] of [["1-number", "1,140"], ["2-sentence", "Most never visit."]]) {
     fs.mkdirSync(path.join(dir, name));
     fs.writeFileSync(path.join(dir, name, "index.html"), `<!doctype html><html><head><link rel="stylesheet" href="/__stage/kit/stage.css"></head><body><div class="stage"><div class="arrive" style="position: absolute; left: 48px; top: 40px; font-size: 96px;">${words}</div></div><script src="/__stage/kit/stage.js"></script></body></html>`);
@@ -241,4 +242,39 @@ test("sketches are filmed for a moment and put side by side, each in its poster 
   }
   await sketch(dir);
   assert.ok(fs.statSync(path.join(dir, "sketches.jpg")).size > 5_000);
+  // The second look chooses among them by the maker's notes beside the folder.
+  assert.throws(() => directionsRequest(dir), /No notes to choose by/);
+  fs.writeFileSync(path.join(dir, "..", "storyboard.md"), "Kind: motion graphic\n\n## Directions\n1. A number.\n2. A sentence.\n");
+  const request = directionsRequest(dir);
+  assert.equal(request.kind, "directions");
+  assert.equal(request.sketches, 2);
+  assert.equal(request.images.length, 1);
+  assert.match(request.spec, /## Directions/);
+});
+
+test("a second look sends the take's sheet and marked stills with the spec and what the checks found", () => {
+  const {dir, file} = filmFolder(BEATS);
+  const take = path.join(dir, "takes", "rehearse", "film", "4x5");
+  fs.mkdirSync(path.join(take, "marks"), {recursive: true});
+  const png = Buffer.from("89504e470d0a1a0a0000000049484452", "hex");
+  fs.writeFileSync(path.join(take, "sheet.png"), png);
+  for (const name of ["01-poster.png", "02-how.jpg", "notes.txt"]) fs.writeFileSync(path.join(take, "marks", name), png);
+  fs.writeFileSync(path.join(take, "report.json"), JSON.stringify({issues: {errors: [], warnings: ["Text under 22px."]}, summary: ["0.5s jump"]}));
+  const request = reviewRequest(file, take);
+  assert.equal(request.images.length, 3, "the sheet and the two marked stills");
+  assert.deepEqual(request.images.map(image => image.media_type), ["image/png", "image/png", "image/jpeg"]);
+  assert.ok(request.images.every(image => image.data_base64 === png.toString("base64")));
+  assert.equal(request.checks, "Text under 22px.\n0.5s jump");
+  assert.equal(request.spec, fs.readFileSync(file, "utf8"));
+  assert.match(request.request_id, /^[0-9a-f]{32}$/);
+  assert.equal(reviewRequest(file, take).request_id, request.request_id, "an unchanged take asks the same question");
+  assert.equal(request.storyboard, "");
+  assert.equal(request.example, null);
+  // A film started from a worked example sends its storyboard and the example's sheet, the bar.
+  fs.writeFileSync(path.join(dir, "storyboard.md"), "# Fold\n\n## 1. Herd\n- Mark: poster\n- Caption: One press herds every sheep.\n");
+  fs.writeFileSync(path.join(dir, "example.jpg"), png);
+  const held = reviewRequest(file, take);
+  assert.match(held.storyboard, /## 1\. Herd/);
+  assert.deepEqual(held.example, {media_type: "image/jpeg", data_base64: png.toString("base64")});
+  assert.notEqual(held.request_id, request.request_id, "a new storyboard asks a new question");
 });

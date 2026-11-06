@@ -20,6 +20,7 @@ from starlette.responses import JSONResponse, Response
 from tin_lite.code_services import CodeServiceError
 from tin_lite.domain import (
     STUDIO_PROVIDER,
+    STUDIO_REVIEW_CAPABILITY,
     STUDIO_VOICE_CAPABILITY,
     TEST_IDENTITY_SMS_CAPABILITY,
     TEST_IDENTITY_WRITE_CAPABILITY,
@@ -32,6 +33,8 @@ from tin_lite.settings import Settings
 from tin_lite.studio import DEFAULT_VOICE_STYLE, STUDIO_VOICES, StudioError
 
 _STUDIO_VOICE_MAX_BODY_BYTES = 8_000
+# A film review carries up to twelve stills, base64-encoded (film_review.MAX_IMAGES).
+_STUDIO_REVIEW_MAX_BODY_BYTES = 40_000_000
 
 
 class RunToolTokenVerifier(TokenVerifier):
@@ -308,6 +311,50 @@ def create_run_tools_app(
             }
         )
 
+    async def studio_review(request: Request) -> Response:
+        """A second look at a feature film's stills by a model that didn't make it. Plain HTTP
+        beside the MCP tools because the payload is images, authorized by the run's grant."""
+        from tin_lite.film_review import FilmReviewError
+
+        authorization = request.headers.get("authorization", "")
+        scheme, _separator, token = authorization.partition(" ")
+        if scheme.lower() != "bearer" or not token.strip():
+            return JSONResponse({"error": "active run-tool grant required"}, status_code=401)
+        grant = await runtime().database.authorize_run_tool_grant(
+            token=token.strip(), capability=STUDIO_REVIEW_CAPABILITY
+        )
+        if grant is None or grant.provider_key != STUDIO_PROVIDER:
+            return JSONResponse({"error": "run does not grant studio.review"}, status_code=403)
+        body = await request.body()
+        if len(body) > _STUDIO_REVIEW_MAX_BODY_BYTES:
+            return JSONResponse({"error": "request body is too large"}, status_code=413)
+        try:
+            payload = json.loads(body)
+        except ValueError:
+            return JSONResponse({"error": "request body must be JSON"}, status_code=400)
+        if not isinstance(payload, dict) or not isinstance(payload.get("images"), list):
+            return JSONResponse({"error": "request body must hold images"}, status_code=400)
+        service = runtime().film_review
+        if service is None:
+            return JSONResponse({"error": "film review is not configured"}, status_code=422)
+        try:
+            review = await service.review(
+                run_id=grant.run_id,
+                request_id=str(payload.get("request_id", "")),
+                spec=str(payload.get("spec", "")),
+                checks=str(payload.get("checks", "")),
+                images=payload["images"],
+                storyboard=str(payload.get("storyboard") or ""),
+                example=payload.get("example"),
+                kind=str(payload.get("kind") or "film"),
+                sketches=int(payload.get("sketches") or 0)
+                if str(payload.get("sketches") or "0").isdigit()
+                else 0,
+            )
+        except FilmReviewError as exc:
+            return JSONResponse({"error": str(exc)}, status_code=422)
+        return JSONResponse(review)
+
     host = urlsplit(settings.switchboard_public_url).hostname or "127.0.0.1"
     app = server.streamable_http_app(
         streamable_http_path="/mcp",
@@ -316,4 +363,5 @@ def create_run_tools_app(
         host=host,
     )
     app.add_route("/studio/voice", studio_voice, methods=["POST"])
+    app.add_route("/studio/review", studio_review, methods=["POST"])
     return server, app

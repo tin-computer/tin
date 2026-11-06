@@ -65,7 +65,8 @@ How a run goes:
    inspect` reads its look as the stage kit's tokens, its fonts and a screenshot.
 2. It decides the kind of film (a product highlight, a motion graphic or both), researches how
    such a claim has been shown, deals five directions with `tin-film directions`, sketches each
-   as a stage page and compares them side by side (`tin-film sketch`), and chooses one.
+   as a stage page and compares them side by side (`tin-film sketch`); from 1.1.0 the second look
+   (`tin-film review --directions`, below) chooses which one becomes the film.
 3. `tin-film new --from` copies the worked example closest to the film, with its contact sheet
    (`example.jpg`, one still per shot): the bar the agent looks at once; the chosen sketch
    becomes the stage.
@@ -76,16 +77,25 @@ How a run goes:
 5. `tin-film rehearse` plays it at low resolution with every frame measured and checked
    (mographc's rules, the kit's own, the pacing checks and the storyboard's); its contact sheet
    is the storyboard drawn, and the agent fixes the film until it is clean.
-6. `tin-film render` makes the final take, and `tin-film deliver` writes `films/{slug}.md` with
+6. From 1.1.0, `tin-film review` asks for a second look: the newest take's contact sheet and
+   marked stills, `film.json`, its storyboard, the worked example's sheet (the bar) and the
+   checks' summary go to the run-bound
+   `POST /internal/run-tools/studio/review` route (`studio.review` on the `tin.studio` grant,
+   film runs only). The switchboard sends them to `creative.feature_film.review.v1`
+   (`gpt-6-sol`, a different model from the run's Codex model, with image input) with the
+   review brief in `src/tin_lite/film_review.py`, and returns a verdict and findings with fixes.
+   One `studio_review` receipt per request (a retry replays it), four reviews a run, and the
+   model call is receipted and billed by the native model service: a film run's terms add
+   `native_model` operations at the pinned supplier card (`service_pricing`).
+7. `tin-film render` makes the final take, and `tin-film deliver` writes `films/{slug}.md` with
    `film.mp4`, `poster.png`, `captions.vtt` and `film.json` in `films/{slug}.assets/`, then runs
    `tin-studio check` on both.
-7. Tin keeps the note (`feature-film.v1`) and its files (`page_assets` kinds mp4, png, vtt and
+8. Tin keeps the note (`feature-film.v1`) and its files (`page_assets` kinds mp4, png, vtt and
    json; every file leak-scanned), and the review shows the note with the film playing.
    Approval binds the note and every file's checksum. Tin posts nothing.
 
-Version 1.0.0 stages what Tin holds about the product in its public look and signs in nowhere;
-captions only, one format a run. A second model's look at the stills and video on LinkedIn drafts
-come next.
+The workflow stages what Tin holds about the product in its public look and signs in nowhere;
+captions only, one format a run. Video on LinkedIn drafts comes next.
 
 ## How a character run works (no sandbox)
 

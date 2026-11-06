@@ -3,6 +3,8 @@
 Not a supplier invoice. Never apply this tariff to ChatGPT OAuth observations.
 """
 
+from copy import deepcopy
+
 from tin_lite.billing_contracts import NANOS_PER_DOLLAR, digest, token_charge
 from tin_lite.codex_api import (
     CONTRACT,
@@ -18,6 +20,7 @@ from tin_lite.codex_api import (
     parallel_requests,
     procedure_contract,
 )
+from tin_lite.studio_contracts import FEATURE_FILM_VALIDATOR
 from tin_lite.workflow_costs import SESSION_FUNDING
 
 RATE_CARD = {
@@ -265,6 +268,14 @@ def api_terms(
         from tin_lite.studio_billing import CARD
 
         terms.update(studio_pricing=CARD, operations=["codex_api", "tool"])
+        # A film's second look is one native model call a review, at the pinned supplier card.
+        if validator == FEATURE_FILM_VALIDATOR:
+            from tin_lite.service_pricing import CARD as SERVICE_CARD
+
+            terms.update(
+                service_pricing=deepcopy(SERVICE_CARD),
+                operations=["codex_api", "tool", "native_model"],
+            )
     procedure = definition.get("procedure", {})
     # Diagrams and Studio keep per-operation funding: their tool operations and image
     # loops are not session-funded. Only the context contract changed for them.

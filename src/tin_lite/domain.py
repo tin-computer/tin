@@ -66,6 +66,8 @@ TEST_IDENTITY_SMS_CAPABILITY = "test_identity.sms.read"
 # project-owned integration connection.
 STUDIO_PROVIDER = "tin.studio"
 STUDIO_VOICE_CAPABILITY = "studio.voice"
+# A feature film's second look (film_review).
+STUDIO_REVIEW_CAPABILITY = "studio.review"
 TEST_IDENTITY_STATUSES = ("pending", "active", "blocked", "failed", "retired")
 
 

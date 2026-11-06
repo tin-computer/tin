@@ -35,6 +35,7 @@ from tin_lite.domain import (
     SCAN_REPORT_WORKFLOW_NAME,
     SITE_HEALTH_WORKFLOW_NAME,
     STUDIO_PROVIDER,
+    STUDIO_REVIEW_CAPABILITY,
     STUDIO_VOICE_CAPABILITY,
     TEST_IDENTITY_SMS_CAPABILITY,
     TEST_IDENTITY_WRITE_CAPABILITY,
@@ -126,6 +127,7 @@ from tin_lite.site_health import (
     fetch_live_page_evidence,
     validate_site_health_model_route,
 )
+from tin_lite.studio_contracts import FEATURE_FILM_VALIDATOR
 from tin_lite.system_wiki import read_system_wiki_document
 from tin_lite.usage_capture import (
     ObservationAlreadyRecorded,
@@ -3498,7 +3500,12 @@ class TinActivities:
                         connection_id=None,
                         external_account_id="",
                         provider_key=STUDIO_PROVIDER,
-                        capabilities=(STUDIO_VOICE_CAPABILITY,),
+                        # A feature film may also ask for a second look at its stills.
+                        capabilities=(
+                            (STUDIO_VOICE_CAPABILITY, STUDIO_REVIEW_CAPABILITY)
+                            if procedure.output_validator == FEATURE_FILM_VALIDATOR
+                            else (STUDIO_VOICE_CAPABILITY,)
+                        ),
                         ttl_seconds=procedure.sandbox.timeout_seconds + 60,
                     )
                     run_tools_url = (
