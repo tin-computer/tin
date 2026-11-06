@@ -259,8 +259,11 @@ test("sketches are filmed for a moment and put side by side, each in its poster 
   fs.writeFileSync(path.join(dir, "2-sentence", "about.txt"), "One sentence carries the claim.\n");
   const project = fs.mkdtempSync(path.join(os.tmpdir(), "tin-film-project-"));
   const notePath = path.join(project, "films", "funnel.md");
-  fs.mkdirSync(path.dirname(notePath));
+  fs.mkdirSync(path.join(project, "films", "funnel.assets"), {recursive: true});
+  // An earlier version's files leave the folder: each version holds exactly its own.
+  fs.writeFileSync(path.join(project, "films", "funnel.assets", "1-earlier.jpg"), "old");
   deliverDirections(dir, notePath);
+  assert.ok(!fs.existsSync(path.join(project, "films", "funnel.assets", "1-earlier.jpg")));
   const delivered = fs.readFileSync(notePath, "utf8");
   assert.match(delivered, /^```tin-directions\nrecommended: 2\nrunner_up: 1\nwhy: A sentence says it\.\n```$/m);
   assert.match(delivered, /^## 2\. Sentence\n\n!\[Sentence\]\(\.\/funnel\.assets\/2-sentence\.jpg\)\n\nOne sentence carries the claim\.$/m);

@@ -172,7 +172,7 @@ async function deliver(file, notePath) {
   if (!fs.existsSync(reportFile) || !fs.existsSync(path.join(dir, "film.mp4"))) throw new Error(`No final take in ${dir}: run tin-film render ${file} first.`);
   const report = JSON.parse(fs.readFileSync(reportFile, "utf8"));
   const folder = notePath.slice(0, -".md".length) + ".assets";
-  fs.mkdirSync(folder, {recursive: true});
+  freshFolder(folder);
   const video = path.join(folder, "film.mp4");
   fs.copyFileSync(path.join(dir, "film.mp4"), video);
   for (const crf of [23, 27, 31]) {
@@ -196,6 +196,16 @@ async function deliver(file, notePath) {
   fs.writeFileSync(notePath, note({film, report, folder, format}));
   console.log(`wrote ${notePath} and ${folder}/ (film.mp4 ${(fs.statSync(video).size / 1e6).toFixed(1)} MB, ${kept.join(", ")})`);
   checkNote(notePath);
+}
+
+// A note's folder holds exactly its version's files: an earlier version's (the directions'
+// sketches before the film, or an earlier cut) stay in the project's history, not beside it.
+// Read anything you need from it (the picked sketch, tin-film restore) before delivering.
+function freshFolder(folder) {
+  fs.mkdirSync(folder, {recursive: true});
+  for (const entry of fs.readdirSync(folder, {withFileTypes: true})) {
+    if (!entry.isDirectory()) fs.rmSync(path.join(folder, entry.name), {force: true});
+  }
 }
 
 // The same contract Tin applies when it keeps the note: tin-studio in the sandbox, the
@@ -249,7 +259,7 @@ export function deliverDirections(dir, notePath) {
   const notes = board ? fs.readFileSync(board, "utf8") : "";
   const title = notes.match(/^# (.+)$/m)?.[1]?.trim() || path.basename(notePath, ".md");
   const folder = notePath.slice(0, -".md".length) + ".assets";
-  fs.mkdirSync(folder, {recursive: true});
+  freshFolder(folder);
   for (const sketch of sketches) {
     const about = path.join(root, sketch.folder, "about.txt");
     sketch.about = fs.existsSync(about) ? fs.readFileSync(about, "utf8").replace(/\s+/g, " ").trim() : "";
