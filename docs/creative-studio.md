@@ -63,8 +63,8 @@ How a run goes:
 1. The agent works out the feature (the run's `feature` and `post`, or the Feature map) and what
    really happens when someone uses it, in the product's real wording; with a page, `tin-film
    inspect` reads its look as the stage kit's tokens, its fonts and a screenshot.
-2. `tin-film new --from` copies the worked example closest to the feature; the agent rehearses
-   it once and looks at its contact sheet, one still per shot: the bar.
+2. `tin-film new --from` copies the worked example closest to the feature, with its contact
+   sheet (`example.jpg`, one still per shot): the bar the agent looks at once.
 3. It rewrites the example's `storyboard.md` for this feature (the story as a before and an
    after, three to six shots and a payoff, each with its mark, caption, hero, satellite, real
    words and what moves), then rebuilds the stage for this product (its tokens, its chrome, the

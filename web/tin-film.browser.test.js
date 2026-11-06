@@ -133,6 +133,7 @@ test("each worked example a staged film starts from is a film its storyboard dra
     const film = filmFromSpec(spec, path.join(dir, "film.json"));
     assert.equal(film.world().stage.entry, "index.html");
     assert.deepEqual(boardIssues(fs.readFileSync(path.join(dir, "storyboard.md"), "utf8"), spec), [], name);
+    assert.ok(fs.statSync(path.join(dir, "sheet.jpg")).size > 50_000, `${name} keeps the contact sheet of its rehearsal`);
   }
 });
 

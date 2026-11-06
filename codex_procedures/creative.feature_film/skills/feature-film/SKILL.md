@@ -46,13 +46,13 @@ changes between takes so each take answers several questions at once.
 ## 2. Start from the closest example
 
 1. `tin-film new WORK/film --from <name>` copies a worked example: its `storyboard.md`, its
-   `film.json` and its `stage/index.html`. It lists the examples and the shape of feature each
-   suits; run it with the closest. `onboarding` is a setup through a coding agent that ends in a
-   result on a dashboard; `people` is a list of records ranked or filtered, the reason behind one,
-   a pick and a record's panel.
-2. Rehearse it unchanged (`tin-film rehearse WORK/film/film.json`) and open its `sheet.jpg` once.
-   The sheet is one still per shot: the example's storyboard, drawn. It is the bar for type size,
-   framing, restraint and how much happens in each shot.
+   `film.json`, its `stage/index.html` and its contact sheet as `example.jpg`. It lists the
+   examples and the shape of feature each suits; run it with the closest. `onboarding` is a setup
+   through a coding agent that ends in a result on a dashboard; `people` is a list of records
+   ranked or filtered, the reason behind one, a pick and a record's panel.
+2. Read its `storyboard.md` and open `example.jpg` once. The sheet is one still per shot: the
+   example's storyboard, drawn. It is the bar for type size, framing, restraint and how much
+   happens in each shot.
 
 ## 3. Storyboard
 
@@ -104,7 +104,7 @@ in the storyboard's order, and a poster.
 2. `tin-film rehearse WORK/film/film.json` plays it at low resolution with every check on. It
    prints errors, warnings (pacing among them) and check findings, and writes the stills.
 3. Open the take's `sheet.jpg`: your storyboard drawn, one still per shot, beside the example's
-   sheet you saw in step 2. Ask of each: is it the shot the storyboard describes? What does the eye
+   sheet (`example.jpg`) you saw in step 2. Ask of each: is it the shot the storyboard describes? What does the eye
    land on first, and is it what the caption says? Is the type as large as the example's, the hero
    inset and running off an edge, the satellite overlapping it? Is anything cut by the stage's
    edge, empty, crowded or too small to read? Does the poster tell the story alone? Open a single

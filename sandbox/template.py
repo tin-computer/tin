@@ -158,7 +158,7 @@ FILM_FILES = (
     *(
         f"web/film/examples/{name}/{file}"
         for name in ("onboarding", "people")
-        for file in ("film.json", "storyboard.md", "stage/index.html")
+        for file in ("film.json", "storyboard.md", "stage/index.html", "sheet.jpg")
     ),
     "src/tin_lite/static/tin-logotype-ink.png",
     "third_party/licenses/stageshow-LICENSE.txt",

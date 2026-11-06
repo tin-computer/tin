@@ -153,8 +153,10 @@ function storyboardIssues(file) {
   return boardIssues(fs.readFileSync(board, "utf8"), JSON.parse(fs.readFileSync(file, "utf8")));
 }
 
-// The worked examples (examples/<name>): a storyboard, a film.json and its stage, copied as the
-// start of a new staged film, the way Stageshow starts from its closest gold example.
+// The worked examples (examples/<name>): a storyboard, a film.json, its stage and the contact
+// sheet of its rehearsal (sheet.jpg; rehearse an example again after changing it and copy its
+// sheet beside it), copied as the start of a new staged film, the way Stageshow starts from its
+// closest gold example.
 const EXAMPLES = fileURLToPath(new URL("./examples/", import.meta.url));
 
 function examples() {
@@ -174,7 +176,9 @@ function start(dir, from = "onboarding") {
   const source = path.join(EXAMPLES, from);
   for (const name of ["film.json", "storyboard.md"]) fs.copyFileSync(path.join(source, name), path.join(target, name));
   fs.cpSync(path.join(source, "stage"), path.join(target, "stage"), {recursive: true});
-  console.log(`wrote ${target}/storyboard.md, film.json and stage/: ${example.title}. Rehearse it as it is first to see the bar, then rewrite all three for this product.`);
+  // The example's contact sheet, one still per shot: the bar this film is held to.
+  fs.copyFileSync(path.join(source, "sheet.jpg"), path.join(target, "example.jpg"));
+  console.log(`wrote ${target}/storyboard.md, film.json and stage/: ${example.title}. Its contact sheet is ${target}/example.jpg, the bar; rewrite all three for this product.`);
   console.log("The worked examples (tin-film new <dir> --from <name>):");
   for (const item of all) console.log(`  ${item.name}: ${item.shape}`);
 }

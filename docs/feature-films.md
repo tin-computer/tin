@@ -233,7 +233,9 @@ thing happens per beat and the result stays on screen, rather than a camera over
   It also warns when a mark's hero (its largest painted part) sits whole on the stage with air
   on every side, and when the stage draws a cursor of its own beside the film's hand.
 - **The worked examples.** `web/film/examples/` holds the bar the workflow copies (`tin-film new
-  --from <name>`) and rebuilds for each product, one per shape of feature:
+  --from <name>`) and rebuilds for each product, one per shape of feature. Each keeps the contact
+  sheet of its rehearsal as `sheet.jpg`, which `new` copies as `example.jpg`: after changing an
+  example, rehearse it and copy the new sheet beside it.
   - `onboarding`: Tin's own onboarding, from "Set up Tin" in Claude Code to a pull request opened
     from Decisions, 34 seconds: a terminal beside a card, then the dashboard.
   - `people`: People ranked by your ICP, from a LinkedIn post's faceless reactions to a connection
