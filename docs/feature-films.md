@@ -220,6 +220,14 @@ thing happens per beat and the result stays on screen, rather than a camera over
   scene away on the film's clock (`together` runs several at once), and the film holds while it
   plays. The film's own clicks reach the stage, which answers through `data-go` (a page of its
   window), `data-then` (a button that changes its label on itself) and `data-tick` (a box).
+- **Diagrams.** The kit carries D3 7.9.0, d3-sankey 0.12.3 and Observable Plot 0.6.17
+  (`web/film/stage/vendor/`, unmodified builds; see THIRD_PARTY_NOTICES), so a stage can lay out
+  data the way a notebook does. The film clock drives D3's transitions like everything else; the
+  runtime adds `draw` (paths draw themselves) and `count` (numbers count up). Inside a
+  `data-diagram` element the probe measures each SVG mark (by its id, with its stroke), so the
+  checks see a diagram's motion, and a diagram may sit whole in the frame. Each still checks that
+  a diagram's marks centre on the caption's centre line and the picture's middle (within 1% and
+  4%) and that its words keep a gutter from the edge.
 - **Serving.** `"stage": "stage/index.html"` in `film.json` opens that page in the film's window;
   the page reaches its own folder (`/__stage/…`), the kit (`/__stage/kit/…`), the dashboard's
   assets (`/assets/…`) and the licensed fonts, and nothing else unless it was recorded.

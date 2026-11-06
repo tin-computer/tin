@@ -15,6 +15,8 @@
 // - press: a button dips, then its label changes on itself; its width holds.
 // - fill: a bar or a progress line grows to a share.
 // - page: a window switches to another of its pages.
+// - draw: a diagram's lines and flows draw themselves from their start.
+// - count: a number counts up to its value.
 // - together: several of these at once, as one beat.
 (() => {
   const all = selector => [...document.querySelectorAll(selector)];
@@ -194,12 +196,53 @@
     return 0.5;
   }
 
+  // A diagram's lines and flows draw themselves from their start, one after another: flows that
+  // share a box never fade up together.
+  function draw(selector, {seconds = 1.1, stagger = 0.3} = {}) {
+    const found = all(selector);
+    found.forEach((path, index) => {
+      const length = path.getTotalLength();
+      path.style.transition = "none";
+      path.style.strokeDasharray = `${length} ${length}`;
+      path.style.strokeDashoffset = `${length}`;
+      path.style.opacity = "0";
+      path.style.visibility = "visible";
+      void path.getBoundingClientRect();
+      // It fades up as its head leaves the start, so it never appears whole in one frame.
+      later(index * stagger * 1000, () => {
+        path.style.transition = `stroke-dashoffset ${seconds}s ${TRAVEL}, opacity 0.25s ${ARRIVE}`;
+        path.style.strokeDashoffset = "0";
+        path.style.opacity = "";
+      });
+      // Drawn, it is a plain path again, whole whatever length a later change gives it.
+      later((index * stagger + seconds) * 1000 + 40, () => {
+        path.style.transition = path.style.strokeDasharray = path.style.strokeDashoffset = "";
+      });
+    });
+    return found.length ? seconds + (found.length - 1) * stagger : 0;
+  }
+
+  // A number counts to its value, in the page's own format (1,140).
+  function count(selector, to, {seconds = 1.1, from = 0} = {}) {
+    const elements = all(selector);
+    const format = new Intl.NumberFormat("en-US");
+    const start = performance.now();
+    const step = () => {
+      const t = Math.min(1, (performance.now() - start) / (seconds * 1000));
+      const eased = 1 - Math.pow(1 - t, 3);
+      for (const element of elements) element.textContent = format.format(Math.round(from + (to - from) * eased));
+      if (t < 1) requestAnimationFrame(step);
+    };
+    step();
+    return seconds;
+  }
+
   // Several changes as one beat, [[name, ...args], ...]: it takes as long as the longest.
   function together(calls) {
     return Math.max(0, ...calls.map(([name, ...args]) => window.stage[name](...args)));
   }
 
-  window.stage = {show, hide, away, swap, print, type, set, tick, press, fill, page, together};
+  window.stage = {show, hide, away, swap, print, type, set, tick, press, fill, page, draw, count, together};
 
   // The film's clicks are real clicks, so a stage answers them as the product would:
   // [data-go] opens a page of its window and marks its nav item; [data-then] is a button whose

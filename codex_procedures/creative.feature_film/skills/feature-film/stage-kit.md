@@ -41,6 +41,29 @@ shown at 1.78 times its size: 15px text reads as 27px. 4:5 and 1:1 films play 72
   real words: that is how a viewer knows the product.
 - A result sits in the hero's quiet margin, a gutter from the edges, never over its controls.
 
+## Alignment
+
+A frame has two lines everything answers to: the caption's centre line (the frame's vertical
+middle, where the caption sits) and the gutter. Check both at every still; the eye finds a
+misalignment of a few pixels at once.
+
+- A composition is either inset or centred, never in between. An inset one (a product window)
+  sits a gutter from the top and left and runs off the right or the foot. A centred one (a
+  diagram, a big number, a single card) centres its weight on the caption's centre line, and
+  its middle on the picture's.
+- Weight is the marks or the body, not the labels: a Sankey's flows and nodes, a chart's bars, a
+  card's surface. Labels hang off the marks, so a diagram with long labels on one side still
+  centres its flows.
+- When a composition grows (more data arrives, a band is added), it reflows so the whole stays
+  centred, the old parts easing to their new places. It never starts where the finished one will
+  sit, off centre.
+- A label sits on its mark's middle. Labels in a column share an edge: the left edge for labels
+  right of their marks, the right edge for labels left of them. Numbers in a column share a size.
+- Nothing the story says comes within a gutter of the frame's edge, labels included.
+
+Every take checks a diagram's marks against the caption's centre line and the picture's middle,
+and its words against the gutter, at each still.
+
 ## Parts
 
 Each is plain HTML with the kit's classes; restyle with the tokens, not new geometry.
@@ -82,8 +105,8 @@ Each is plain HTML with the kit's classes; restyle with the tokens, not new geom
   `.post-text`, quiet `<i class="bar">` lines, `.post-media` and `.post-foot` (`.faces` and the
   counts). People nobody can read yet: `.face-row` (an `<i class="face">` and two bars).
 - Chip `.chip`, dot `.dot` (`.ink`, `.hot`, `.pulse`), toast `.toast`, pull request `.pull`.
-- A diagram (an iceberg, rings, a stream, a field of dots) is built from boxes on the stage, not
-  kit parts; see `directions.md`. Wrap one that sits whole in the frame in `data-diagram`.
+- A diagram (a Sankey, rings, a stream, a timeline) is data laid out with the kit's D3, d3-sankey
+  or Observable Plot inside a `data-diagram` element; see `directions.md`.
 
 Arrivals: `.arrive` (hidden until shown; it fades and rises in), `.arrive.slide` (comes up from
 below the stage, opaque: a window or a result), `.arrive.slide.from-right` (comes in through
@@ -107,6 +130,8 @@ film's clock and the film holds for as long as it takes.
 | `["away", "#terminal, #card"]` | The scene travels up and off; pair it with `show` of an `.arrive.slide` window to bring the next one up. |
 | `["fill", "#bar", 0.4, {"seconds": 1.4}]` | Grow a bar to a share. |
 | `["page", "#app", "decisions"]` | Switch a window's page without a click. |
+| `["draw", "#link-a, #link-b", {"seconds": 1.2}]` | A diagram's paths draw themselves from their start (a flow grows along its length), 0.3 s apart unless `stagger` says otherwise. |
+| `["count", "#total", 1140, {"seconds": 1.2}]` | A number counts up to its value, as 1,140. |
 | `["together", [["hide", "#a .tickbox"], ["set", "#a .status", "Queued"]]]` | Several calls as one beat; it takes as long as the longest. |
 
 Clicks are the film's own (`{"click": "#nav-decisions"}`); the stage answers them as the product

@@ -36,6 +36,15 @@ Taylor). Its license is in `third_party/licenses/stageshow-LICENSE.txt`. The sta
 (`web/film/stage/`) is written for Tin after Stageshow's framing, restraint and motion rules and
 its two easing curves; it copies none of Stageshow's components.
 
+The stage kit's data libraries (`web/film/stage/vendor/`) are the unmodified published browser
+builds of `d3` 7.9.0 (ISC, Copyright 2010-2023 Mike Bostock), `d3-sankey` 0.12.3 (BSD-3-Clause,
+Copyright 2015 Mike Bostock) and `@observablehq/plot` 0.6.17 (ISC, Copyright 2020-2025
+Observable, Inc.), whose build includes `interval-tree-1d` 1.0.4 (MIT, Copyright (c) 2013
+Mikola Lysenko), `binary-search-bounds` 2.0.5 (MIT, Copyright (c) 2013-2015 Mikola Lysenko) and
+`isoformat` 0.2.1 (ISC, Copyright 2021 Mike Bostock). Their licenses are in
+`third_party/licenses/` (`d3-`, `d3-sankey-`, `observablehq-plot-`, `interval-tree-1d-`,
+`binary-search-bounds-` and `isoformat-LICENSE.txt`).
+
 The film recorder's checks (`web/film/vendor/mographc/`) are mographc 0.1.1's film model,
 viewer and rules, copied from its published build, and `web/film/probe.js` adapts its probe
 (MIT, Copyright (c) 2026 Replicas). Its license is in `third_party/licenses/mographc-LICENSE.txt`.

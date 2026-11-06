@@ -121,6 +121,48 @@ test("a stage whose hero floats whole, or that draws its own cursor, is told so"
   assert.ok(report.issues.warnings.some(line => /^At poster, the hero #terminal \(780×300\) sits whole on the stage with air on every side/.test(line)), report.issues.warnings.join("\n"));
 });
 
+// A diagram on a stage: d3-sankey lays it out from data, inside data-diagram.
+const DIAGRAM = `<!doctype html><html><head><link rel="stylesheet" href="/__stage/kit/stage.css"><style>
+  .link { fill: none; stroke: #b3aa9b; visibility: hidden; }
+  .link.is-ticked { visibility: visible; }
+</style></head><body><div class="stage"><div data-diagram><svg width="1080" height="517"></svg></div>
+<div class="arrive" style="position: absolute; left: 48px; top: 40px; font-size: 20px;" id="total">0</div></div>
+<script src="/__stage/kit/vendor/d3.min.js"></script><script src="/__stage/kit/vendor/d3-sankey.min.js"></script>
+<script src="/__stage/kit/stage.js"></script><script>
+  const graph = d3.sankey().nodeId(d => d.id).extent([[200, 60], [880, 460]])({
+    nodes: [{id: "a"}, {id: "b"}, {id: "c"}],
+    links: [{source: "a", target: "b", value: 900}, {source: "a", target: "c", value: 240}],
+  });
+  d3.select("svg").selectAll("path").data(graph.links).join("path")
+    .attr("class", "link").attr("id", (d, i) => "link-" + i)
+    .attr("d", d3.sankeyLinkHorizontal()).attr("stroke-width", d => d.width);
+</script></body></html>`;
+
+test("a diagram's marks are checked: a drawn flow passes, one that pops in or sits off centre is caught", {timeout: 240000}, async () => {
+  const beats = reveal => [
+    {camera: "body", cut: true, pad: 0},
+    {caption: "Most of them never visit."},
+    {begin: true},
+    {do: ["show", "#total"]},
+    {do: ["count", "#total", 1140]},
+    {do: reveal},
+    {hold: 1.6},
+    {mark: "poster"},
+    {end: true},
+  ];
+  const drawn = stagedFolder(beats(["draw", "#link-0, #link-1"]), DIAGRAM);
+  const {report} = await shoot(filmFromSpec(drawn.spec, drawn.file), {format: "16:9", out: path.join(drawn.dir, "takes"), rehearse: true, check: true, encode: false});
+  assert.deepEqual(report.issues.errors, []);
+  assert.deepEqual(report.issues.warnings.filter(line => /diagram/.test(line)), [], "centred on the caption, inside the gutter");
+  assert.ok(!(report.summary ?? []).some(line => /pop-in/.test(line)), (report.summary ?? []).join("\n"));
+  const shifted = stagedFolder(beats(["draw", "#link-0, #link-1"]), DIAGRAM.replace("[[200, 60], [880, 460]]", "[[320, 60], [1000, 460]]"));
+  const third = await shoot(filmFromSpec(shifted.spec, shifted.file), {format: "16:9", out: path.join(shifted.dir, "takes"), rehearse: true, check: true, encode: false});
+  assert.ok(third.report.issues.warnings.some(line => /^At poster, the diagram's marks centre \d+px right of the frame's centre/.test(line)), third.report.issues.warnings.join("\n"));
+  const popped = stagedFolder(beats(["tick", "#link-0, #link-1"]), DIAGRAM);
+  const second = await shoot(filmFromSpec(popped.spec, popped.file), {format: "16:9", out: path.join(popped.dir, "takes"), rehearse: true, check: true, encode: false});
+  assert.ok((second.report.summary ?? []).some(line => /pop-in/.test(line)), "the probe sees inside the diagram");
+});
+
 test("a beat that calls what the stage's runtime lacks names what it offers", {timeout: 180000}, async () => {
   const {dir, file, spec} = stagedFolder(STAGED.map(beat => (beat.do?.[0] === "set" ? {do: ["morph", "#count"]} : beat)));
   await assert.rejects(shoot(filmFromSpec(spec, file), {format: "16:9", out: path.join(dir, "takes"), rehearse: true, encode: false}), /The stage has no morph; it offers show, hide, away, swap, print/);

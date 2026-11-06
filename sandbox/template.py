@@ -155,6 +155,9 @@ FILM_FILES = (
     # from the dashboard's assets (the fonts come with the diagram layer).
     "web/film/stage/stage.css",
     "web/film/stage/stage.js",
+    "web/film/stage/vendor/d3.min.js",
+    "web/film/stage/vendor/d3-sankey.min.js",
+    "web/film/stage/vendor/plot.umd.min.js",
     *(
         f"web/film/examples/{name}/{file}"
         for name in ("onboarding", "people")

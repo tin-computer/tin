@@ -141,6 +141,42 @@ function floating() {
   return air.every(gap => gap > 1) ? {label: hero.label, width: Math.round(box.width), height: Math.round(box.height)} : null;
 }
 
+// In a staged page: where each diagram's weight sits against the frame's centre, which is the
+// caption's, and its words within a gutter of the frame's edge. Weight is the diagram's marks
+// (its flows, bars, nodes), not its labels, which hang off them.
+function diagramLayout() {
+  const stage = document.querySelector(".stage") || document.body;
+  const frame = stage.getBoundingClientRect();
+  const gutter = Math.round(frame.width * 0.044);
+  const seen = el => {
+    for (let at = el; at && at !== stage; at = at.parentElement) {
+      const style = getComputedStyle(at);
+      if (style.visibility === "hidden" || style.display === "none" || Number(style.opacity) < 0.3) return false;
+    }
+    return true;
+  };
+  return [...document.querySelectorAll("[data-diagram]")].map(diagram => {
+    let [left, top, right, bottom] = [Infinity, Infinity, -Infinity, -Infinity];
+    for (const mark of diagram.querySelectorAll("svg path, svg rect, svg circle, svg ellipse, svg line, svg polygon, svg polyline")) {
+      const box = mark.getBoundingClientRect();
+      const style = getComputedStyle(mark);
+      if ((!box.width && !box.height) || !seen(mark)) continue;
+      const m = mark.getScreenCTM?.();
+      const half = style.stroke && style.stroke !== "none" ? (parseFloat(style.strokeWidth) / 2) * (m ? Math.hypot(m.a, m.b) : 1) : 0;
+      const [x, y] = box.width >= box.height ? [0, half] : [half, 0];
+      [left, top] = [Math.min(left, box.left - x), Math.min(top, box.top - y)];
+      [right, bottom] = [Math.max(right, box.right + x), Math.max(bottom, box.bottom + y)];
+    }
+    const words = [...diagram.querySelectorAll("*")].filter(el => [...el.childNodes].some(node => node.nodeType === 3 && node.textContent.trim()) && seen(el))
+      .filter(el => {
+        const box = el.getBoundingClientRect();
+        return box.left < frame.left + gutter - 0.5 || box.right > frame.right - gutter + 0.5 || box.top < frame.top + gutter / 2 - 0.5 || box.bottom > frame.bottom - gutter / 2 + 0.5;
+      }).map(el => el.textContent.trim().slice(0, 40));
+    if (left === Infinity) return {words, gutter};
+    return {words, gutter, dx: Math.round((left + right) / 2 - (frame.left + frame.right) / 2), dy: Math.round((top + bottom) / 2 - (frame.top + frame.bottom) / 2), width: frame.width, height: frame.height};
+  });
+}
+
 // In a staged page: parts that draw a cursor of their own, beside the one the film draws.
 function drawnCursors() {
   return [...document.querySelectorAll(".stage *, body > *")].filter(el => {
@@ -665,6 +701,11 @@ export class Director {
     if (this.staged) {
       const hero = await this.app.evaluate(floating);
       if (hero) this.warn(`At ${name}, the hero ${hero.label} (${hero.width}×${hero.height}) sits whole on the stage with air on every side: inset it a gutter from the top and left and let it run off the right or the foot.`);
+      for (const diagram of await this.app.evaluate(diagramLayout)) {
+        if (Math.abs(diagram.dx) > diagram.width * 0.01) this.warn(`At ${name}, the diagram's marks centre ${Math.abs(diagram.dx)}px ${diagram.dx > 0 ? "right" : "left"} of the frame's centre, where the caption sits: move them so their middle lines up with the caption's, and let the labels hang off them.`);
+        if (Math.abs(diagram.dy) > diagram.height * 0.04) this.warn(`At ${name}, the diagram's marks centre ${Math.abs(diagram.dy)}px ${diagram.dy > 0 ? "below" : "above"} the middle of the picture: centre them in it.`);
+        if (diagram.words.length) this.warn(`At ${name}, the diagram's words come within the ${diagram.gutter}px gutter of the frame's edge: ${diagram.words.slice(0, 3).map(text => `“${text}”`).join(", ")}.`);
+      }
     }
     // A following camera crops through the screen as it goes, as Screen Studio's does; a framed
     // shot shouldn't.
