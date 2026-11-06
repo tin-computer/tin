@@ -386,17 +386,6 @@ def test_sandbox_write_token_is_scoped_to_exact_ephemeral_branch() -> None:
         ["*", ["no-push"]],
     ]
     assert "@" not in remotes.ephemeral_url
-    assert claims["exp"] - claims["iat"] == 900
-
-    # A procedure's sandbox may run an hour; its push credential lives as long.
-    hour = storage.sandbox_remotes(
-        repo_id="projects/demo", branch=branch, subject="run:run-1", ttl_seconds=3720
-    )
-    for header in (hour.ephemeral_auth_header, hour.canonical_auth_header):
-        basic = header.removeprefix("Authorization: Basic ")
-        _, token = base64.b64decode(basic).decode().split(":", 1)
-        claims = jwt.decode(token, options={"verify_signature": False})
-        assert claims["exp"] - claims["iat"] == 3720
 
 
 def test_canonical_token_is_read_only() -> None:

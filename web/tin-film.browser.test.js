@@ -1,6 +1,7 @@
 // tin-film: a film written as JSON plays a live site from its recording, says what is wrong with a
 // spec before it reaches the screen, and becomes a note that plays the film from its own folder.
 import assert from "node:assert/strict";
+import {spawnSync} from "node:child_process";
 import crypto from "node:crypto";
 import fs from "node:fs";
 import os from "node:os";
@@ -8,7 +9,7 @@ import path from "node:path";
 import test from "node:test";
 import {filmFromSpec, shoot, vtt} from "./film/film.js";
 import {recordingKey} from "./film/recording.js";
-import {boardIssues, deliverDirections, directionsRequest, note, restore, reviewRequest, sketch} from "./film/tin-film.js";
+import {boardIssues, deliverDirections, directionsPacket, note, restore, reviewPacket, sketch, upload} from "./film/tin-film.js";
 import {FAMILIES, STRUCTURES, deal} from "./film/directions.js";
 import {faceName, fontFaces, inspect} from "./film/inspect.js";
 import http from "node:http";
@@ -252,21 +253,23 @@ test("sketches are filmed for a moment and put side by side, each in its poster 
   }
   assert.ok(fs.statSync(path.join(dir, "sketches.jpg")).size > 5_000);
   // Without the product's fonts the kit's face falls back, and each sketch says so.
-  assert.ok(said.some(line => /1\. 1-number: The stage asks for FK Grotesk Neue .* falls back to/.test(line)), said.join("\n"));
+  assert.ok(said.some(line => /1\. 1-number: warning: The stage asks for FK Grotesk Neue .* falls back to/.test(line)), said.join("\n"));
   // Each still and its name, for the founder's pick in Decisions.
   const {sketches} = JSON.parse(fs.readFileSync(path.join(dir, "sketches.json"), "utf8"));
   assert.deepEqual(sketches.map(item => [item.n, item.name, item.still]), [[1, "Number", "1-number/still.jpg"], [2, "Sentence", "2-sentence/still.jpg"]]);
   assert.ok(sketches.every(item => fs.statSync(path.join(dir, item.still)).size > 2_000));
-  // The second look chooses among them by the maker's notes beside the folder.
-  assert.throws(() => directionsRequest(dir), /No notes to choose by/);
+  // A reviewer that didn't sketch them chooses, by the sheet and the maker's notes beside it.
+  assert.throws(() => directionsPacket(dir), /No notes to choose by/);
   fs.writeFileSync(path.join(dir, "..", "storyboard.md"), "Kind: motion graphic\n\n## Directions\n1. A number.\n2. A sentence.\n");
-  const request = directionsRequest(dir);
-  assert.equal(request.kind, "directions");
-  assert.equal(request.sketches, 2);
-  assert.equal(request.images.length, 1);
-  assert.match(request.spec, /## Directions/);
-  // The second look's recommendation and each sketch go into the note the founder picks from.
-  fs.writeFileSync(path.join(dir, "review.json"), JSON.stringify({verdict: "chosen", choice: 2, runner_up: 1, summary: "A sentence says it.", keep: "", findings: []}));
+  const packet = directionsPacket(dir);
+  assert.match(packet, /^# Choose a direction/);
+  assert.match(packet, /least like a stock picture/, "the brief from the guide");
+  assert.ok(packet.includes(path.join(dir, "sketches.jpg")) && packet.includes(path.join(dir, "2-sentence", "still.jpg")));
+  assert.ok(packet.includes(path.join(dir, "review.json")), "where the reviewer answers");
+  // The reviewer's recommendation and each sketch go into the note the founder picks from.
+  fs.writeFileSync(path.join(dir, "review.json"), JSON.stringify({choice: 9, runner_up: 1, why: "A sentence says it.", keep: ""}));
+  assert.throws(() => deliverDirections(dir, path.join(os.tmpdir(), "x.md")), /one of the sketches' numbers/);
+  fs.writeFileSync(path.join(dir, "review.json"), JSON.stringify({choice: 2, runner_up: 1, why: "A sentence says it.", keep: ""}));
   fs.writeFileSync(path.join(dir, "2-sentence", "about.txt"), "One sentence carries the claim.\n");
   const project = fs.mkdtempSync(path.join(os.tmpdir(), "tin-film-project-"));
   const notePath = path.join(project, "films", "funnel.md");
@@ -299,7 +302,7 @@ test("a delivered film comes back as a staged film to change", () => {
   assert.throws(() => restore(path.join(project, "films", "funnel.md"), work), /no stage\.html/);
 });
 
-test("a second look sends the take's sheet and marked stills with the spec and what the checks found", () => {
+test("a second look is a brief for a reviewer that didn't make the film, with the stills to open", () => {
   const {dir, file} = filmFolder(BEATS);
   const take = path.join(dir, "takes", "rehearse", "film", "4x5");
   fs.mkdirSync(path.join(take, "marks"), {recursive: true});
@@ -307,23 +310,54 @@ test("a second look sends the take's sheet and marked stills with the spec and w
   fs.writeFileSync(path.join(take, "sheet.png"), png);
   for (const name of ["01-poster.png", "02-how.jpg", "notes.txt"]) fs.writeFileSync(path.join(take, "marks", name), png);
   fs.writeFileSync(path.join(take, "report.json"), JSON.stringify({issues: {errors: [], warnings: ["Text under 22px."]}, summary: ["0.5s jump"]}));
-  const request = reviewRequest(file, take);
-  assert.equal(request.images.length, 3, "the sheet and the two marked stills");
-  assert.deepEqual(request.images.map(image => image.media_type), ["image/png", "image/png", "image/jpeg"]);
-  assert.ok(request.images.every(image => image.data_base64 === png.toString("base64")));
-  assert.equal(request.checks, "Text under 22px.\n0.5s jump");
-  assert.equal(request.spec, fs.readFileSync(file, "utf8"));
-  assert.match(request.request_id, /^[0-9a-f]{32}$/);
-  assert.equal(reviewRequest(file, take).request_id, request.request_id, "an unchanged take asks the same question");
-  assert.equal(request.storyboard, "");
-  assert.equal(request.example, null);
-  // A film started from a worked example sends its storyboard and the example's sheet, the bar.
-  fs.writeFileSync(path.join(dir, "storyboard.md"), "# Fold\n\n## 1. Herd\n- Mark: poster\n- Caption: One press herds every sheep.\n");
+  const packet = reviewPacket(file, take);
+  assert.match(packet, /^# Review this film/);
+  assert.match(packet, /No eyebrows/, "the brief from the guide");
+  for (const name of ["sheet.png", path.join("marks", "01-poster.png"), path.join("marks", "02-how.jpg")]) assert.ok(packet.includes(path.join(take, name)), name);
+  assert.ok(!packet.includes("notes.txt"), "only images");
+  assert.match(packet, /- Text under 22px\.\n- 0\.5s jump/);
+  assert.ok(packet.includes(path.resolve(file)));
+  assert.ok(!packet.includes("example.jpg"));
+  // A film started from a worked example names its storyboard and the example's sheet, the bar.
+  fs.writeFileSync(path.join(dir, "storyboard.md"), "# Fold\n");
   fs.writeFileSync(path.join(dir, "example.jpg"), png);
-  const held = reviewRequest(file, take);
-  assert.match(held.storyboard, /## 1\. Herd/);
-  assert.deepEqual(held.example, {media_type: "image/jpeg", data_base64: png.toString("base64")});
-  assert.notEqual(held.request_id, request.request_id, "a new storyboard asks a new question");
+  const held = reviewPacket(file, take);
+  assert.ok(held.includes(path.join(dir, "storyboard.md")) && held.includes(path.join(dir, "example.jpg")));
+});
+
+test("upload sends the note and its folder to the link, and says what Tin answered", async () => {
+  const project = fs.mkdtempSync(path.join(os.tmpdir(), "tin-film-project-"));
+  fs.mkdirSync(path.join(project, "films", "funnel.assets"), {recursive: true});
+  fs.writeFileSync(path.join(project, "films", "funnel.md"), "# Funnel\n");
+  fs.writeFileSync(path.join(project, "films", "funnel.assets", "1-number.jpg"), "jpeg");
+  const received = [];
+  const server = http.createServer((request, response) => {
+    const chunks = [];
+    request.on("data", chunk => chunks.push(chunk));
+    request.on("end", () => {
+      received.push({method: request.method, url: request.url, type: request.headers["content-type"], body: Buffer.concat(chunks)});
+      const refused = request.url.endsWith("refuse");
+      response.writeHead(refused ? 422 : 200, {"content-type": "application/json"});
+      response.end(JSON.stringify(refused ? {detail: "The note can't be kept.", problems: ["funnel.assets/2-x.jpg is missing"]} : {ok: true, next: "Kept as version 1.", decisions: "https://app.tin.test/decisions", dropped: []}));
+    });
+  });
+  await new Promise(resolve => server.listen(0, "127.0.0.1", resolve));
+  const base = `http://127.0.0.1:${server.address().port}/api/film-uploads`;
+  try {
+    await assert.rejects(upload(path.join(project, "films", "funnel.md"), "https://elsewhere.test/x"), /usage/);
+    const kept = await upload(path.join(project, "films", "funnel.md"), `${base}/token-abc`);
+    assert.equal(kept.next, "Kept as version 1.");
+    assert.equal(received[0].method, "PUT");
+    assert.equal(received[0].type, "application/gzip");
+    const listing = spawnSync("tar", ["-tzf", "-"], {input: received[0].body}).stdout.toString().split("\n").filter(Boolean).sort();
+    assert.deepEqual(listing, ["funnel.assets/", "funnel.assets/1-number.jpg", "funnel.md"]);
+    const refused = await upload(path.join(project, "films", "funnel.md"), `${base}/token-refuse`);
+    assert.deepEqual(refused.problems, ["funnel.assets/2-x.jpg is missing"]);
+    assert.equal(process.exitCode, 1, "a refused upload exits 1");
+  } finally {
+    process.exitCode = 0;
+    server.close();
+  }
 });
 
 test("inspect keeps the face a page's text is set in, with its files, not the body's", {timeout: 120000}, async () => {
@@ -381,7 +415,7 @@ test("an eyebrow fails the take; a table's column header does not", {timeout: 18
   const page = body => `<!doctype html><html><head><link rel="stylesheet" href="/__stage/kit/stage.css"></head><body><div class="stage"><div class="arrive" style="position: absolute; left: 48px; top: 40px;">${body}</div></div><script src="/__stage/kit/stage.js"></script></body></html>`;
   const sketches = {
     "1-kicker": `<div style="font-size: 11px; letter-spacing: 0.12em; text-transform: uppercase;">Mentions</div><div style="font-size: 44px;">“Sample Tool”</div>`,
-    "2-table": `<table><thead><tr><th style="font-size: 11px; letter-spacing: 0.12em; text-transform: uppercase; text-align: left;">Name</th></tr></thead><tbody><tr><td style="font-size: 30px;">Mira Tallow</td></tr></tbody></table>`,
+    "2-table": `<table><thead><tr><th style="font-size: 14px; letter-spacing: 0.12em; text-transform: uppercase; text-align: left;">Name</th></tr></thead><tbody><tr><td style="font-size: 30px;">Mira Tallow</td></tr></tbody></table>`,
   };
   for (const [name, body] of Object.entries(sketches)) {
     fs.mkdirSync(path.join(dir, name), {recursive: true});
@@ -398,4 +432,34 @@ test("an eyebrow fails the take; a table's column header does not", {timeout: 18
   }
   assert.ok(said.some(line => line.includes("1. 1-kicker: error: At poster, an eyebrow: “Mentions” sits small above ““Sample Tool””")), said.join("\n"));
   assert.ok(!said.some(line => /2-table: error/.test(line)), said.join("\n"));
+  assert.equal(process.exitCode, 1, "a sketch with an error fails the command");
+  process.exitCode = 0;
+});
+
+test("a sketch with words on words or text too small to read fails; a clean one passes", {timeout: 180000}, async () => {
+  const dir = path.join(fs.mkdtempSync(path.join(os.tmpdir(), "tin-film-layout-")), "sketches");
+  const page = body => `<!doctype html><html><head><link rel="stylesheet" href="/__stage/kit/stage.css"><style>.stage { background: #141210; color: #f6f1e7; } .card { position: absolute; left: 140px; top: 120px; width: 560px; height: 260px; background: #1b1917; border-radius: 16px; }</style></head><body><div class="stage">${body}</div><script src="/__stage/kit/stage.js"></script></body></html>`;
+  const sketches = {
+    "1-crowded": page('<div class="card"></div><p style="position: absolute; left: 180px; top: 170px; margin: 0; font-size: 40px;">Which tool should I use?</p><p style="position: absolute; left: 196px; top: 176px; margin: 0; font-size: 40px;">Use Sample Tool today.</p><p style="position: absolute; left: 180px; top: 300px; margin: 0; font-size: 9px;">A sample answer, made up for this film</p><p style="position: absolute; left: 180px; top: 500px; margin: 0; font-size: 28px;">Files / reports / AI-VISIBILITY.md</p>'),
+    "2-clean": page('<div class="card"><p style="margin: 64px 56px; font-size: 40px;">Use Sample Tool.</p></div>'),
+  };
+  for (const [name, html] of Object.entries(sketches)) {
+    fs.mkdirSync(path.join(dir, name), {recursive: true});
+    fs.writeFileSync(path.join(dir, name, "index.html"), html);
+    fs.writeFileSync(path.join(dir, name, "caption.txt"), "AI answers are the new front door.");
+  }
+  const said = [];
+  const log = console.log;
+  console.log = (...args) => { said.push(args.join(" ")); log(...args); };
+  try {
+    await sketch(dir);
+  } finally {
+    console.log = log;
+  }
+  assert.ok(said.some(line => /1-crowded: error: .*layout\/text-overlap/.test(line)), said.join("\n"));
+  assert.ok(said.some(line => /1-crowded: error: \d+ text runs are under \d+px/.test(line)), said.join("\n"));
+  assert.ok(said.some(line => /1-crowded: error: At poster, the crop cuts “Files \/ reports \/ AI-VISIBILITY\.md”/.test(line)), said.join("\n"));
+  assert.ok(!said.some(line => /2-clean: error/.test(line)), said.join("\n"));
+  assert.equal(process.exitCode, 1);
+  process.exitCode = 0;
 });

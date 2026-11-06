@@ -156,7 +156,7 @@ if [[ "${TIN_PROCEDURE_STUDIO:-}" == "1" ]]; then
   # Camoufox, renders the demo, and asks the switchboard for voice through the run-bound grant.
   # The provider credential never enters the sandbox.
   for tool in /opt/tin-lite/studio/tin-studio /opt/tin-lite/studio-venv/bin/python \
-              /opt/tin-lite/studio/resvg /usr/bin/ffmpeg /opt/tin-lite/studio/tin-film; do
+              /opt/tin-lite/studio/resvg /usr/bin/ffmpeg; do
     if [[ ! -x "${tool}" ]]; then
       echo "studio profile requires ${tool} in the sandbox template" >&2
       exit 69

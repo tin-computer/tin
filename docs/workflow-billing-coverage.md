@@ -145,8 +145,8 @@ Both readiness probes run before model execution, without falling back to OAuth.
 
 ### Studio and hosted defaults — September 16, 2026
 
-Studio/video (`creative.product_demo`, and `creative.feature_film` since November 2026) now
-uses the protected `studio_api` runner for API-enabled runs. Its budget includes OpenAI usage and supplier-reported fal synthesis and
+Studio/video (`creative.product_demo`) now uses the protected `studio_api` runner for
+API-enabled runs. Its budget includes OpenAI usage and supplier-reported fal synthesis and
 transcription costs. Paid narrated-video acceptance and hosted-default activation are recorded
 in [Studio API and hosted credits](studio-api-and-hosted-credits.md). Existing OAuth runs keep
 their original contract.

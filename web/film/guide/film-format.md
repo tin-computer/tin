@@ -43,7 +43,7 @@ and `ready`, and write the rest for this film.
 - `screens`: the screen per format. `{"16:9": 1080}` for a 16:9 film; leave 4:5 and 1:1 at their
   default (720).
 - `now`: the time the stage's clock shows. A calendar in the stage should agree with it.
-- `format`: the run's `format`: `16:9`, `4:5` or `1:1`.
+- `format`: `16:9` (LinkedIn, X, the site), `4:5` or `1:1` (a feed seen on phones).
 - `theme`: `dark` (the default) puts the stage on black with white captions; `light` on white with
   dark ones. Pick the one closest to the product's own ground.
 - `ready`: a selector the stage shows once it has loaded; `.stage`.

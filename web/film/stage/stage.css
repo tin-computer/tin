@@ -244,6 +244,11 @@ body { background: var(--ground); color: var(--ink); font-family: var(--sans); f
 
 /* A popover: the reason under a value, where the product shows it on hover. Small: it may fade. */
 .pop { position: absolute; padding: 13px 16px 12px; border-radius: 10px; background: var(--raised); box-shadow: var(--shadow-satellite); font-size: 15px; line-height: 20px; color: var(--ink); }
+/* A popover comes in over other words: its ground is whole within a few frames, and only then
+   do its own words fade in, so the words under it never show through them. */
+.pop.arrive { transition: opacity 0.12s linear, transform 0.4s var(--arrive); }
+.pop.arrive > * { opacity: 0; transition: opacity 0.35s var(--arrive) 0.12s; }
+.pop.arrive.is-on > * { opacity: 1; }
 .pop p { margin: 0; }
 .pop code { display: block; margin-top: 8px; font-family: var(--mono); font-size: 13px; line-height: 18px; color: var(--accent); }
 

@@ -35,7 +35,6 @@ from tin_lite.domain import (
     SCAN_REPORT_WORKFLOW_NAME,
     SITE_HEALTH_WORKFLOW_NAME,
     STUDIO_PROVIDER,
-    STUDIO_REVIEW_CAPABILITY,
     STUDIO_VOICE_CAPABILITY,
     TEST_IDENTITY_SMS_CAPABILITY,
     TEST_IDENTITY_WRITE_CAPABILITY,
@@ -127,7 +126,6 @@ from tin_lite.site_health import (
     fetch_live_page_evidence,
     validate_site_health_model_route,
 )
-from tin_lite.studio_contracts import FEATURE_FILM_VALIDATOR
 from tin_lite.system_wiki import read_system_wiki_document
 from tin_lite.usage_capture import (
     ObservationAlreadyRecorded,
@@ -3374,13 +3372,10 @@ class TinActivities:
                         details={"previous_sandbox_id": previous_sandbox_id},
                         dedupe_key=f"{execution_key}:sandbox_recovered:{sandbox_id}",
                     )
-                # The push credential outlives the sandbox by a little, as its run grants do: a
-                # procedure that delivers late in its hour can still push its result.
                 remotes = self._storage.sandbox_remotes(
                     repo_id=project.state_repo_id,
                     branch=run.ephemeral_branch,
                     subject=f"run:{run.id}:procedure",
-                    ttl_seconds=max(900, procedure.sandbox.timeout_seconds + 120),
                 )
                 public_host = urlsplit(self._settings.switchboard_public_url).hostname
                 if not public_host:
@@ -3500,12 +3495,7 @@ class TinActivities:
                         connection_id=None,
                         external_account_id="",
                         provider_key=STUDIO_PROVIDER,
-                        # A feature film may also ask for a second look at its stills.
-                        capabilities=(
-                            (STUDIO_VOICE_CAPABILITY, STUDIO_REVIEW_CAPABILITY)
-                            if procedure.output_validator == FEATURE_FILM_VALIDATOR
-                            else (STUDIO_VOICE_CAPABILITY,)
-                        ),
+                        capabilities=(STUDIO_VOICE_CAPABILITY,),
                         ttl_seconds=procedure.sandbox.timeout_seconds + 60,
                     )
                     run_tools_url = (
@@ -4532,8 +4522,7 @@ class TinActivities:
                 )
                 if summarized is not None:
                     result["run_summary"] = summarized
-                # A revision's notes say what changed; a film carries no notes file.
-                if procedure.review_revision_context is not None and procedure.companion_path:
+                if procedure.review_revision_context is not None:
                     from tin_lite.article_review import change_summary
 
                     revision_notes = await self._storage.read_procedure_checkpoint(

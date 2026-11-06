@@ -43,7 +43,6 @@ LINKEDIN_LISTEN_CHECKPOINTS = (("1h", 1), ("4h", 4), ("24h", 24), ("72h", 72))
 LINKEDIN_LISTEN_READ_ATTEMPTS = 5
 CREATIVE_CHARACTER_WORKFLOW_NAME = "creative.character"
 CREATIVE_PRODUCT_DEMO_WORKFLOW_NAME = "creative.product_demo"
-CREATIVE_FEATURE_FILM_WORKFLOW_NAME = "creative.feature_film"
 CODEX_PROCEDURE_EXECUTOR = "codex.procedure"
 # A run admitted while a prerequisite run is still in progress carries this Temporal memo
 # (the awaited run ids) and waits, with no compute, up to this many minutes for them.
@@ -66,8 +65,6 @@ TEST_IDENTITY_SMS_CAPABILITY = "test_identity.sms.read"
 # project-owned integration connection.
 STUDIO_PROVIDER = "tin.studio"
 STUDIO_VOICE_CAPABILITY = "studio.voice"
-# A feature film's second look (film_review).
-STUDIO_REVIEW_CAPABILITY = "studio.review"
 TEST_IDENTITY_STATUSES = ("pending", "active", "blocked", "failed", "retired")
 
 

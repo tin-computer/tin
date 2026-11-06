@@ -57,6 +57,7 @@ from tin_lite.domain import (
     Workspace,
 )
 from tin_lite.failures import public_error_text
+from tin_lite.film_api import router as film_router
 from tin_lite.growth_onboarding import KEY as GROWTH_ONBOARDING_KEY
 from tin_lite.growth_onboarding import expectation as workflow_expectation
 from tin_lite.growth_onboarding_control import OnboardingPickError, ensure_onboarding_approvable
@@ -179,6 +180,7 @@ router.include_router(linkedin_requests_router)
 router.include_router(collection_router)
 router.include_router(public_catalog_router)
 router.include_router(website_change_router)
+router.include_router(film_router)
 router.include_router(protected_paths_router)
 router.include_router(official_profiles_router)
 logger = logging.getLogger(__name__)
@@ -1057,18 +1059,6 @@ class WorkflowRevisionRequest(BaseModel):
 
     feedback: str = Field(min_length=1, max_length=8000)
     reference_files: list[str] = Field(default_factory=list, max_length=8)
-    request_id: UUID
-    review_token: str = Field(min_length=64, max_length=64)
-    billing_quote_id: UUID | None = None
-
-
-class FilmDirectionPick(BaseModel):
-    """A film's direction to build, or none to sketch others, with an optional note."""
-
-    model_config = ConfigDict(extra="forbid")
-
-    direction: int | None = Field(default=None, ge=1, le=8)
-    note: str = Field(default="", max_length=2000)
     request_id: UUID
     review_token: str = Field(min_length=64, max_length=64)
     billing_quote_id: UUID | None = None
@@ -5260,39 +5250,6 @@ async def request_workflow_changes(
             request_id=payload.request_id,
             token=payload.review_token,
             reference_files=payload.reference_files,
-            billing_quote_id=payload.billing_quote_id,
-        )
-        return RunView.model_validate(run)
-    except BillingError as exc:
-        raise HTTPException(status_code=exc.status, detail=exc.diagnostic()) from exc
-    except LookupError as exc:
-        raise HTTPException(status_code=404, detail=public_error_text(exc)) from exc
-    except (ReviewConflict, RuntimeError) as exc:
-        raise HTTPException(status_code=409, detail=public_error_text(exc)) from exc
-    except ValueError as exc:
-        raise HTTPException(status_code=422, detail=public_error_text(exc)) from exc
-
-
-@router.post("/api/workflows/runs/{run_id}/film-direction", response_model=RunView, status_code=202)
-async def pick_film_direction(
-    run_id: UUID,
-    payload: FilmDirectionPick,
-    request: Request,
-    user: AuthContext = AUTHENTICATED_USER,
-):
-    """Build one of a film's sketched directions, or sketch others."""
-    from tin_lite import film_directions
-    from tin_lite.workflow_review_store import ReviewConflict
-
-    try:
-        run = await film_directions.pick(
-            _workflow_reviews(request),
-            run_id=run_id,
-            actor=user.clerk_user_id,
-            token=payload.review_token,
-            request_id=payload.request_id,
-            direction=payload.direction,
-            note=payload.note,
             billing_quote_id=payload.billing_quote_id,
         )
         return RunView.model_validate(run)

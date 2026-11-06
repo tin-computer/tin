@@ -35,10 +35,8 @@ from tin_lite.studio_contracts import (
     CHARACTER_SVG_VALIDATOR,
     DEMO_VIDEO_MEDIA_TYPE,
     DEMO_VIDEO_VALIDATOR,
-    FEATURE_FILM_VALIDATOR,
     MAX_CHARACTER_SVG_BYTES,
     MAX_DEMO_VIDEO_BYTES,
-    parse_film_output,
     validate_character_svg,
     validate_demo_video,
 )
@@ -130,7 +128,6 @@ ARTIFACT_VALIDATORS = frozenset(
         PRODUCT_AUDIT_VALIDATOR,
         CHARACTER_SVG_VALIDATOR,
         DEMO_VIDEO_VALIDATOR,
-        FEATURE_FILM_VALIDATOR,
     }
 )
 SLUG_TEMPLATE_VALIDATORS = frozenset(
@@ -140,7 +137,6 @@ SLUG_TEMPLATE_VALIDATORS = frozenset(
         *REVIEWED_DIAGRAM_VALIDATORS,
         CHARACTER_SVG_VALIDATOR,
         DEMO_VIDEO_VALIDATOR,
-        FEATURE_FILM_VALIDATOR,
     }
 )
 HOST_TIMESTAMP_TEMPLATE_VALIDATORS = frozenset(
@@ -699,9 +695,6 @@ class PinnedCodexProcedure:
         if self.review_revision_context is not None:
             from tin_lite.article_review import revision_prompt
 
-            if self.output_validator == FEATURE_FILM_VALIDATOR:
-                from tin_lite.film_directions import revision_prompt
-
             context["prompt"] += "\n" + revision_prompt(self.review_revision_context)
         if identity is not None:
             if not self.identity.enabled:
@@ -1201,15 +1194,6 @@ def validate_codex_procedure_definition(definition: dict[str, Any]) -> CodexProc
             or not output_path_template.lower().endswith(".mp4")
         ):
             raise ValueError("demo video validation requires a demos/{slug}.mp4 output")
-        if output_validator == FEATURE_FILM_VALIDATOR and (
-            output_media_type != "text/markdown"
-            or output_path_template is None
-            or not output_path_template.startswith("films/")
-            or not output_path_template.endswith(".md")
-            or output_assets is None
-            or "mp4" not in output_assets.kinds
-        ):
-            raise ValueError("film validation requires a films/{slug}.md note that carries an MP4")
         if output_media_type in BINARY_ARTIFACT_MEDIA_TYPES and output_validator is None:
             raise ValueError("binary procedure artifacts require a validator")
         if output_validator == EMAIL_SHORTLIST_VALIDATOR and (
@@ -1629,8 +1613,6 @@ def validate_procedure_artifact(
         content_refresh.validate_document(content, spec.refresh_context)
     elif spec.output_validator == CHARACTER_SVG_VALIDATOR:
         validate_character_svg(content)
-    elif spec.output_validator == FEATURE_FILM_VALIDATOR:
-        parse_film_output(content, folder=(spec.assets_folder or "").rsplit("/", 1)[-1])
     elif spec.output_validator == EMAIL_SHORTLIST_VALIDATOR:
         _validate_email_shortlist(text)
     elif spec.output_validator == SIGNUP_WALKTHROUGH_VALIDATOR:

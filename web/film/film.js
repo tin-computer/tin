@@ -9,14 +9,19 @@ import fs from "node:fs";
 import path from "node:path";
 import {fileURLToPath, pathToFileURL} from "node:url";
 import {chromium} from "playwright";
-import {checkFrames, describe, summary} from "./checks.js";
+import {STAGE_RULES, checkFrames, describe, summary} from "./checks.js";
 import {measureFrame} from "./probe.js";
 import {findSecrets, openRecording} from "./recording.js";
 import {player} from "./spec.js";
-import {serveApp} from "../app-fixture.js";
 import {installVirtualClock} from "./clock.js";
 import {bezier} from "./ease.js";
 import {installScreen, installStage} from "./overlay.js";
+
+// Tin's own films play its dashboard from the repository's fixture; the kit run as a package
+// (npx) serves only the film's origin.
+const FIXTURE = fileURLToPath(new URL("../app-fixture.js", import.meta.url));
+const DASHBOARD = fs.existsSync(FIXTURE);
+const {serveApp} = await import(DASHBOARD ? pathToFileURL(FIXTURE).href : "./origin.js");
 
 export const FPS = 30;
 // The stage kit's parts and runtime (stage/), served beside a staged film's own page.
@@ -204,9 +209,11 @@ function fallbackType() {
   return [...found.values()];
 }
 
-// Runs in the stage: eyebrows, the small label set above a title, a card's words or a number
-// (uppercase, letter-spaced or mono: "HOW IT WORKS", "MENTIONS"). Tin never uses them
-// (design_rules.py). A table's column headers are not eyebrows.
+// Runs in the stage: eyebrows, the small label set above a title, a card's words or a number,
+// lined up with it (uppercase, letter-spaced or mono: "HOW IT WORKS", "MENTIONS"). Tin never uses
+// them (design_rules.py). Only what the picture shows counts. A table's column headers are not
+// eyebrows, and neither is data set in mono: a date or a time ("mon 2", "10:02") over a calendar's
+// or a card's words.
 function eyebrows() {
   const own = element => [...element.childNodes].filter(node => node.nodeType === 3).map(node => node.textContent).join("").replace(/\s+/g, " ").trim();
   const parts = [...document.querySelectorAll(".stage *")].flatMap(element => {
@@ -215,6 +222,13 @@ function eyebrows() {
     const box = element.getBoundingClientRect();
     const style = getComputedStyle(element);
     if (box.width < 2 || box.height < 2 || style.visibility === "hidden" || style.display === "none" || Number(style.opacity) < 0.05) return [];
+    // On screen and on top: a page under a sliding window or past the window's edge isn't seen.
+    const x = (Math.max(box.left, 0) + Math.min(box.right, innerWidth)) / 2, y = (Math.max(box.top, 0) + Math.min(box.bottom, innerHeight)) / 2;
+    if (x <= 0 || y <= 0 || x >= innerWidth || y >= innerHeight) return [];
+    const stack = document.elementsFromPoint(x, y);
+    const at = stack.findIndex(item => element.contains(item));
+    const opaque = item => !/rgba\(0, 0, 0, 0\)|transparent/.test(getComputedStyle(item).backgroundColor);
+    if (at < 0 || stack.slice(0, at).some(item => !item.contains(element) && opaque(item))) return [];
     const size = parseFloat(style.fontSize);
     const letters = text.replace(/[^A-Za-z]/g, "");
     return [{text, size, top: box.top, bottom: box.bottom, left: box.left, right: box.right,
@@ -226,8 +240,10 @@ function eyebrows() {
   for (const label of parts) {
     if (label.text.split(" ").length > 6 || /[.!?:]$/.test(label.text)) continue;
     if (!(label.upper || label.spaced || label.mono)) continue;
+    if (!label.upper && !label.spaced && /\d/.test(label.text)) continue;
+    const lined = other => Math.abs(other.left - label.left) <= 3 || Math.abs((other.left + other.right) / 2 - (label.left + label.right) / 2) <= 3;
     const under = parts.filter(other => other !== label && other.top >= label.bottom - 2 && other.top - label.bottom <= Math.max(28, label.size * 2.6)
-      && other.left < label.right && other.right > label.left && other.size >= label.size * 1.2)
+      && other.left < label.right && other.right > label.left && other.size >= label.size * 1.2 && lined(other))
       .sort((a, b) => a.top - b.top)[0];
     if (under) found.push({text: label.text, under: under.text.slice(0, 40)});
   }
@@ -533,7 +549,14 @@ export class Director {
     const floor = Math.round(SMALLEST_TEXT * Math.min(this.size.width, this.size.height));
     const runs = [...this.small].sort((a, b) => a[1].size - b[1].size);
     const marks = [...new Set(runs.flatMap(([, item]) => [...item.marks]))];
-    this.warn(`${runs.length} text runs are under ${floor}px (at ${marks.join(", ")}): ${runs.slice(0, 5).map(([text, item]) => `“${text}” ${item.size}px`).join(", ")}.`);
+    this.misdrawn(`${runs.length} text runs are under ${floor}px (at ${marks.join(", ")}): ${runs.slice(0, 5).map(([text, item]) => `“${text}” ${item.size}px`).join(", ")}.`);
+  }
+
+  // A stage is drawn for the film, so what a viewer can't read on it is an error; a product's own
+  // screens, filmed as they are, are only warned about.
+  misdrawn(message) {
+    if (this.staged) this.error(message);
+    else this.warn(message);
   }
 
   // A hand goes where it's going. A trip that only steps aside and then comes most of the way back
@@ -776,7 +799,7 @@ export class Director {
     // A following camera crops through the screen as it goes, as Screen Studio's does; a framed
     // shot shouldn't.
     const cut = this.follower ? [] : await this.app.evaluate(picture => window.__film.sliced(picture), this.onScreen(this.picture));
-    if (cut.length) this.warn(`At ${name}, the crop cuts ${cut.slice(0, 3).map(text => `“${text}”`).join(", ")}.`);
+    if (cut.length) this.misdrawn(`At ${name}, the crop cuts ${cut.slice(0, 3).map(text => `“${text}”`).join(", ")}.`);
     const sizes = (await this.app.evaluate(frame => window.__film.textSizes(frame), this.onScreen(this.picture)))
       .map(item => ({...item, size: Math.round((item.size * this.windowScale / this.scale) * 10) / 10}));
     const floor = SMALLEST_TEXT * Math.min(this.size.width, this.size.height);
@@ -915,7 +938,7 @@ export class Director {
       if (last && last.frames[1] === n - 1) last.frames[1] = n;
       else accepts.push({rule: "layout/text-cut", frames: [n, n], reason: "the following camera crops through the screen as it goes, as Screen Studio's does"});
     }
-    this.findings.push(...checkFrames(this.measured, {name, fps: FPS, offset, marks, accepts}));
+    this.findings.push(...checkFrames(this.measured, {name, fps: FPS, offset, marks, accepts, staged: this.staged}));
     this.measured = [];
   }
 
@@ -1063,14 +1086,15 @@ export function srt(captions, total) {
 // The stage: the backdrop, and the dashboard in its own window, an iframe exactly the screen's
 // size, `margin` in from the corner. A corner is rounded where both its sides sit on the
 // backdrop; an edge that runs off the picture stays square. The hairline edge, and on white a
-// short shadow that fades out above the band. The app's stylesheet gives the captions its type.
+// short shadow that fades out above the band. The app's stylesheet (in Tin's repository) gives
+// the captions Tin's type; a stage's own fonts.css gives them the product's.
 const STAGE = "/__film/stage";
-function stagePage({screen, margin: m, room, view, backdrop, theme, fonts, start}) {
+function stagePage({screen, margin: m, room, view, backdrop, theme, fonts, start, face = null}) {
   const round = (a, b) => (a && b ? "12px" : "0");
   const edge = theme === "light" ? "0 0 0 1px rgb(0 0 0 / 9%), 0 2px 10px rgb(0 0 0 / 7%)" : "0 0 0 1px rgb(255 255 255 / 9%)";
   const framed = m.top || m.right || m.bottom || m.left;
   return `<!doctype html><html data-theme="${theme}"><head><meta charset="utf-8">
-<link rel="stylesheet" href="/assets/app.css">${fonts ? '<link rel="stylesheet" href="/film-fonts/fonts.css">' : ""}
+${DASHBOARD ? '<link rel="stylesheet" href="/assets/app.css">' : ""}${fonts ? '<link rel="stylesheet" href="/film-fonts/fonts.css">' : ""}${face ? `<link rel="stylesheet" href="/__stage/fonts.css"><style>:root { --sans: ${face}, sans-serif; }</style>` : ""}
 <style>
   html, body { margin: 0 !important; padding: 0 !important; width: ${view.width}px; height: ${view.height}px; min-height: 0 !important; overflow: hidden !important; background: ${backdrop} !important; }
   #room { position: absolute; left: 0; top: 0; width: ${room.width}px; height: ${room.height}px; transform-origin: 0 0; }
@@ -1118,6 +1142,9 @@ export async function shoot(film, {format = "4:5", theme = film.theme || "dark",
     const view = {width: size.width / deviceScale, height: size.height / deviceScale};
     const context = await browser.newContext({viewport: view, deviceScaleFactor: rehearse ? 1 : deviceScale, colorScheme: theme, timezoneId: film.timezone || "UTC", locale: "en-US", ...(site?.session ? {storageState: site.session} : {})});
     const backdrop = BACKDROP[theme] || BACKDROP.dark;
+    // A stage set in the product's type captions in it too: the first face its fonts.css names.
+    const typeSheet = world.stage && path.join(world.stage.dir, "fonts.css");
+    const face = typeSheet && fs.existsSync(typeSheet) ? fs.readFileSync(typeSheet, "utf8").match(/font-family:\s*(["'][^"']+["']|[^;\s]+)/)?.[1] ?? null : null;
     await context.route("**/*", async route => {
       const url = route.request().url();
       if (!url.startsWith(served.base)) {
@@ -1126,7 +1153,7 @@ export async function shoot(film, {format = "4:5", theme = film.theme || "dark",
         return route.abort();
       }
       const {pathname} = new URL(url);
-      if (pathname === STAGE) return route.fulfill({body: stagePage({screen, margin, room, view, backdrop, theme, fonts: Boolean(fonts), start: site?.url ? site.url : world.stage ? `/__stage/${world.stage.entry}` : `${world.start || "/system"}?project=project`}), contentType: "text/html"});
+      if (pathname === STAGE) return route.fulfill({body: stagePage({screen, margin, room, view, backdrop, theme, fonts: Boolean(fonts), face, start: site?.url ? site.url : world.stage ? `/__stage/${world.stage.entry}` : `${world.start || "/system"}?project=project`}), contentType: "text/html"});
       // A staged film's page and the kit's parts it uses (/__stage/kit/…); nothing outside its folder.
       if (world.stage && pathname.startsWith("/__stage/")) {
         const name = decodeURIComponent(pathname.slice("/__stage/".length));
@@ -1152,7 +1179,7 @@ export async function shoot(film, {format = "4:5", theme = film.theme || "dark",
     });
     await context.addInitScript(`(${installVirtualClock})(${JSON.stringify({fps: FPS, epoch: now})});`);
     await context.addInitScript(`(${installScreen})();`);
-    await context.addInitScript(`(${installStage})(${JSON.stringify({backdrop, path: STAGE, size, dpr: deviceScale})});`);
+    await context.addInitScript(`(${installStage})(${JSON.stringify({backdrop, ink: theme === "light" ? "#141210" : "#f6f1e7", path: STAGE, size, dpr: deviceScale})});`);
     await context.addInitScript(({member, theme, image}) => {
       window.Clerk = {load: async () => {}, isSignedIn: true, user: {id: "member", firstName: member, imageUrl: image}, session: {getToken: async () => "synthetic"}, mountSignIn: () => {}};
       localStorage.setItem("tin-lite:theme", theme);
@@ -1229,6 +1256,9 @@ export async function shoot(film, {format = "4:5", theme = film.theme || "dark",
     if (recorded) report.recording = {name: site.recording, ...recorded};
     if (director.checking) report.checks = director.findings.map(describe);
     if (director.checking) report.summary = summary(director.findings);
+    // A stage's layout errors fail the take: the founder would see them.
+    const misdrawn = director.findings.filter(item => !item.accepted && item.severity === "error" && (item.rule in STAGE_RULES || item.rule === "layout/text-cut"));
+    if (director.checking && director.staged) issues.errors.push(...summary(misdrawn));
     if (encoder) {
       encoder.child.stdin.end();
       await encoder.done;

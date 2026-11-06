@@ -368,8 +368,7 @@ block that `report_words` reads back for `get_run`; the review explanation store
 is Tin's view alone, since the dashboard shows it to the founder. `tell_the_founder` is the two
 joined, kept one release for clients on older instructions.
 
-`creative.character`, `creative.product_demo` and `creative.feature_film` form the
-`creative-studio` system.
+`creative.character` and `creative.product_demo` form the `creative-studio` system.
 `creative.character` is a native model workflow: the switchboard fetches the product page itself
 (public HTTPS only, resolved addresses checked, HTML and up to three stylesheets bounded),
 extracts what a designer would notice (title, description, headings, calls to action, body
@@ -402,10 +401,6 @@ is the first binary procedure artifact, allowed up to 16 MB only for that declar
 Both workflows enter the human-review queue, and Files plays the video and shows the character
 inline. Migration 027 lets `run_tool_grants` carry a `tin.studio` grant with no integration
 connection. The studio image is verified live with `uv run python scripts/verify_studio_sandbox.py`.
-`creative.feature_film` runs on the same studio profile with the film kit (`web/film`) as
-`tin-film`: it films the founder's public pages as they really move, from a recording made on
-its one live visit, checks every frame, and files a note at `films/{slug}.md` (`feature-film.v1`)
-that plays the MP4, poster and WebVTT captions kept beside it in `films/{slug}.assets/`.
 
 `creative.character_direct` is the sandbox-free sibling of `creative.character`. It produces the
 same contract-checked SVG through the model provider boundary instead of a Codex procedure: the

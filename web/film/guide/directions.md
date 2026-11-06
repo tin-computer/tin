@@ -45,16 +45,19 @@ what the first second did. Nothing of theirs goes in the film. Read public pages
    built with the kit, the product's tokens and its type (copy `WORK/look/fonts.css` and
    `WORK/look/fonts/` into the folder and link it). When the poster needs more than every part
    shown (a flow drawn, a value set), define `stage.poster`. Rough is fine; the idea must read
-   in one look. No eyebrows: a label above a title or a card is the first thing that makes a
-   sketch look generated, and `tin-film sketch` fails a sketch that has one.
-3. `tin-film sketch WORK/sketches` films each for a moment and puts the stills side by side, in
-   order, in `WORK/sketches/sketches.jpg`. Open it once.
-4. `tin-film review --directions WORK/sketches` sends the sheet and your notes to a model that
-   didn't make them. It chooses the sketch whose frame says the claim with no caption, that the
-   product can truthfully back and that is least like a stock picture of the subject, names the
-   runner-up and says why, in a sentence the founder reads beside it. Its choice is Tin's
-   recommendation; the founder picks, and the picked page grows into the film's stage in the
-   next run.
+   in one look, and it must pass the checks: no eyebrows (a label above a title or a card is
+   the first thing that makes a sketch look generated), no words on words, no text crossing a
+   card's edge, nothing too small to read on a phone, no object drawn from boxes and lines.
+   `tin-film sketch` fails a sketch that breaks one.
+3. `tin-film sketch WORK/sketches` films each for a moment, checks it, and puts the stills side
+   by side, in order, in `WORK/sketches/sketches.jpg`. Fix what it prints, then open the sheet
+   once.
+4. `tin-film review --directions WORK/sketches` writes a brief for a reviewer that didn't make
+   them (`tin-film guide review`). It chooses the sketch whose frame says the claim with no
+   caption, that the product can truthfully back and that is least like a stock picture of the
+   subject, names the runner-up and says why, in a sentence the founder reads beside it, in
+   `review.json`. Its choice is the recommendation; the founder picks in Decisions, and the
+   picked page grows into the film's stage.
 
 ## Families
 

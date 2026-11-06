@@ -1,23 +1,27 @@
-// tin-film: the film kit as a command, for the feature-film workflow's agent in Tin's studio
-// sandbox (and anyone making a film by hand). A film is a JSON file (film.json) that plays a stage
-// (a page of photogenic parts beside it, stage/) or a live site; its recording (world/) and takes
-// (takes/) sit beside it, never in the project.
+#!/usr/bin/env node
+// tin-film: Tin's film kit, for a founder's coding agent making a film of their product on its
+// own machine (npx -y <the kit get_film names> <command>). A film is a JSON file (film.json) that
+// plays a stage (a page of photogenic parts beside it, stage/) or a live site; its recording
+// (world/) and takes (takes/) sit beside it. Read the guide first: tin-film guide.
 //
+//   tin-film guide [topic]           how a film is made to Tin's standard; topics: directions, stage-kit, review, film-format
+//   tin-film inspect <url> [--dir DIR] [--format 16:9]  a page's look, type, outline and screenshots
 //   tin-film directions --kind idea|product|both [--count 5] [--seed S]  ways to show it, dealt
-//   tin-film sketch <dir> [--format 16:9]   one still of each sketch page in <dir>, side by side
+//   tin-film sketch <dir> [--format 16:9]   one still of each sketch page in <dir>, checked, side by side
+//   tin-film review --directions <dir>   a brief for a reviewer that didn't sketch them to choose one
+//   tin-film deliver --directions <dir> <films/name.md>   the sketches and the recommendation, to pick from
 //   tin-film new <dir> [--from people]  a staged film to start from: a worked example, to rebuild
-//   tin-film inspect <url> [--dir DIR] [--format 16:9]  a page's look, outline and screenshots
 //   tin-film record <film.json>      play it once, saving what it loads from outside
 //   tin-film rehearse <film.json>    play it from the recording at low resolution, every frame checked
 //   tin-film render <film.json>      the final take from the recording, at full resolution, checked
-//   tin-film review <film.json>      a second look at the latest take's stills by a model that didn't make it
-//   tin-film review --directions <dir>   that model chooses among the sketches in <dir>
-//   tin-film deliver <film.json> <note.md>   the final take beside its note, as Tin keeps films
-//   tin-film deliver --directions <dir> <note.md>   the sketches and the recommendation, to pick from
-//   tin-film restore <note.md> <dir>   a delivered film's spec, stage and storyboard, to change
+//   tin-film review <film.json>      a brief for a reviewer that didn't make the film, on the latest take
+//   tin-film deliver <film.json> <films/name.md>   the final take beside its note, as Tin keeps films
+//   tin-film restore <films/name.md> <dir>   a delivered film's spec, stage and storyboard, to change
+//   tin-film upload <films/name.md> <link>   the note and its folder to the project, through get_film's link
 //
 // Every take prints what went wrong, the checks' findings and the files to look at; a take with
-// an error exits 1. See docs/feature-films.md.
+// an error exits 1. Needs Node 20, ffmpeg, and Playwright's Chromium (npx playwright install
+// chromium). See docs/feature-films.md in Tin's repository.
 import {spawnSync} from "node:child_process";
 import crypto from "node:crypto";
 import fs from "node:fs";
@@ -32,8 +36,8 @@ const TAKES = {
   rehearse: {record: false, rehearse: true},
   render: {record: false, rehearse: false},
 };
-// Tin keeps an MP4 of at most 16 MB beside a note (page_assets.KINDS).
-const MAX_FILM_BYTES = 16_000_000;
+// Tin keeps a film's MP4 of at most 64 MB (films.py), as LinkedIn and X posts carry it.
+const MAX_FILM_BYTES = 64_000_000;
 
 const load = file => filmFromSpec(JSON.parse(fs.readFileSync(file, "utf8")), file);
 const here = file => path.dirname(path.resolve(file));
@@ -86,79 +90,62 @@ export function note({film, report, folder, format}) {
   return lines.join("\n");
 }
 
-// A second look: the latest take's contact sheet and marked stills, the spec, its storyboard,
-// the worked example's sheet and what the checks still report go to Tin's review route with the
-// run's grant (film_review.py); the findings are printed and kept beside the take. A run has a
-// few reviews; each costs a model call.
-export function reviewRequest(file, dir) {
+// A second look by a reviewer that didn't make the film: a subagent with no other context, or
+// another person. The brief (guide/review.md), the stills to open and what the checks still
+// report go in review.md beside the take; the reviewer answers in the conversation, and the
+// maker fixes what it ranks first and takes again.
+const GUIDE = fileURLToPath(new URL("./guide/", import.meta.url));
+const brief = part => fs.readFileSync(path.join(GUIDE, "review.md"), "utf8").split(/^## /m).find(section => section.startsWith(part))?.replace(/^.*\n/, "").trim() ?? "";
+
+export function reviewPacket(file, dir) {
   const report = JSON.parse(fs.readFileSync(path.join(dir, "report.json"), "utf8"));
   // A rehearsal's stills are JPEGs, a final take's PNGs.
   const still = name => /\.(png|jpg)$/.test(name);
-  const marks = fs.readdirSync(path.join(dir, "marks")).filter(still).sort().slice(0, 11);
-  const sheet = fs.readdirSync(dir).find(name => name.startsWith("sheet.") && still(name));
-  const images = [path.join(dir, sheet), ...marks.map(name => path.join(dir, "marks", name))]
-    .map(file => ({media_type: file.endsWith(".jpg") ? "image/jpeg" : "image/png", data_base64: fs.readFileSync(file).toString("base64")}));
-  const checks = [...report.issues.errors, ...report.issues.warnings, ...(report.summary ?? [])].join("\n");
-  const spec = fs.readFileSync(file, "utf8");
-  // The plan the stills draw, and the worked example's sheet the film started beside: the bar.
+  const marks = fs.readdirSync(path.join(dir, "marks")).filter(still).sort().map(name => path.join(dir, "marks", name));
+  const sheet = fs.readdirSync(dir).filter(name => name.startsWith("sheet.") && still(name)).map(name => path.join(dir, name));
+  const strips = fs.existsSync(path.join(dir, "motion")) ? fs.readdirSync(path.join(dir, "motion")).filter(still).sort().map(name => path.join(dir, "motion", name)) : [];
+  const checks = [...report.issues.errors, ...report.issues.warnings, ...(report.summary ?? [])];
   const board = path.join(here(file), "storyboard.md");
-  const storyboard = fs.existsSync(board) ? fs.readFileSync(board, "utf8") : "";
-  const bar = path.join(here(file), "example.jpg");
-  const example = fs.existsSync(bar) ? {media_type: "image/jpeg", data_base64: fs.readFileSync(bar).toString("base64")} : null;
-  const request_id = crypto.createHash("sha256").update(spec).update(storyboard).update(checks).update(images.map(image => image.data_base64).join("")).update(example?.data_base64 ?? "").digest("hex").slice(0, 32);
-  return {request_id, spec, storyboard, checks, images, example};
+  const example = path.join(here(file), "example.jpg");
+  const lines = ["# Review this film", "", brief("The film"), "", "## Open these", ""];
+  for (const item of [...sheet, ...marks]) lines.push(`- ${item}`);
+  if (strips.length) lines.push("", "The motion, a strip of every other frame around each click, cut and camera move:", "", ...strips.map(item => `- ${item}`));
+  if (fs.existsSync(example)) lines.push("", `The bar, the worked example's contact sheet: ${example}`);
+  lines.push("", `The spec: ${path.resolve(file)}`);
+  if (fs.existsSync(board)) lines.push(`The storyboard: ${board}`);
+  lines.push("", "## What the checks still report", "", ...(checks.length ? checks.map(line => `- ${line}`) : ["Nothing."]), "");
+  return lines.join("\n");
 }
 
-// Choosing a direction: the sketch sheet (tin-film sketch) and the maker's notes (the storyboard
-// beside the sketches' folder: kind, research, directions) go to the same route; it answers with
-// the number of the sketch that carries the claim, the runner-up, why, and what to keep.
-export function directionsRequest(dir) {
+export function directionsPacket(dir) {
   const root = path.resolve(dir);
   const sheet = path.join(root, "sketches.jpg");
   if (!fs.existsSync(sheet)) throw new Error(`No sketch sheet: run tin-film sketch ${dir} first.`);
-  const sketches = fs.readdirSync(root, {withFileTypes: true}).filter(entry => entry.isDirectory() && fs.existsSync(path.join(root, entry.name, "index.html"))).length;
-  const board = [path.join(root, "..", "storyboard.md"), path.join(root, "..", "film", "storyboard.md")].find(file => fs.existsSync(file));
-  const notes = board ? fs.readFileSync(board, "utf8") : "";
-  if (!notes.trim()) throw new Error("No notes to choose by: write the kind, the research and the directions in storyboard.md beside the sketches' folder.");
-  const images = [{media_type: "image/jpeg", data_base64: fs.readFileSync(sheet).toString("base64")}];
-  const request_id = crypto.createHash("sha256").update("directions").update(notes).update(images[0].data_base64).digest("hex").slice(0, 32);
-  return {request_id, kind: "directions", sketches, spec: notes, checks: "", images};
+  const board = [path.join(root, "..", "storyboard.md"), path.join(root, "..", "film", "storyboard.md")].find(item => fs.existsSync(item));
+  if (!board) throw new Error("No notes to choose by: write the kind, the research and the directions in storyboard.md beside the sketches' folder.");
+  const {sketches} = JSON.parse(fs.readFileSync(path.join(root, "sketches.json"), "utf8"));
+  return ["# Choose a direction", "", brief("The directions"), "", "## Open these", "",
+    `- The sheet, numbered in this order: ${sheet}`, ...sketches.map(item => `- ${item.n}. ${item.name}: ${path.join(root, item.still)}`),
+    `- The maker's notes: ${board}`, "",
+    `Answer by writing ${path.join(root, "review.json")}: {"choice": 2, "runner_up": 1, "why": "…", "keep": "…"}.`, ""].join("\n");
 }
 
-async function post(body) {
-  const url = process.env.TIN_RUN_TOOLS_URL || "";
-  const grant = process.env.TIN_RUN_TOOLS_GRANT || "";
-  if (!url || !grant) throw new Error("This run has no studio grant (TIN_RUN_TOOLS_URL and TIN_RUN_TOOLS_GRANT): a review runs inside Tin's studio sandbox.");
-  const response = await fetch(`${url.replace(/\/mcp$/, "").replace(/\/$/, "")}/studio/review`, {
-    method: "POST",
-    headers: {"authorization": `Bearer ${grant}`, "content-type": "application/json"},
-    body: JSON.stringify(body),
-  });
-  const answer = await response.json().catch(() => ({error: `the review route answered ${response.status}`}));
-  if (!response.ok) throw new Error(`Review refused: ${answer.error || response.status}`);
-  return answer;
-}
-
-async function reviewDirections(dir) {
-  const answer = await post(directionsRequest(dir));
-  fs.writeFileSync(path.join(path.resolve(dir), "review.json"), `${JSON.stringify(answer, null, 2)}\n`);
-  console.log(`directions: build sketch ${answer.choice} (runner-up ${answer.runner_up})${answer.replayed ? " (already bought; replayed)" : ""}`);
-  if (answer.summary) console.log(`  ${answer.summary}`);
-  if (answer.keep) console.log(`  Keep: ${answer.keep}`);
-}
-
-async function review(file) {
+function review(file) {
   const film = load(file);
   const format = formatOf(film, {});
   // The newest take, whichever kind it was.
   const dir = ["render", "rehearse", "record"].map(kind => takeDir(file, kind, film, format)).filter(candidate => fs.existsSync(path.join(candidate, "report.json")))
     .sort((a, b) => fs.statSync(path.join(b, "report.json")).mtimeMs - fs.statSync(path.join(a, "report.json")).mtimeMs)[0];
   if (!dir) throw new Error(`No take to review: run tin-film rehearse ${file} first.`);
-  const answer = await post(reviewRequest(file, dir));
-  fs.writeFileSync(path.join(dir, "review.json"), `${JSON.stringify(answer, null, 2)}\n`);
-  console.log(`review of ${dir}: ${answer.verdict}${answer.replayed ? " (already bought; replayed)" : ""}`);
-  if (answer.summary) console.log(`  ${answer.summary}`);
-  for (const item of answer.findings) console.log(`  - ${item.where}: ${item.what} Fix: ${item.fix}`);
+  const target = path.join(dir, "review.md");
+  fs.writeFileSync(target, reviewPacket(file, dir));
+  console.log(`wrote ${target}: give it to a reviewer that didn't make the film (a subagent with no other context), fix what it ranks first, and take again.`);
+}
+
+function reviewDirections(dir) {
+  const target = path.join(path.resolve(dir), "review.md");
+  fs.writeFileSync(target, directionsPacket(dir));
+  console.log(`wrote ${target}: give it to a reviewer that didn't sketch them (a subagent with no other context); it writes review.json, then deliver --directions.`);
 }
 
 // Copy the final take beside the note (re-encoded smaller when it is over Tin's limit), write the
@@ -194,8 +181,7 @@ async function deliver(file, notePath) {
     kept.push("stage.html", "storyboard.json");
   }
   fs.writeFileSync(notePath, note({film, report, folder, format}));
-  console.log(`wrote ${notePath} and ${folder}/ (film.mp4 ${(fs.statSync(video).size / 1e6).toFixed(1)} MB, ${kept.join(", ")})`);
-  checkNote(notePath);
+  console.log(`wrote ${notePath} and ${folder}/ (film.mp4 ${(fs.statSync(video).size / 1e6).toFixed(1)} MB, ${kept.join(", ")}); upload it with tin-film upload ${notePath} <link>`);
 }
 
 // A note's folder holds exactly its version's files: an earlier version's (the directions'
@@ -208,26 +194,14 @@ function freshFolder(folder) {
   }
 }
 
-// The same contract Tin applies when it keeps the note: tin-studio in the sandbox, the
-// repository's copy elsewhere.
-function checkNote(notePath) {
-  const local = fileURLToPath(new URL("../../sandbox/studio/tin_studio.py", import.meta.url));
-  const command = fs.existsSync(local) ? ["python3", [local, "check", notePath]] : ["tin-studio", ["check", notePath]];
-  const checked = spawnSync(command[0], command[1], {encoding: "utf8"});
-  process.stdout.write(checked.stdout || "");
-  if (checked.status !== 0) {
-    process.stdout.write(checked.stderr || "");
-    process.exitCode = 1;
-  }
-}
-
 // The directions as a note to pick from: the sketches' stills and pages beside it, each with its
-// name and what it shows, and the one the second look recommends (review --directions). The
-// founder picks in Decisions; the note's next version is the film.
+// name and what it shows, and the one the reviewer recommends (review.json: choice, runner_up,
+// why). The founder picks in Decisions; the note's next version is the film.
 export function directionsNote({title, lede, sketches, review, folder}) {
   const name = path.basename(folder);
   const file = (sketch, ext) => `${sketch.n}-${slugOf(sketch.name)}${ext}`;
   const recommended = sketches.find(sketch => sketch.n === review.choice);
+  review = {...review, summary: review.why ?? review.summary};
   const lines = [`# ${title}`, ""];
   if (lede) lines.push(lede, "");
   lines.push(`${sketches.length} ways to show it, each sketched as one frame.${recommended ? ` Tin recommends ${recommended.name}${review.summary ? `: ${review.summary.replace(/\s+/g, " ").trim()}` : "."}` : ""}`, "");
@@ -252,9 +226,10 @@ export function deliverDirections(dir, notePath) {
   const manifest = path.join(root, "sketches.json");
   const reviewed = path.join(root, "review.json");
   if (!fs.existsSync(manifest)) throw new Error(`No sketches in ${root}: run tin-film sketch ${dir} first.`);
-  if (!fs.existsSync(reviewed)) throw new Error(`No recommendation for ${root}: run tin-film review --directions ${dir} first.`);
+  if (!fs.existsSync(reviewed)) throw new Error(`No recommendation for ${root}: run tin-film review --directions ${dir}, and have the reviewer write review.json.`);
   const {sketches} = JSON.parse(fs.readFileSync(manifest, "utf8"));
   const review = JSON.parse(fs.readFileSync(reviewed, "utf8"));
+  if (!sketches.some(sketch => sketch.n === review.choice)) throw new Error(`review.json's choice must be one of the sketches' numbers, 1 to ${sketches.length}.`);
   const board = [path.join(root, "..", "storyboard.md"), path.join(root, "..", "film", "storyboard.md")].find(item => fs.existsSync(item));
   const notes = board ? fs.readFileSync(board, "utf8") : "";
   const title = notes.match(/^# (.+)$/m)?.[1]?.trim() || path.basename(notePath, ".md");
@@ -270,8 +245,7 @@ export function deliverDirections(dir, notePath) {
   // The kind, the research and the directions' notes, for the run that builds the pick.
   fs.writeFileSync(path.join(folder, "notes.json"), `${JSON.stringify({storyboard: notes}, null, 2)}\n`);
   fs.writeFileSync(notePath, directionsNote({title, sketches, review, folder}));
-  console.log(`wrote ${notePath} and ${folder}/ (${sketches.length} sketches, each a still and its page; recommended ${review.choice})`);
-  checkNote(notePath);
+  console.log(`wrote ${notePath} and ${folder}/ (${sketches.length} sketches, each a still and its page; recommended ${review.choice}); upload it with tin-film upload ${notePath} <link>`);
 }
 
 // A delivered film back as a staged film: its spec, stage and storyboard, from the note's folder.
@@ -375,9 +349,10 @@ function directions(options) {
 
 // One still of each sketch: a folder per direction (1-iceberg/index.html, 2-orbit/index.html…)
 // holding a stage page and its caption in caption.txt; stage.poster puts the page in its poster
-// frame (the kit's shows every part). Each is
-// filmed for a moment, as a staged film is, and the stills are tiled into <dir>/sketches.jpg in
-// folder order, each caption numbered so a reader can name the one they mean.
+// frame (the kit's shows every part). Each is filmed for a moment and checked as a staged film
+// is, so a sketch with words on words, type too small to read, text crossing a card's edge or an
+// eyebrow says so and the command exits 1; the stills are tiled into <dir>/sketches.jpg in folder
+// order, each caption numbered so a reader can name the one they mean.
 // A sketch's folder, as the founder reads its name: "02-zoom-out" is "Zoom out".
 const nameOf = folder => {
   const words = folder.replace(/^\d+[-_ ]*/, "").replace(/[-_]+/g, " ").trim() || folder;
@@ -391,6 +366,7 @@ export async function sketch(dir, options = {}) {
   if (folders.length < 2) throw new Error(`Sketch at least two directions: ${root} needs a folder per direction, each with an index.html.`);
   const stills = [];
   const sketches = [];
+  let failed = 0;
   for (const [index, name] of folders.entries()) {
     const folder = path.join(root, name);
     const caption = fs.existsSync(path.join(folder, "caption.txt")) ? fs.readFileSync(path.join(folder, "caption.txt"), "utf8").trim() : name;
@@ -398,10 +374,10 @@ export async function sketch(dir, options = {}) {
       // Numbered for the sheet the second look reads; the founder's still has the caption alone.
       beats: [{camera: "body", cut: true, pad: 0}, {caption: `${index + 1}. ${caption}`}, {do: ["poster"]}, {begin: true}, {hold: 1.2}, {mark: "poster"}, {caption}, {hold: 0.8}, {mark: "still"}, {end: true}]};
     const film = filmFromSpec(spec, path.join(folder, "film.json"));
-    const {dir: take, report} = await shoot(film, {format, out: path.join(folder, "takes"), rehearse: true, check: false, gif: false});
+    const {dir: take, report} = await shoot(film, {format, out: path.join(folder, "takes"), rehearse: true, check: true, gif: false});
     for (const line of report.issues.errors) console.log(`  ${index + 1}. ${name}: error: ${line}`);
-    // A sketch in a stand-in face misleads the pick: say so beside it.
-    for (const line of report.issues.warnings.filter(line => line.startsWith("The stage"))) console.log(`  ${index + 1}. ${name}: ${line}`);
+    for (const line of report.issues.warnings) console.log(`  ${index + 1}. ${name}: warning: ${line}`);
+    if (report.issues.errors.length) failed++;
     const marked = name => fs.readdirSync(path.join(take, "marks")).find(file => new RegExp(`${name}\\.(jpg|png)$`).test(file));
     const poster = marked("poster");
     const still = path.join(folder, `still${path.extname(poster)}`);
@@ -418,6 +394,46 @@ export async function sketch(dir, options = {}) {
   await ffmpeg(["-i", path.join(tiles, `%02d${ext}`), "-vf", `scale=960:-2:flags=lanczos,tile=${columns}x${Math.ceil(stills.length / columns)}:padding=24:margin=24:color=0x44403a`, "-frames:v", "1", "-q:v", "3", path.join(root, "sketches.jpg")]).done;
   fs.rmSync(tiles, {recursive: true, force: true});
   console.log(`look at: ${path.join(root, "sketches.jpg")}, the sketches in this order; each still and its name are in sketches.json`);
+  if (failed) {
+    console.log(`${failed} sketch${failed === 1 ? " has" : "es have"} errors: fix ${failed === 1 ? "it" : "them"} and sketch again before anyone picks.`);
+    process.exitCode = 1;
+  }
+}
+
+// The guide, or one of its topics, as the agent reads it before anything else.
+function guide(topic = "README") {
+  const topics = fs.readdirSync(GUIDE).filter(name => name.endsWith(".md")).map(name => name.slice(0, -3));
+  if (!topics.includes(topic)) throw new Error(`The guide's topics are ${topics.filter(name => name !== "README").join(", ")}.`);
+  process.stdout.write(fs.readFileSync(path.join(GUIDE, `${topic}.md`), "utf8"));
+}
+
+// The note and its folder to the project, through the link get_film gave (it lasts 45 minutes and
+// makes one version). Tin checks them as it keeps them and answers with what's next, or exactly
+// what to fix.
+export async function upload(notePath, link) {
+  if (!notePath?.endsWith(".md") || !/^https?:\/\/[^/]+\/api\/film-uploads\/[\w-]+$/.test(link || "")) {
+    throw new Error("usage: tin-film upload <films/name.md> <the upload link get_film gave>");
+  }
+  const dir = path.dirname(path.resolve(notePath));
+  const name = path.basename(notePath);
+  const folder = `${name.slice(0, -".md".length)}.assets`;
+  if (!fs.existsSync(path.join(dir, name))) throw new Error(`There is no ${notePath}: deliver the film or its directions first.`);
+  const members = fs.existsSync(path.join(dir, folder)) ? [name, folder] : [name];
+  // No macOS resource forks: the film is its files.
+  const packed = spawnSync("tar", ["-czf", "-", "-C", dir, ...members], {env: {...process.env, COPYFILE_DISABLE: "1"}, maxBuffer: 200_000_000});
+  if (packed.status !== 0) throw new Error(`tar failed: ${packed.stderr.toString().trim()}`);
+  const response = await fetch(link, {method: "PUT", headers: {"content-type": "application/gzip"}, body: packed.stdout});
+  const answer = await response.json().catch(() => ({detail: `Tin answered ${response.status}.`}));
+  if (!response.ok) {
+    console.log(`not kept: ${answer.detail}`);
+    for (const line of answer.problems || []) console.log(`  - ${line}`);
+    process.exitCode = 1;
+    return answer;
+  }
+  console.log(answer.next);
+  for (const item of answer.dropped || []) console.log(`  left out ${item.path}: ${item.reason}`);
+  console.log(`  Decisions: ${answer.decisions}`);
+  return answer;
 }
 
 async function main(argv) {
@@ -446,6 +462,8 @@ async function main(argv) {
     console.log(`wrote ${path.join(dir, "inspect.json")}, screen.jpg, page.jpg and, if it was missing, film.json`);
     return;
   }
+  if (command === "guide" && args.length <= 1) return guide(args[0]);
+  if (command === "upload" && args.length === 2) return upload(args[0], args[1]);
   if (command === "directions" && args.length === 0) return directions(options);
   if (command === "sketch" && args.length === 1) return sketch(args[0], options);
   if (command === "new" && args.length === 1) return start(args[0], options.from);
@@ -455,7 +473,7 @@ async function main(argv) {
   if (command === "deliver" && options.directions && args.length === 1) return deliverDirections(options.directions, args[0]);
   if (command === "deliver" && args.length === 2) return deliver(args[0], args[1]);
   if (command === "restore" && args.length === 2) return restore(args[0], args[1]);
-  const header = fs.readFileSync(fileURLToPath(import.meta.url), "utf8").split("\n");
+  const header = fs.readFileSync(fileURLToPath(import.meta.url), "utf8").split("\n").filter(line => !line.startsWith("#!"));
   console.log(header.slice(0, header.findIndex(line => !line.startsWith("//"))).join("\n").replaceAll("// ", "").replaceAll("//", ""));
   if (command && command !== "help") process.exitCode = 64;
 }

@@ -35,8 +35,6 @@ class ModelCapability(StrEnum):
     TEXT = "text"
     JSON_SCHEMA = "json_schema"
     REASONING_EFFORT = "reasoning_effort"
-    # Images beside the text of a user message (a film's stills for a second look).
-    IMAGE_INPUT = "image_input"
 
 
 class MessageRole(StrEnum):
@@ -73,22 +71,9 @@ class ModelCapabilityError(ValueError):
 
 
 @dataclass(frozen=True)
-class ModelImage:
-    """One PNG or JPEG image, base64-encoded, so a request stays plain data."""
-
-    media_type: str
-    data_base64: str
-
-
-IMAGE_MEDIA_TYPES = frozenset({"image/png", "image/jpeg"})
-MAX_REQUEST_IMAGES = 16
-
-
-@dataclass(frozen=True)
 class ModelMessage:
     role: MessageRole
     content: str
-    images: tuple[ModelImage, ...] = ()
 
 
 @dataclass(frozen=True)
@@ -105,8 +90,6 @@ class ModelRequest:
 
     def required_capabilities(self) -> frozenset[ModelCapability]:
         required = {ModelCapability.TEXT}
-        if any(message.images for message in self.messages):
-            required.add(ModelCapability.IMAGE_INPUT)
         if self.output_schema is not None:
             required.add(ModelCapability.JSON_SCHEMA)
         if self.reasoning_effort is not None:
@@ -256,25 +239,9 @@ _COMMON_CAPABILITIES = frozenset(
 )
 
 
-def _openai_content(message: ModelMessage) -> str | list[dict[str, str]]:
-    if not message.images:
-        return message.content
-    return [
-        {"type": "input_text", "text": message.content},
-        *(
-            {
-                "type": "input_image",
-                "image_url": f"data:{image.media_type};base64,{image.data_base64}",
-                "detail": "high",
-            }
-            for image in message.images
-        ),
-    ]
-
-
 class OpenAIModelProvider:
     name = ProviderName.OPENAI
-    capabilities = _COMMON_CAPABILITIES | {ModelCapability.IMAGE_INPUT}
+    capabilities = _COMMON_CAPABILITIES
 
     def __init__(
         self,
@@ -299,7 +266,7 @@ class OpenAIModelProvider:
             "model": model,
             "service_tier": "default",
             "input": [
-                {"role": message.role.value, "content": _openai_content(message)}
+                {"role": message.role.value, "content": message.content}
                 for message in request.messages
             ],
             "max_output_tokens": request.max_output_tokens,
@@ -685,13 +652,6 @@ def model_failure_reason(exc: BaseException) -> str:
 def _validate_request(request: ModelRequest) -> None:
     if not request.messages or any(not message.content.strip() for message in request.messages):
         raise ValueError("model request requires non-empty messages")
-    images = [image for message in request.messages for image in message.images]
-    if any(message.images and message.role != MessageRole.USER for message in request.messages):
-        raise ValueError("only a user message may carry images")
-    if len(images) > MAX_REQUEST_IMAGES or any(
-        image.media_type not in IMAGE_MEDIA_TYPES or not image.data_base64 for image in images
-    ):
-        raise ValueError(f"a model request carries at most {MAX_REQUEST_IMAGES} PNG or JPEG images")
     if request.max_output_tokens < 1:
         raise ValueError("model request max_output_tokens must be positive")
     if request.temperature is not None and not 0 <= request.temperature <= 2:

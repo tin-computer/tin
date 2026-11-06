@@ -8,7 +8,7 @@
   tin-studio frame <workdir> <out.png> --at SECONDS [--character path.svg] [--bg mesh]
   tin-studio rasterize <character.svg> <out.png> [--mouth mouth-open] [--eyes eyes-closed]
                                                  [--expression expr-happy] [--width 1024]
-  tin-studio check <artifact.svg|artifact.mp4|film.md>  validate against the Tin output contract
+  tin-studio check <artifact.svg|artifact.mp4>       validate against the Tin output contract
   tin-studio probe <file.mp4|file.mp3>               ffprobe summary
 
 Work in a scratch directory outside the project checkout; only the declared artifact belongs in
@@ -58,47 +58,11 @@ def rasterize(args):
     return 0
 
 
-def check_film(path, content):
-    """A film note and the files it plays, as Tin keeps them: the note's contract, the film's
-    size and length, and each file's kind."""
-    from studio_contracts import (
-        is_film_directions,
-        parse_feature_film,
-        parse_film_directions,
-        validate_feature_film_video,
-    )
-
-    folder = os.path.basename(path)[: -len(".md")] + ".assets"
-    here = os.path.dirname(os.path.abspath(path))
-    read = lambda name: open(os.path.join(here, name), "rb").read()  # noqa: E731
-    if is_film_directions(content):
-        # Before the film: each sketch's still, and its page when it links one.
-        directions = parse_film_directions(content, folder=folder)
-        for item in directions.sketches:
-            still = read(item.still)
-            if still[:8] != b"\x89PNG\r\n\x1a\n" and still[:3] != b"\xff\xd8\xff":
-                raise ValueError(f"sketch {item.n}'s still must be a PNG or JPEG image")
-            if item.page:
-                read(item.page).decode("utf-8")
-        return {"directions": directions}
-    note = parse_feature_film(content, folder=folder)
-    video = validate_feature_film_video(read(note.video))
-    if len(read(note.video)) > 16_000_000:
-        raise ValueError("film must be at most 16 MB")
-    if note.poster:
-        poster = read(note.poster)
-        if poster[:8] != b"\x89PNG\r\n\x1a\n" and poster[:3] != b"\xff\xd8\xff":
-            raise ValueError("poster must be a PNG or JPEG image")
-    if note.captions and not read(note.captions).decode("utf-8").startswith("WEBVTT"):
-        raise ValueError("captions must be a WebVTT file")
-    return {"note": note, "video": video}
-
-
 def check(args):
     from studio_contracts import validate_character_svg, validate_demo_video
 
     if len(args) != 1:
-        raise SystemExit("usage: tin-studio check <artifact.svg|artifact.mp4|film.md>")
+        raise SystemExit("usage: tin-studio check <artifact.svg|artifact.mp4>")
     path = args[0]
     content = open(path, "rb").read()
     try:
@@ -106,11 +70,9 @@ def check(args):
             result = validate_character_svg(content)
         elif path.lower().endswith(".mp4"):
             result = validate_demo_video(content)
-        elif path.lower().endswith(".md"):
-            result = check_film(path, content)
         else:
-            raise SystemExit("check accepts a .svg character, a .mp4 demo or a .md film note")
-    except (OSError, ValueError) as exc:
+            raise SystemExit("check accepts a .svg character or a .mp4 demo")
+    except ValueError as exc:
         print(f"REJECTED: {exc}")
         return 1
     print(f"OK: {result}")

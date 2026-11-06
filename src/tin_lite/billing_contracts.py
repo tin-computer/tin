@@ -136,16 +136,14 @@ def receipt_charge(terms, kind, record):
         from tin_lite.studio_billing import price
 
         return price(terms["studio_pricing"], record)
-    # Before the supplier card: a film run carries both, and its Codex requests keep their own
-    # rates. No other run has codex_api operations beside service_pricing.
-    if kind == "codex_api":
-        from tin_lite.codex_api_pricing import price_response
-
-        return price_response(terms.get("pricing"), record)
     if "service_pricing" in terms:
         from tin_lite.service_pricing import price_receipt
 
         return price_receipt(terms, kind, record)
+    if kind == "codex_api":
+        from tin_lite.codex_api_pricing import price_response
+
+        return price_response(terms.get("pricing"), record)
     usage = record.get("usage")
     if not isinstance(usage, dict):
         return None

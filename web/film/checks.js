@@ -32,6 +32,22 @@ const PICTURE_RULES = {
   "film/mark-cursor-on-text": "warn",
 };
 
+// A stage (a sketch, or a staged film's page) is drawn to be filmed: its type, its spacing and
+// where its parts sit are the film's own, so the motion-graphics layout rules hold for it as they
+// do for a Remotion film. Words on words, a headline half over a card, and parts left off the
+// canvas are errors: a founder would see them.
+export const STAGE_RULES = {
+  "layout/text-overlap": "error",
+  "staging/text-too-small": "error",
+  // A hero runs off an edge on purpose, and its words near that edge are framed, not crowded.
+  "staging/no-padding": "warn",
+  "staging/text-over-product": "error",
+  "layout/subject-off-canvas": "error",
+  "layout/unbalanced-space": "warn",
+  "staging/title-off-centre": "warn",
+  "staging/top-banner": "warn",
+};
+
 const changed = (a, b) => {
   if (!a || !b) return Boolean(a || b);
   const moved = Math.hypot(a.box[0] - b.box[0], a.box[1] - b.box[1]);
@@ -118,14 +134,15 @@ function shifted(findings, fps, offset, where) {
 
 // `measured` holds probe.js's measurements for one stretch of the take, from frame `offset`;
 // `marks` maps a key frame's name to its frame in the take; `accepts` lists findings the film
-// means to have, as {rule, frames: [first, last], reason} in the take's frames.
-export function checkFrames(measured, {name, fps, offset = 0, marks = {}, accepts = []}) {
+// means to have, as {rule, frames: [first, last], reason} in the take's frames. A `staged` take
+// is held to the stage's layout rules too.
+export function checkFrames(measured, {name, fps, offset = 0, marks = {}, accepts = [], staged = false}) {
   if (!measured.length) return [];
   const findings = [];
   const inStretch = Object.entries(marks).filter(([, frame]) => frame >= offset && frame < offset + measured.length).map(([mark, frame]) => [mark, frame - offset]);
   const picture = filmOf(name, fps, measured.map(item => item.picture), offset);
   const markOptions = {marks: inStretch};
-  findings.push(...shifted(run(picture, only(PICTURE_RULES, {"film/mark-settled": markOptions, "film/mark-cursor-on-text": markOptions})), fps, offset, "picture"));
+  findings.push(...shifted(run(picture, only(staged ? {...PICTURE_RULES, ...STAGE_RULES} : PICTURE_RULES, {"film/mark-settled": markOptions, "film/mark-cursor-on-text": markOptions})), fps, offset, "picture"));
   // Each window's page, over each run of frames in which it shows.
   const ids = new Set(measured.flatMap(item => Object.keys(item.pages)));
   for (const id of ids) {

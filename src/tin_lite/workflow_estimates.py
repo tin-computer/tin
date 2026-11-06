@@ -49,8 +49,6 @@ ESTIMATES_USD: dict[str, str] = {
     "organic.mention_backlinks": "1.25",
     "content.diagram": "1.20",
     "creative.product_demo": "1.50",
-    # Judged, not measured: the demo's agent loop, with more stills looked at per rehearsal.
-    "creative.feature_film": "2.00",
     "qa.signup_walkthrough": "1.00",
     "outreach.newsletter_placements": "1.00",
     "outreach.syllabus_placement": "1.00",

@@ -25,6 +25,44 @@ Each format lands in `.films/<film>/<format>/`:
 | `captions.srt`, `captions.vtt` | The captions with their times, for platforms that take a caption file and for the browser's video track |
 | `report.json` | Frames, length, sizes, frame hashes and the checks below |
 
+## Films a founder's coding agent makes
+
+Tin doesn't make founders' films: their coding agent does (Claude Code, Codex, any agent with
+Tin's MCP), on its own machine, with this kit or any tool it likes, and Tin keeps what it makes.
+A film is a project object with versions (`src/tin_lite/films.py`, migration
+`081_film_versions.sql`), not a workflow run: Tin runs nothing and never waits for one.
+
+1. **`get_film(project_id, slug)`** (MCP) answers with the film's `state` and the one thing to do
+   `next`, the founder's latest decision, the files to read first, the guide
+   (`web/film/guide/README.md`) for a new film, the command that runs this release's kit, and a
+   fresh upload link.
+2. **The kit** is `web/film` packed as an npm tarball by the service (`film_kit.py`), at
+   `/kit/tin-film-<digest>.tgz` (`/kit/tin-film.tgz` redirects to it): `npx -y <url> <command>`.
+   A release is the repository's archive, so the service packs the same files it was deployed
+   with. It needs Node 20, `ffmpeg` and Playwright's Chromium on the agent's machine.
+3. **`tin-film upload films/<slug>.md <link>`** sends the note and its folder as a tar.gz to
+   `PUT /api/film-uploads/<token>`. The link is random, kept only as a hash, tied to one project
+   and film, lasts 45 minutes and makes one version; sending it again after it worked answers
+   with that version. Tin reads the note as directions (a `tin-directions` block and 2 to 8
+   `## N. Name` sketches with a still each) or a film (one `tin-video` block whose MP4 is
+   1920×1080, 1080×1350, 1080×1080 or 1080×1920, 4 to 180 s, fast start, at most 64 MB), checks
+   every file it shows, keeps the folder's other PNG, JPEG, WebVTT, HTML and JSON files, names
+   what it left out and why, and commits the note and folder to project Files in one commit (the
+   folder holds exactly that version's files; earlier ones stay in the history). A refused
+   upload answers with each problem and keeps the link for the next try.
+4. **Decisions** shows the version waiting: directions as the pick card (the recommended sketch
+   large with why, the others in a strip), a film to watch, approve or send back. The founder's
+   decision is recorded on the version (`picked`, `others`, `changes` with their words, or
+   `approved`; `discarded` drops the film); a newer upload supersedes one still waiting.
+   `decide_film` (MCP) records the same decisions, only as the founder said them, and
+   `list_open_decisions` lists the waiting versions under `films`.
+5. The agent reads the decision back through `get_film` (`build`, `sketch_again`, `revise`,
+   `approved`) and uploads the next version.
+
+Before anyone sees them, the guide has the agent check sketches and takes with the kit and hand
+`tin-film review` (a brief with the stills to open) to a reviewer that didn't make them: a
+subagent with no other context, or a person.
+
 ## Formats
 
 | Format | Size | Screen the dashboard is filmed on | Use |
@@ -207,9 +245,10 @@ npm run film -- sheepdogs-site --format 16:9,4:5 --check on # from the recording
 
 A staged film plays a scene built for it instead of a product or a site: one HTML page of
 photogenic parts beside `film.json`, in the product's own look, simplified to what the viewer
-needs, after [Stageshow](https://github.com/benjitaylor/skills) (MIT). It is what the
-`creative.feature_film` workflow makes: a feature shown the way a launch page shows it, where one
-thing happens per beat and the result stays on screen, rather than a camera over a landing page.
+needs, after [Stageshow](https://github.com/benjitaylor/skills) (MIT). It is what a
+founder's coding agent makes for their product (above): a feature shown the way a launch page
+shows it, where one thing happens per beat and the result stays on screen, rather than a camera
+over a landing page.
 
 - **The kit.** `web/film/stage/stage.css` holds the parts (windows, a terminal, cards, rows and
   ranks, an app with its rail and pages, a calendar, running work, a decision, buttons, a pull
@@ -241,13 +280,18 @@ thing happens per beat and the result stays on screen, rather than a camera over
   its storyboard disagree (a shot's mark or caption missing, marks in another order, no poster).
   It also warns when a mark's hero (its largest painted part) sits whole on the stage with air
   on every side, when the stage draws a cursor of its own beside the film's hand, and when its
-  text is set in a system face or in one that never loaded; an eyebrow (a small uppercase,
-  letter-spaced or mono label above a title, a card's words or a number) is an error.
+  text is set in a system face or in one that never loaded. An eyebrow (a small uppercase,
+  letter-spaced or mono label lined up above a title, a card's words or a number; not a table's
+  column header or a date or time in mono) is an error, and so is any layout fault a viewer
+  would see: words on words, a headline half over a card, a part off the canvas, text under 2%
+  of the picture's short side, or a word cut by the picture's edge or the caption band (see
+  Checks). A stage set in the product's type (a `fonts.css` beside the page) captions in it too.
+  A popover (`.pop.arrive`) is opaque before its words fade in, so nothing shows through.
 - **The product's type and theme.** `tin-film inspect` reads the faces the page's visible text
   is set in (not the body's), keeps their files from its own recording as `look/fonts.css` and
   `look/fonts/`, and reads the page's dark theme too, from a load that asks for one, so a stage
   is set in the product's own type on its own ground.
-- **The worked examples.** `web/film/examples/` holds the bar the workflow copies (`tin-film new
+- **The worked examples.** `web/film/examples/` holds the bar a film copies (`tin-film new
   --from <name>`) and rebuilds for each product, one per shape of feature. Each keeps the contact
   sheet of its rehearsal as `sheet.jpg`, which `new` copies as `example.jpg`: after changing an
   example, rehearse it and copy the new sheet beside it.
@@ -263,9 +307,8 @@ TIN_FILM_FONTS=https://fonts.tin.computer/v1/private-fonts.css node web/film/tin
 ## tin-film: a film as a JSON file
 
 `web/film/tin-film.js` is the kit as one command, for a staged film or a live site filmed from a
-JSON file. It is what the `creative.feature_film` workflow's agent runs in Tin's studio sandbox
-(`tin-film`, see [the creative studio](creative-studio.md#feature-films-creativefeature_film)),
-and works the same from the repository:
+JSON file. A founder's coding agent runs it with npx (above); it works the same from the
+repository:
 
 ```
 node web/film/tin-film.js directions --kind idea                # five ways to show it, dealt at random
@@ -275,8 +318,9 @@ node web/film/tin-film.js inspect https://sheepdogs.io/ --dir .films/look   # it
 node web/film/tin-film.js record .films/herding/film.json     # once, saving what it loads from outside
 node web/film/tin-film.js rehearse .films/herding/film.json   # from the recording, low resolution, checked
 node web/film/tin-film.js render .films/herding/film.json     # the final take, from the recording
-node web/film/tin-film.js review .films/herding/film.json     # a second model's look (in Tin's sandbox)
+node web/film/tin-film.js review .films/herding/film.json     # a brief for a reviewer that didn't make it
 node web/film/tin-film.js deliver .films/herding/film.json films/herding.md
+node web/film/tin-film.js upload films/herding.md '<the link get_film gave>'
 ```
 
 - **Directions before a storyboard.** A film is a product highlight (staged in the product's
@@ -288,9 +332,9 @@ node web/film/tin-film.js deliver .films/herding/film.json films/herding.md
   from; the chosen page grows into the film's stage.
 - **The file.** `film.json` holds `title`, `story` (`before` and `after`), `stage` or
   `site.url`, `screens`, `now` (the page's clock), `format`, `theme`, `ready`, `beats` and
-  `notes`; the workflow's skill documents every field and beat
-  (`codex_procedures/creative.feature_film/skills/feature-film/film-format.md` and
-  `stage-kit.md`). A missing field or an unknown beat is refused before anything is filmed.
+  `notes`; the guide documents every field and beat (`web/film/guide/film-format.md` and
+  `stage-kit.md`, or `tin-film guide film-format`). A missing field or an unknown beat is refused
+  before anything is filmed.
 - **Pacing.** Every take warns when the first caption comes after 1.5 s, a caption shows for
   less time than its words need (17 characters a second) or more than 6.5 s, or the picture
   stands frozen for 4 s.
@@ -301,20 +345,22 @@ node web/film/tin-film.js deliver .films/herding/film.json films/herding.md
   already recording.
 - **A live site's own errors** are warnings, not errors: the take goes on. Tin's dashboard still
   fails a take on any console error.
-- **`review`** sends the newest take's contact sheet, marked stills, spec and check summary to
-  Tin's review route with the run's grant, and prints a verdict and findings with fixes (see
-  [the creative studio](creative-studio.md#feature-films-creativefeature_film)). It needs the
-  run-bound grant, so it runs only in Tin's studio sandbox.
-- **`deliver`** copies the final take's film (re-encoded smaller when it is over 16 MB), poster,
+- **`review`** writes `review.md` beside the newest take: the brief from
+  `web/film/guide/review.md`, the contact sheet, marked stills and motion strips to open, the
+  example's sheet, and what the checks still report, for a reviewer that didn't make the film.
+  `review --directions <dir>` does the same for sketches; the reviewer writes `review.json`
+  (`choice`, `runner_up`, `why`, `keep`).
+- **`deliver`** copies the final take's film (re-encoded smaller when it is over 64 MB), poster,
   WebVTT captions and `film.json`, and a staged film's stage (`stage.html`) and storyboard
-  (`storyboard.json`), into `<note>.assets/`, writes the note (the film in a `tin-video` block,
-  the story, every caption with its time, what the checks still found, and the film's facts),
-  and checks both with `tin-studio check`, the contract Tin applies when it keeps them
-  (`feature-film.v1`). **`restore <note>.md <dir>`** puts a delivered staged film back to change.
+  (`storyboard.json`), into `<note>.assets/` and writes the note (the film in a `tin-video` block,
+  the story, every caption with its time, what the checks still found, and the film's facts).
+  **`restore <note>.md <dir>`** puts a delivered staged film back to change.
 - **`deliver --directions <dir> <note>.md`** writes the note the founder picks from, before any
   film: each sketch's still and page (`N-name.jpg`, `N-name.html`) under a `## N. Name` heading
   with the sentence in its `about.txt`, a `tin-directions` block naming the recommended sketch
-  and why (from `review --directions`), and `notes.json` with the maker's notes.
+  and why (from `review.json`), and `notes.json` with the maker's notes.
+- **`sketch`** checks each sketch as a staged take is checked and exits 1 while any has an error.
+- **`upload <note>.md <link>`** and **`guide [topic]`**: above.
 
 ## Desk films
 
@@ -398,8 +444,18 @@ vendored without Remotion; see its README). `web/film/probe.js` reads each frame
 Each finding says when, where (`picture`, or the window's id), what was measured and what the rule
 requires; repeats at one moment fold into one line. Findings a film means to have are accepted with
 a reason: while the camera follows the hand it crops through the screen, so words it cuts then are
-accepted. Findings don't fail the take yet: they are listed in the output and in `report.json`
-(`checks`, `summary`). Rules made for motion graphics stay off for filmed product: pace and dead
+accepted. A film of a product or a site lists findings in the output and in `report.json`
+(`checks`, `summary`) without failing the take.
+
+A stage (a sketch, or a staged film's page) is drawn for the film, so it is held to the
+motion-graphics layout rules too (`STAGE_RULES` in `web/film/checks.js`), and their errors fail
+the take: two texts drawn on each other (`layout/text-overlap`, which caught the People example's
+reason card fading in over the table for 0.2 s), a headline half over a card
+(`staging/text-over-product`), a part off the canvas (`layout/subject-off-canvas`), and words cut
+by the frame (`layout/text-cut`). A crop or the caption band cutting a word, and text under the
+size floor, fail a stage's take as well; on a filmed product they stay warnings. Padding inside a
+card, unbalanced side space, a title off centre and a top banner are warnings: a hero runs off an
+edge on purpose. Rules made for motion graphics stay off for filmed product: pace and dead
 air (a film holds still while the product is read), competing text (a product screen is full of
 it), the cursor's stretch and entrance (the hand is the system's, and hides with the window it
 works in). `web/film-checks.test.js` covers each rule on synthetic frames.

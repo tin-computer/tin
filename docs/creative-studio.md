@@ -1,4 +1,4 @@
-# Creative studio: `creative.character`, `creative.product_demo` and `creative.feature_film`
+# Creative studio: `creative.character` and `creative.product_demo`
 
 Written 2026-09-08. Two `codex.procedure` workflows that turn a product's public pages into a
 brand character (an animatable SVG) and a narrated 9:16 demo video, the way a human editor would
@@ -41,78 +41,6 @@ mascot reacting in the corner. The design record is the "Creative studio outcome
    `tin-studio check` validates it; Codex copies it to `demos/<slug>.mp4`.
 5. The runner pushes the artifact to the ephemeral branch; the switchboard validates it again,
    publishes it canonically, and asks for review.
-
-## Feature films: `creative.feature_film`
-
-Added 2026-11-05. A `codex.procedure` on the same studio profile that makes a short captioned
-film of one feature for a LinkedIn or X post: a staged scene in the product's own look, where one
-thing happens per beat and the result stays on screen, played on a virtual clock one frame at a
-time with a drawn cursor and a caption band. It is the film kit (`web/film`,
-[feature films](feature-films.md#staged-films)) and its stage kit as the `tin-film` command.
-
-| Piece | Where | What it does |
-|---|---|---|
-| Toolkit | `web/film/tin-film.js`, `inspect.js`, the kit and `web/film/stage/`, in the image at `/opt/tin-lite/diagram/web/film/` | `directions`, `sketch`, `new`, `inspect`, `record`, `rehearse`, `review`, `render`, `deliver` (a film, or `--directions`), `restore`; runs on the diagram layer's pinned Playwright Chromium (`sandbox/tin_film.sh`) |
-| Worked examples | `web/film/examples/onboarding/`, `people/` | Tin's own onboarding and People films, each a storyboard, a `film.json` and a stage: the bar `tin-film new --from` copies |
-| Contract | `studio_contracts.parse_film_output` (`parse_film_directions`, `parse_feature_film`), `validate_feature_film_video` (both copies) | the note either offers 2 to 8 directions (a `tin-directions` block naming the recommended one, a `## N. Name` section per sketch with one still from its own folder) or plays exactly one film from its own folder; the film is a fast-start MP4 at 1080x1350, 1080x1080 or 1920x1080, 8 to 90 s |
-| Picking | `src/tin_lite/film_directions.py`, `POST /api/workflows/runs/{id}/film-direction`, MCP `pick_film_direction`, the Decisions card in `static/app.js` | a pick is a revision of the note (`content-revision.v1`): "Build direction N, Name." or "Sketch other directions.", with the founder's note |
-| Procedure | `codex_procedures/creative.feature_film/` | prompt, skill, `stage-kit.md` (the parts, the runtime, framing) and `film-format.md` (the JSON film and its beats) |
-| Catalog | `src/tin_lite/catalog.py` | id `…049`, `FEATURE_FILM_REVIEW_POLICY`, on demand, inputs `slug`, `feature`, `post`, `angle`, `product_url` (optional, for the look), `format`, `notes` |
-
-From 1.2.0 the founder picks the direction. A film is a review chain on one note,
-`films/{slug}.md`, the way an article draft's revisions are: the first run delivers its
-directions and waits in Decisions; picking one (or asking for others, with a note) starts the
-next version, which builds the film at the same path; the film waits to be watched, and asking
-for changes starts another. Each version is its own metered run; approval binds the film, and
-directions can't be approved. The decision offers revisions (`feedback_supported`), and the
-document page's Request changes revises a film like a draft.
-
-How a run goes:
-
-1. The agent works out the feature (the run's `feature` and `post`, or the Feature map) and what
-   really happens when someone uses it, in the product's real wording; with a page, `tin-film
-   inspect` reads its look as the stage kit's tokens, its fonts and a screenshot.
-2. It decides the kind of film (a product highlight, a motion graphic or both), researches how
-   such a claim has been shown, deals five directions with `tin-film directions`, sketches each
-   as a stage page and compares them side by side (`tin-film sketch`); the second look
-   (`tin-film review --directions`, below) recommends one. From 1.2.0 `tin-film deliver
-   --directions` writes the note: a still and the page of each sketch (`N-name.jpg`,
-   `N-name.html`), one sentence on each, the recommendation and why, and `notes.json` (the kind,
-   research and directions) for the run that builds it. The run ends in Decisions, where the
-   card shows the recommended still large with why under it and the others in a strip
-   (Paper PD-B); the founder builds one or asks for others.
-3. In the next version (its revision packet says "Build direction N, Name."), `tin-film new
-   --from` copies the worked example closest to the film, with its contact sheet
-   (`example.jpg`, one still per shot): the bar the agent looks at once; the picked sketch's
-   page, from the checkout, becomes the stage.
-4. It rewrites the example's `storyboard.md` for this feature (the story as a before and an
-   after, three to six shots and a payoff, each with its mark, caption, hero, satellite, real
-   words and what moves), then rebuilds the stage for this product (its tokens, its chrome, the
-   kit's parts, sample content only) and writes the beats, a caption and a mark per shot.
-5. `tin-film rehearse` plays it at low resolution with every frame measured and checked
-   (mographc's rules, the kit's own, the pacing checks and the storyboard's); its contact sheet
-   is the storyboard drawn, and the agent fixes the film until it is clean.
-6. From 1.1.0, `tin-film review` asks for a second look: the newest take's contact sheet and
-   marked stills, `film.json`, its storyboard, the worked example's sheet (the bar) and the
-   checks' summary go to the run-bound
-   `POST /internal/run-tools/studio/review` route (`studio.review` on the `tin.studio` grant,
-   film runs only). The switchboard sends them to `creative.feature_film.review.v1`
-   (`gpt-6-sol`, a different model from the run's Codex model, with image input) with the
-   review brief in `src/tin_lite/film_review.py`, and returns a verdict and findings with fixes.
-   One `studio_review` receipt per request (a retry replays it), four reviews a run, and the
-   model call is receipted and billed by the native model service: a film run's terms add
-   `native_model` operations at the pinned supplier card (`service_pricing`).
-7. `tin-film render` makes the final take, and `tin-film deliver` writes `films/{slug}.md` with
-   `film.mp4`, `poster.png`, `captions.vtt`, `film.json` and, for a staged film, `stage.html`
-   and `storyboard.json` in `films/{slug}.assets/`, then runs `tin-studio check` on both.
-   A revision of the film puts them back with `tin-film restore`.
-8. Tin keeps the note (`feature-film.v1`) and its files (`page_assets` kinds mp4, png, jpeg,
-   vtt, json and html, at most 16 files and 32 MB; every file leak-scanned), and the review
-   shows the note with the film playing. Approval binds the note and every file's checksum.
-   Tin posts nothing.
-
-The workflow stages what Tin holds about the product in its public look and signs in nowhere;
-captions only, one format a run. Video on LinkedIn drafts comes next.
 
 ## How a character run works (no sandbox)
 

@@ -926,7 +926,7 @@ class BillingService:
                 terms = {**terms, "mode": self.mode}
             else:
                 terms = self.terms(definition, run["project_id"], object_value(run["input"]))
-            if "service_pricing" in terms and "service_pricing" in parent_terms:
+            if "service_pricing" in terms:
                 terms["service_pricing"] = parent_terms["service_pricing"]
             if incremental(parent_terms):
                 terms = configured_terms(terms, definition, object_value(run["input"]))

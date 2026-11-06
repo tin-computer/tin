@@ -79,8 +79,12 @@ export function installScreen() {
     const shown = (element, box) => {
       const style = getComputedStyle(element);
       if (style.visibility === "hidden" || Number(style.opacity) === 0) return false;
-      const top = document.elementsFromPoint(box.left + box.width / 2, box.top + box.height / 2).find(item => !item.closest(ours));
-      return Boolean(top && element.contains(top));
+      // The middle of the part the window shows: a line half past its edge is still drawn, and cut.
+      const left = Math.max(box.left, 0), right = Math.min(box.right, innerWidth);
+      const top = Math.max(box.top, 0), bottom = Math.min(box.bottom, innerHeight);
+      if (right - left < 1 || bottom - top < 1) return false;
+      const hit = document.elementsFromPoint((left + right) / 2, (top + bottom) / 2).find(item => !item.closest(ours));
+      return Boolean(hit && element.contains(hit));
     };
     const found = [];
     const walker = document.createTreeWalker(document.body, NodeFilter.SHOW_TEXT);
@@ -90,8 +94,13 @@ export function installScreen() {
       if (!text || !element || element.closest(ours)) continue;
       const range = document.createRange();
       range.selectNodeContents(node);
-      for (const box of range.getClientRects()) {
-        if (box.width && box.height && shown(element, box)) found.push({text: text.slice(0, 40), box, size: parseFloat(getComputedStyle(element).fontSize)});
+      const size = parseFloat(getComputedStyle(element).fontSize);
+      for (const line of range.getClientRects()) {
+        // A line's box is its font's whole height, past the letters when the line is set tight;
+        // its letters sit within about 0.8 em of its middle, and only they can be cut.
+        const half = Math.min(line.height, size * 0.8) / 2;
+        const box = new DOMRect(line.left, (line.top + line.bottom) / 2 - half, line.width, half * 2);
+        if (box.width && box.height && shown(element, box)) found.push({text: text.slice(0, 40), box, size});
       }
     }
     for (const element of document.body.querySelectorAll("input, button, select, textarea, [role=tab]")) {
@@ -331,7 +340,7 @@ export function installScreen() {
   };
 }
 
-export function installStage({backdrop = "#000", path = "/", size, dpr = 2} = {}) {
+export function installStage({backdrop = "#000", ink = "#f6f1e7", path = "/", size, dpr = 2} = {}) {
   if (window !== window.top || location.pathname !== path) return;
   const film = window.__film = window.__film || {};
 
@@ -399,7 +408,8 @@ export function installStage({backdrop = "#000", path = "/", size, dpr = 2} = {}
 
     const caption = state.caption || {};
     parts.words.textContent = caption.text || "";
-    Object.assign(parts.words.style, {color: getComputedStyle(document.body).color, opacity: String(caption.opacity ?? 0),
+    // The page's ink when Tin's stylesheet sets one, else the film's own for its backdrop.
+    Object.assign(parts.words.style, {color: getComputedStyle(document.documentElement).getPropertyValue("--ink").trim() ? getComputedStyle(document.body).color : ink, opacity: String(caption.opacity ?? 0),
       transform: `translateY(${(caption.rise || 0) * unit * 0.02}px)`});
 
     // The cursor is drawn at macOS's size in the screen's own px, Stageshow's large style (1.5x),

@@ -23,8 +23,8 @@ closest one's structure, change its look and its words.
 
 A film is set in the product's own type, from the product itself:
 
-1. **Its code**, when the prompt lists CONNECTED REPOSITORIES (read-only, under
-   `/home/user/repos/`). The product's faces are there: `@font-face` rules,
+1. **Its code**, the repository you work in or the founder's others. The product's faces are
+   there: `@font-face` rules,
    `next/font/local` sources, font files in `public/fonts/` or beside a layout, a Tailwind
    or CSS-variable theme naming them, and the logo's SVG. The app behind sign-in is often set
    differently from the landing page; the code shows both. Copy the files beside the stage

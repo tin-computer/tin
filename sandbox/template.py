@@ -108,67 +108,6 @@ _STUDIO_INSTALL = (
 )
 _STUDIO_CHECK = f"{STUDIO_PYTHON} /opt/tin-lite/studio/tin_studio.py help >/dev/null"
 
-# The film kit for `tin-film` (creative.feature_film). It runs on the diagram layer's pinned
-# Playwright and Chromium, so it goes into that layer's root, where its imports resolve and the
-# stage page finds the bundled Geist fonts; mographc (MIT) is vendored with its licence.
-FILM_ROOT = "/opt/tin-lite/diagram"
-FILM_FILES = (
-    "web/app-fixture.js",
-    *(
-        f"web/film/{name}"
-        for name in (
-            "film.js",
-            "tin-film.js",
-            "inspect.js",
-            "directions.js",
-            "checks.js",
-            "probe.js",
-            "recording.js",
-            "spec.js",
-            "clock.js",
-            "ease.js",
-            "overlay.js",
-        )
-    ),
-    *(
-        f"web/film/vendor/mographc/{name}"
-        for name in (
-            "LICENSE",
-            "README.md",
-            "config.js",
-            "film.js",
-            "lint.js",
-            "report.js",
-            "rule.js",
-            "viewer.js",
-            "rules/activity.js",
-            "rules/attention.js",
-            "rules/compiler.js",
-            "rules/motion.js",
-            "rules/regression.js",
-            "rules/spacing.js",
-            "rules/staging.js",
-            "rules/util.js",
-        )
-    ),
-    "third_party/licenses/mographc-LICENSE.txt",
-    # The stage kit a staged film is built from, its worked examples, and what they use
-    # from the dashboard's assets (the fonts come with the diagram layer).
-    "web/film/stage/stage.css",
-    "web/film/stage/stage.js",
-    "web/film/stage/vendor/d3.min.js",
-    "web/film/stage/vendor/d3-sankey.min.js",
-    "web/film/stage/vendor/plot.umd.min.js",
-    *(
-        f"web/film/examples/{name}/{file}"
-        for name in ("onboarding", "people")
-        for file in ("film.json", "storyboard.md", "stage/index.html", "sheet.jpg")
-    ),
-    "src/tin_lite/static/tin-logotype-ink.png",
-    "third_party/licenses/stageshow-LICENSE.txt",
-)
-_FILM_CHECK = "tin-film help >/dev/null"
-
 
 class TemplateSettings(BaseSettings):
     model_config = SettingsConfigDict(
@@ -333,17 +272,10 @@ def _studio_layer(template):
         template = template.copy(
             f"sandbox/studio/{name}", f"/opt/tin-lite/studio/{name}", user="user", mode=0o644
         )
-    template = template.copy(
-        "sandbox/tin_film.sh", "/opt/tin-lite/studio/tin-film", user="user", mode=0o755
-    )
-    for name in FILM_FILES:
-        template = template.copy(name, f"{FILM_ROOT}/{name}", user="root", mode=0o644)
     return (
         template.run_cmd(_STUDIO_INSTALL, user="root")
         .run_cmd(_STUDIO_CHECK, user="user")
         .make_symlink("/opt/tin-lite/studio/tin-studio", "/usr/local/bin/tin-studio", user="root")
-        .make_symlink("/opt/tin-lite/studio/tin-film", "/usr/local/bin/tin-film", user="root")
-        .run_cmd(_FILM_CHECK, user="user")
     )
 
 
@@ -379,24 +311,19 @@ def show_build_log(entry) -> None:
 def main(argv: list[str]) -> int:
     settings = TemplateSettings()
     selected = list(TEMPLATES)
-    # `--as` builds one image under another alias, a candidate to verify before the alias the
-    # service runs is replaced.
-    target = None
-    if len(argv) == 4 and argv[0] == "--only" and argv[2] == "--as":
-        argv, target = argv[:2], argv[3]
     if len(argv) == 2 and argv[0] == "--only":
         if argv[1] not in TEMPLATES:
             print(f"unknown template alias: {argv[1]}", file=sys.stderr)
             return 64
         selected = [argv[1]]
     elif argv:
-        print("usage: template.py [--only <alias> [--as <candidate alias>]]", file=sys.stderr)
+        print("usage: template.py [--only <alias>]", file=sys.stderr)
         return 64
     for alias in selected:
         build, cpu_count, memory_mb = TEMPLATES[alias]
         Template.build(
             build(),
-            alias=target or alias,
+            alias=alias,
             cpu_count=cpu_count,
             memory_mb=memory_mb,
             on_build_logs=show_build_log,
