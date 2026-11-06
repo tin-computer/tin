@@ -102,6 +102,7 @@ async def test_directions_are_picked_from_and_the_film_is_approved(publication_d
     ]
     assert view["directions"]["sketches"][0]["page"] == "films/herding.assets/1-iceberg.html"
     assert view["can_request_changes"] and not view["can_approve"]
+    assert view["submit_label"] == "Sketch other directions"
     with pytest.raises(ReviewConflict, match="Pick one to build"):
         await f.reviews.approve(run_id=first.id, actor=ACTOR, token=view["review_token"])
     # The decision offers revisions, the way a draft's does.
@@ -131,6 +132,7 @@ async def test_directions_are_picked_from_and_the_film_is_approved(publication_d
     watched = await f.reviews.view(film.id, ACTOR)
     assert watched["directions"] is None
     assert watched["can_approve"] and watched["can_request_changes"]
+    assert watched["submit_label"] == "Revise film"
     assert watched["root_run_id"] == str(first.id)
     with pytest.raises(ReviewConflict, match="no directions waiting"):
         await film_directions.pick(

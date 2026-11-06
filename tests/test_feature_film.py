@@ -334,3 +334,12 @@ def test_tin_studio_checks_delivered_directions_as_tin_keeps_them(tmp_path: Path
     (folder / "2-flow.jpg").write_bytes(b"GIF89a")
     checked = _check(note)
     assert "REJECTED: sketch 2's still must be a PNG or JPEG image" in checked.stdout
+
+
+def test_the_reader_shows_a_directions_note_without_its_block() -> None:
+    from tin_lite.documents import render_markdown
+
+    html = render_markdown(DIRECTIONS.decode(), asset_folder="films/herding.assets").html
+    # The note's words say the recommendation; the block is for Decisions and agents.
+    assert "tin-directions" not in html and "recommended: 2" not in html
+    assert 'data-asset="films/herding.assets/2-flow.jpg"' in html

@@ -17,6 +17,18 @@ CAPABILITY = "content-revision.v1"
 MAX_CONTEXT_BYTES = 64_000
 
 
+def film_labels(run, directions):
+    """A film's review form in its own words: a retry, other directions, or a new cut."""
+    if run.status == RunStatus.FAILED:
+        return {"feedback_hint": "Tin tries this version again.", "submit_label": "Try again"}
+    if directions:
+        return {
+            "feedback_hint": "Say what to try instead. To build one, pick it in Decisions.",
+            "submit_label": "Sketch other directions",
+        }
+    return {"feedback_hint": "For this film only.", "submit_label": "Revise film"}
+
+
 def review_token(run, artifact):
     return digest({"run": str(run.id), "version": run.review_version, "artifact": artifact})
 
@@ -171,6 +183,7 @@ class WorkflowReviews:
             and not artifact["assessment"]
             and directions is None,
             "directions": directions,
+            **(film_labels(run, directions) if definition.key == FILM_KEY else {}),
             "is_current": latest,
             "versions": [dict(v) for v in versions],
             "feedback": incoming["feedback"] if incoming else None,
