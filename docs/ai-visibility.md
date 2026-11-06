@@ -29,15 +29,22 @@ that names the project or one that only checks citations.
 
 ## The page
 
-- **Score:** the share of the kind's answers that recommended the project, the share that
+- **Score:** a sentence that says the week (how many answers recommended the project and how
+  many named or cited it, how many questions brought it up, who was recommended instead most),
+  then four tiles: the share of the kind's answers that recommended the project, the share that
   mentioned or cited it (recommendations included), how many questions named it at least once,
   and the brand recommended most often instead. Each share shows its change from the week before.
+  The Recommended tile turns moss when its share rose by 3 points or more on the week before and
+  crimson when it fell as far; a smaller move, which a few hundred answers a week can't tell from
+  noise, or a first week leaves it plain.
 - **Week by week:** once there are two weeks, both shares for every week. Selecting a week opens
   it, as do the arrows by the week's dates.
 - **Table:** questions down the left in their sections and groups, an engine in each column, and
   each question's three brands most often recommended instead. A cell shows the best of its
-  answers (a tick, a yellow dot or a cross), with `1/2` when only one of two answers reached it.
-  Selecting a cell opens that engine's answers under the row.
+  answers as a chip: a tick on moss where an engine recommended the project, a dot on sand where
+  it only named or cited it, a faint cross where it did neither, and a dash for no answer, with a
+  `1/2` tag when only one of two answers reached it. Selecting a cell opens that engine's answers
+  under the row.
 
 ## Storing a week
 
