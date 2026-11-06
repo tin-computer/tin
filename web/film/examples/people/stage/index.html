@@ -1,0 +1,108 @@
+<!doctype html>
+<html>
+<head>
+<meta charset="utf-8">
+<title>People ranked by your ICP</title>
+<link rel="stylesheet" href="/film-fonts/fonts.css">
+<link rel="stylesheet" href="/__stage/kit/stage.css">
+<style>
+  /* A 1080 × 517 screen. First the founder's LinkedIn post is the hero, inset top-left and off the
+     foot, with "Who reacted" straddling its right edge from the first frame: faces nobody can
+     read. Then the scene travels up and Tin's People page comes up at the same inset, off the
+     right and the foot; the reason, the ticks and the person's panel all happen inside it. One
+     gutter: 48px. */
+  :root { --mark: url("/assets/tin-logotype-ink.png"); }
+  #post { left: 48px; top: 40px; width: 647px; height: 520px; }
+  #who { left: 638px; top: 84px; width: 394px; height: 480px; }
+  #who .card-body { padding-top: 0; }
+  #app { left: 48px; top: 40px; width: 1240px; height: 520px; }
+  #people .tabs, .table { width: 749px; }
+  .table { margin-top: 16px; --cols: 36px 214px 259px 99px 1fr; }
+  #reason { left: 741px; top: 272px; width: 288px; }
+  /* The panel runs off the stage's right edge like the window; its words keep a gutter from it. */
+  #panel { left: 673px; top: 76px; width: 615px; height: 484px; padding-right: 260px; --scene-x: 480px; }
+  #panel .panel-head { margin-right: -260px; padding-right: 260px; }
+</style>
+</head>
+<body>
+<div class="stage">
+
+  <div class="card post" id="post">
+    <div class="post-head"><div class="avatar">AL</div><div><div class="post-name">Avery Lane</div><div class="post-sub">Founder, Plainfield · your post on LinkedIn</div></div></div>
+    <div class="post-text">We stopped chasing invoices by hand.<br>Here’s what changed for our studio.</div>
+    <i class="bar" style="width: 529px"></i><i class="bar" style="width: 495px"></i><i class="bar" style="width: 343px"></i>
+    <div class="post-media"></div>
+    <div class="post-foot"><span class="faces"><i></i><i></i><i></i></span><span><b>214 reactions</b> · 31 comments</span></div>
+  </div>
+
+  <div class="card" id="who">
+    <div class="card-head">
+      <div class="card-title">Who reacted</div>
+      <div class="card-sub">214 people across your posts, last 90 days</div>
+    </div>
+    <div class="card-body">
+      <div class="face-row arrive"><i class="face"></i><div><i class="bar" style="width: 135px"></i><i class="bar" style="width: 214px"></i></div></div>
+      <div class="face-row arrive"><i class="face"></i><div><i class="bar" style="width: 107px"></i><i class="bar" style="width: 169px"></i></div></div>
+      <div class="face-row arrive"><i class="face"></i><div><i class="bar" style="width: 152px"></i><i class="bar" style="width: 236px"></i></div></div>
+      <div class="face-row arrive"><i class="face"></i><div><i class="bar" style="width: 118px"></i><i class="bar" style="width: 191px"></i></div></div>
+      <div class="face-row arrive"><i class="face"></i><div><i class="bar" style="width: 141px"></i><i class="bar" style="width: 157px"></i></div></div>
+      <div class="face-row arrive"><i class="face"></i><div><i class="bar" style="width: 112px"></i><i class="bar" style="width: 202px"></i></div></div>
+    </div>
+  </div>
+
+  <div class="window app arrive slide" id="app">
+    <div class="window-bar"><i></i><i></i><i></i><div class="window-address">app.tin.computer</div></div>
+    <div class="window-body">
+      <div class="app-side">
+        <div class="app-mark" role="img" aria-label="Tin"></div>
+        <div class="app-project">Plainfield (demo)<small>Plainfield · 1 running</small></div>
+        <div class="nav"><svg viewBox="0 0 16 16"><circle cx="3.5" cy="8" r="1.8"/><circle cx="12.5" cy="3.5" r="1.8"/><circle cx="12.5" cy="12.5" r="1.8"/><path d="M5.2 7.2l5.6-3M5.2 8.8l5.6 3"/></svg><span>System</span></div>
+        <div class="nav"><svg viewBox="0 0 16 16"><path d="M3 2.5h10v11H3zM5.5 6h5M5.5 9h3"/></svg><span>Decisions</span></div>
+        <div class="nav is-current"><svg viewBox="0 0 16 16"><circle cx="8" cy="5.2" r="2.6"/><path d="M2.8 13.6c.4-2.6 2.6-4.2 5.2-4.2s4.8 1.6 5.2 4.2"/></svg><span>People</span></div>
+        <div class="nav"><svg viewBox="0 0 16 16"><path d="M2.5 13.5V8.5M6.2 13.5V4M9.8 13.5V6.5M13.5 13.5V2.5"/></svg><span>Analytics</span></div>
+        <div class="nav"><svg viewBox="0 0 16 16"><path d="M2 4.5h4l1.4 1.5H14v6.5H2z"/></svg><span>Files</span></div>
+      </div>
+      <div class="app-main">
+        <div data-page="people" class="is-current" id="people">
+          <div class="app-title">People</div>
+          <div class="tabs">
+            <div class="tab is-current">All people<span class="count" style="color: var(--ink-3)">214</span></div>
+            <div class="tab">ICP fit<span class="count">38</span></div>
+            <div class="tab">Not connected yet<span class="count" style="color: var(--ink-3)">171</span></div>
+            <div class="aside arrive" id="sending"><span class="dot"></span>Sending on · 9 sent this week · 3 accepted</div>
+          </div>
+          <div class="table">
+            <div class="thead sized" id="thead">
+              <div data-view="columns" class="is-current"><span></span><span>Name</span><span>Headline</span><span class="is-sorted">ICP fit ↓</span><span>LinkedIn</span></div>
+              <div data-view="selected" class="picked"><span class="tickbox is-mixed"></span><b id="n-picked">1 selected</b><span class="line">One at a time from your LinkedIn · the first around 10:40 today</span><button class="button go" id="send"><span class="label">Send 1 request</span></button></div>
+            </div>
+            <div class="tr arrive" id="row-daniel"><span class="tickbox arrive is-on" data-tick="#row-daniel"></span><span class="who">Daniel Okafor</span><span class="sub">Founder, Fieldline Studio</span><span class="num is-fit">0.91</span><span class="status">Not connected</span></div>
+            <div class="tr arrive" id="row-grace"><span></span><span class="who">Grace Liu</span><span class="sub">Founder, Pinewood Collective</span><span class="num is-fit">0.88</span><span class="status"><span class="connected">Connected</span></span></div>
+            <div class="tr arrive" id="row-hannah"><span class="tickbox arrive is-on" data-tick="#row-hannah"></span><span class="who">Hannah Kim</span><span class="sub">Co-founder, Brightcut Films</span><span class="num is-fit">0.86</span><span class="status">Not connected</span></div>
+            <div class="tr arrive" id="row-chloe"><span class="tickbox arrive is-on" data-tick="#row-chloe"></span><span class="who">Chloé Martin</span><span class="sub"><i class="bar"></i></span><span class="num">0.58</span><span class="status">Not connected</span></div>
+            <div class="tr arrive" id="row-lea"><span class="tickbox arrive is-on" data-tick="#row-lea"></span><span class="who">Lea Fischer</span><span class="sub"><i class="bar" style="width: 169px"></i></span><span class="num">0.52</span><span class="status">Not connected</span></div>
+            <div class="tr arrive" id="row-nina"><span class="tickbox arrive is-on" data-tick="#row-nina"></span><span class="who">Nina Weiss</span><span class="sub"><i class="bar" style="width: 124px"></i></span><span class="num">0.47</span><span class="status">Not connected</span></div>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <div class="panel arrive slide from-right" id="panel">
+    <div class="panel-head">
+      <div class="panel-title">Chloé Martin</div>
+      <div class="panel-sub">Founder, Studio Lumen</div>
+      <span class="link" id="open-li">Open on LinkedIn<span class="out">↗</span></span>
+    </div>
+    <div class="field"><div class="label">ICP fit</div><div><b class="num">0.58</b><p>Runs a six-person studio with a few monthly retainers.</p></div></div>
+    <div class="field" id="li-field"><div class="label">LinkedIn</div><div><b>Connected</b></div></div>
+    <div class="happened"><span>Accepted your connection request</span><code>14:10</code></div>
+    <div class="happened"><span>Connection request sent</span><code>10:40</code></div>
+  </div>
+
+  <div class="pop arrive" id="reason"><p>Runs a 14-person design studio and bills its clients every month.</p><code>0.91 · ICP 1: agency founders</code></div>
+
+</div>
+<script src="/__stage/kit/stage.js"></script>
+</body>
+</html>

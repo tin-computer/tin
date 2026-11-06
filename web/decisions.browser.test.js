@@ -13,7 +13,7 @@ import { chromium } from "playwright";
 const assets = path.resolve("src/tin_lite/static");
 const minutesAgo = minutes => new Date(Date.now() - minutes * 60_000).toISOString();
 
-async function serve({draft: revision, release, extra = [], waitingTasks = false, adapted, olderDraft = false, unavailableDraft = false, review = null} = {}) {
+async function serve({draft: revision, release, extra = [], waitingTasks = false, adapted, olderDraft = false, unavailableDraft = false, review = null, films = null} = {}) {
   const project = {id: "project-1", name: "Example project", workspace_id: "ws", workspace_name: "Example", member_count: 1, hidden: false};
   const task = {
     id: "5a7e0000-0000-4000-8000-000000000001", project_id: project.id, workflow_id: "task", workflow_name: "project.task",
@@ -136,6 +136,13 @@ async function serve({draft: revision, release, extra = [], waitingTasks = false
       return send(requestedRun);
     }
     if (review && url.pathname === `/api/workflows/runs/${review.runId}/review`) return send(review.current);
+    // Film versions a coding agent uploaded, and their files at the version's revision.
+    if (films && /^\/api\/projects\/[^/]+\/films$/.test(url.pathname)) return send({films: films.versions});
+    if (films && url.pathname.endsWith("/files/raw")) {
+      const file = films.files[url.searchParams.get("path")];
+      if (!file) {response.statusCode = 404; return send({detail: "not found"});}
+      response.setHeader("Content-Type", file.endsWith(".mp4") ? "video/mp4" : "image/jpeg"); return response.end(await fs.readFile(file));
+    }
     // A content.generate draft's current review: it may be approved, or revised from feedback.
     const drafted = runs.find(run => run.workflow_name === "content.generate" && url.pathname === `/api/workflows/runs/${run.id}/review`);
     if (drafted) return send({run_id: drafted.id, status: drafted.status, version: 1, is_current: true, can_approve: true, can_request_changes: true, review_token: `token-${drafted.id}`});
@@ -576,4 +583,64 @@ test("discarding a draft asks once, then leaves it in Files and publishes nothin
     assert.deepEqual(errors, []);
     await context.close();
   } finally { await browser.close(); server.close(); }
+});
+
+test("a film a coding agent uploaded: its directions to pick from, then the cut to approve or send back", async () => {
+  const sheet = name => path.resolve(`web/film/examples/${name}/sheet.jpg`);
+  const names = ["Iceberg", "Flow", "Zoom out", "Orbit", "One person"];
+  const sketches = names.map((name, index) => ({n: index + 1, name, still: `films/funnel.assets/${index + 1}-${name.toLowerCase().replace(" ", "-")}.jpg`,
+    page: `films/funnel.assets/${index + 1}-${name.toLowerCase().replace(" ", "-")}.html`, about: `What ${name} shows, in one sentence.`}));
+  const files = Object.fromEntries(sketches.map((item, index) => [item.still, sheet(index % 2 ? "onboarding" : "people")]));
+  const directions = {slug: "funnel", id: "v1", version: 1, kind: "directions", title: "Your funnel is larger than you think", status: "waiting", revision: "c".repeat(40),
+    picked: null, note: "", uploaded_at: minutesAgo(2), decided_at: null,
+    directions: {recommended: 2, runner_up: 1, why: "Its frame says the claim without the caption: a wide band of people who never visit, with the 96 who fit traced in green.", sketches}};
+  const cut = {slug: "herding", id: "v2", version: 2, kind: "film", title: "Draw a circle, and the sheep follow", status: "waiting", revision: "d".repeat(40),
+    picked: null, note: "", uploaded_at: minutesAgo(5), decided_at: null,
+    film: {video: "films/herding.assets/film.mp4", poster: "films/herding.assets/poster.png", captions: null, width: 1920, height: 1080, seconds: 20}};
+  files[cut.film.video] = sheet("people");
+  files[cut.film.poster] = sheet("people");
+  const {server, base, writes} = await serve({films: {versions: [directions, cut], files}});
+  const browser = await chromium.launch({headless: true});
+  try {
+    const {page, context, errors} = await open(browser, base, "/decisions?project=project-1");
+    await page.locator("[data-decision-id='film:funnel:1']").click();
+    const card = page.locator(".film-directions");
+    await card.waitFor({timeout: 5000});
+    await page.waitForFunction(() => [...document.querySelectorAll(".film-directions img")].every(image => image.complete && image.naturalWidth > 0));
+    assert.match(await card.locator("header code").innerText(), /^Film · Pick a direction · /);
+    assert.equal(await card.locator("header strong").innerText(), "Your funnel is larger than you think");
+    assert.equal(await card.locator(".film-direction-name strong").innerText(), "Flow");
+    assert.equal(await card.locator(".film-direction-name span").innerText(), "Recommended");
+    assert.match(await card.locator(".film-direction-reason").innerText(), /traced in green/);
+    assert.deepEqual(await card.locator(".film-direction-strip span").allInnerTexts(), ["Iceberg", "Zoom out", "Orbit", "One person"]);
+    if (process.env.FILM_CARD_SHOT) await card.screenshot({path: process.env.FILM_CARD_SHOT});
+    // A click brings another up, with its own sentence, and the button follows it.
+    await card.getByRole("button", {name: "Orbit"}).click();
+    await page.locator(".film-directions .film-direction-name", {hasText: "Orbit"}).waitFor();
+    assert.match(await page.locator(".film-direction-reason").innerText(), /What Orbit shows/);
+    await page.locator("[data-film-note]").fill("End on the 96 who fit.");
+    const waiting = Number(await page.locator("#decision-count").textContent());
+    await page.getByRole("button", {name: "Build Orbit"}).click();
+    await page.locator("[data-decision-id='film:funnel:1']").waitFor({state: "detached"});
+    assert.equal(await page.locator("#decision-count").textContent(), String(waiting - 1));
+    const pick = writes.find(item => item.path === "/api/projects/project-1/films/funnel/versions/1/decision");
+    assert.deepEqual(pick.body, {decision: "pick", direction: 4, note: "End on the 96 who fit."});
+    assert.match(await page.locator(".toast").innerText(), /Picked Orbit\. Your coding agent builds it next\./);
+    // The cut plays where the still was; sending it back needs words.
+    await page.locator("[data-decision-id='film:herding:2']").click();
+    const watch = page.locator(".film-cut");
+    await watch.waitFor();
+    assert.match(await watch.locator("header code").innerText(), /^Film · Watch the film · /);
+    await page.waitForFunction(() => document.querySelector(".film-cut video")?.src.startsWith("blob:"));
+    await watch.getByRole("button", {name: "Ask for changes"}).click();
+    assert.match(await page.locator(".toast").innerText(), /Say what to change first\./);
+    assert.ok(!writes.some(item => item.path.includes("/films/herding/")));
+    await page.locator("[data-film-note]").fill("Larger captions.");
+    await watch.getByRole("button", {name: "Ask for changes"}).click();
+    await page.locator("[data-decision-id='film:herding:2']").waitFor({state: "detached"});
+    const changes = writes.find(item => item.path === "/api/projects/project-1/films/herding/versions/2/decision");
+    assert.deepEqual(changes.body, {decision: "changes", direction: null, note: "Larger captions."});
+    assert.deepEqual(errors, []);
+    await context.close();
+  } finally {await browser.close(); server.close();}
 });

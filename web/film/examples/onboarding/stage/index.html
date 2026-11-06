@@ -1,0 +1,128 @@
+<!doctype html>
+<html>
+<head>
+<meta charset="utf-8">
+<title>Onboarding to Tin</title>
+<link rel="stylesheet" href="/film-fonts/fonts.css">
+<link rel="stylesheet" href="/__stage/kit/stage.css">
+<style>
+  /* A 1080 × 517 screen. The terminal is the hero for the first four beats, inset top-left and
+     off the foot, with Tin's card straddling its right edge from the first frame (the form, then
+     the plan it becomes); then the scene travels up and Tin's dashboard comes up at the same
+     inset, off the right and the foot. One gutter: 48px. */
+  :root { --mark: url("/assets/tin-logotype-ink.png"); }
+  #terminal { left: 48px; top: 40px; width: 780px; height: 520px; }
+  #tin { left: 632px; top: 72px; width: 400px; }
+  #app { left: 48px; top: 40px; width: 1240px; height: 520px; }
+  #running { margin-top: 18px; width: 758px; }
+  #decisions .decision { width: 758px; margin-top: 20px; }
+  #pr { left: 274px; top: 392px; --scene: 160px; }
+</style>
+</head>
+<body>
+<div class="stage">
+
+  <div class="window terminal" id="terminal">
+    <div class="window-bar"><i></i><i></i><i></i><div class="window-title">aupilot — claude</div></div>
+    <div class="window-body">
+      <div class="scroll">
+        <div class="line"><span class="muted">~/aupilot $</span> <span id="cmd"></span></div>
+        <div id="term"></div>
+      </div>
+    </div>
+  </div>
+
+  <div class="card sized" id="tin">
+    <div data-view="form" class="is-current">
+      <div class="card-head">
+        <div class="card-title">Start here</div>
+        <div class="card-sub">What Tin asks about your business</div>
+      </div>
+      <div class="card-body">
+        <div class="row"><div class="label">Product</div><div class="value" id="v-product"><i class="bar"></i></div></div>
+        <div class="row"><div class="label">For</div><div class="value" id="v-for"><i class="bar" style="width: 170px"></i></div></div>
+        <div class="row"><div class="label">Hosting</div><div class="value" id="v-hosting"><i class="bar" style="width: 90px"></i></div></div>
+        <div class="row"><div class="label">Analytics</div><div class="value" id="v-analytics"><i class="bar" style="width: 104px"></i></div></div>
+        <div class="row"><div class="label">Payments</div><div class="value" id="v-payments"><i class="bar" style="width: 80px"></i></div></div>
+        <div class="row"><div class="label">Goal</div><div class="value" id="v-goal"><i class="bar" style="width: 130px"></i></div></div>
+      </div>
+      <div class="arrive grow" id="form-foot" style="--gap: 0px"><div class="card-foot"><span style="display: flex; align-items: center; gap: 10px;"><span class="dot pulse"></span>Tin is writing your plan</span><span class="when">3–6 min</span></div></div>
+    </div>
+    <div data-view="plan">
+      <div class="card-head">
+        <div class="card-title">Growth plan for Aupilot</div>
+        <div class="card-sub">A clear offer and a live site, but few searches find it yet.</div>
+      </div>
+      <div class="card-body">
+        <div class="rank is-top"><div class="n">1</div><div class="what"><div class="name-row"><div class="name">Organic traffic system</div><div class="chip" id="pick-chip">Tin's suggestion</div></div><div class="detail">Research now, then an article every week</div></div></div>
+        <div class="rank"><div class="n">2</div><div class="what"><div class="name">Conversion and trust</div></div></div>
+        <div class="rank"><div class="n">3</div><div class="what"><div class="name">Platform and marketplaces</div></div></div>
+        <div class="rank"><div class="n">4</div><div class="what"><div class="bar"></div></div></div>
+        <div class="rank"><div class="n">5</div><div class="what"><div class="bar" style="width: 36%"></div></div></div>
+      </div>
+    </div>
+  </div>
+
+  <div class="window app arrive slide" id="app">
+    <div class="window-bar"><i></i><i></i><i></i><div class="window-address">app.tin.computer</div></div>
+    <div class="window-body">
+      <div class="app-side">
+        <div class="app-mark" role="img" aria-label="Tin"></div>
+        <div class="app-project">Aupilot (demo)<small>Aupilot · 1 running</small></div>
+        <div class="nav is-current" data-go="system" id="nav-system"><svg viewBox="0 0 16 16"><circle cx="3.5" cy="8" r="1.8"/><circle cx="12.5" cy="3.5" r="1.8"/><circle cx="12.5" cy="12.5" r="1.8"/><path d="M5.2 7.2l5.6-3M5.2 8.8l5.6 3"/></svg><span>System</span><small class="count">1</small></div>
+        <div class="nav" data-go="decisions" id="nav-decisions"><svg viewBox="0 0 16 16"><path d="M3 2.5h10v11H3zM5.5 6h5M5.5 9h3"/></svg><span>Decisions</span><small class="count" id="decision-count"></small></div>
+        <div class="nav"><svg viewBox="0 0 16 16"><circle cx="8" cy="5.2" r="2.6"/><path d="M2.8 13.6c.4-2.6 2.6-4.2 5.2-4.2s4.8 1.6 5.2 4.2"/></svg><span>People</span></div>
+        <div class="nav"><svg viewBox="0 0 16 16"><path d="M2.5 13.5V8.5M6.2 13.5V4M9.8 13.5V6.5M13.5 13.5V2.5"/></svg><span>Analytics</span></div>
+        <div class="nav"><svg viewBox="0 0 16 16"><path d="M2 4.5h4l1.4 1.5H14v6.5H2z"/></svg><span>Files</span></div>
+        <div class="nav"><svg viewBox="0 0 16 16"><rect x="2.5" y="2.5" width="4.6" height="4.6" rx="1"/><rect x="8.9" y="2.5" width="4.6" height="4.6" rx="1"/><rect x="2.5" y="8.9" width="4.6" height="4.6" rx="1"/><rect x="8.9" y="8.9" width="4.6" height="4.6" rx="1"/></svg><span>Integrations</span></div>
+      </div>
+      <div class="app-main">
+        <div data-page="system" class="is-current" id="system">
+          <div class="app-title">System</div>
+          <div class="tabs"><div class="tab is-current">My system<span class="count">1</span></div><div class="tab">Workflows</div><div class="tab">Activity</div></div>
+          <div class="week">
+            <div class="day is-today"><div class="day-name">mon 2</div>
+              <div class="arrive grow" id="ev-draft"><div class="event for-you"><div>Collections that sound like you</div><div class="foot"><span>10:41</span><span class="state hot"><span class="dot hot"></span>for you</span></div></div></div>
+              <div class="event sized arrive" id="ev-audit"><div class="body"><div>Audit organic visibility</div><div class="foot"><span>10:02</span><span class="state"><span class="dot ink"></span>running</span></div></div></div>
+              <div class="event sized arrive" id="ev-keywords"><div class="body"><div>Plan keyword opportunities</div><div class="foot"><span>10:02</span><span class="state"><span class="dot ink"></span>running</span></div></div></div>
+            </div>
+            <div class="day"><div class="day-name">tue 3</div>
+              <div class="event arrive" id="ev-weekly"><div>Weekly article</div><div class="foot"><span>10:00</span><span>weekly</span></div></div>
+            </div>
+            <div class="day"><div class="day-name">wed 4</div></div>
+            <div class="day"><div class="day-name">thu 5</div></div>
+            <div class="day"><div class="day-name">fri 6</div></div>
+            <div class="day"><div class="day-name">sat 7</div></div>
+            <div class="day"><div class="day-name">sun 8</div></div>
+          </div>
+          <div id="running">
+            <div class="group-title">Running<small>1</small></div>
+            <div class="run" id="run-organic"><span class="dot ink"></span><div class="name">Run the organic traffic system</div><div class="state" id="run-state">researching</div><div class="track"><i id="bar-organic"></i></div></div>
+          </div>
+        </div>
+        <div data-page="decisions" id="decisions">
+          <div class="app-title">Decisions</div>
+          <div class="decision">
+            <div class="decision-head"><div class="avatar">D</div><div><div class="title">Collections that sound like you</div><small>Draft planned content · waiting for you</small></div></div>
+            <div class="decision-body">Automated invoice reminders for studio retainers, in wording you approve once.<div class="where">Will be published at <code>aupilot.com/features/collections/</code></div></div>
+            <div class="decision-actions">
+              <div class="check"><i></i>Do this for future drafts</div>
+              <button class="button quiet">Discard</button>
+              <button class="button" id="open-pr" data-then="Opening PR|PR opened" data-show="#pr"><span class="label">Open a pull request</span></button>
+              <button class="button primary">Publish now</button>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <div class="pull arrive slide" id="pr">
+    <span class="state"><svg viewBox="0 0 16 16"><path d="M1.5 3.25a2.25 2.25 0 1 1 3 2.12v5.26a2.25 2.25 0 1 1-1.5 0V5.37a2.25 2.25 0 0 1-1.5-2.12Zm5.68.22 2.54-2.54a.25.25 0 0 1 .43.18V2.5h1.1A2.75 2.75 0 0 1 14 5.25v5.38a2.25 2.25 0 1 1-1.5 0V5.25c0-.69-.56-1.25-1.25-1.25h-1.1v1.39a.25.25 0 0 1-.43.18L7.18 3.03a.25.25 0 0 1 0-.36ZM3.75 2.5a.75.75 0 1 0 0 1.5.75.75 0 0 0 0-1.5Zm0 9.5a.75.75 0 1 0 0 1.5.75.75 0 0 0 0-1.5Zm8.25.75a.75.75 0 1 0 1.5 0 .75.75 0 0 0-1.5 0Z"/></svg>Open</span>
+    <div><div class="title">Content: Collections that sound like you</div><small>aupilot/site #14</small></div>
+  </div>
+
+</div>
+<script src="/__stage/kit/stage.js"></script>
+</body>
+</html>

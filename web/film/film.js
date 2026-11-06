@@ -7,18 +7,26 @@ import {spawn} from "node:child_process";
 import crypto from "node:crypto";
 import fs from "node:fs";
 import path from "node:path";
-import {pathToFileURL} from "node:url";
+import {fileURLToPath, pathToFileURL} from "node:url";
 import {chromium} from "playwright";
-import {checkFrames, describe, summary} from "./checks.js";
+import {STAGE_RULES, checkFrames, describe, summary} from "./checks.js";
 import {measureFrame} from "./probe.js";
 import {findSecrets, openRecording} from "./recording.js";
 import {player} from "./spec.js";
-import {serveApp} from "../app-fixture.js";
 import {installVirtualClock} from "./clock.js";
 import {bezier} from "./ease.js";
 import {installScreen, installStage} from "./overlay.js";
 
+// Tin's own films play its dashboard from the repository's fixture; the kit run as a package
+// (npx) serves only the film's origin.
+const FIXTURE = fileURLToPath(new URL("../app-fixture.js", import.meta.url));
+const DASHBOARD = fs.existsSync(FIXTURE);
+const {serveApp} = await import(DASHBOARD ? pathToFileURL(FIXTURE).href : "./origin.js");
+
 export const FPS = 30;
+// The stage kit's parts and runtime (stage/), served beside a staged film's own page.
+const STAGE_KIT = fileURLToPath(new URL("./stage/", import.meta.url));
+const STAGE_TYPES = {".html": "text/html", ".css": "text/css", ".js": "text/javascript", ".json": "application/json", ".svg": "image/svg+xml", ".png": "image/png", ".jpg": "image/jpeg", ".woff2": "font/woff2"};
 // Output sizes, the caption band under the picture, and how wide a screen the dashboard is filmed
 // on. 4:5 for LinkedIn and X feeds, 16:9 for X on desktop, the site and blog posts. The tall
 // formats use a narrower screen, so the dashboard shows its own compact layouts.
@@ -115,13 +123,152 @@ export function zigzags(lens) {
   return found;
 }
 
+// In a staged page: its largest painted part on show, when that part sits wholly inside the stage.
+// A diagram (inside [data-diagram]) may sit whole in the frame.
+function floating() {
+  const stage = document.querySelector(".stage") || document.body;
+  const frame = stage.getBoundingClientRect();
+  const whole = frame.width * frame.height;
+  let hero = null;
+  for (const el of stage.querySelectorAll("*")) {
+    const box = el.getBoundingClientRect();
+    const shown = Math.max(0, Math.min(box.right, frame.right) - Math.max(box.left, frame.left)) * Math.max(0, Math.min(box.bottom, frame.bottom) - Math.max(box.top, frame.top));
+    if (shown < 0.15 * whole || shown > 0.95 * whole || (hero && shown <= hero.shown) || el.closest("[data-diagram]")) continue;
+    const style = getComputedStyle(el);
+    if (/rgba\(0, 0, 0, 0\)|transparent/.test(style.backgroundColor) && style.boxShadow === "none") continue;
+    let seen = true;
+    for (let at = el; at && at !== stage; at = at.parentElement) if (Number(getComputedStyle(at).opacity) < 0.5) seen = false;
+    if (seen) hero = {shown, box, label: el.id ? `#${el.id}` : `.${[...el.classList].join(".") || el.tagName.toLowerCase()}`};
+  }
+  if (!hero) return null;
+  const {box} = hero;
+  const air = [box.left - frame.left, box.top - frame.top, frame.right - box.right, frame.bottom - box.bottom];
+  return air.every(gap => gap > 1) ? {label: hero.label, width: Math.round(box.width), height: Math.round(box.height)} : null;
+}
+
+// In a staged page: where each diagram's weight sits against the frame's centre, which is the
+// caption's, and its words within a gutter of the frame's edge. Weight is the diagram's marks
+// (its flows, bars, nodes), not its labels, which hang off them.
+function diagramLayout() {
+  const stage = document.querySelector(".stage") || document.body;
+  const frame = stage.getBoundingClientRect();
+  const gutter = Math.round(frame.width * 0.044);
+  const seen = el => {
+    for (let at = el; at && at !== stage; at = at.parentElement) {
+      const style = getComputedStyle(at);
+      if (style.visibility === "hidden" || style.display === "none" || Number(style.opacity) < 0.3) return false;
+    }
+    return true;
+  };
+  return [...document.querySelectorAll("[data-diagram]")].map(diagram => {
+    let [left, top, right, bottom] = [Infinity, Infinity, -Infinity, -Infinity];
+    for (const mark of diagram.querySelectorAll("svg path, svg rect, svg circle, svg ellipse, svg line, svg polygon, svg polyline")) {
+      const box = mark.getBoundingClientRect();
+      const style = getComputedStyle(mark);
+      if ((!box.width && !box.height) || !seen(mark)) continue;
+      const m = mark.getScreenCTM?.();
+      const half = style.stroke && style.stroke !== "none" ? (parseFloat(style.strokeWidth) / 2) * (m ? Math.hypot(m.a, m.b) : 1) : 0;
+      const [x, y] = box.width >= box.height ? [0, half] : [half, 0];
+      [left, top] = [Math.min(left, box.left - x), Math.min(top, box.top - y)];
+      [right, bottom] = [Math.max(right, box.right + x), Math.max(bottom, box.bottom + y)];
+    }
+    const words = [...diagram.querySelectorAll("*")].filter(el => [...el.childNodes].some(node => node.nodeType === 3 && node.textContent.trim()) && seen(el))
+      .filter(el => {
+        const box = el.getBoundingClientRect();
+        return box.left < frame.left + gutter - 0.5 || box.right > frame.right - gutter + 0.5 || box.top < frame.top + gutter / 2 - 0.5 || box.bottom > frame.bottom - gutter / 2 + 0.5;
+      }).map(el => el.textContent.trim().slice(0, 40));
+    if (left === Infinity) return {words, gutter};
+    return {words, gutter, dx: Math.round((left + right) / 2 - (frame.left + frame.right) / 2), dy: Math.round((top + bottom) / 2 - (frame.top + frame.bottom) / 2), width: frame.width, height: frame.height};
+  });
+}
+
+// In a staged page: parts that draw a cursor of their own, beside the one the film draws.
+// Runs in the stage: text set in a face the page never loaded. A stage names the product's face
+// (tin-film inspect keeps its files in look/fonts.css); one that falls to Arial or the system's
+// sans looks like any other company's film. Code and figures in a generic mono are fine.
+function fallbackType() {
+  const clean = family => family.trim().replace(/^["']|["']$/g, "");
+  const generic = /^(serif|sans-serif|system-ui|ui-sans-serif|ui-serif|ui-rounded|-apple-system|blinkmacsystemfont|cursive|fantasy)$/i;
+  const mono = /^(monospace|ui-monospace)$/i;
+  const system = /^(arial|helvetica|helvetica neue|segoe ui|roboto|times|times new roman|georgia|verdana|tahoma|trebuchet ms|inter var)$/i;
+  const loaded = new Set([...document.fonts].filter(face => face.status === "loaded").map(face => clean(face.family)));
+  const found = new Map();
+  for (const element of document.querySelectorAll(".stage *")) {
+    if (![...element.childNodes].some(node => node.nodeType === 3 && node.textContent.trim())) continue;
+    const box = element.getBoundingClientRect();
+    const style = getComputedStyle(element);
+    if (box.width < 2 || box.height < 2 || style.visibility === "hidden" || style.display === "none") continue;
+    const families = style.fontFamily.split(",").map(clean).filter(Boolean);
+    const asked = families[0] || "";
+    if (loaded.has(asked) || mono.test(asked)) continue;
+    const sets = families.find(name => loaded.has(name));
+    const sample = [...element.childNodes].filter(node => node.nodeType === 3).map(node => node.textContent).join("").replace(/\s+/g, " ").trim().slice(0, 40);
+    const kind = generic.test(asked) || system.test(asked) ? "system" : "missing";
+    if (!found.has(asked)) found.set(asked, {family: asked, kind, sets: sets || null, sample});
+  }
+  return [...found.values()];
+}
+
+// Runs in the stage: eyebrows, the small label set above a title, a card's words or a number,
+// lined up with it (uppercase, letter-spaced or mono: "HOW IT WORKS", "MENTIONS"). Tin never uses
+// them (design_rules.py). Only what the picture shows counts. A table's column headers are not
+// eyebrows, and neither is data set in mono: a date or a time ("mon 2", "10:02") over a calendar's
+// or a card's words.
+function eyebrows() {
+  const own = element => [...element.childNodes].filter(node => node.nodeType === 3).map(node => node.textContent).join("").replace(/\s+/g, " ").trim();
+  const parts = [...document.querySelectorAll(".stage *")].flatMap(element => {
+    const text = own(element);
+    if (!text || element.closest("th, thead, .thead, [role=columnheader]")) return [];
+    const box = element.getBoundingClientRect();
+    const style = getComputedStyle(element);
+    if (box.width < 2 || box.height < 2 || style.visibility === "hidden" || style.display === "none" || Number(style.opacity) < 0.05) return [];
+    // On screen and on top: a page under a sliding window or past the window's edge isn't seen.
+    const x = (Math.max(box.left, 0) + Math.min(box.right, innerWidth)) / 2, y = (Math.max(box.top, 0) + Math.min(box.bottom, innerHeight)) / 2;
+    if (x <= 0 || y <= 0 || x >= innerWidth || y >= innerHeight) return [];
+    const stack = document.elementsFromPoint(x, y);
+    const at = stack.findIndex(item => element.contains(item));
+    const opaque = item => !/rgba\(0, 0, 0, 0\)|transparent/.test(getComputedStyle(item).backgroundColor);
+    if (at < 0 || stack.slice(0, at).some(item => !item.contains(element) && opaque(item))) return [];
+    const size = parseFloat(style.fontSize);
+    const letters = text.replace(/[^A-Za-z]/g, "");
+    return [{text, size, top: box.top, bottom: box.bottom, left: box.left, right: box.right,
+      upper: style.textTransform === "uppercase" || (letters.length >= 3 && letters === letters.toUpperCase()),
+      spaced: parseFloat(style.letterSpacing) / size >= 0.04,
+      mono: /mono|courier|consolas|menlo|monaco/i.test(style.fontFamily)}];
+  });
+  const found = [];
+  for (const label of parts) {
+    if (label.text.split(" ").length > 6 || /[.!?:]$/.test(label.text)) continue;
+    if (!(label.upper || label.spaced || label.mono)) continue;
+    if (!label.upper && !label.spaced && /\d/.test(label.text)) continue;
+    const lined = other => Math.abs(other.left - label.left) <= 3 || Math.abs((other.left + other.right) / 2 - (label.left + label.right) / 2) <= 3;
+    const under = parts.filter(other => other !== label && other.top >= label.bottom - 2 && other.top - label.bottom <= Math.max(28, label.size * 2.6)
+      && other.left < label.right && other.right > label.left && other.size >= label.size * 1.2 && lined(other))
+      .sort((a, b) => a.top - b.top)[0];
+    if (under) found.push({text: label.text, under: under.text.slice(0, 40)});
+  }
+  return found;
+}
+
+function drawnCursors() {
+  return [...document.querySelectorAll(".stage *, body > *")].filter(el => {
+    const names = [el.id, typeof el.className === "string" ? el.className : el.className?.baseVal, el.getAttribute("aria-label"), el.getAttribute("alt"), el.getAttribute("src")].join(" ");
+    const own = [...el.childNodes].filter(node => node.nodeType === 3).map(node => node.textContent).join("").trim();
+    return /cursor|pointer|mouse/i.test(names) || /^[➤➜↖⬉🖱👆☝]$/u.test(own);
+  }).map(el => (el.id ? `#${el.id}` : el.tagName.toLowerCase()));
+}
+
 export class Director {
   // `page` is the stage, `app` the dashboard's frame in it. Everything the director works in
   // (frames, the cursor, rects) is in the stage's px; the screen sits `margin` in from its corner.
-  constructor({page, app, format, size, screen, margin = {top: 0, right: 0, bottom: 0, left: 0}, room = screen, deviceScale, served, issues, ripple = false, check = false}) {
-    Object.assign(this, {page, app, format, size, screen, margin, room, deviceScale, world: served, issues, ripple});
+  constructor({page, app, format, size, screen, margin = {top: 0, right: 0, bottom: 0, left: 0}, room = screen, deviceScale, served, issues, ripple = false, check = false, staged = false}) {
+    Object.assign(this, {page, app, format, size, screen, margin, room, deviceScale, world: served, issues, ripple, staged});
     // With `check`, every frame is measured (probe.js) and checked (checks.js) as the take goes.
     this.checking = check;
+    // Faces the stage asked for that never loaded, by family, from every mark.
+    this.fallbacks = new Map();
+    // Eyebrows already reported, by their words.
+    this.eyebrowsSeen = new Set();
     this.measured = [];
     this.findings = [];
     // Frames shot while the camera followed the hand: it crops through the screen as it goes.
@@ -222,7 +369,8 @@ export class Director {
       frame.x += shift.dx;
       frame.y += shift.dy;
     }
-    if ((box.width + pad * 2) / width > scale + 1e-6 || (box.height + pad * 2) / room > scale + 1e-6) {
+    // Half a pixel either way is a screen whose height was rounded (1080 wide in 16:9), not a cut.
+    if ((box.width + pad * 2 - 1) / width > scale + 1e-6 || (box.height + pad * 2 - 1) / room > scale + 1e-6) {
       this.warn(`The camera can't fit ${JSON.stringify(target)} in ${this.format}; it is cut.`);
     }
     if (cut || !this.n) {
@@ -401,7 +549,14 @@ export class Director {
     const floor = Math.round(SMALLEST_TEXT * Math.min(this.size.width, this.size.height));
     const runs = [...this.small].sort((a, b) => a[1].size - b[1].size);
     const marks = [...new Set(runs.flatMap(([, item]) => [...item.marks]))];
-    this.warn(`${runs.length} text runs are under ${floor}px (at ${marks.join(", ")}): ${runs.slice(0, 5).map(([text, item]) => `“${text}” ${item.size}px`).join(", ")}.`);
+    this.misdrawn(`${runs.length} text runs are under ${floor}px (at ${marks.join(", ")}): ${runs.slice(0, 5).map(([text, item]) => `“${text}” ${item.size}px`).join(", ")}.`);
+  }
+
+  // A stage is drawn for the film, so what a viewer can't read on it is an error; a product's own
+  // screens, filmed as they are, are only warned about.
+  misdrawn(message) {
+    if (this.staged) this.error(message);
+    else this.warn(message);
   }
 
   // A hand goes where it's going. A trip that only steps aside and then comes most of the way back
@@ -605,6 +760,17 @@ export class Director {
     await this.run(() => (this.ending = to * ease(++i / frames)) >= to - 1e-9);
   }
 
+  // Call the stage's own runtime (stage/stage.js) in the screen: show a card, print a terminal's
+  // lines, tick a box. What it schedules runs on the film's clock, and a call that says how long it
+  // takes is held for that long, filmed.
+  async do(name, ...args) {
+    const seconds = await this.app.evaluate(([name, args]) => {
+      if (typeof window.stage?.[name] !== "function") throw new Error(`The stage has no ${name}; it offers ${Object.keys(window.stage || {}).join(", ")}.`);
+      return window.stage[name](...args);
+    }, [name, args]);
+    if (typeof seconds === "number" && seconds > 0) await this.hold(seconds);
+  }
+
   // Keep the frame just shot: the poster, and the stills of the contact sheet.
   async mark(name) {
     if (this.dry) {
@@ -613,10 +779,27 @@ export class Director {
     }
     if (!this.last) throw new Error(`Mark ${name} before any frame was shot.`);
     this.marks[name] = {frame: this.n - 1, png: this.last};
+    // A staged film's hero runs off an edge of the stage; whole, with air on every side, it floats
+    // like a screenshot pasted on black.
+    if (this.staged) {
+      for (const item of await this.app.evaluate(fallbackType)) this.fallbacks.set(item.family, item);
+      for (const item of await this.app.evaluate(eyebrows)) {
+        if (this.eyebrowsSeen.has(item.text)) continue;
+        this.eyebrowsSeen.add(item.text);
+        this.issues.errors.push(`At ${name}, an eyebrow: “${item.text}” sits small above “${item.under}”. Tin never uses eyebrows: delete it, and let the title or the content say it.`);
+      }
+      const hero = await this.app.evaluate(floating);
+      if (hero) this.warn(`At ${name}, the hero ${hero.label} (${hero.width}×${hero.height}) sits whole on the stage with air on every side: inset it a gutter from the top and left and let it run off the right or the foot.`);
+      for (const diagram of await this.app.evaluate(diagramLayout)) {
+        if (Math.abs(diagram.dx) > diagram.width * 0.01) this.warn(`At ${name}, the diagram's marks centre ${Math.abs(diagram.dx)}px ${diagram.dx > 0 ? "right" : "left"} of the frame's centre, where the caption sits: move them so their middle lines up with the caption's, and let the labels hang off them.`);
+        if (Math.abs(diagram.dy) > diagram.height * 0.04) this.warn(`At ${name}, the diagram's marks centre ${Math.abs(diagram.dy)}px ${diagram.dy > 0 ? "below" : "above"} the middle of the picture: centre them in it.`);
+        if (diagram.words.length) this.warn(`At ${name}, the diagram's words come within the ${diagram.gutter}px gutter of the frame's edge: ${diagram.words.slice(0, 3).map(text => `“${text}”`).join(", ")}.`);
+      }
+    }
     // A following camera crops through the screen as it goes, as Screen Studio's does; a framed
     // shot shouldn't.
     const cut = this.follower ? [] : await this.app.evaluate(picture => window.__film.sliced(picture), this.onScreen(this.picture));
-    if (cut.length) this.warn(`At ${name}, the crop cuts ${cut.slice(0, 3).map(text => `“${text}”`).join(", ")}.`);
+    if (cut.length) this.misdrawn(`At ${name}, the crop cuts ${cut.slice(0, 3).map(text => `“${text}”`).join(", ")}.`);
     const sizes = (await this.app.evaluate(frame => window.__film.textSizes(frame), this.onScreen(this.picture)))
       .map(item => ({...item, size: Math.round((item.size * this.windowScale / this.scale) * 10) / 10}));
     const floor = SMALLEST_TEXT * Math.min(this.size.width, this.size.height);
@@ -755,7 +938,7 @@ export class Director {
       if (last && last.frames[1] === n - 1) last.frames[1] = n;
       else accepts.push({rule: "layout/text-cut", frames: [n, n], reason: "the following camera crops through the screen as it goes, as Screen Studio's does"});
     }
-    this.findings.push(...checkFrames(this.measured, {name, fps: FPS, offset, marks, accepts}));
+    this.findings.push(...checkFrames(this.measured, {name, fps: FPS, offset, marks, accepts, staged: this.staged}));
     this.measured = [];
   }
 
@@ -838,7 +1021,14 @@ export function ffmpeg(args) {
   const child = spawn("ffmpeg", ["-loglevel", "error", "-y", ...args], {stdio: ["pipe", "ignore", "pipe"]});
   let stderr = "";
   child.stderr.on("data", chunk => (stderr += chunk));
-  const done = new Promise((resolve, reject) => child.on("close", code => (code ? reject(new Error(`ffmpeg: ${stderr.trim()}`)) : resolve())));
+  // A missing or failed ffmpeg is said by `done`; the pipe it leaves broken is not a second error.
+  child.stdin.on("error", () => {});
+  const done = new Promise((resolve, reject) => {
+    child.on("error", error => reject(new Error(`ffmpeg: ${error.message}`)));
+    child.on("close", code => (code ? reject(new Error(`ffmpeg: ${stderr.trim()}`)) : resolve()));
+  });
+  // Whoever awaits `done` still gets its failure; until then it is not an unhandled rejection.
+  done.catch(() => {});
   return {child, done};
 }
 
@@ -847,6 +1037,41 @@ export async function encodeStills(pngs, args) {
   for (const png of pngs) child.stdin.write(png);
   child.stdin.end();
   await done;
+}
+
+// Pacing a viewer feels before any frame check: the first caption by a second and a half, each
+// caption long enough to read (17 characters a second, the subtitle rate) and gone by six and a
+// half seconds, and the picture never frozen for four seconds. Warnings, so a take still renders.
+export function pace(director, issues) {
+  const shown = director.captions.filter(item => item.text).map(item => ({text: item.text, start: item.start / FPS, end: Math.min(item.end ?? director.n, director.n) / FPS}));
+  const quote = text => `“${text.length > 48 ? `${text.slice(0, 47)}…` : text}”`;
+  if (shown.length && shown[0].start > 1.5) issues.warnings.push(`The first caption starts at ${shown[0].start.toFixed(1)} s; say the change within a second and a half.`);
+  for (const item of shown) {
+    const seconds = item.end - item.start;
+    const needed = Math.max(1.5, item.text.length / 17);
+    if (seconds > 6.5) issues.warnings.push(`The caption ${quote(item.text)} stays ${seconds.toFixed(1)} s; at most six, then say the next thing or move on.`);
+    else if (seconds + 0.05 < needed && item.end < director.n / FPS - 0.1) issues.warnings.push(`The caption ${quote(item.text)} shows ${seconds.toFixed(1)} s, too short to read; it needs ${needed.toFixed(1)} s, or fewer words.`);
+  }
+  // Identical frames in a row: nothing on screen changed at all.
+  let run = 0;
+  for (let i = 1; i <= director.hashes.length; i++) {
+    const same = i < director.hashes.length && director.hashes[i] && director.hashes[i] === director.hashes[i - 1];
+    if (same) run++;
+    else {
+      if (run / FPS >= 4) issues.warnings.push(`Nothing moves for ${(run / FPS).toFixed(1)} s from ${((i - 1 - run) / FPS).toFixed(1)} s; cut the hold or let the next beat start.`);
+      run = 0;
+    }
+  }
+}
+
+// The same captions as WebVTT, which a browser's video plays as a track.
+export function vtt(captions, total) {
+  const time = frame => {
+    const ms = Math.round((frame / FPS) * 1000);
+    const pad = (value, size = 2) => String(value).padStart(size, "0");
+    return `${pad(Math.floor(ms / 3600000))}:${pad(Math.floor(ms / 60000) % 60)}:${pad(Math.floor(ms / 1000) % 60)}.${pad(ms % 1000, 3)}`;
+  };
+  return `WEBVTT\n\n${captions.map(item => `${time(item.start)} --> ${time(Math.min(item.end ?? total, total))}\n${item.text}\n`).join("\n")}`;
 }
 
 export function srt(captions, total) {
@@ -861,14 +1086,15 @@ export function srt(captions, total) {
 // The stage: the backdrop, and the dashboard in its own window, an iframe exactly the screen's
 // size, `margin` in from the corner. A corner is rounded where both its sides sit on the
 // backdrop; an edge that runs off the picture stays square. The hairline edge, and on white a
-// short shadow that fades out above the band. The app's stylesheet gives the captions its type.
+// short shadow that fades out above the band. The app's stylesheet (in Tin's repository) gives
+// the captions Tin's type; a stage's own fonts.css gives them the product's.
 const STAGE = "/__film/stage";
-function stagePage({screen, margin: m, room, view, backdrop, theme, fonts, start}) {
+function stagePage({screen, margin: m, room, view, backdrop, theme, fonts, start, face = null}) {
   const round = (a, b) => (a && b ? "12px" : "0");
   const edge = theme === "light" ? "0 0 0 1px rgb(0 0 0 / 9%), 0 2px 10px rgb(0 0 0 / 7%)" : "0 0 0 1px rgb(255 255 255 / 9%)";
   const framed = m.top || m.right || m.bottom || m.left;
   return `<!doctype html><html data-theme="${theme}"><head><meta charset="utf-8">
-<link rel="stylesheet" href="/assets/app.css">${fonts ? '<link rel="stylesheet" href="/film-fonts/fonts.css">' : ""}
+${DASHBOARD ? '<link rel="stylesheet" href="/assets/app.css">' : ""}${fonts ? '<link rel="stylesheet" href="/film-fonts/fonts.css">' : ""}${face ? `<link rel="stylesheet" href="/__stage/fonts.css"><style>:root { --sans: ${face}, sans-serif; }</style>` : ""}
 <style>
   html, body { margin: 0 !important; padding: 0 !important; width: ${view.width}px; height: ${view.height}px; min-height: 0 !important; overflow: hidden !important; background: ${backdrop} !important; }
   #room { position: absolute; left: 0; top: 0; width: ${room.width}px; height: ${room.height}px; transform-origin: 0 0; }
@@ -876,6 +1102,9 @@ function stagePage({screen, margin: m, room, view, backdrop, theme, fonts, start
     ${framed ? `border-radius: ${round(m.top, m.left)} ${round(m.top, m.right)} ${round(m.bottom, m.right)} ${round(m.bottom, m.left)}; box-shadow: ${edge};` : ""} }
 </style></head><body><div id="room"><iframe id="screen" src="${start}"></iframe></div></body></html>`;
 }
+
+// Where a take goes inside its film's folder: one per format and theme.
+export const takeName = (format, theme = "dark") => `${format.replace(":", "x")}${theme === "dark" ? "" : `-${theme}`}`;
 
 // Film one format: serve the world, open the dashboard under the virtual clock, play the script.
 // A rehearsal (`rehearse`) shoots the same layout at one device px per CSS px instead of two, a
@@ -886,7 +1115,7 @@ function stagePage({screen, margin: m, room, view, backdrop, theme, fonts, start
 // plays the site live where its recording has no answer yet, and saves what it gets. `session` is
 // a signed-in browser's storage state (Playwright's), for a site behind sign-in: its cookies go
 // with each request and are never saved, and their values are among the secrets looked for.
-export async function shoot(film, {format = "4:5", theme = film.theme || "dark", out, fonts = null, encode = true, check = false, rehearse = false, record = false} = {}) {
+export async function shoot(film, {format = "4:5", theme = film.theme || "dark", out, fonts = null, encode = true, check = false, rehearse = false, record = false, gif = !rehearse} = {}) {
   const size = FORMATS[format];
   if (!size) throw new Error(`Unknown format ${format}; use ${Object.keys(FORMATS).join(", ")}.`);
   const world = film.world();
@@ -898,7 +1127,7 @@ export async function shoot(film, {format = "4:5", theme = film.theme || "dark",
   const {screen, margin, room, viewport} = stage(size, film.screens?.[format]);
   const browser = await chromium.launch({headless: true});
   const issues = {errors: [], warnings: [], blocked: []};
-  const dir = path.join(out, film.name, `${format.replace(":", "x")}${theme === "dark" ? "" : `-${theme}`}`);
+  const dir = path.join(out, film.name, takeName(format, theme));
   fs.rmSync(dir, {recursive: true, force: true});
   fs.mkdirSync(dir, {recursive: true});
   const mp4 = path.join(dir, "film.mp4");
@@ -913,6 +1142,9 @@ export async function shoot(film, {format = "4:5", theme = film.theme || "dark",
     const view = {width: size.width / deviceScale, height: size.height / deviceScale};
     const context = await browser.newContext({viewport: view, deviceScaleFactor: rehearse ? 1 : deviceScale, colorScheme: theme, timezoneId: film.timezone || "UTC", locale: "en-US", ...(site?.session ? {storageState: site.session} : {})});
     const backdrop = BACKDROP[theme] || BACKDROP.dark;
+    // A stage set in the product's type captions in it too: the first face its fonts.css names.
+    const typeSheet = world.stage && path.join(world.stage.dir, "fonts.css");
+    const face = typeSheet && fs.existsSync(typeSheet) ? fs.readFileSync(typeSheet, "utf8").match(/font-family:\s*(["'][^"']+["']|[^;\s]+)/)?.[1] ?? null : null;
     await context.route("**/*", async route => {
       const url = route.request().url();
       if (!url.startsWith(served.base)) {
@@ -921,7 +1153,17 @@ export async function shoot(film, {format = "4:5", theme = film.theme || "dark",
         return route.abort();
       }
       const {pathname} = new URL(url);
-      if (pathname === STAGE) return route.fulfill({body: stagePage({screen, margin, room, view, backdrop, theme, fonts: Boolean(fonts), start: site ? site.url : `${world.start || "/system"}?project=project`}), contentType: "text/html"});
+      if (pathname === STAGE) return route.fulfill({body: stagePage({screen, margin, room, view, backdrop, theme, fonts: Boolean(fonts), face, start: site?.url ? site.url : world.stage ? `/__stage/${world.stage.entry}` : `${world.start || "/system"}?project=project`}), contentType: "text/html"});
+      // A staged film's page and the kit's parts it uses (/__stage/kit/…); nothing outside its folder.
+      if (world.stage && pathname.startsWith("/__stage/")) {
+        const name = decodeURIComponent(pathname.slice("/__stage/".length));
+        const root = name.startsWith("kit/") ? STAGE_KIT : world.stage.dir;
+        const file = path.resolve(root, name.startsWith("kit/") ? name.slice(4) : name);
+        if (!file.startsWith(path.resolve(root) + path.sep) || !fs.existsSync(file)) return route.fulfill({status: 404, body: ""});
+        return route.fulfill({body: fs.readFileSync(file), contentType: STAGE_TYPES[path.extname(file)] || "application/octet-stream"});
+      }
+      // Without licensed fonts, a page that asks for them gets none, not a failed load.
+      if (pathname === "/film-fonts/fonts.css" && !fonts) return route.fulfill({body: "", contentType: "text/css"});
       // Clerk is stubbed (below); the fixture leaves its script address unfilled.
       if (decodeURIComponent(pathname).startsWith("/{{CLERK_FRONTEND_API_URL}}/")) return route.fulfill({body: "", contentType: "text/javascript"});
       if (pathname.startsWith("/film-fonts/") && fonts?.has(path.basename(pathname))) {
@@ -937,37 +1179,61 @@ export async function shoot(film, {format = "4:5", theme = film.theme || "dark",
     });
     await context.addInitScript(`(${installVirtualClock})(${JSON.stringify({fps: FPS, epoch: now})});`);
     await context.addInitScript(`(${installScreen})();`);
-    await context.addInitScript(`(${installStage})(${JSON.stringify({backdrop, path: STAGE, size, dpr: deviceScale})});`);
+    await context.addInitScript(`(${installStage})(${JSON.stringify({backdrop, ink: theme === "light" ? "#141210" : "#f6f1e7", path: STAGE, size, dpr: deviceScale})});`);
     await context.addInitScript(({member, theme, image}) => {
       window.Clerk = {load: async () => {}, isSignedIn: true, user: {id: "member", firstName: member, imageUrl: image}, session: {getToken: async () => "synthetic"}, mountSignIn: () => {}};
       localStorage.setItem("tin-lite:theme", theme);
     }, {member: world.member || "Avery", theme, image: avatar(world.member || "Avery")});
     const page = await context.newPage();
-    page.on("pageerror", error => issues.errors.push(`The page threw: ${error.message}`));
+    // Tin's own dashboard must film without an error; a live site's own errors are its own, so
+    // they are said and the take goes on.
+    const faults = site?.url ? issues.warnings : issues.errors;
+    const fault = text => faults.includes(text) || faults.push(text);
+    page.on("pageerror", error => fault(`The page threw: ${error.message}`));
     page.on("console", message => {
       if (message.type() !== "error") return;
       const where = message.location()?.url;
-      issues.errors.push(`The page logged an error: ${message.text()}${where ? ` (${where.replace(served.base, "")})` : ""}`);
+      fault(`The page logged an error: ${message.text()}${where ? ` (${where.replace(served.base, "")})` : ""}`);
     });
     await page.goto(`${served.base}${STAGE}`, {waitUntil: "domcontentloaded"});
     const app = await (await page.waitForSelector("#screen")).contentFrame();
     await app.waitForLoadState("domcontentloaded");
     await page.evaluate(() => document.fonts.ready);
 
-    const director = new Director({page, app, format, size, screen, margin, room, deviceScale, served, issues, ripple: Boolean(film.ripple), check});
+    const director = new Director({page, app, format, size, screen, margin, room, deviceScale, served, issues, ripple: Boolean(film.ripple), check, staged: Boolean(world.stage)});
     director.sink = async png => {
       if (!encoder) return;
-      if (!encoder.child.stdin.write(png)) await new Promise(resolve => encoder.child.stdin.once("drain", resolve));
+      // An encoder that has stopped never drains: its end, or its failure, stops the take.
+      if (!encoder.child.stdin.write(png)) {
+        await Promise.race([new Promise(resolve => encoder.child.stdin.once("drain", resolve)),
+          encoder.done.then(() => { throw new Error("ffmpeg stopped before the film ended"); })]);
+      }
     };
     // The dashboard boots without being filmed.
     director.recording = false;
     for (let i = 0; i < 20 * FPS && !(await app.locator(world.ready || "main").count()); i++) await director.shoot();
+    // What a film does before it starts, unfilmed: a site's cookie banner dismissed, a popup
+    // closed. The hand that did it is not in the film.
+    if (film.prepare) {
+      await player({beats: film.prepare}, film.values, "prepare")(director);
+      Object.assign(director, {journeys: [], events: [], moves: []});
+      director.cursor.visible = false;
+    }
     // A second more, unfilmed, so what the page draws once on arrival has settled, as a desk does.
     for (let i = 0; i < FPS; i++) await director.shoot();
     await app.evaluate(() => document.fonts.ready);
     await page.evaluate(() => document.fonts.ready);
+    if (world.stage) {
+      const drawn = [...new Set(await app.evaluate(drawnCursors))];
+      if (drawn.length) issues.warnings.push(`The stage draws a cursor of its own (${drawn.slice(0, 3).join(", ")}); the film draws the hand, so take it out.`);
+    }
     director.recording = true;
     await film.play(director);
+    for (const item of director.fallbacks.values()) {
+      issues.warnings.push(item.kind === "system"
+        ? `The stage's text (“${item.sample}”) is set in ${item.family}, a system face, not the product's type: link the fonts tin-film inspect kept (look/fonts.css, with look/fonts/ beside it) and set --sans to its face.`
+        : `The stage asks for ${item.family} (“${item.sample}”), but no font file for it loaded, so it falls back to ${item.sets || "a system face"}: link the fonts tin-film inspect kept (look/fonts.css, with look/fonts/ beside it).`);
+    }
     director.caption(null);
     director.check(film.name);
     director.judgeCamera();
@@ -977,6 +1243,7 @@ export async function shoot(film, {format = "4:5", theme = film.theme || "dark",
     await context.close();
 
     issues.blocked = [...new Set(issues.blocked)];
+    pace(director, issues);
     if (!director.marks.poster) issues.errors.push("The film never marks its poster.");
     if (director.n / FPS > 140) issues.warnings.push("Longer than X's 2 minutes 20 seconds.");
     const recorded = recording?.close();
@@ -985,16 +1252,20 @@ export async function shoot(film, {format = "4:5", theme = film.theme || "dark",
     const cookies = site?.session ? JSON.parse(fs.readFileSync(site.session, "utf8")).cookies?.map(cookie => cookie.value) ?? [] : [];
     const leaks = site ? findSecrets(recordingDir, [...(site.secrets || []), ...cookies]) : [];
     if (leaks.length) issues.errors.push(`The recording ${site.recording} holds a secret in ${leaks.length} answer${leaks.length === 1 ? "" : "s"}: ${leaks.slice(0, 3).join(", ")}. Delete those answers and record again.`);
-    const report = {film: film.name, title: film.title, format, size, frames: director.n, seconds: director.n / FPS, hashes: director.hashes, trail: director.trail, lens: director.lens, issues};
+    const report = {film: film.name, title: film.title, format, size, frames: director.n, seconds: director.n / FPS, captions: director.captions.map(item => ({text: item.text, start: item.start / FPS, end: Math.min(item.end ?? director.n, director.n) / FPS})), hashes: director.hashes, trail: director.trail, lens: director.lens, issues};
     if (recorded) report.recording = {name: site.recording, ...recorded};
     if (director.checking) report.checks = director.findings.map(describe);
     if (director.checking) report.summary = summary(director.findings);
+    // A stage's layout errors fail the take: the founder would see them.
+    const misdrawn = director.findings.filter(item => !item.accepted && item.severity === "error" && (item.rule in STAGE_RULES || item.rule === "layout/text-cut"));
+    if (director.checking && director.staged) issues.errors.push(...summary(misdrawn));
     if (encoder) {
       encoder.child.stdin.end();
       await encoder.done;
-      await stills(director, size, dir, {gif: !rehearse});
+      await stills(director, size, dir, {gif, light: rehearse});
       if (!rehearse) await motionStrips(director, size, dir);
       fs.writeFileSync(path.join(dir, "captions.srt"), srt(director.captions, director.n));
+      fs.writeFileSync(path.join(dir, "captions.vtt"), vtt(director.captions, director.n));
       report.bytes = Object.fromEntries(fs.readdirSync(dir).filter(name => name.includes(".")).map(name => [name, fs.statSync(path.join(dir, name)).size]));
       if (report.bytes["film.gif"] > 15 * 1024 * 1024) issues.warnings.push("The GIF is over X's 15 MB.");
     }
@@ -1017,21 +1288,26 @@ export async function shoot(film, {format = "4:5", theme = film.theme || "dark",
 }
 
 // Each mark at full size (the poster among them), a contact sheet of them, and a GIF small
-// enough for X (15 MB).
-export async function stills(director, size, dir, {gif = true} = {}) {
+// enough for X (15 MB). A rehearsal's stills (`light`) are JPEGs at the half size it was shot
+// at: whoever looks at them, an agent with a bounded context among them, reads a tenth of the
+// bytes.
+export async function stills(director, size, dir, {gif = true, light = false} = {}) {
   fs.mkdirSync(path.join(dir, "marks"));
+  const kind = light ? "jpg" : "png";
+  const scale = light ? 0.5 : 1;
+  const quality = light ? ["-q:v", "3"] : [];
   // A mark in a scene played dry has no frame to show.
   const marks = Object.entries(director.marks).filter(([, mark]) => mark.png).sort(([, a], [, b]) => a.frame - b.frame);
   const files = [];
   for (const [index, [name, mark]] of marks.entries()) {
-    const file = path.join(dir, "marks", `${String(index + 1).padStart(2, "0")}-${name}.png`);
-    await encodeStills([mark.png], ["-vf", `scale=${size.width}:${size.height}:flags=lanczos`, "-frames:v", "1", file]);
+    const file = path.join(dir, "marks", `${String(index + 1).padStart(2, "0")}-${name}.${kind}`);
+    await encodeStills([mark.png], ["-vf", `scale=${size.width * scale}:${size.height * scale}:flags=lanczos`, ...quality, "-frames:v", "1", file]);
     files.push(file);
-    if (name === "poster") fs.copyFileSync(file, path.join(dir, "poster.png"));
+    if (name === "poster") fs.copyFileSync(file, path.join(dir, `poster.${kind}`));
   }
   // Every still is the same size by now: ffmpeg's tile starts over whenever the size changes.
   const columns = Math.min(3, files.length);
-  await encodeStills(files.map(file => fs.readFileSync(file)), ["-vf", `scale=${Math.round(size.width / 2.5)}:-2:flags=lanczos,tile=${columns}x${Math.ceil(files.length / columns)}:padding=24:margin=24:color=0x44403a`, "-frames:v", "1", path.join(dir, "sheet.png")]);
+  await encodeStills(marks.map(([, mark]) => mark.png), ["-vf", `scale=${Math.round(size.width / 2.5)}:-2:flags=lanczos,tile=${columns}x${Math.ceil(files.length / columns)}:padding=24:margin=24:color=0x44403a`, ...quality, "-frames:v", "1", path.join(dir, `sheet.${kind}`)]);
   if (!gif) return;
   const width = Math.round(size.width * (size.width > size.height ? 0.5 : 0.6) / 2) * 2;
   await ffmpeg(["-i", path.join(dir, "film.mp4"), "-vf", `fps=15,scale=${width}:-2:flags=lanczos,split[a][b];[a]palettegen=stats_mode=diff[p];[b][p]paletteuse=dither=bayer:bayer_scale=4`, path.join(dir, "film.gif")]).done;
@@ -1053,7 +1329,27 @@ export async function motionStrips(director, size, dir) {
   }
 }
 
+// A film written as JSON, as the feature-film workflow's agent writes one: its stage (a page of
+// photogenic parts beside the file, stage/) or a live site, its beats and the named film's facts.
+// Its recording (what the page asks outside itself) and takes sit beside the file.
+export function filmFromSpec(spec, file) {
+  const problems = [];
+  if (!spec || typeof spec !== "object" || Array.isArray(spec)) throw new Error(`${file} is not a film: it must hold one JSON object.`);
+  if (typeof spec.title !== "string" || !spec.title.trim()) problems.push("a title");
+  const here = path.dirname(path.resolve(file));
+  const stage = typeof spec.stage === "string" && path.resolve(here, spec.stage);
+  if (stage && (!stage.startsWith(here + path.sep) || !fs.existsSync(stage))) problems.push(`stage, a page beside film.json (${spec.stage} isn't there)`);
+  if (!stage && !/^https:\/\/[^\s/]+/.test(spec.site?.url ?? "")) problems.push("a stage (the page the film plays, beside film.json) or site.url, the https address it opens on");
+  if (Number.isNaN(Date.parse(spec.now))) problems.push("now, the moment the page's clock shows, as an ISO time");
+  if (!Array.isArray(spec.beats) || !spec.beats.length) problems.push("beats");
+  if (problems.length) throw new Error(`${file} needs ${problems.join(", ")}.`);
+  const site = {...spec.site, recording: path.join(here, "world")};
+  const world = {site, ready: spec.ready || "body", ...(stage ? {stage: {dir: path.dirname(stage), entry: path.basename(stage)}} : {})};
+  return {name: spec.name || "film", ...spec, world: () => world, play: player(spec)};
+}
+
 export async function loadFilm(name) {
+  if (name.endsWith(".json")) return filmFromSpec(JSON.parse(fs.readFileSync(name, "utf8")), name);
   const file = path.resolve("web/film/films", `${name}.js`);
   if (!fs.existsSync(file)) throw new Error(`No film named ${name} in web/film/films.`);
   const film = await import(pathToFileURL(file));

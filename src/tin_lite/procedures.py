@@ -634,6 +634,10 @@ class PinnedCodexProcedure:
             # through the sandbox, as TIN_RUN_ID for its commands.
             context["run"] = {"id": str(UUID(str(run_id)))}
             context["prompt"] += run_context_instruction(context["run"]["id"])
+        # Every procedure may make something someone looks at; Tin's design rules travel with it.
+        from tin_lite import design_rules
+
+        context["prompt"] += design_rules.instruction()
         if self.services:
             context["services"] = [asdict(service) for service in self.services]
             context["prompt"] += (

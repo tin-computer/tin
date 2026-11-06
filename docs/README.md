@@ -107,8 +107,9 @@ your own accounts before use; ordinary contributor tests need no production cred
 - [Technical repair](technical-fix.md): site-fix-v5, the rules website.change applies to the latest audit.
 - [Diagram renderer](diagram-renderer.md), [composition checks](diagram-composition-quality.md)
   and [creative Studio](creative-studio.md).
-- [Feature films](feature-films.md): short captioned videos of a feature for LinkedIn and X, filmed
-  from the real dashboard on a demo world, frame by frame.
+- [Feature films](feature-films.md): short captioned videos of a feature for LinkedIn and X, made
+  by a founder's coding agent with Tin's film kit and kept by Tin for the founder to decide on, or
+  filmed from Tin's own dashboard on a demo world, frame by frame.
 
 Keep public examples synthetic. Do not add customer files, run receipts, credentials,
 private screenshots or licensed font binaries to documentation or fixtures.

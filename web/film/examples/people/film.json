@@ -1,0 +1,320 @@
+{
+  "title": "See who engaged with your posts, ranked by your ideal customer",
+  "story": {
+    "before": "Hundreds of people react to your posts, and you can't tell which of them could buy.",
+    "after": "Tin ranks them by your ideal customer, asks the ones who fit, and you start the conversation."
+  },
+  "stage": "stage/index.html",
+  "screens": {
+    "16:9": 1080
+  },
+  "now": "2026-11-02T10:00:00Z",
+  "format": "16:9",
+  "ready": ".stage",
+  "beats": [
+    {
+      "camera": "body",
+      "cut": true,
+      "pad": 0
+    },
+    {
+      "caption": "Your posts reach the right people. You just can't see who."
+    },
+    {
+      "begin": true
+    },
+    {
+      "hold": 0.4
+    },
+    {
+      "do": [
+        "show",
+        "#who .face-row",
+        {
+          "stagger": 0.14
+        }
+      ]
+    },
+    {
+      "hold": 1.6
+    },
+    {
+      "mark": "post"
+    },
+    {
+      "hold": 0.5
+    },
+    {
+      "caption": "Tin ranks everyone who engaged by your ideal customer."
+    },
+    {
+      "do": [
+        "away",
+        "#post, #who"
+      ]
+    },
+    {
+      "do": [
+        "show",
+        "#app"
+      ]
+    },
+    {
+      "hold": 0.45
+    },
+    {
+      "do": [
+        "show",
+        ".tr",
+        {
+          "stagger": 0.12
+        }
+      ]
+    },
+    {
+      "hold": 1.2
+    },
+    {
+      "mark": "ranked"
+    },
+    {
+      "caption": "Every score comes with its reason."
+    },
+    {
+      "move": "#row-daniel .num",
+      "to": [
+        0.62,
+        0.55
+      ]
+    },
+    {
+      "do": [
+        "show",
+        "#reason"
+      ]
+    },
+    {
+      "hold": 1.7
+    },
+    {
+      "mark": "reason"
+    },
+    {
+      "hold": 0.3
+    },
+    {
+      "caption": "Tin asks the ones who fit, one at a time, from your LinkedIn."
+    },
+    {
+      "do": [
+        "hide",
+        "#reason"
+      ]
+    },
+    {
+      "move": "#people .app-title",
+      "to": [
+        0.45,
+        0.5
+      ]
+    },
+    {
+      "do": [
+        "together",
+        [
+          [
+            "hide",
+            "#row-daniel .tickbox"
+          ],
+          [
+            "set",
+            "#row-daniel .status",
+            "<span class='queued'>Queued</span>"
+          ]
+        ]
+      ]
+    },
+    {
+      "hold": 0.3
+    },
+    {
+      "do": [
+        "together",
+        [
+          [
+            "hide",
+            "#row-hannah .tickbox"
+          ],
+          [
+            "set",
+            "#row-hannah .status",
+            "<span class='queued'>Queued</span>"
+          ]
+        ]
+      ]
+    },
+    {
+      "hold": 0.3
+    },
+    {
+      "do": [
+        "show",
+        "#sending"
+      ]
+    },
+    {
+      "hold": 1.5
+    },
+    {
+      "mark": "poster"
+    },
+    {
+      "hold": 0.4
+    },
+    {
+      "caption": "Pick anyone else to ask."
+    },
+    {
+      "click": "#row-chloe .tickbox"
+    },
+    {
+      "do": [
+        "swap",
+        "#thead",
+        "selected"
+      ]
+    },
+    {
+      "click": "#row-lea .tickbox"
+    },
+    {
+      "do": [
+        "together",
+        [
+          [
+            "set",
+            "#n-picked",
+            "2 selected"
+          ],
+          [
+            "set",
+            "#send .label",
+            "Send 2 requests"
+          ]
+        ]
+      ]
+    },
+    {
+      "move": "#send",
+      "to": [
+        -0.16,
+        0.55
+      ]
+    },
+    {
+      "hold": 0.4
+    },
+    {
+      "mark": "picks"
+    },
+    {
+      "click": "#send",
+      "to": [
+        0.5,
+        0.55
+      ]
+    },
+    {
+      "do": [
+        "together",
+        [
+          [
+            "swap",
+            "#thead",
+            "columns"
+          ],
+          [
+            "tick",
+            "#row-chloe, #row-lea",
+            false
+          ],
+          [
+            "hide",
+            "#row-chloe .tickbox, #row-lea .tickbox"
+          ],
+          [
+            "set",
+            "#row-chloe .status, #row-lea .status",
+            "<span class='queued'>Queued</span>"
+          ]
+        ]
+      ]
+    },
+    {
+      "hold": 0.4
+    },
+    {
+      "caption": "Later, they accept. You start the conversation."
+    },
+    {
+      "do": [
+        "set",
+        "#row-chloe .status",
+        "<span class='connected'>Connected</span>"
+      ]
+    },
+    {
+      "hold": 0.4
+    },
+    {
+      "click": "#row-chloe .who",
+      "to": [
+        0.3,
+        0.5
+      ]
+    },
+    {
+      "do": [
+        "together",
+        [
+          [
+            "tick",
+            "#row-chloe"
+          ],
+          [
+            "show",
+            "#panel"
+          ]
+        ]
+      ]
+    },
+    {
+      "hold": 0.3
+    },
+    {
+      "do": [
+        "tick",
+        "#li-field"
+      ]
+    },
+    {
+      "move": "#open-li",
+      "to": [
+        1.25,
+        0.6
+      ]
+    },
+    {
+      "hold": 1.0
+    },
+    {
+      "mark": "payoff"
+    },
+    {
+      "hold": 0.8
+    },
+    {
+      "end": true
+    }
+  ]
+}

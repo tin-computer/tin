@@ -58,7 +58,8 @@ export function probeDocument({cursor = null} = {}) {
     for (const el of node.children) {
       yield [el, parent];
       if (el.shadowRoot) yield* walk(el.shadowRoot, el);
-      if (el.tagName !== "IFRAME" && el.tagName !== "svg") yield* walk(el, el);
+      // An SVG is one drawing, except a diagram's ([data-diagram]): its marks move on their own.
+      if (el.tagName !== "IFRAME" && (el.tagName !== "svg" || el.closest("[data-diagram]"))) yield* walk(el, el);
     }
   };
   for (const [el, parent] of walk(root, root)) {
@@ -89,13 +90,28 @@ export function probeDocument({cursor = null} = {}) {
     const tag = el.getAttribute("data-motion");
     // The document itself is the canvas: it grows and shrinks with whatever a route shows.
     if (el === document.body) continue;
-    if (opacity < 0.01 || (rect.width * rect.height < 4 && !tag)) continue;
-    if (el.closest("svg") && el.tagName !== "svg") continue;
+    const mark = el.closest("svg") && el.tagName !== "svg";
+    if (mark && !el.closest("[data-diagram]")) continue;
+    // A straight stroked line has no area of its own; its ink is its stroke.
+    const stroked = mark && style.stroke !== "none" && parseFloat(style.strokeWidth) > 0;
+    if (opacity < 0.01 || (rect.width * rect.height < 4 && !tag && !stroked)) continue;
     const text = Array.from(el.childNodes).filter(node => node.nodeType === 3).map(node => node.textContent ?? "").join("").trim();
     const shadows = [style.boxShadow, style.textShadow, ...(style.filter.match(/drop-shadow\([^)]*\)[^)]*\)?/g) ?? [])].filter(x => x && x !== "none");
-    const paints = !/rgba\(0, 0, 0, 0\)|transparent/.test(style.backgroundColor) || style.borderTopWidth !== "0px" || shadows.length > 0 || el.tagName === "svg" || el.tagName === "IMG";
+    const inked = colour => colour && colour !== "none" && !/rgba\(0, 0, 0, 0\)|transparent/.test(colour);
+    const paints = mark
+      ? inked(style.fill) || (inked(style.stroke) && parseFloat(style.strokeWidth) > 0)
+      : !/rgba\(0, 0, 0, 0\)|transparent/.test(style.backgroundColor) || style.borderTopWidth !== "0px" || shadows.length > 0 || el.tagName === "svg" || el.tagName === "IMG";
     if (!text && !paints && !tag) continue;
     let measured = [rect.left, rect.top, rect.width, rect.height];
+    // A stroked mark's box is its line's; its ink reaches half the stroke past it (a Sankey's
+    // flow is a line as wide as the people it carries).
+    if (mark && inked(style.stroke) && parseFloat(style.strokeWidth) > 0) {
+      const m = el.getScreenCTM?.();
+      const half = (parseFloat(style.strokeWidth) / 2) * (m ? Math.hypot(m.a, m.b) : 1);
+      // Across its run: a wide flow's ink spreads up and down, a tall line's left and right.
+      const [x, y] = rect.width >= rect.height ? [0, half] : [half, 0];
+      measured = [rect.left - x, rect.top - y, rect.width + 2 * x, rect.height + 2 * y];
+    }
     const node = Array.from(el.childNodes).find(child => child.nodeType === 3 && child.textContent.trim());
     if (text && node) {
       const range = document.createRange();
@@ -117,7 +133,7 @@ export function probeDocument({cursor = null} = {}) {
       row.ff = family;
       if (fonts.has(family) && !fonts.get(family)) row.fb = family;
     }
-    if (paints && !text) row.bg = style.backgroundColor;
+    if (paints && !text) row.bg = mark ? (inked(style.fill) ? style.fill : style.stroke) : style.backgroundColor;
     if (el.tagName === "svg") {
       const first = el.querySelector("path");
       row.fill = first?.getAttribute("fill") ?? "";
@@ -133,8 +149,12 @@ export function probeDocument({cursor = null} = {}) {
     const stretch = stretchOf(linear);
     if (stretch > 1.001) row.st = Math.round(stretch * 1000) / 1000;
     if (tag) row.id = tag;
+    // A diagram's marks are many of one shape that move at once; one with an id keeps it.
+    else if (mark && el.id) row.id = `surface:${el.id}`;
     const ignore = el.getAttribute("data-motion-ignore");
     if (ignore) row.ig = ignore;
+    // A diagram's flows share boxes they never both cover: seeing through each other is the picture.
+    else if (mark) row.ig = "staging/double-exposure: a diagram's marks overlap only in their boxes";
     // The film's own marks, drawn in the page: part of the picture, not of the product.
     if (el.closest("[data-film-layer]")) row.film = 1;
     rows.push(row);

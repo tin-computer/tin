@@ -57,6 +57,7 @@ from tin_lite.domain import (
     Workspace,
 )
 from tin_lite.failures import public_error_text
+from tin_lite.film_api import router as film_router
 from tin_lite.growth_onboarding import KEY as GROWTH_ONBOARDING_KEY
 from tin_lite.growth_onboarding import expectation as workflow_expectation
 from tin_lite.growth_onboarding_control import OnboardingPickError, ensure_onboarding_approvable
@@ -179,6 +180,7 @@ router.include_router(linkedin_requests_router)
 router.include_router(collection_router)
 router.include_router(public_catalog_router)
 router.include_router(website_change_router)
+router.include_router(film_router)
 router.include_router(protected_paths_router)
 router.include_router(official_profiles_router)
 logger = logging.getLogger(__name__)

@@ -1,0 +1,391 @@
+{
+  "title": "Set up Tin from your coding agent",
+  "story": {
+    "before": "Growing a product means a blank calendar and no one to say what to do first.",
+    "after": "You tell your coding agent to set up Tin, and a marketing system starts running."
+  },
+  "stage": "stage/index.html",
+  "screens": {
+    "16:9": 1080
+  },
+  "now": "2026-11-02T10:00:00Z",
+  "format": "16:9",
+  "ready": ".stage",
+  "beats": [
+    {
+      "camera": "body",
+      "cut": true,
+      "pad": 0
+    },
+    {
+      "caption": "Tell your coding agent to set up Tin."
+    },
+    {
+      "begin": true
+    },
+    {
+      "hold": 0.3
+    },
+    {
+      "do": [
+        "type",
+        "#cmd",
+        "claude \"Set up Tin\"",
+        {
+          "cps": 20
+        }
+      ]
+    },
+    {
+      "do": [
+        "print",
+        "#term",
+        [
+          "<div class='gap'></div>",
+          "<span class='claude'>✻</span> Welcome to Claude Code",
+          "<div class='gap'></div>",
+          "<span class='muted'>&gt;</span> Set up Tin"
+        ],
+        {
+          "gap": 0.16
+        }
+      ]
+    },
+    {
+      "do": [
+        "print",
+        "#term",
+        [
+          "<span class='ok'>⏺</span> <b>Read</b><span class='muted'>(README.md, src/pages/pricing.astro)</span>",
+          "<span class='soft'>  ⎿  Aupilot: retainer billing for design studios</span>",
+          "<span class='ok'>⏺</span> <b>tin - create_project</b> <span class='muted'>(MCP)(name: \"Aupilot\")</span>",
+          "<span class='soft'>  ⎿  Created Aupilot</span>"
+        ],
+        {
+          "gap": 0.3
+        }
+      ]
+    },
+    {
+      "hold": 0.5
+    },
+    {
+      "mark": "ask"
+    },
+    {
+      "caption": "It reads your code, so there's no form to fill."
+    },
+    {
+      "do": [
+        "print",
+        "#term",
+        [
+          "<span class='ok'>⏺</span> <b>tin - get_started</b> <span class='muted'>(MCP)</span>",
+          "<span class='soft'>  ⎿  Answering Tin's questions from the code</span>"
+        ],
+        {
+          "gap": 0.25
+        }
+      ]
+    },
+    {
+      "do": [
+        "set",
+        "#v-product",
+        "aupilot.com"
+      ]
+    },
+    {
+      "do": [
+        "set",
+        "#v-for",
+        "Design studios on retainers"
+      ]
+    },
+    {
+      "do": [
+        "set",
+        "#v-hosting",
+        "Vercel"
+      ]
+    },
+    {
+      "do": [
+        "set",
+        "#v-analytics",
+        "PostHog"
+      ]
+    },
+    {
+      "do": [
+        "set",
+        "#v-payments",
+        "Stripe"
+      ]
+    },
+    {
+      "do": [
+        "set",
+        "#v-goal",
+        "More signups"
+      ]
+    },
+    {
+      "hold": 0.4
+    },
+    {
+      "mark": "answers"
+    },
+    {
+      "do": [
+        "print",
+        "#term",
+        [
+          "<span class='ok'>⏺</span> <b>tin - start_workflow</b> <span class='muted'>(MCP)(growth.onboarding)</span>",
+          "<span class='soft'>  ⎿  <span id='writing'>Tin is writing your plan</span></span>"
+        ],
+        {
+          "gap": 0.25
+        }
+      ]
+    },
+    {
+      "do": [
+        "show",
+        "#form-foot"
+      ]
+    },
+    {
+      "hold": 0.8
+    },
+    {
+      "caption": "Tin reads your site and ranks 14 marketing systems for your business."
+    },
+    {
+      "do": [
+        "swap",
+        "#tin",
+        "plan"
+      ]
+    },
+    {
+      "do": [
+        "set",
+        "#writing",
+        "Tin's plan is ready"
+      ]
+    },
+    {
+      "hold": 2.9
+    },
+    {
+      "mark": "plan"
+    },
+    {
+      "caption": "Pick what Tin takes on."
+    },
+    {
+      "do": [
+        "print",
+        "#term",
+        [
+          "<div class='rule'></div>",
+          "<b>What should Tin take on?</b>",
+          "<span class='option is-current' id='opt1'><span class='mark'></span>1. <span class='box'><i>✔</i></span> Organic traffic system</span>",
+          "<span class='option'><span class='mark'></span>2. <span class='box'><i>✔</i></span> Conversion and trust</span>",
+          "<span class='option'><span class='mark'></span>3. <span class='box'><i>✔</i></span> Platform and marketplaces</span>"
+        ],
+        {
+          "gap": 0.12
+        }
+      ]
+    },
+    {
+      "hold": 0.6
+    },
+    {
+      "do": [
+        "tick",
+        "#opt1"
+      ]
+    },
+    {
+      "do": [
+        "set",
+        "#pick-chip",
+        "Taking on"
+      ]
+    },
+    {
+      "do": [
+        "print",
+        "#term",
+        [
+          "<div class='gap'></div>",
+          "<span class='ok'>⏺</span> <b>tin - record_onboarding_picks</b> <span class='muted'>(MCP)</span>",
+          "<span class='soft'>  ⎿  Setting up the organic traffic system</span>"
+        ],
+        {
+          "gap": 0.25
+        }
+      ]
+    },
+    {
+      "hold": 0.4
+    },
+    {
+      "mark": "pick"
+    },
+    {
+      "caption": "A marketing system starts: research now, an article every Tuesday."
+    },
+    {
+      "do": [
+        "away",
+        "#terminal, #tin"
+      ]
+    },
+    {
+      "do": [
+        "show",
+        "#app"
+      ]
+    },
+    {
+      "hold": 0.35
+    },
+    {
+      "do": [
+        "show",
+        "#ev-audit, #ev-keywords, #ev-weekly",
+        {
+          "stagger": 0.3
+        }
+      ]
+    },
+    {
+      "do": [
+        "fill",
+        "#bar-organic",
+        0.34,
+        {
+          "seconds": 1.4
+        }
+      ]
+    },
+    {
+      "hold": 0.7
+    },
+    {
+      "mark": "poster"
+    },
+    {
+      "hold": 0.6
+    },
+    {
+      "caption": "Later, the first article waits for you."
+    },
+    {
+      "do": [
+        "set",
+        "#ev-audit .body",
+        "<div class='one'><span class='done'>✓</span>Audit organic visibility</div>"
+      ]
+    },
+    {
+      "do": [
+        "set",
+        "#ev-keywords .body",
+        "<div class='one'><span class='done'>✓</span>Plan keyword opportunities</div>"
+      ]
+    },
+    {
+      "do": [
+        "set",
+        "#run-state",
+        "drafting"
+      ]
+    },
+    {
+      "do": [
+        "show",
+        "#ev-draft"
+      ]
+    },
+    {
+      "do": [
+        "set",
+        "#decision-count",
+        "1"
+      ]
+    },
+    {
+      "hold": 0.3
+    },
+    {
+      "mark": "draft"
+    },
+    {
+      "click": "#nav-decisions",
+      "to": [
+        0.4,
+        0.5
+      ]
+    },
+    {
+      "hold": 0.9
+    },
+    {
+      "caption": "One press, and Tin opens the pull request."
+    },
+    {
+      "move": "#open-pr",
+      "to": [
+        0.5,
+        0.55
+      ]
+    },
+    {
+      "hold": 0.25
+    },
+    {
+      "click": "#open-pr",
+      "to": [
+        0.5,
+        0.55
+      ]
+    },
+    {
+      "hold": 0.5
+    },
+    {
+      "move": "#decisions .decision",
+      "to": [
+        0.82,
+        1.32
+      ]
+    },
+    {
+      "hold": 1.4
+    },
+    {
+      "do": [
+        "set",
+        "#decision-count",
+        ""
+      ]
+    },
+    {
+      "hold": 0.2
+    },
+    {
+      "mark": "payoff"
+    },
+    {
+      "hold": 1.0
+    },
+    {
+      "end": true
+    }
+  ]
+}
