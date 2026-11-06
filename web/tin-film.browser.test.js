@@ -302,6 +302,14 @@ test("a delivered film comes back as a staged film to change", () => {
   assert.throws(() => restore(path.join(project, "films", "funnel.md"), work), /no stage\.html/);
 });
 
+test("the kit runs through the link npx puts in node_modules/.bin", () => {
+  const bin = path.join(fs.mkdtempSync(path.join(os.tmpdir(), "tin-film-bin-")), "tin-film");
+  fs.symlinkSync(path.resolve("web/film/tin-film.js"), bin);
+  const run = spawnSync(process.execPath, [bin, "help"], {encoding: "utf8"});
+  assert.equal(run.status, 0, run.stderr);
+  assert.match(run.stdout, /upload/);
+});
+
 test("a second look is a brief for a reviewer that didn't make the film, with the stills to open", () => {
   const {dir, file} = filmFolder(BEATS);
   const take = path.join(dir, "takes", "rehearse", "film", "4x5");

@@ -93,6 +93,8 @@ jobs:
           path: ~/.cache/ms-playwright
           key: playwright-${{ runner.os }}-${{ hashFiles('package-lock.json') }}
       - run: npx playwright install --with-deps chromium
+      # The film kit's sketches and takes encode with ffmpeg.
+      - run: sudo apt-get install -y --no-install-recommends ffmpeg
       - run: npm run test:browser
 
   # The required status check; a skipped browser job counts as passed.
