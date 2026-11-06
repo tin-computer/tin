@@ -3,8 +3,10 @@
 import fs from "node:fs/promises";
 import http from "node:http";
 import path from "node:path";
+import {fileURLToPath} from "node:url";
 
-const assets = path.resolve("src/tin_lite/static");
+// Beside this file, wherever it runs from: the repository, or the studio sandbox's toolkit.
+const assets = fileURLToPath(new URL("../src/tin_lite/static", import.meta.url));
 export const revision = "c".repeat(40);
 
 export const projectFiles = [

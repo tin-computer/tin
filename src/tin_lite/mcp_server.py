@@ -719,6 +719,11 @@ own words (a customer, not a buyer, the right ICP, how they know them), use upda
 add_person_note: no run replaces a member's pick, and Tin reads notes the next time it scores
 the person. Forget a person (forget_person) only when the founder asked, with their exact name.
 
+Films: when the founder wants a short film of their product (a feature, a launch, an idea for a
+post), you make it, on this machine, and Tin keeps it. Call get_film(project_id, slug) first and
+follow its guide and `next`; upload each version with its link, and the founder decides on it in
+Decisions. Tin never makes or changes the film.
+
 Tool errors start with a code, then the reason: forbidden (sign in or scope; stop), not_found
 (wrong id or no access; stop), invalid (fix the input and retry), conflict (state moved; re-read
 it and retry once), or a workflow-specific code explained in its text."""
@@ -1585,9 +1590,12 @@ def create_mcp_app(
         are pending change rows (approve_website_change or decline_website_change).
         `judgment_calls` are open questions the coding agent answers with the next website
         change run; there is nothing to approve. `paid_ads_proposals` are pending Google Ads
-        changes. Show each to the founder and ask; never decide for them.
+        changes. `films` are film versions a coding agent uploaded: directions to pick from or a
+        film to watch (get_film, decide_film). Show each to the founder and ask; never decide
+        for them.
         """
         from tin_lite import website_change, website_change_audit
+        from tin_lite.films import Films
 
         token = await caller()
         project = _mcp_uuid(project_id, field="project_id")
@@ -1597,6 +1605,9 @@ def create_mcp_app(
         changes = await website_change.list_changes(database, project_id=project, status="pending")
         calls = await website_change_audit.judgment_calls(database, project)
         proposals = await database.list_paid_ads_proposals(project_id=project, status="pending")
+        films = await Films(database=database, storage=runtime().storage, settings=settings).open(
+            project
+        )
         return {
             "reviews": [
                 {
@@ -1622,7 +1633,80 @@ def create_mcp_app(
             "website_changes": changes,
             "judgment_calls": calls,
             "paid_ads_proposals": [_mcp_proposal_view(row) for row in proposals],
+            "films": [
+                {
+                    "slug": item["slug"],
+                    "version": item["version"],
+                    "kind": item["kind"],
+                    "title": item["title"],
+                    "uploaded_at": item["uploaded_at"],
+                }
+                for item in films
+            ],
         }
+
+    @server.tool(annotations=ToolAnnotations(destructiveHint=False))
+    async def get_film(project_id: str, slug: str, guide: bool = False) -> dict[str, Any]:
+        """A film the coding agent makes for the project: where it stands, what to do next, and
+        a fresh link to upload its next version. `slug` names it (lowercase words joined by
+        hyphens, like `people-ranked`); a new name starts a film.
+
+        You make the film on this machine, with Tin's film kit (`kit`, run with npx) or any tool,
+        to the guide's standard: read `guide` (returned for a new film, or with guide=true) and
+        the files in `read_first` before anything else. Upload with `upload.command`; Tin checks
+        the note and its files, keeps them in project Files at `note` and `folder`, and shows
+        them to the founder in Decisions. `state` and `next` say what follows: the founder
+        picks a direction or watches the film there, and you read their decision here
+        (`latest.status`, `latest.picked`, `latest.note`). Tin never makes or changes the film.
+        """
+        from tin_lite.films import FilmError, Films, check_slug
+
+        token = await caller()
+        project_id_value = _mcp_uuid(project_id, field="project_id")
+        await require_project(project_id_value, token, tool_name="get_film")
+        project = await runtime().database.get_project(project_id_value)
+        if project is None:
+            raise ToolError("not_found: project not found")
+        try:
+            return await Films(
+                database=runtime().database, storage=runtime().storage, settings=settings
+            ).get(project, check_slug(slug), token.subject, guide=guide)
+        except FilmError as error:
+            raise ToolError(str(error)) from None
+
+    @server.tool(annotations=ToolAnnotations(destructiveHint=False, idempotentHint=True))
+    async def decide_film(
+        project_id: str,
+        slug: str,
+        version: int,
+        decision: str,
+        direction: int | None = None,
+        note: str = "",
+    ) -> dict[str, Any]:
+        """Record the founder's decision on a film version waiting in Decisions, only as they
+        said it in their own words; never decide for them. Directions: `pick` with the
+        sketch's number in `direction` (and their note, if any), or `others` for other
+        directions. A film: `approve`, or `changes` with what to change in `note`. Either:
+        `discard` drops the film. Deciding the same thing again answers with the version."""
+        from tin_lite.films import FilmError, Films
+
+        token = await caller()
+        project_id_value = _mcp_uuid(project_id, field="project_id")
+        await require_project(project_id_value, token, tool_name="decide_film")
+        try:
+            return await Films(
+                database=runtime().database, storage=runtime().storage, settings=settings
+            ).decide(
+                project_id_value,
+                slug,
+                token.subject,
+                version=version,
+                decision=decision,
+                direction=direction,
+                note=note,
+            )
+        except FilmError as error:
+            raise ToolError(str(error)) from None
 
     @server.tool()
     async def send_connection_requests(

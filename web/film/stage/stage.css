@@ -1,0 +1,298 @@
+/* The stage kit: photogenic parts for a staged feature film, after Stageshow (MIT; see
+   third_party/licenses/stageshow-LICENSE.txt). A product shot, not a screenshot: real words only
+   on what the story is about, quiet bars for the rest, one hero with a satellite at most, and
+   every part arriving whole. A film's stage sets the tokens below to its product's own look; the
+   defaults are Tin's dashboard in its dark theme. Sizes are CSS px of the film's screen: design a
+   16:9 stage at 1080 × 518 (film.json "screens": {"16:9": 1080}), where 15px reads as 27px. */
+
+@font-face { font-family: "Geist Sans"; src: url("/assets/fonts/geist-sans-regular.woff2") format("woff2"); font-weight: 400; }
+@font-face { font-family: "Geist Sans"; src: url("/assets/fonts/geist-sans-bold.woff2") format("woff2"); font-weight: 700; }
+@font-face { font-family: "Geist Mono"; src: url("/assets/fonts/geist-mono-regular.woff2") format("woff2"); font-weight: 400; }
+@font-face { font-family: "Geist Mono"; src: url("/assets/fonts/geist-mono-bold.woff2") format("woff2"); font-weight: 700; }
+
+:root {
+  --ground: #000;
+  --rail: #0f0d0b;
+  --surface: #141210;
+  --card: #1b1917;
+  --raised: #23201d;
+  --well: #2a2620;
+  --line: rgb(246 241 231 / 8%);
+  --line-strong: rgb(246 241 231 / 14%);
+  --ink: #f6f1e7;
+  --ink-2: #b3aa9b;
+  --ink-3: #9a9285;
+  --accent: #99af62;
+  --accent-soft: rgb(153 175 98 / 14%);
+  --hot: #db4415;
+  --hot-text: #ec4b1a;
+  --on-hot: #fffdf6;
+  --terminal: #0e0d0c;
+  --terminal-bar: #1a1816;
+  --terminal-ink: #e9e3d7;
+  --claude: #d97757;
+  --sans: "FK Grotesk Neue", "Geist Sans", system-ui, sans-serif;
+  --mono: "Geist Mono", ui-monospace, monospace;
+  --radius: 12px;
+  --shadow-hero: 0 0 0 1px rgb(255 255 255 / 8%), 0 30px 80px rgb(0 0 0 / 60%);
+  --shadow-satellite: 0 0 0 1px rgb(255 255 255 / 11%), 0 18px 44px rgb(0 0 0 / 55%), 0 3px 10px rgb(0 0 0 / 35%);
+  --travel: cubic-bezier(0.45, 0, 0.1, 1);
+  --arrive: cubic-bezier(0.25, 0.8, 0.25, 1);
+}
+
+* { box-sizing: border-box; }
+html, body { margin: 0; height: 100%; }
+body { background: var(--ground); color: var(--ink); font-family: var(--sans); font-size: 15px; line-height: 22px; -webkit-font-smoothing: antialiased; overflow: hidden; }
+.stage { position: relative; width: 100%; height: 100%; overflow: hidden; }
+
+/* Arrivals. A part with .arrive is off until the film shows it; it comes in whole. */
+.arrive { opacity: 0; transform: translateY(8px); transition: opacity 0.5s var(--arrive), transform 0.6s var(--arrive); }
+.arrive.is-on { opacity: 1; transform: none; }
+/* .slide: a window that comes up from below the stage, opaque all the way, --scene px (a stage's
+   height and a little: the next scene coming up as the last one goes away by the same distance). */
+.arrive.slide { opacity: 1; transform: translateY(var(--scene, 640px)); transition: transform 0.95s var(--travel); }
+.arrive.slide.is-on { transform: none; }
+/* .grow: a part that opens its height as it arrives in a column (gap --gap), carrying what sits
+   below it. It takes no room until then; wrap a part with its own padding in it. */
+.arrive.grow { display: none; height: 0; margin-bottom: calc(-1 * var(--gap, 8px)); overflow: hidden; transition: opacity 0.45s var(--arrive) 0.12s, transform 0.5s var(--arrive) 0.12s, height 0.5s var(--travel), margin-bottom 0.5s var(--travel); }
+.arrive.grow.is-on { margin-bottom: 0; }
+.sized { overflow: hidden; }
+/* A scene leaving: up and off the stage, opaque all the way, as the next comes up under it. */
+.is-away { transform: translateY(calc(-1 * var(--scene, 640px))) !important; transition: transform 0.95s var(--travel) !important; }
+/* A card with views shows one at a time (stage.swap). */
+[data-view] { display: none; }
+[data-view].is-current { display: block; }
+
+/* Windows: a title bar and a body. The hero runs off the stage's foot rather than floating. */
+.window { position: absolute; display: flex; flex-direction: column; background: var(--surface); border-radius: var(--radius); box-shadow: var(--shadow-hero); overflow: hidden; }
+.window-bar { position: relative; flex-shrink: 0; height: 36px; display: flex; align-items: center; gap: 7px; padding: 0 14px; background: var(--terminal-bar); border-bottom: 1px solid var(--line); }
+.window-bar i { width: 11px; height: 11px; border-radius: 50%; background: #3a3631; }
+.window-title { position: absolute; inset: 0; display: flex; align-items: center; justify-content: center; font-size: 13px; color: var(--ink-3); pointer-events: none; }
+.window-address { position: absolute; left: 50%; top: 6px; transform: translateX(-50%); width: 300px; height: 24px; border-radius: 7px; background: var(--well); display: flex; align-items: center; justify-content: center; font-size: 13px; color: var(--ink-2); }
+.window-body { position: relative; flex: 1; overflow: hidden; }
+.scroll { position: relative; transition: transform 0.45s var(--travel); }
+/* A scrolling pane shows nothing in its top padding, so lines leave at the content's edge. */
+.window-body:has(> .scroll) { -webkit-mask-image: linear-gradient(to bottom, transparent var(--pad-top, 18px), #000 var(--pad-top, 18px)); mask-image: linear-gradient(to bottom, transparent var(--pad-top, 18px), #000 var(--pad-top, 18px)); }
+
+/* A terminal: Claude Code's look, a character grid. Keep lines under the satellite's edge. */
+.terminal { background: var(--terminal); }
+.terminal .window-body { padding: 18px 26px; font-family: var(--mono); font-size: 17px; line-height: 28px; color: var(--terminal-ink); }
+.terminal .line { white-space: pre; }
+.terminal .gap { height: 10px; }
+.terminal .muted { color: var(--ink-3); }
+.terminal .soft { color: var(--ink-2); }
+.terminal .ok { color: var(--accent); }
+.terminal .claude { color: var(--claude); }
+.terminal b { font-weight: 700; color: var(--ink); }
+.typing::after { content: ""; display: inline-block; width: 0.6em; height: 1.1em; margin-left: 1px; vertical-align: -0.18em; background: var(--terminal-ink); }
+.terminal .rule { height: 1px; margin: 10px 0 8px; background: rgb(246 241 231 / 18%); }
+.option { color: var(--terminal-ink); }
+.option .mark { display: inline-block; width: 2ch; }
+.option.is-current { color: var(--accent); }
+.option.is-current .mark::before { content: "❯"; }
+.box::before { content: "["; }
+.box::after { content: "]"; }
+.box i { font-style: normal; display: inline-block; width: 1ch; text-align: center; opacity: 0; transform: scale(0.4); transition: opacity 0.22s var(--arrive), transform 0.3s var(--arrive); }
+.is-ticked .box i { opacity: 1; transform: none; }
+
+/* Cards: a satellite that carries the beat's point. */
+.card { position: absolute; display: flex; flex-direction: column; background: var(--card); border-radius: var(--radius); box-shadow: var(--shadow-satellite); overflow: hidden; }
+.card-head { padding: 18px 22px 15px; border-bottom: 1px solid var(--line); }
+.card-title { font-size: 20px; line-height: 26px; font-weight: 700; letter-spacing: -0.01em; color: var(--ink); }
+.card-sub { margin-top: 4px; font-size: 15px; line-height: 21px; color: var(--ink-2); }
+.card-body { padding: 4px 22px 8px; }
+.card-foot { display: flex; align-items: center; justify-content: space-between; gap: 12px; padding: 12px 22px; background: var(--raised); border-top: 1px solid var(--line); font-size: 15px; color: var(--ink); }
+.card-foot .when { font-family: var(--mono); font-size: 14px; color: var(--accent); }
+
+.row { display: flex; align-items: baseline; gap: 14px; padding: 9px 0; border-bottom: 1px solid var(--line); font-size: 15px; line-height: 21px; }
+.row:last-child { border-bottom: 0; }
+.row .label { width: 92px; flex-shrink: 0; color: var(--ink-3); }
+.row .value { color: var(--ink); }
+.row .value .bar { display: inline-block; width: 120px; height: 8px; border-radius: 4px; background: var(--line-strong); vertical-align: 1px; }
+
+.rank { display: flex; align-items: flex-start; gap: 12px; padding: 11px 0; border-bottom: 1px solid var(--line); }
+.rank:last-child { border-bottom: 0; }
+.rank .n { width: 18px; flex-shrink: 0; font-family: var(--mono); font-size: 14px; line-height: 22px; color: var(--ink-3); }
+.rank.is-top .n { color: var(--accent); }
+.rank .what { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 2px; }
+.rank .name { font-size: 15px; line-height: 22px; color: var(--ink-2); }
+.rank.is-top .name { font-size: 16px; font-weight: 700; color: var(--ink); }
+.rank .detail { font-size: 14px; line-height: 20px; color: var(--ink-2); }
+.rank .name-row { display: flex; align-items: center; justify-content: space-between; gap: 10px; }
+.rank .bar { width: 52%; height: 8px; margin-top: 7px; border-radius: 4px; background: var(--line-strong); }
+
+.chip { flex-shrink: 0; padding: 2px 10px; border-radius: 999px; background: var(--accent-soft); color: var(--accent); font-size: 13px; line-height: 20px; white-space: nowrap; }
+.dot { display: inline-block; flex-shrink: 0; width: 8px; height: 8px; border-radius: 50%; background: var(--accent); }
+.dot.ink { background: var(--ink); }
+.dot.hot { background: var(--hot-text); }
+.dot.pulse { animation: pulse 1.6s ease-in-out infinite; }
+@keyframes pulse { 50% { opacity: 0.35; } }
+
+/* An app in Tin's chrome: the rail, a main pane, pages that cross over. */
+.app .window-body { display: flex; background: var(--surface); }
+.app-side { width: 196px; flex-shrink: 0; display: flex; flex-direction: column; gap: 2px; padding: 20px 12px; background: var(--rail); border-right: 1px solid var(--line); }
+.app-mark { width: 40px; height: 26px; margin: 0 0 16px 8px; background: var(--ink); -webkit-mask: var(--mark) left center / contain no-repeat; mask: var(--mark) left center / contain no-repeat; }
+.app-project { margin-bottom: 14px; padding: 9px 11px; border-radius: 9px; background: rgb(246 241 231 / 5%); font-size: 14px; line-height: 19px; font-weight: 700; color: var(--ink); }
+.app-project small { display: block; font-weight: 400; font-size: 13px; color: var(--ink-2); }
+.nav { display: flex; align-items: center; gap: 10px; padding: 7px 10px; border-radius: 8px; font-size: 15px; color: var(--ink-2); transition: background 0.3s var(--arrive), color 0.3s var(--arrive); }
+.nav svg { width: 16px; height: 16px; flex-shrink: 0; fill: none; stroke: currentColor; stroke-width: 1.3; stroke-linecap: round; stroke-linejoin: round; }
+.nav span { flex: 1; }
+.nav.is-current { background: var(--accent-soft); color: var(--accent); }
+.nav .count { display: inline-block; font-size: 13px; color: var(--ink-3); }
+.app-main { flex: 1; position: relative; overflow: hidden; }
+.app-title { font-size: 28px; line-height: 34px; font-weight: 700; letter-spacing: -0.02em; color: var(--ink); }
+[data-page] { position: absolute; inset: 0; padding: 22px 30px; opacity: 0; transition: opacity 0.16s ease-in; pointer-events: none; }
+[data-page].is-current { opacity: 1; transition: opacity 0.3s var(--arrive) 0.16s; pointer-events: auto; }
+
+.tabs { display: flex; gap: 26px; margin-top: 14px; border-bottom: 1px solid var(--line); }
+.tab { padding: 5px 2px 8px; font-size: 15px; color: var(--ink-2); }
+.tab.is-current { color: var(--ink); font-weight: 700; box-shadow: inset 0 -2px 0 var(--ink); }
+.tab .count { margin-left: 6px; font-family: var(--mono); font-weight: 400; font-size: 13px; color: var(--accent); }
+
+/* A week: days across, the work on each, as Tin's calendar draws it. */
+.week { display: grid; grid-template-columns: repeat(7, 150px); gap: 10px; margin-top: 16px; }
+.day { display: flex; flex-direction: column; gap: 8px; }
+.day-name { padding-top: 6px; border-top: 2px solid var(--line); font-family: var(--mono); font-size: 13px; line-height: 18px; color: var(--ink-3); }
+.day.is-today .day-name { border-top-color: var(--accent); color: var(--accent); }
+.event { padding: 8px 10px; border-radius: 8px; background: var(--card); border: 1px solid var(--line-strong); font-size: 14px; line-height: 19px; color: var(--ink); }
+.event.for-you { border-color: rgb(236 75 26 / 55%); }
+.event .sub { color: var(--ink-2); }
+.event .foot { display: flex; justify-content: space-between; align-items: center; margin-top: 6px; font-family: var(--mono); font-size: 12px; line-height: 16px; color: var(--ink-3); }
+.event .foot .state { display: flex; align-items: center; gap: 6px; color: var(--ink); }
+.event .foot .state.hot { color: var(--hot-text); }
+.event .done { color: var(--accent); margin-right: 6px; }
+.event .one { display: block; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+
+/* A group of running work: rows with a live bar. */
+.group-title { margin: 20px 0 9px; font-size: 15px; font-weight: 700; color: var(--ink); }
+.group-title small { margin-left: 6px; font-family: var(--mono); font-weight: 400; font-size: 13px; color: var(--ink-3); }
+.run { position: relative; display: flex; align-items: center; gap: 12px; padding: 12px 18px 15px; margin-bottom: 10px; border-radius: 10px; background: var(--card); border: 1px solid var(--line-strong); }
+.run .name { flex: 1; font-size: 15px; font-weight: 700; color: var(--ink); }
+.run .state { font-family: var(--mono); font-size: 13px; color: var(--accent); }
+.run .track { position: absolute; left: 12px; right: 12px; bottom: 6px; height: 3px; border-radius: 2px; background: var(--line); overflow: hidden; }
+.run .track i { display: block; height: 100%; width: 0; background: var(--accent); transition: width 1.2s var(--travel); }
+.run .muted { font-family: var(--mono); font-size: 13px; color: var(--ink-3); }
+
+/* A decision: what waits for the founder, and its actions. */
+.decision { margin-top: 12px; border-radius: 12px; background: var(--card); border: 1px solid var(--line-strong); overflow: hidden; }
+.decision-head { display: flex; align-items: center; gap: 12px; padding: 14px 20px; border-bottom: 1px solid var(--line); }
+.decision-head .avatar { width: 30px; height: 30px; flex-shrink: 0; border-radius: 50%; display: flex; align-items: center; justify-content: center; background: var(--well); color: var(--accent); font-size: 14px; font-weight: 700; }
+.decision-head .title { font-size: 17px; line-height: 23px; font-weight: 700; color: var(--ink); }
+.decision-head small { display: block; font-family: var(--mono); font-size: 13px; line-height: 18px; color: var(--ink-3); }
+.decision-body { padding: 16px 20px 18px; font-size: 16px; line-height: 24px; color: var(--ink); }
+.decision-body .where { margin-top: 10px; font-size: 14px; color: var(--ink-3); }
+.decision-body .where code { font-family: var(--mono); font-size: 13px; color: var(--ink-2); }
+.decision-actions { display: flex; align-items: center; gap: 12px; padding: 12px 20px; border-top: 1px solid var(--line); }
+.decision-actions .check { flex: 1; display: flex; align-items: center; gap: 9px; font-size: 14px; color: var(--ink-2); }
+.decision-actions .check i { width: 14px; height: 14px; border-radius: 3px; border: 1px solid var(--line-strong); }
+
+.button { display: inline-flex; align-items: center; justify-content: center; gap: 8px; height: 36px; padding: 0 15px; border-radius: 8px; border: 1px solid var(--line-strong); background: transparent; color: var(--ink); font: inherit; font-size: 15px; white-space: nowrap; transition: transform 0.12s ease-out, background 0.3s var(--arrive), border-color 0.3s var(--arrive), color 0.3s var(--arrive); }
+.button .label { display: inline-block; }
+.button.primary { border-color: transparent; background: var(--hot); color: var(--on-hot); font-weight: 700; }
+.button.quiet { border-color: transparent; padding: 0 4px; color: var(--hot-text); }
+.button.is-pressed { transform: scale(0.96); }
+.button.is-done { border-color: transparent; background: var(--accent-soft); color: var(--accent); }
+
+/* A toast: one line where the product puts it. */
+.toast { position: absolute; right: 26px; bottom: 26px; display: flex; align-items: center; gap: 12px; padding: 12px 16px; border-radius: 10px; background: var(--raised); box-shadow: var(--shadow-satellite); font-size: 15px; color: var(--ink); }
+
+/* A pull request, as GitHub lists one: the result of an approval, in the quiet margin. */
+.pull { position: absolute; display: flex; align-items: center; gap: 14px; padding: 14px 18px; border-radius: 10px; background: #0d1117; box-shadow: var(--shadow-satellite); }
+.pull .state { display: inline-flex; align-items: center; gap: 6px; height: 26px; padding: 0 11px; border-radius: 999px; background: #238636; color: #fff; font-size: 13px; font-weight: 700; }
+.pull .state svg { width: 14px; height: 14px; fill: currentColor; }
+.pull .title { font-size: 16px; line-height: 21px; font-weight: 700; color: #e6edf3; }
+.pull small { display: block; font-family: var(--mono); font-size: 13px; line-height: 18px; color: #8d96a0; }
+
+/* A slide from the right: a panel coming in over the page's edge, opaque all the way. */
+.arrive.slide.from-right { transform: translateX(var(--scene-x, 480px)); }
+.arrive.slide.from-right.is-on { transform: none; }
+
+/* A table of records: a header row and rows on one grid (--cols), a box to tick on each. The
+   header is a part with views (stage.swap): its columns, and the bar of what is ticked. */
+.table { font-size: 15px; line-height: 21px; }
+.thead { height: 32px; border-radius: 8px; background: var(--card); }
+.thead [data-view].is-current, .tr { display: grid; grid-template-columns: var(--cols); align-items: center; }
+.thead [data-view] { height: 32px; font-size: 13px; color: var(--ink-2); }
+.thead .is-sorted { color: var(--ink); }
+.thead .picked { display: none; }
+.thead .picked.is-current { display: flex; align-items: center; gap: 14px; padding: 0 4px 0 12px; }
+.picked b { font-size: 15px; color: var(--ink); }
+.picked .line { flex: 1; font-size: 14px; color: var(--ink-2); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+/* A ticked row's tint fades on its own layer, so the row never pops as a surface. */
+.tr { position: relative; height: 46px; border-bottom: 1px solid var(--line); }
+.tr::before { content: ""; position: absolute; inset: 0; background: rgb(153 175 98 / 6%); opacity: 0; transition: opacity 0.3s var(--arrive); pointer-events: none; }
+.tr.is-ticked::before { opacity: 1; }
+.tr .who { font-size: 17px; color: var(--ink); white-space: nowrap; }
+.tr .sub { color: var(--ink-2); white-space: nowrap; overflow: hidden; }
+.tr .num { font-family: var(--mono); color: var(--ink-2); }
+.tr .num.is-fit { color: var(--accent); }
+.tr .status { color: var(--ink-2); white-space: nowrap; }
+.tr .bar { display: inline-block; width: 140px; height: 9px; border-radius: 5px; background: var(--line-strong); vertical-align: 1px; }
+.status .queued { color: var(--accent); }
+.status .connected { color: var(--ink); }
+.tickbox { justify-self: center; position: relative; width: 14px; height: 14px; border-radius: 3px; border: 1px solid rgb(246 241 231 / 30%); transition: background 0.2s var(--arrive), border-color 0.2s var(--arrive), opacity 0.35s var(--arrive); }
+.tickbox::after { content: ""; position: absolute; left: 4px; top: 1px; width: 4px; height: 8px; border: solid #141210; border-width: 0 2px 2px 0; transform: rotate(45deg) scale(0.4); opacity: 0; transition: opacity 0.2s var(--arrive), transform 0.25s var(--arrive); }
+.is-ticked > .tickbox, .tickbox.is-mixed { border-color: transparent; background: var(--accent); }
+.is-ticked > .tickbox::after { opacity: 1; transform: rotate(45deg); }
+.tickbox.is-mixed::after { left: 3px; top: 6px; width: 8px; height: 0; border-width: 0 0 2px; transform: none; opacity: 1; }
+.arrive.tickbox:not(.is-on) { transform: none; }
+.button.go { height: 26px; padding: 0 12px; border: 0; border-radius: 999px; background: var(--accent); color: #141210; font-size: 14px; font-weight: 700; }
+.button.go.is-done { background: var(--accent-soft); color: var(--accent); }
+
+/* A line beside a page's tabs: a status the product keeps. */
+.tabs .aside { margin-left: auto; align-self: center; display: flex; align-items: center; gap: 9px; padding-bottom: 3px; font-size: 15px; color: var(--ink-2); }
+
+/* A popover: the reason under a value, where the product shows it on hover. Small: it may fade. */
+.pop { position: absolute; padding: 13px 16px 12px; border-radius: 10px; background: var(--raised); box-shadow: var(--shadow-satellite); font-size: 15px; line-height: 20px; color: var(--ink); }
+/* A popover comes in over other words: its ground is whole within a few frames, and only then
+   do its own words fade in, so the words under it never show through them. */
+.pop.arrive { transition: opacity 0.12s linear, transform 0.4s var(--arrive); }
+.pop.arrive > * { opacity: 0; transition: opacity 0.35s var(--arrive) 0.12s; }
+.pop.arrive.is-on > * { opacity: 1; }
+.pop p { margin: 0; }
+.pop code { display: block; margin-top: 8px; font-family: var(--mono); font-size: 13px; line-height: 18px; color: var(--accent); }
+
+/* A side panel over a page's right edge: one record's fields and what happened. Put it on the
+   stage over the window, not inside it, and bring it in with .slide.from-right: it enters
+   through the stage's edge like the window did. */
+.panel { position: absolute; padding: 24px 25px; background: var(--card); border-left: 1px solid var(--line-strong); box-shadow: -30px 0 60px rgb(0 0 0 / 35%); }
+.panel-title { font-size: 21px; line-height: 27px; font-weight: 700; letter-spacing: -0.01em; color: var(--ink); }
+.panel-sub { margin-top: 4px; font-size: 15px; color: var(--ink-2); }
+.panel .link { display: inline-block; margin-top: 8px; font-size: 15px; color: var(--accent); text-decoration: underline; text-underline-offset: 3px; text-decoration-thickness: 1px; }
+.panel .link .out { margin-left: 6px; text-decoration: none; display: inline-block; font-size: 14px; }
+.panel-head { margin: 0 -25px; padding: 0 25px 18px; border-bottom: 1px solid var(--line); }
+.field { display: flex; gap: 14px; margin: 14px -10px 0; padding: 9px 10px; border-radius: 8px; box-shadow: inset 0 0 0 1px transparent; transition: box-shadow 0.4s var(--arrive), background 0.4s var(--arrive); }
+.field.is-ticked { background: rgb(153 175 98 / 7%); box-shadow: inset 0 0 0 1px rgb(153 175 98 / 70%); }
+.field .label { width: 74px; flex-shrink: 0; font-size: 14px; color: var(--ink-3); }
+.field b { font-weight: 400; font-size: 15px; color: var(--ink); }
+.field .num { font-family: var(--mono); }
+.field p { margin: 4px 0 0; font-size: 14px; line-height: 19px; color: var(--ink-2); }
+.happened { display: flex; justify-content: space-between; align-items: baseline; gap: 12px; margin-top: 12px; font-size: 15px; color: var(--ink); }
+.happened + .happened { color: var(--ink-2); }
+.happened code { font-family: var(--mono); font-size: 13px; color: var(--ink-3); }
+
+/* A social post, as its network shows it: who wrote it, its words, quiet lines for the rest,
+   and what it drew. */
+.post { padding: 27px 32px; background: var(--surface); }
+.post-head { display: flex; align-items: center; gap: 14px; }
+.post-head .avatar { width: 43px; height: 43px; flex-shrink: 0; border-radius: 50%; display: flex; align-items: center; justify-content: center; background: var(--well); color: var(--accent); font-size: 16px; font-weight: 700; }
+.post-name { font-size: 17px; line-height: 22px; font-weight: 700; color: var(--ink); }
+.post-sub { font-size: 14px; line-height: 20px; color: var(--ink-2); }
+.post-text { margin-top: 22px; font-size: 22px; line-height: 29px; letter-spacing: -0.005em; color: var(--ink); }
+.post > .bar { display: block; height: 9px; margin-top: 10px; border-radius: 5px; background: var(--line-strong); }
+.post > .bar:first-of-type { margin-top: 20px; }
+.post-media { height: 140px; margin-top: 20px; border-radius: 8px; background: rgb(246 241 231 / 4%); }
+.post-foot { display: flex; align-items: center; gap: 12px; margin-top: 22px; font-size: 17px; color: var(--ink-2); }
+.post-foot b { font-weight: 400; color: var(--ink); }
+.faces { display: flex; }
+.faces i { width: 20px; height: 20px; margin-right: -5px; border-radius: 50%; border: 2px solid var(--surface); background: #4a443d; }
+.faces i:nth-child(2) { background: #5a524a; }
+.faces i:nth-child(3) { background: #6a6158; }
+
+/* People nobody can see yet: a face and two quiet lines. */
+.face-row { display: flex; align-items: center; gap: 13px; padding: 11px 0; border-bottom: 1px solid var(--line); }
+.face-row .face { width: 32px; height: 32px; flex-shrink: 0; border-radius: 50%; background: #3e3a35; }
+.face-row:nth-child(2n) .face { background: #4d4740; }
+.face-row:nth-child(3n) .face { background: #5c544b; }
+.face-row .bar { display: block; height: 9px; border-radius: 5px; background: var(--line-strong); }
+.face-row .bar + .bar { height: 7px; margin-top: 8px; background: var(--line); }

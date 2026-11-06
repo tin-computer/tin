@@ -117,6 +117,10 @@ class _TinHTMLRenderer(HTMLRenderer):
         language = ""
         if info:
             language = info.strip().split(None, 1)[0]
+        if language == "tin-directions":
+            # A film's directions name their recommendation for Decisions; the note's own
+            # words already say it, so the reader shows nothing for the block.
+            return ""
         if language in {"tin-embed", "tin-video"} and self.asset_folder:
             fields = {
                 match[1]: match[2].strip()

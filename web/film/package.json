@@ -1,0 +1,16 @@
+{
+  "name": "tin-film",
+  "version": "1.0.0",
+  "description": "Tin's film kit: staged product films and sketches, every frame checked, uploaded to a Tin project for the founder to decide on.",
+  "type": "module",
+  "bin": {
+    "tin-film": "tin-film.js"
+  },
+  "engines": {
+    "node": ">=20"
+  },
+  "dependencies": {
+    "playwright": "1.63.0"
+  },
+  "license": "SEE LICENSE IN guide/README.md"
+}

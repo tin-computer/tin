@@ -16,3 +16,6 @@ node_modules/
 
 # Feature films (npm run film)
 /.films/
+# A film's takes and recording sit beside its film.json, never in git.
+/web/film/examples/*/takes/
+/web/film/examples/*/world/

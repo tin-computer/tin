@@ -11,12 +11,13 @@ import base64
 import json
 from types import SimpleNamespace
 from unittest.mock import AsyncMock
-from uuid import UUID
+from uuid import UUID, uuid4
 
 import pytest
 from test_codex_isolation import load_sandbox_module
 from test_rollouts import base_values
 
+from tin_lite import design_rules
 from tin_lite.e2b_runtime import E2BRuntime, SandboxProcedureInput
 from tin_lite.procedures import PinnedCodexProcedure
 
@@ -49,7 +50,15 @@ def test_the_brief_and_context_name_the_run():
 
 def test_a_context_without_a_run_is_unchanged():
     context = spec().sandbox_context(inputs={})
-    assert "run" not in context and context["prompt"] == "Build the blog index."
+    assert "run" not in context
+    assert context["prompt"] == "Build the blog index." + design_rules.instruction()
+
+
+def test_every_brief_ends_with_tins_design_rules():
+    # No eyebrows, anywhere: every procedure may make something someone looks at.
+    prompt = spec().sandbox_context(inputs={}, run_id=uuid4())["prompt"]
+    assert prompt.endswith(design_rules.instruction())
+    assert "No eyebrows, anywhere" in prompt
 
 
 async def test_the_sandbox_controller_receives_tin_run_id(monkeypatch):

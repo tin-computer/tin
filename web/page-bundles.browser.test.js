@@ -166,6 +166,7 @@ test("page bundles: figures load inert, embeds are walled off, videos are allow-
     assert.match(await video.getAttribute("src"), /^blob:/);
     assert.match(await video.getAttribute("poster"), /^blob:/);
     assert.equal(await ours.locator('track[kind="captions"]').count(), 1);
+    assert.equal(await ours.locator("track").getAttribute("default"), null, "captions start off");
     assert.match(await ours.locator("track").getAttribute("src"), /^blob:/);
     assert.equal(await ours.locator("figcaption").textContent(), "Our film");
     assert.equal(await page.locator('figure[data-title="Gone"] .md-embed-missing').textContent(), "This video isn't available.");

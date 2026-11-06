@@ -117,11 +117,11 @@ test("a broken film is refused before anything is filmed, naming each beat that'
     {morph: [{camera: "@nowhere"}]},
     "hold",
   ], values), [
-    'beats[1] starts with "hodl", which is no action (address, begin, camera, click, endCard, end, focus, follow, gone, hide, highlight, hold, look, mark, move, open, raise, read, ready, say, scroll, scrollPage, show, still, type, wait, caption, term.box, term.clear, term.enter, term.paste, term.print, term.prompt, term.type, term.work)',
+    'beats[1] starts with "hodl", which is no action (address, begin, camera, click, do, endCard, end, focus, follow, gone, hide, highlight, hold, look, mark, move, open, raise, read, ready, say, scroll, scrollPage, show, still, type, wait, caption, term.box, term.clear, term.enter, term.paste, term.print, term.prompt, term.type, term.work)',
     'beats[2]: when "sideways" names no take (wide, tall, full, brisk)',
     "beats[3]: the film has no value @nowhere",
     'beats[4]: the film has no hook "missing"',
-    'beats[6].beats[0] starts with "term.dance", which is no action (address, begin, camera, click, endCard, end, focus, follow, gone, hide, highlight, hold, look, mark, move, open, raise, read, ready, say, scroll, scrollPage, show, still, type, wait, caption, term.box, term.clear, term.enter, term.paste, term.print, term.prompt, term.type, term.work)',
+    'beats[6].beats[0] starts with "term.dance", which is no action (address, begin, camera, click, do, endCard, end, focus, follow, gone, hide, highlight, hold, look, mark, move, open, raise, read, ready, say, scroll, scrollPage, show, still, type, wait, caption, term.box, term.clear, term.enter, term.paste, term.print, term.prompt, term.type, term.work)',
     "beats[7].morph[0]: the film has no value @nowhere",
     "beats[8] is not a beat",
   ]);
