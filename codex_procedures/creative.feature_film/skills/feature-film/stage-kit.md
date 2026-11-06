@@ -5,7 +5,7 @@ and runtime, sets the product's look, places its parts, and leaves every part th
 hidden until a beat shows it:
 
 ```html
-<link rel="stylesheet" href="/film-fonts/fonts.css">
+<link rel="stylesheet" href="fonts.css"> <!-- the product's type, kept by tin-film inspect -->
 <link rel="stylesheet" href="/__stage/kit/stage.css">
 <style>
   :root { /* the product's tokens, from tin-film inspect */ }
@@ -18,6 +18,17 @@ hidden until a beat shows it:
 Files beside `index.html` (an image, a font) load by their name. The worked examples
 (`tin-film new --from onboarding` or `people`) are the reference for everything below: copy the
 closest one's structure, change its look and its words.
+
+## Type
+
+A film is set in the product's own type. `tin-film inspect` finds the faces its visible text
+is set in (not the body's default) and keeps their files: `WORK/look/fonts.css` and
+`WORK/look/fonts/`. Copy both beside each sketch's and the stage's `index.html`, link
+`fonts.css`, and set `--sans` (and a heading face, when inspect names one) to the face it
+names. When inspect kept none, the product uses a system face; name the one it printed. Every
+take warns when the stage's text falls to a face that never loaded (Arial, the system's sans,
+or the kit's default): fix it before anything else, because a film in a stand-in face looks
+like any company's.
 
 ## The screen
 

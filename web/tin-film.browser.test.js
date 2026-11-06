@@ -10,6 +10,8 @@ import {filmFromSpec, shoot, vtt} from "./film/film.js";
 import {recordingKey} from "./film/recording.js";
 import {boardIssues, deliverDirections, directionsRequest, note, restore, reviewRequest, sketch} from "./film/tin-film.js";
 import {FAMILIES, STRUCTURES, deal} from "./film/directions.js";
+import {faceName, fontFaces, inspect} from "./film/inspect.js";
+import http from "node:http";
 
 const SITE = "https://film.test/";
 const PAGE = `<!doctype html><html><head><title>Fold</title><style>
@@ -240,8 +242,17 @@ test("sketches are filmed for a moment and put side by side, each in its poster 
     fs.writeFileSync(path.join(dir, name, "index.html"), `<!doctype html><html><head><link rel="stylesheet" href="/__stage/kit/stage.css"></head><body><div class="stage"><div class="arrive" style="position: absolute; left: 48px; top: 40px; font-size: 96px;">${words}</div></div><script src="/__stage/kit/stage.js"></script></body></html>`);
     fs.writeFileSync(path.join(dir, name, "caption.txt"), "Your funnel is larger than you think.");
   }
-  await sketch(dir);
+  const said = [];
+  const log = console.log;
+  console.log = (...args) => { said.push(args.join(" ")); log(...args); };
+  try {
+    await sketch(dir);
+  } finally {
+    console.log = log;
+  }
   assert.ok(fs.statSync(path.join(dir, "sketches.jpg")).size > 5_000);
+  // Without the product's fonts the kit's face falls back, and each sketch says so.
+  assert.ok(said.some(line => /1\. 1-number: The stage asks for FK Grotesk Neue .* falls back to/.test(line)), said.join("\n"));
   // Each still and its name, for the founder's pick in Decisions.
   const {sketches} = JSON.parse(fs.readFileSync(path.join(dir, "sketches.json"), "utf8"));
   assert.deepEqual(sketches.map(item => [item.n, item.name, item.still]), [[1, "Number", "1-number/still.jpg"], [2, "Sentence", "2-sentence/still.jpg"]]);
@@ -313,4 +324,47 @@ test("a second look sends the take's sheet and marked stills with the spec and w
   assert.match(held.storyboard, /## 1\. Herd/);
   assert.deepEqual(held.example, {media_type: "image/jpeg", data_base64: png.toString("base64")});
   assert.notEqual(held.request_id, request.request_id, "a new storyboard asks a new question");
+});
+
+test("inspect keeps the face a page's text is set in, with its files, not the body's", {timeout: 120000}, async () => {
+  // Shaped like a Next.js site: the body names one face, a wrapper sets the visible text in a
+  // next/font face with a hashed name, and a fallback face points at a system font.
+  const font = fs.readFileSync(path.resolve("src/tin_lite/static/fonts/geist-sans-regular.woff2"));
+  const pages = {
+    "/": ["text/html", `<!doctype html><html><head><title>Fold</title><link rel="stylesheet" href="/site.css"><style>
+      @font-face { font-family: "__brandSans_4f5e8e"; src: url(/media/a1b2c3-s.p.woff2) format("woff2"); font-weight: 400; font-style: normal; }
+      @font-face { font-family: "__brandSans_Fallback_4f5e8e"; src: local("Arial"); }
+      .wrap { font-family: "__brandSans_4f5e8e", "__brandSans_Fallback_4f5e8e", sans-serif; }
+    </style></head><body><div class="wrap"><h1>Herd them with a circle</h1><p>Draw round the sheep and they follow.</p></div></body></html>`],
+    "/site.css": ["text/css", `@font-face { font-family: "Body Face"; src: url(/fonts/body.woff2) format("woff2"); } body { font-family: "Body Face", sans-serif; margin: 0; }`],
+    "/media/a1b2c3-s.p.woff2": ["font/woff2", font],
+  };
+  const server = http.createServer((request, response) => {
+    const page = pages[new URL(request.url, "http://x").pathname];
+    if (!page) return response.writeHead(404).end();
+    response.writeHead(200, {"content-type": page[0]}).end(page[1]);
+  });
+  await new Promise(resolve => server.listen(0, "127.0.0.1", resolve));
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), "tin-film-look-"));
+  try {
+    const report = await inspect(`http://127.0.0.1:${server.address().port}/`, {dir});
+    assert.equal(report.look.font, "Brand Sans");
+    assert.deepEqual(report.look.fonts.map(item => [item.family, item.kept]), [["Brand Sans", ["400"]]]);
+    assert.match(report.look.tokens, /--sans: "Brand Sans", system-ui, sans-serif;/);
+    const css = fs.readFileSync(path.join(dir, "fonts.css"), "utf8");
+    assert.match(css, /font-family: "Brand Sans"; src: url\("fonts\/brand-sans-400-[0-9a-f]{8}\.woff2"\) format\("woff2"\); font-weight: 400;/);
+    const [file] = fs.readdirSync(path.join(dir, "fonts"));
+    assert.deepEqual(fs.readFileSync(path.join(dir, "fonts", file)), font);
+    // The body's own face set no visible text, and the fallback face is a system font: neither is kept.
+    assert.doesNotMatch(css, /Body Face|Fallback/);
+  } finally {
+    server.close();
+  }
+});
+
+test("a face's name reads as people say it, and its rules resolve against their sheet", () => {
+  assert.equal(faceName("__fkGroteskNeue_4f5e8e"), "Fk Grotesk Neue");
+  assert.equal(faceName("Inter"), "Inter");
+  const [face] = fontFaces(`@font-face{font-family:'Inter';src:url(data:x) format("woff2"),url("../f/inter.woff2?v=1") format("woff2");font-weight:100 900;unicode-range:U+0000-00FF}`, "https://site.test/css/a.css");
+  assert.deepEqual(face, {family: "Inter", weight: "100 900", style: "normal", range: "U+0000-00FF", sources: [{url: "https://site.test/f/inter.woff2?v=1", format: "woff2"}]});
 });

@@ -40,8 +40,9 @@ The founder picks the direction, so a film takes at least two runs at the same n
   2 with a new deal. Leave out what the previous copy sketched (its headings) unless the
   feedback asks for one, and follow the feedback.
 - **Feedback on a film**: `tin-film restore /home/user/project/films/<slug>.md WORK/film` puts
-  its spec, stage and storyboard back. Change what the feedback asks and keep the rest, then
-  steps 6 to 8.
+  its spec, stage and storyboard back. Run `tin-film inspect` again for the product's type and
+  copy it beside the stage (`stage-kit.md`, Type). Change what the feedback asks and keep the
+  rest, then steps 6 to 8.
 
 Every image you open stays in your context for the rest of the run, and a request has a fixed
 size limit: a run that keeps opening images ends without its film. Open each image once, open
@@ -64,7 +65,9 @@ changes between takes so each take answers several questions at once.
    wording (buttons, labels, statuses, messages) from its pages, its docs and the Feature map.
 4. When the run gives `product_url` (or the project names its site), run
    `tin-film inspect <url> --dir WORK/look`. It prints the page's look as the stage kit's tokens,
-   its font stylesheets and its outline, and writes `screen.jpg`. Open `screen.jpg` once.
+   the faces its text is set in (keeping their files in `WORK/look/fonts.css` and
+   `WORK/look/fonts/`; `stage-kit.md`, Type) and its outline, and writes `screen.jpg`. Open
+   `screen.jpg` once.
 5. Decide the kind of film: a product highlight (the post shows what the product does), a motion
    graphic (the post argues an idea bigger than one screen) or both (an idea that lands on the
    product). It decides which directions are dealt.
@@ -169,6 +172,8 @@ in the storyboard's order, and a poster.
    - The hero sits whole with air on every side: inset it a gutter from the top and left and
      make it larger, so it runs off the right or the foot, as in the examples.
    - The stage draws a cursor of its own: delete it; the film's hand is the only one.
+   - The stage's text is set in a system face, or asks for one that never loaded: copy
+     `WORK/look/fonts.css` and `WORK/look/fonts/` beside the page, link it, and set `--sans`.
    - `storyboard:` lines: the film and the storyboard disagree. Change whichever is wrong; the
      storyboard is the plan, so change it only for a better shot.
 5. Stop when a rehearsal has no errors, no warnings, no storyboard lines and the stills are

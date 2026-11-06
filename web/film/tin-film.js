@@ -400,6 +400,8 @@ export async function sketch(dir, options = {}) {
     const film = filmFromSpec(spec, path.join(folder, "film.json"));
     const {dir: take, report} = await shoot(film, {format, out: path.join(folder, "takes"), rehearse: true, check: false, gif: false});
     for (const line of report.issues.errors) console.log(`  ${index + 1}. ${name}: error: ${line}`);
+    // A sketch in a stand-in face misleads the pick: say so beside it.
+    for (const line of report.issues.warnings.filter(line => line.startsWith("The stage"))) console.log(`  ${index + 1}. ${name}: ${line}`);
     const marked = name => fs.readdirSync(path.join(take, "marks")).find(file => new RegExp(`${name}\\.(jpg|png)$`).test(file));
     const poster = marked("poster");
     const still = path.join(folder, `still${path.extname(poster)}`);
@@ -431,6 +433,11 @@ async function main(argv) {
     const report = await inspect(args[0], {dir, format: options.format || "16:9"});
     console.log(`${report.title} (${report.url}), ${report.height}px tall, read at ${report.screen.width}×${report.screen.height}`);
     console.log(`look: ${report.look.background} ground, ${report.look.color} text, ${report.look.font}; as the stage kit's tokens:\n${report.look.tokens}`);
+    for (const item of report.look.fonts || []) {
+      const kept = item.kept.length ? `kept (${item.kept.join(", ")}) in look's fonts.css` : "no font file: a system font, or one the page didn't load";
+      console.log(`  type: ${item.family}${item.heading ? ", in its headings" : ""}, “${item.sample}”: ${kept}`);
+    }
+    if ((report.look.fonts || []).some(item => item.kept.length)) console.log(`  set the stage in it: copy ${path.join(dir, "fonts.css")} and ${path.join(dir, "fonts")}/ beside the stage page and link fonts.css`);
     if (report.look.stylesheets.length) console.log(`  its font stylesheets: ${report.look.stylesheets.join(", ")}`);
     for (const item of report.headings) console.log(`  h${item.level} at ${item.top}: ${item.text}  →  ${item.selector}`);
     for (const item of report.controls) console.log(`  ${item.kind} at ${item.top}: ${item.text || "(no text)"}${item.href ? ` [${item.href}]` : ""}  →  ${item.selector}`);

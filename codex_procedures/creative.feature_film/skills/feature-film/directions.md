@@ -42,7 +42,8 @@ what the first second did. Nothing of theirs goes in the film. Read public pages
    `caption.txt` and, in `about.txt`, one sentence for the founder on what this way of showing
    it is (they pick from the stills and these sentences; the folder's name is the direction's
    name, so name it as they would read it: `2-flow`, `4-one-person`). Only its poster frame,
-   built with the kit and the product's tokens. When the poster needs more than every part
+   built with the kit, the product's tokens and its type (copy `WORK/look/fonts.css` and
+   `WORK/look/fonts/` into the folder and link it). When the poster needs more than every part
    shown (a flow drawn, a value set), define `stage.poster`. Rough is fine; the idea must read
    in one look.
 3. `tin-film sketch WORK/sketches` films each for a moment and puts the stills side by side, in
