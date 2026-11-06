@@ -114,11 +114,12 @@ async function deliver(file, notePath) {
 }
 
 // A storyboard (storyboard.md beside film.json): a title, a line saying what shape of feature it
-// suits, the story, then a "## N. Name" section per shot with its Mark and its Caption. A take's
+// suits, the story, its directions (## Directions), then a "## N. Name" section per shot with its
+// Mark and its Caption. A take's
 // contact sheet is the storyboard drawn, one still per shot, so the film marks every shot and
 // shows every caption, in the storyboard's order.
 export function shotsOf(text) {
-  return text.split(/^## /m).slice(1).map(section => {
+  return text.split(/^## /m).slice(1).filter(section => /^\d+\./.test(section)).map(section => {
     const [heading, ...lines] = section.split("\n");
     const field = name => lines.find(line => line.startsWith(`- ${name}:`))?.slice(name.length + 3).trim() || "";
     return {name: heading.replace(/^\d+\.\s*/, "").trim(), mark: field("Mark"), caption: field("Caption")};

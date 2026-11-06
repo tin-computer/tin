@@ -226,7 +226,8 @@ thing happens per beat and the result stays on screen, rather than a camera over
 - **Scale.** A 16:9 stage is a 1080 × 517 screen (`"screens": {"16:9": 1080}`), shown at 1.78
   times its size, so 15px text reads as 27px on a phone; the camera stays on the whole stage.
 - **Storyboards.** A staged film keeps `storyboard.md` beside `film.json`: its title, the shape of
-  feature it suits, the story, then a `## N. Name` section per shot with its mark, caption, hero,
+  feature it suits, the story, its directions (five far-apart visual ideas from different families
+  and the one chosen, per the skill's `directions.md`), then a `## N. Name` section per shot with its mark, caption, hero,
   satellite, real words and what moves. The film marks every shot, so a take's contact sheet is
   the storyboard drawn, one still per shot; every take of a staged film says where the film and
   its storyboard disagree (a shot's mark or caption missing, marks in another order, no poster).

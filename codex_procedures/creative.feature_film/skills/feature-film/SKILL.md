@@ -57,12 +57,16 @@ changes between takes so each take answers several questions at once.
 ## 3. Storyboard
 
 Rewrite `WORK/film/storyboard.md` for this feature, in the example's shape, before any stage
-code:
+code. Read `directions.md` first.
 
 1. A title, then one line on the shape of feature it shows.
 2. `Before:` and `After:`, one sentence each, in the founder's words: the story as one change.
    They go in `film.json` as `story` and open the note.
-3. Three to six shots and a payoff, 15 to 40 seconds in all. Each is a `## N. Name` section with:
+3. `## Directions`: five directions from different families, one line each, then the one you
+   chose and why, and why the runner-up lost (`directions.md`). The example is one direction,
+   not the answer: copy its craft, not its idea.
+4. Three to six shots and a payoff for the chosen direction, 15 to 40 seconds in all. Each is a
+   `## N. Name` section with:
    - `- Mark:` the still that draws it (`poster` for the one frame that tells the story at a
      glance, with the result on screen; `payoff` for the last);
    - `- Caption:` at most twelve words, one idea, exactly as the film will show it;
@@ -72,11 +76,11 @@ code:
      real wording; everything else is quiet bars;
    - `- Moves:` what changes on screen, in order. Never empty: a shot where nothing changes is a
      still, and the viewer leaves.
-4. Open where the founder's problem lives (their terminal, their post, their inbox) and travel to
+5. Open where the founder's problem lives (their terminal, their post, their inbox) and travel to
    the product answering it, as both examples do; the scene changes once, with `away` and a
    `.slide` window. A feature that lives on one page may stay in one scene, but then something
    in it changes every shot.
-5. Every caption claim is visible in its shot or comes from a Feature map line marked
+6. Every caption claim is visible in its shot or comes from a Feature map line marked
    `observed`. A wait the film compresses is labelled with its real length or with "Later".
 
 Every take checks `film.json` against the storyboard: each shot's mark and caption in the film,

@@ -147,6 +147,9 @@ test("a storyboard the film drifted from says which shot", () => {
     "No shot is the poster (- Mark: poster).",
   ]);
   assert.deepEqual(boardIssues("# Nothing yet\n", spec), ['It has no shots: a "## 1. Name" section for each, with "- Mark:" and "- Caption:" lines.']);
+  // The directions weighed before the shots are not a shot.
+  const weighed = "# Ranked\n\nA list.\n\n## Directions\n- Iceberg.\n- Orbit.\n\n## 1. Ranked\n- Mark: ranked\n- Caption: Tin ranks them.\n\n## 2. Asked\n- Mark: poster\n- Caption: Tin asks them.\n";
+  assert.deepEqual(boardIssues(weighed, spec), []);
 });
 
 test("a take whose encoder is missing stops with the reason instead of waiting", {timeout: 180000}, async () => {

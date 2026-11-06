@@ -82,6 +82,8 @@ Each is plain HTML with the kit's classes; restyle with the tokens, not new geom
   `.post-text`, quiet `<i class="bar">` lines, `.post-media` and `.post-foot` (`.faces` and the
   counts). People nobody can read yet: `.face-row` (an `<i class="face">` and two bars).
 - Chip `.chip`, dot `.dot` (`.ink`, `.hot`, `.pulse`), toast `.toast`, pull request `.pull`.
+- A diagram (an iceberg, rings, a stream, a field of dots) is built from boxes on the stage, not
+  kit parts; see `directions.md`. Wrap one that sits whole in the frame in `data-diagram`.
 
 Arrivals: `.arrive` (hidden until shown; it fades and rises in), `.arrive.slide` (comes up from
 below the stage, opaque: a window or a result), `.arrive.slide.from-right` (comes in through

@@ -119,6 +119,7 @@ export function zigzags(lens) {
 }
 
 // In a staged page: its largest painted part on show, when that part sits wholly inside the stage.
+// A diagram (inside [data-diagram]) may sit whole in the frame.
 function floating() {
   const stage = document.querySelector(".stage") || document.body;
   const frame = stage.getBoundingClientRect();
@@ -127,7 +128,7 @@ function floating() {
   for (const el of stage.querySelectorAll("*")) {
     const box = el.getBoundingClientRect();
     const shown = Math.max(0, Math.min(box.right, frame.right) - Math.max(box.left, frame.left)) * Math.max(0, Math.min(box.bottom, frame.bottom) - Math.max(box.top, frame.top));
-    if (shown < 0.15 * whole || shown > 0.95 * whole || (hero && shown <= hero.shown)) continue;
+    if (shown < 0.15 * whole || shown > 0.95 * whole || (hero && shown <= hero.shown) || el.closest("[data-diagram]")) continue;
     const style = getComputedStyle(el);
     if (/rgba\(0, 0, 0, 0\)|transparent/.test(style.backgroundColor) && style.boxShadow === "none") continue;
     let seen = true;
