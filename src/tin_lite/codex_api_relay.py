@@ -269,10 +269,25 @@ def request_identity(headers, raw, operation):
     return fingerprint
 
 
+# OpenAI answers 503 when it is overloaded and did not take the request, and asks for it again.
+# Only that answer is sent again, on the same admitted attempt, after these waits (seconds). Any
+# other answer leaves the attempt unconfirmed and is never sent again; the receipt is settled
+# once, from the usage of the response that arrives, so nothing is charged twice.
+OVERLOADED_WAITS = (2.0, 5.0)
+
+
 class CodexAPIRelay:
-    def __init__(self, *, database, api_key: str, client: httpx.AsyncClient | None = None):
+    def __init__(
+        self,
+        *,
+        database,
+        api_key: str,
+        client: httpx.AsyncClient | None = None,
+        overloaded_waits: tuple[float, ...] = OVERLOADED_WAITS,
+    ):
         self.db = database
         self._api_key = api_key
+        self._overloaded_waits = overloaded_waits
         self.client = client or httpx.AsyncClient(
             timeout=httpx.Timeout(180, connect=15), follow_redirects=False, trust_env=False
         )
@@ -607,18 +622,29 @@ class CodexAPIRelay:
             # Lite disallows provider-hosted search. Standard Responses accepts
             # the same additional_tools/context items and SSE protocol unchanged.
             upstream_headers.pop("x-openai-internal-codex-responses-lite", None)
-        try:
-            upstream = await self.client.send(
-                self.client.build_request(
-                    "POST", f"{UPSTREAM}/{operation}", json=body, headers=upstream_headers
-                ),
-                stream=True,
+        for wait in (*self._overloaded_waits, None):
+            try:
+                upstream = await self.client.send(
+                    self.client.build_request(
+                        "POST", f"{UPSTREAM}/{operation}", json=body, headers=upstream_headers
+                    ),
+                    stream=True,
+                )
+            except httpx.HTTPError:
+                # Intent stays unconfirmed. HTTPX and Codex are configured not to retry.
+                raise RelayRejected(
+                    502, "Codex API request outcome is unconfirmed", reason="upstream_unreachable"
+                ) from None
+            if upstream.status_code != 503 or wait is None:
+                break
+            await upstream.aclose()
+            logger.warning(
+                "Codex API upstream overloaded run=%s operation=%r; sending again in %ss",
+                run_id,
+                operation,
+                wait,
             )
-        except httpx.HTTPError:
-            # Intent stays unconfirmed. HTTPX and Codex are configured not to retry.
-            raise RelayRejected(
-                502, "Codex API request outcome is unconfirmed", reason="upstream_unreachable"
-            ) from None
+            await asyncio.sleep(wait)
         if upstream.status_code != 200:
             status = upstream.status_code
             await upstream.aclose()

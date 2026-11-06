@@ -75,7 +75,7 @@ def result_event(**updates):
     )
 
 
-async def setup_relay(db, handler=None):
+async def setup_relay(db, handler=None, overloaded_waits=(0, 0)):
     _, _, run, _ = await activity_fixture(db)
     record = {
         "run_id": str(run.id),
@@ -111,6 +111,7 @@ async def setup_relay(db, handler=None):
             transport=httpx.MockTransport(upstream),
             follow_redirects=False,
         ),
+        overloaded_waits=overloaded_waits,
     )
     app = FastAPI()
     app.state.runtime = SimpleNamespace(codex_api=relay)
@@ -209,7 +210,7 @@ async def test_unknown_attempts_never_automatically_repurchase(publication_db, m
         if mode == "timeout":
             raise httpx.ReadTimeout("do-not-expose-provider-secret", request=request)
         return httpx.Response(
-            503 if mode == "rejected" else 307 if mode == "redirect" else 200,
+            500 if mode == "rejected" else 307 if mode == "redirect" else 200,
             content=b"data: {}\n\n" if mode == "disconnect" else b"data: invalid\n\n",
             headers={"location": "https://attacker.test"},
         )
@@ -220,6 +221,48 @@ async def test_unknown_attempts_never_automatically_repurchase(publication_db, m
         assert "do-not-expose" not in response.text
         retry = await post(client, run, {**BODY, "input": "different"})
         assert retry.status_code == 409 and len(sent) == 1
+        facts = await publication_db.pool.fetchrow(
+            "SELECT status, result FROM effect_receipts WHERE operation=$1", USAGE
+        )
+        assert facts["status"] == "started" and json.loads(facts["result"])["usage"] is None
+    finally:
+        await client.aclose()
+        await relay.close()
+
+
+async def test_an_overloaded_answer_is_sent_again_and_settled_once(publication_db):
+    answers = iter([503, 503, 200])
+
+    async def handler(_request):
+        status = next(answers)
+        if status == 503:
+            return httpx.Response(503, content=b"overloaded")
+        return httpx.Response(200, content=result_event(), headers={"x-request-id": "req_test"})
+
+    run, relay, client, sent = await setup_relay(publication_db, handler)
+    try:
+        response = await post(client, run)
+        assert response.status_code == 200 and b"response.completed" in response.content
+        assert len(sent) == 3
+        receipts = await publication_db.pool.fetch(
+            "SELECT status, result FROM effect_receipts WHERE operation=$1", USAGE
+        )
+        assert len(receipts) == 1 and receipts[0]["status"] == "completed"
+        assert json.loads(receipts[0]["result"])["usage"]["requests"] == 1
+    finally:
+        await client.aclose()
+        await relay.close()
+
+
+async def test_an_upstream_still_overloaded_after_its_retries_stays_unconfirmed(publication_db):
+    async def handler(_request):
+        return httpx.Response(503, content=b"overloaded")
+
+    run, relay, client, sent = await setup_relay(publication_db, handler)
+    try:
+        response = await post(client, run)
+        assert response.status_code == 502 and len(sent) == 3
+        assert (await post(client, run, {**BODY, "input": "different"})).status_code == 409
         facts = await publication_db.pool.fetchrow(
             "SELECT status, result FROM effect_receipts WHERE operation=$1", USAGE
         )
