@@ -88,12 +88,18 @@ test("a week: score, trend, the table, one engine's answers and the folded full 
     await item.click();
     await tab.locator(".visibility-grid").first().waitFor();
     assert.equal(new URL(tab.url()).pathname, "/ai-visibility");
-    assert.equal(await tab.locator(".visibility-week strong").innerText(), "Nov 2 – Nov 8");
+    assert.equal(await tab.locator(".visibility-week strong").innerText(), "Nov 2 – 8");
     assert.equal(await tab.locator('.visibility-arrow[aria-label="Next week"]').isDisabled(), true);
     const tiles = await tab.locator(".visibility-tiles .analytics-tile strong").allInnerTexts();
     assert.deepEqual(tiles, ["25%", "50%", "1 of 2", "HubSpot"]);
-    // Recommended leads; the answers without web search aren't shown.
-    assert.equal(await tab.locator(".analytics-tile.is-hero > span").innerText(), "Recommended");
+    // The week in a sentence, then Recommended first; the answers without web search aren't shown.
+    assert.equal(await tab.locator(".visibility-summary h2").innerText(), "Week of November 2");
+    assert.equal(await tab.locator(".visibility-summary p").innerText(), "AI engines recommended Example Co in 1 of 4 answers and named or cited it in 2. Of the 2 questions, 1 brought it up at least once. HubSpot was recommended instead most often, in 3 answers.");
+    const recommended = tab.locator(".analytics-tile.is-recommended");
+    assert.equal(await recommended.locator("> span").innerText(), "Recommended");
+    // Up 25 points on the week before, so its tile is washed moss and says by how much.
+    assert.equal(await recommended.evaluate((tile) => tile.classList.contains("is-up")), true);
+    assert.equal(await recommended.locator(".visibility-delta").innerText(), "+25 points on Oct 26 – Nov 1");
     assert.equal(await tab.getByRole("tab", {name: "What models already know"}).count(), 0);
     // The question that names the project sits apart, under its own heading.
     const apart = tab.locator(".visibility-apart");
