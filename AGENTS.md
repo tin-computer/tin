@@ -204,6 +204,12 @@ outside marketing, or were written without ever being run. Full rules:
 
 ## Product and content
 
+- No eyebrows, anywhere: in Tin's own UI and in everything Tin generates for any project
+  (films and their sketches, figures, embeds, pages, boards). An eyebrow is a small uppercase,
+  letter-spaced or mono label set above a title, a card's words or a number. Let the title or
+  the content say it. `design_rules.py` closes every procedure's brief with this, and the film
+  kit fails a take that shows one.
+
 - Dashboard and MCP share the same authenticated services, prerequisites and idempotency
   contracts. Chat can start workflows only through the normal project-bound run API.
 - Chat is a shared durable project transcript. Tasks have their own transcript and exact

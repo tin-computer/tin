@@ -5029,7 +5029,7 @@ function supportsArticleFeedback(run) {
   if (!run) return false;
   // A writing style proposal reads its review too: approval binds the exact version shown.
   return Boolean(workflowForRun(run)?.definition?.procedure?.output?.apply_on_approval) ||
-    ["content.generate", "social.x_style", "style.capture"].includes(workflowForRun(run)?.key || run?.workflow_name) ||
+    ["content.generate", "creative.feature_film", "social.x_style", "style.capture"].includes(workflowForRun(run)?.key || run?.workflow_name) ||
     // A first content plan waits for approval and can be revised from feedback (1.1.0).
     ((workflowForRun(run)?.key || run?.workflow_name) === "content.plan" && Boolean(run.review_required));
 }
@@ -5040,7 +5040,7 @@ function mountArticleFeedback(host, runId, reader = false, documentContext = {})
   const repositoryDelivery = repositoryDeliveryAvailable(run);
   const adapted = publishPreview(run);
   return window.TinWorkflowReview.mount(host, {
-    approvalLabel: adapted ? "Publish" : repositoryDelivery ? "Publish now" : run?.content_delivery?.approval_label,
+    approvalLabel: adapted ? "Publish" : repositoryDelivery ? "Publish now" : run?.content_delivery?.approval_label || ((workflowForRun(run)?.key || run?.workflow_name) === FILM_WORKFLOW_KEY ? "Approve film" : undefined),
     deliveryOptions: reader && repositoryDelivery && !adapted ? [{ label: "Open a pull request", delivery: "github_pr" }] : [],
     onApprove: async (button, delivery = null) => approveRun(runId, button, delivery ? { delivery } : await publishDelivery(run, repositoryDelivery ? "github_commit" : null)),
     api, projectId: context.projectId, runId, reader, toast: showToast,
@@ -5491,8 +5491,10 @@ function renderDecisions() {
   const decision = selectedDecision();
   if (decision && state.decisionId !== decision.id) state.decisionId = decision.id;
   const items = decisionItems();
+  const film = filmDirectionsFor(decision);
   const detail = decision?.kind === "website_change" ? websiteChangeDetailHtml(decision)
-    : decision?.kind === "judgment_call" ? judgmentCallDetailHtml(decision) : decisionDetailHtml(decision);
+    : decision?.kind === "judgment_call" ? judgmentCallDetailHtml(decision)
+    : film ? filmDirectionsHtml(decision, film) : decisionDetailHtml(decision);
   main.innerHTML = `<section class="product-view decisions-view">
     <header class="decisions-header"><h1>Decisions</h1>${decisionsPace() ? `<code>${escapeHtml(decisionsPace())}</code>` : ""}</header>
     ${items.length ? `<div class="decisions-layout">
@@ -5530,8 +5532,145 @@ function renderDecisions() {
     button.addEventListener("click", (event) => decideWebsiteChange(decision, event.currentTarget));
   });
   bindPageUrls();
+  if (film) {
+    bindFilmDirections(decision, film);
+    return;
+  }
+  if (isFilmDecision(decision)) loadFilmDirections(decision);
   if (decision?.run_id && supportsArticleFeedback(state.runs.find(run => run.id === decision.run_id) || {workflow_name: decision.workflow_key, review_required: true})) {
     state.documentCleanup = mountArticleFeedback(main.querySelector(".decision-detail-card"), decision.run_id);
+  }
+}
+
+// A film first waits with its directions: a still of each sketch and the one Tin recommends
+// (Paper PD-B). The recommendation shows at the size it will play, the others in a strip below;
+// a click brings one up. Building one, or asking for others, is the note's next version.
+const FILM_WORKFLOW_KEY = "creative.feature_film";
+const filmReviews = new Map();
+
+function isFilmDecision(decision) {
+  return decision?.kind === "review" && decision.workflow_key === FILM_WORKFLOW_KEY;
+}
+
+function filmDirectionsFor(decision) {
+  const entry = isFilmDecision(decision) ? filmReviews.get(decision.run_id) : null;
+  return entry?.view?.directions && entry.view.is_current ? entry : null;
+}
+
+async function loadFilmDirections(decision) {
+  if (filmReviews.has(decision.run_id)) return;
+  const context = currentProjectContext();
+  const entry = { view: null, urls: new Map(), selected: null, note: "", request: null };
+  filmReviews.set(decision.run_id, entry);
+  try {
+    entry.view = await api(`/api/workflows/runs/${encodeURIComponent(decision.run_id)}/review`);
+  } catch {
+    filmReviews.delete(decision.run_id);
+    return;
+  }
+  // A film's own review already shows; only its directions take over the card.
+  if (!isCurrentProjectContext(context) || !entry.view?.directions || state.view !== "decisions") return;
+  if (selectedDecision()?.run_id === decision.run_id) renderDecisions();
+}
+
+function filmSketch(entry, n) {
+  return entry.view.directions.sketches.find((item) => item.n === n);
+}
+
+function filmDirectionsHtml(decision, entry) {
+  const { directions } = entry.view;
+  const run = state.runs.find((item) => item.id === decision.run_id);
+  const heading = decisionHeading(decision, run);
+  const waited = waitingLabel(decision.created_at);
+  const subtitle = [decision.workflow_title, "Pick a direction", waited === "now" ? "Just arrived" : `Waiting ${waited}`].join(" · ");
+  const chosen = filmSketch(entry, entry.selected) || filmSketch(entry, directions.recommended) || directions.sketches[0];
+  const recommended = chosen.n === directions.recommended;
+  const line = recommended ? directions.why || chosen.about : chosen.about;
+  const strip = directions.sketches.filter((item) => item.n !== chosen.n);
+  return `<article class="decision-detail-card film-directions">
+    <header>
+      <span class="decision-workflow-mark">${escapeHtml((decision.workflow_title || "F").slice(0, 1))}</span>
+      <span><strong>${escapeHtml(heading.title)}</strong><code title="${escapeHtml(`${decision.workflow_key} · ${shortRunId(decision.run_id)}`)}">${escapeHtml(subtitle)}</code></span>
+      <button class="open-button" type="button" data-decision-read="${escapeHtml(decision.id)}">Open</button>
+    </header>
+    <div class="decision-detail-body">
+      <img class="film-direction-still" data-film-still="${chosen.n}" alt="${escapeHtml(chosen.name)}">
+      <div class="film-direction-reason">
+        <p class="film-direction-name"><strong>${escapeHtml(chosen.name)}</strong>${recommended ? "<span>Recommended</span>" : ""}</p>
+        ${line ? `<p>${escapeHtml(line)}</p>` : ""}
+      </div>
+      <div class="film-direction-strip">${strip.map((item) => `<button type="button" data-film-direction="${item.n}">
+        <img data-film-still="${item.n}" alt="">
+        <span>${escapeHtml(item.name)}</span>
+      </button>`).join("")}</div>
+    </div>
+    <footer>
+      <input class="film-direction-note" type="text" maxlength="2000" placeholder="A note for the film, optional" aria-label="A note for the film, optional" value="${escapeHtml(entry.note)}" data-film-note>
+      ${discardButtonHtml(decision)}
+      <button class="film-direction-others" type="button" data-film-others>Try other directions</button>
+      <button class="decision-approval" type="button" data-film-build="${chosen.n}">Build ${escapeHtml(chosen.name)}</button>
+    </footer>
+  </article>`;
+}
+
+function bindFilmDirections(decision, entry) {
+  const card = main.querySelector(".film-directions");
+  if (!card) return;
+  const load = bundleAssetLoader(entry.view.artifact?.revision);
+  card.querySelectorAll("[data-film-still]").forEach((image) => {
+    const n = Number(image.dataset.filmStill);
+    const show = (url) => { if (url) image.src = url; };
+    if (entry.urls.has(n)) return show(entry.urls.get(n));
+    const sketch = filmSketch(entry, n);
+    if (!sketch || !load) return;
+    load(sketch.still)
+      .then((bytes) => {
+        const url = URL.createObjectURL(new Blob([bytes], { type: /\.png$/i.test(sketch.still) ? "image/png" : "image/jpeg" }));
+        entry.urls.set(n, url);
+        show(url);
+      })
+      .catch(() => image.classList.add("is-missing"));
+  });
+  card.querySelectorAll("[data-film-direction]").forEach((button) => {
+    button.addEventListener("click", () => {
+      entry.selected = Number(button.dataset.filmDirection);
+      entry.request = null;
+      renderDecisions();
+    });
+  });
+  const note = card.querySelector("[data-film-note]");
+  note?.addEventListener("input", () => { entry.note = note.value; entry.request = null; });
+  card.querySelector("[data-film-others]")?.addEventListener("click", (event) => pickFilmDirection(decision, entry, null, event.currentTarget));
+  card.querySelector("[data-film-build]")?.addEventListener("click", (event) => pickFilmDirection(decision, entry, Number(event.currentTarget.dataset.filmBuild), event.currentTarget));
+}
+
+async function pickFilmDirection(decision, entry, direction, button) {
+  const context = currentProjectContext();
+  const actions = [...main.querySelectorAll(".film-directions footer button")];
+  actions.forEach((item) => { item.disabled = true; });
+  entry.request ||= crypto.randomUUID();
+  try {
+    const successor = await api(`/api/workflows/runs/${encodeURIComponent(decision.run_id)}/film-direction`, {
+      method: "POST",
+      body: JSON.stringify({ direction, note: entry.note, request_id: entry.request, review_token: entry.view.review_token }),
+    });
+    if (!isCurrentProjectContext(context)) return;
+    const source = state.runs.find((item) => item.id === decision.run_id);
+    if (source) upsertRun({ ...source, status: "superseded" });
+    upsertRun(successor);
+    state.decisions = state.decisions.filter((item) => item.run_id !== decision.run_id);
+    entry.urls.forEach((url) => URL.revokeObjectURL(url));
+    filmReviews.delete(decision.run_id);
+    state.workflowSection = "yours";
+    navigate("workflows");
+    const name = direction ? filmSketch(entry, direction)?.name : "";
+    showToast(name ? `Building ${name}. The film comes back to Decisions to watch.` : "Sketching other directions. They come back to Decisions to pick from.");
+    schedulePolling({ immediate: true });
+  } catch (error) {
+    if (!isCurrentProjectContext(context)) return;
+    actions.forEach((item) => { item.disabled = false; });
+    showToast(`Could not ${direction ? "build it" : "ask for other directions"}: ${error.message}`);
+    if (button?.isConnected) button.focus();
   }
 }
 

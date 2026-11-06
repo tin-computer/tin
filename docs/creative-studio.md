@@ -52,11 +52,20 @@ time with a drawn cursor and a caption band. It is the film kit (`web/film`,
 
 | Piece | Where | What it does |
 |---|---|---|
-| Toolkit | `web/film/tin-film.js`, `inspect.js`, the kit and `web/film/stage/`, in the image at `/opt/tin-lite/diagram/web/film/` | `new`, `inspect`, `record`, `rehearse`, `render`, `deliver`; runs on the diagram layer's pinned Playwright Chromium (`sandbox/tin_film.sh`) |
+| Toolkit | `web/film/tin-film.js`, `inspect.js`, the kit and `web/film/stage/`, in the image at `/opt/tin-lite/diagram/web/film/` | `directions`, `sketch`, `new`, `inspect`, `record`, `rehearse`, `review`, `render`, `deliver` (a film, or `--directions`), `restore`; runs on the diagram layer's pinned Playwright Chromium (`sandbox/tin_film.sh`) |
 | Worked examples | `web/film/examples/onboarding/`, `people/` | Tin's own onboarding and People films, each a storyboard, a `film.json` and a stage: the bar `tin-film new --from` copies |
-| Contract | `studio_contracts.parse_feature_film`, `validate_feature_film_video` (both copies) | the note plays exactly one film from its own folder; the film is a fast-start MP4 at 1080x1350, 1080x1080 or 1920x1080, 8 to 90 s |
+| Contract | `studio_contracts.parse_film_output` (`parse_film_directions`, `parse_feature_film`), `validate_feature_film_video` (both copies) | the note either offers 2 to 8 directions (a `tin-directions` block naming the recommended one, a `## N. Name` section per sketch with one still from its own folder) or plays exactly one film from its own folder; the film is a fast-start MP4 at 1080x1350, 1080x1080 or 1920x1080, 8 to 90 s |
+| Picking | `src/tin_lite/film_directions.py`, `POST /api/workflows/runs/{id}/film-direction`, MCP `pick_film_direction`, the Decisions card in `static/app.js` | a pick is a revision of the note (`content-revision.v1`): "Build direction N, Name." or "Sketch other directions.", with the founder's note |
 | Procedure | `codex_procedures/creative.feature_film/` | prompt, skill, `stage-kit.md` (the parts, the runtime, framing) and `film-format.md` (the JSON film and its beats) |
 | Catalog | `src/tin_lite/catalog.py` | id `…049`, `FEATURE_FILM_REVIEW_POLICY`, on demand, inputs `slug`, `feature`, `post`, `angle`, `product_url` (optional, for the look), `format`, `notes` |
+
+From 1.2.0 the founder picks the direction. A film is a review chain on one note,
+`films/{slug}.md`, the way an article draft's revisions are: the first run delivers its
+directions and waits in Decisions; picking one (or asking for others, with a note) starts the
+next version, which builds the film at the same path; the film waits to be watched, and asking
+for changes starts another. Each version is its own metered run; approval binds the film, and
+directions can't be approved. The decision offers revisions (`feedback_supported`), and the
+document page's Request changes revises a film like a draft.
 
 How a run goes:
 
@@ -65,11 +74,17 @@ How a run goes:
    inspect` reads its look as the stage kit's tokens, its fonts and a screenshot.
 2. It decides the kind of film (a product highlight, a motion graphic or both), researches how
    such a claim has been shown, deals five directions with `tin-film directions`, sketches each
-   as a stage page and compares them side by side (`tin-film sketch`); from 1.1.0 the second look
-   (`tin-film review --directions`, below) chooses which one becomes the film.
-3. `tin-film new --from` copies the worked example closest to the film, with its contact sheet
-   (`example.jpg`, one still per shot): the bar the agent looks at once; the chosen sketch
-   becomes the stage.
+   as a stage page and compares them side by side (`tin-film sketch`); the second look
+   (`tin-film review --directions`, below) recommends one. From 1.2.0 `tin-film deliver
+   --directions` writes the note: a still and the page of each sketch (`N-name.jpg`,
+   `N-name.html`), one sentence on each, the recommendation and why, and `notes.json` (the kind,
+   research and directions) for the run that builds it. The run ends in Decisions, where the
+   card shows the recommended still large with why under it and the others in a strip
+   (Paper PD-B); the founder builds one or asks for others.
+3. In the next version (its revision packet says "Build direction N, Name."), `tin-film new
+   --from` copies the worked example closest to the film, with its contact sheet
+   (`example.jpg`, one still per shot): the bar the agent looks at once; the picked sketch's
+   page, from the checkout, becomes the stage.
 4. It rewrites the example's `storyboard.md` for this feature (the story as a before and an
    after, three to six shots and a payoff, each with its mark, caption, hero, satellite, real
    words and what moves), then rebuilds the stage for this product (its tokens, its chrome, the
@@ -88,11 +103,13 @@ How a run goes:
    model call is receipted and billed by the native model service: a film run's terms add
    `native_model` operations at the pinned supplier card (`service_pricing`).
 7. `tin-film render` makes the final take, and `tin-film deliver` writes `films/{slug}.md` with
-   `film.mp4`, `poster.png`, `captions.vtt` and `film.json` in `films/{slug}.assets/`, then runs
-   `tin-studio check` on both.
-8. Tin keeps the note (`feature-film.v1`) and its files (`page_assets` kinds mp4, png, vtt and
-   json; every file leak-scanned), and the review shows the note with the film playing.
-   Approval binds the note and every file's checksum. Tin posts nothing.
+   `film.mp4`, `poster.png`, `captions.vtt`, `film.json` and, for a staged film, `stage.html`
+   and `storyboard.json` in `films/{slug}.assets/`, then runs `tin-studio check` on both.
+   A revision of the film puts them back with `tin-film restore`.
+8. Tin keeps the note (`feature-film.v1`) and its files (`page_assets` kinds mp4, png, jpeg,
+   vtt, json and html, at most 16 files and 32 MB; every file leak-scanned), and the review
+   shows the note with the film playing. Approval binds the note and every file's checksum.
+   Tin posts nothing.
 
 The workflow stages what Tin holds about the product in its public look and signs in nowhere;
 captions only, one format a run. Video on LinkedIn drafts comes next.

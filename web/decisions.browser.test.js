@@ -136,6 +136,12 @@ async function serve({draft: revision, release, extra = [], waitingTasks = false
       return send(requestedRun);
     }
     if (review && url.pathname === `/api/workflows/runs/${review.runId}/review`) return send(review.current);
+    // A film's sketch stills, read at the note's revision.
+    if (review?.stills && url.pathname.endsWith("/files/raw")) {
+      const still = review.stills[url.searchParams.get("path")];
+      if (!still) {response.statusCode = 404; return send({detail: "not found"});}
+      response.setHeader("Content-Type", "image/jpeg"); return response.end(await fs.readFile(still));
+    }
     // A content.generate draft's current review: it may be approved, or revised from feedback.
     const drafted = runs.find(run => run.workflow_name === "content.generate" && url.pathname === `/api/workflows/runs/${run.id}/review`);
     if (drafted) return send({run_id: drafted.id, status: drafted.status, version: 1, is_current: true, can_approve: true, can_request_changes: true, review_token: `token-${drafted.id}`});
@@ -188,6 +194,64 @@ test("an unavailable older run leaves Decisions readable with approval disabled"
     assert.match(await card.innerText(), /run could not load/);
     assert.equal(await page.locator(".view-error").count(), 0);
     assert.deepEqual(writes, []);
+    assert.deepEqual(errors, []);
+    await context.close();
+  } finally {await browser.close(); server.close();}
+});
+
+test("a film's directions: the recommended still large with why, the others in a strip, and a pick builds one", async () => {
+  // Stand-in stills: the worked examples' sheets, or real sketches from FILM_CARD_STILLS.
+  const shots = process.env.FILM_CARD_STILLS
+    ? ["sankey", "iceberg", "cone", "orbit", "timeline"].map(name => path.join(process.env.FILM_CARD_STILLS, `${name}.jpg`))
+    : ["onboarding", "people", "onboarding", "people", "onboarding"].map(name => path.resolve(`web/film/examples/${name}/sheet.jpg`));
+  const names = ["Iceberg", "Flow", "Zoom out", "Orbit", "One person"];
+  const order = [1, 0, 2, 3, 4];
+  const film = {id: "f11a0000-0000-4000-8000-000000000049", project_id: "project-1", workflow_id: "film", workflow_name: "codex.procedure",
+    status: "needs_input", review_required: true, artifact_path: "films/funnel.md", canonical_commit_sha: "c".repeat(40), created_at: minutesAgo(2)};
+  const sketches = names.map((name, index) => ({n: index + 1, name, still: `films/funnel.assets/${index + 1}-${name.toLowerCase().replace(" ", "-")}.jpg`,
+    page: `films/funnel.assets/${index + 1}-${name.toLowerCase().replace(" ", "-")}.html`, about: `What ${name} shows, in one sentence.`}));
+  const review = {runId: film.id, stills: Object.fromEntries(sketches.map((item, index) => [item.still, shots[order[index]]])), current: {
+    run_id: film.id, status: "needs_input", version: 1, is_current: true, can_approve: false, can_request_changes: true, review_token: "t".repeat(64),
+    artifact: {run_id: film.id, path: film.artifact_path, revision: film.canonical_commit_sha},
+    directions: {recommended: 2, runner_up: 1, why: "Its frame says the claim without the caption: a wide band of people who never visit, with the 96 who fit traced in green.", sketches}}};
+  const decision = {id: "film-decision", run_id: film.id, project_id: "project-1", workflow_key: "creative.feature_film", workflow_title: "Film a feature",
+    kind: "review", title: "Review: Your funnel is larger than you think", output_title: "Your funnel is larger than you think",
+    explanation: "5 ways to show it, each sketched as one frame.", consequence: "", items: [], created_at: minutesAgo(2)};
+  const {server, base, writes} = await serve({extra: [{run: film, decision}], review});
+  const browser = await chromium.launch({headless: true});
+  try {
+    const {page, context, errors} = await open(browser, base, "/decisions?project=project-1");
+    await page.locator("[data-decision-id=film-decision]").click();
+    const card = page.locator(".film-directions");
+    await card.waitFor({timeout: 5000});
+    await page.waitForFunction(() => [...document.querySelectorAll(".film-directions img")].every(image => image.complete && image.naturalWidth > 0));
+    assert.match(await card.locator("header code").innerText(), /^Film a feature · Pick a direction · /);
+    assert.equal(await card.locator(".film-direction-name strong").innerText(), "Flow");
+    assert.equal(await card.locator(".film-direction-name span").innerText(), "Recommended");
+    assert.match(await card.locator(".film-direction-reason").innerText(), /traced in green/);
+    assert.deepEqual(await card.locator(".film-direction-strip span").allInnerTexts(), ["Iceberg", "Zoom out", "Orbit", "One person"]);
+    // Nothing to approve: directions are picked from.
+    assert.equal(await card.locator("[data-apply-decision]").count(), 0);
+    assert.equal(await card.getByRole("button", {name: "Build Flow"}).count(), 1);
+    if (process.env.FILM_CARD_SHOT) {
+      await card.screenshot({path: process.env.FILM_CARD_SHOT});
+      await page.evaluate(() => { document.documentElement.dataset.theme = "dark"; });
+      await card.screenshot({path: process.env.FILM_CARD_SHOT.replace(/\.png$/, "-dark.png")});
+      await page.evaluate(() => { document.documentElement.dataset.theme = "light"; });
+    }
+    // A click brings another up, with its own sentence, and the button follows it.
+    await card.getByRole("button", {name: "Orbit"}).click();
+    await page.locator(".film-directions .film-direction-name", {hasText: "Orbit"}).waitFor();
+    assert.match(await page.locator(".film-direction-reason").innerText(), /What Orbit shows/);
+    assert.deepEqual(await page.locator(".film-direction-strip span").allInnerTexts(), ["Iceberg", "Flow", "Zoom out", "One person"]);
+    await page.locator("[data-film-note]").fill("End on the 96 who fit.");
+    await page.getByRole("button", {name: "Build Orbit"}).click();
+    await page.waitForFunction(() => location.pathname === "/system");
+    const pick = writes.find(item => item.path === `/api/workflows/runs/${film.id}/film-direction`);
+    assert.equal(pick.body.direction, 4);
+    assert.equal(pick.body.note, "End on the 96 who fit.");
+    assert.equal(pick.body.review_token, "t".repeat(64));
+    assert.match(pick.body.request_id, /^[0-9a-f-]{36}$/);
     assert.deepEqual(errors, []);
     await context.close();
   } finally {await browser.close(); server.close();}

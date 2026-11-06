@@ -12,6 +12,7 @@ from __future__ import annotations
 from dataclasses import replace
 from types import SimpleNamespace
 
+from tin_lite import design_rules
 from tin_lite.brand_capture import active_brand_files
 from tin_lite.procedures import PinnedCodexProcedure, brand_instruction, procedure_state_dir
 
@@ -37,7 +38,9 @@ def test_brief_names_the_approved_brand_files():
 
 
 def test_brief_without_brand_files_is_unchanged():
-    assert spec().sandbox_context(inputs={})["prompt"] == "Apply the approved change."
+    assert spec().sandbox_context(inputs={})["prompt"] == (
+        "Apply the approved change." + design_rules.instruction()
+    )
 
 
 def test_capture_and_branded_diagrams_keep_their_own_brand_context():

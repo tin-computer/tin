@@ -178,6 +178,62 @@ function diagramLayout() {
 }
 
 // In a staged page: parts that draw a cursor of their own, beside the one the film draws.
+// Runs in the stage: text set in a face the page never loaded. A stage names the product's face
+// (tin-film inspect keeps its files in look/fonts.css); one that falls to Arial or the system's
+// sans looks like any other company's film. Code and figures in a generic mono are fine.
+function fallbackType() {
+  const clean = family => family.trim().replace(/^["']|["']$/g, "");
+  const generic = /^(serif|sans-serif|system-ui|ui-sans-serif|ui-serif|ui-rounded|-apple-system|blinkmacsystemfont|cursive|fantasy)$/i;
+  const mono = /^(monospace|ui-monospace)$/i;
+  const system = /^(arial|helvetica|helvetica neue|segoe ui|roboto|times|times new roman|georgia|verdana|tahoma|trebuchet ms|inter var)$/i;
+  const loaded = new Set([...document.fonts].filter(face => face.status === "loaded").map(face => clean(face.family)));
+  const found = new Map();
+  for (const element of document.querySelectorAll(".stage *")) {
+    if (![...element.childNodes].some(node => node.nodeType === 3 && node.textContent.trim())) continue;
+    const box = element.getBoundingClientRect();
+    const style = getComputedStyle(element);
+    if (box.width < 2 || box.height < 2 || style.visibility === "hidden" || style.display === "none") continue;
+    const families = style.fontFamily.split(",").map(clean).filter(Boolean);
+    const asked = families[0] || "";
+    if (loaded.has(asked) || mono.test(asked)) continue;
+    const sets = families.find(name => loaded.has(name));
+    const sample = [...element.childNodes].filter(node => node.nodeType === 3).map(node => node.textContent).join("").replace(/\s+/g, " ").trim().slice(0, 40);
+    const kind = generic.test(asked) || system.test(asked) ? "system" : "missing";
+    if (!found.has(asked)) found.set(asked, {family: asked, kind, sets: sets || null, sample});
+  }
+  return [...found.values()];
+}
+
+// Runs in the stage: eyebrows, the small label set above a title, a card's words or a number
+// (uppercase, letter-spaced or mono: "HOW IT WORKS", "MENTIONS"). Tin never uses them
+// (design_rules.py). A table's column headers are not eyebrows.
+function eyebrows() {
+  const own = element => [...element.childNodes].filter(node => node.nodeType === 3).map(node => node.textContent).join("").replace(/\s+/g, " ").trim();
+  const parts = [...document.querySelectorAll(".stage *")].flatMap(element => {
+    const text = own(element);
+    if (!text || element.closest("th, thead, .thead, [role=columnheader]")) return [];
+    const box = element.getBoundingClientRect();
+    const style = getComputedStyle(element);
+    if (box.width < 2 || box.height < 2 || style.visibility === "hidden" || style.display === "none" || Number(style.opacity) < 0.05) return [];
+    const size = parseFloat(style.fontSize);
+    const letters = text.replace(/[^A-Za-z]/g, "");
+    return [{text, size, top: box.top, bottom: box.bottom, left: box.left, right: box.right,
+      upper: style.textTransform === "uppercase" || (letters.length >= 3 && letters === letters.toUpperCase()),
+      spaced: parseFloat(style.letterSpacing) / size >= 0.04,
+      mono: /mono|courier|consolas|menlo|monaco/i.test(style.fontFamily)}];
+  });
+  const found = [];
+  for (const label of parts) {
+    if (label.text.split(" ").length > 6 || /[.!?:]$/.test(label.text)) continue;
+    if (!(label.upper || label.spaced || label.mono)) continue;
+    const under = parts.filter(other => other !== label && other.top >= label.bottom - 2 && other.top - label.bottom <= Math.max(28, label.size * 2.6)
+      && other.left < label.right && other.right > label.left && other.size >= label.size * 1.2)
+      .sort((a, b) => a.top - b.top)[0];
+    if (under) found.push({text: label.text, under: under.text.slice(0, 40)});
+  }
+  return found;
+}
+
 function drawnCursors() {
   return [...document.querySelectorAll(".stage *, body > *")].filter(el => {
     const names = [el.id, typeof el.className === "string" ? el.className : el.className?.baseVal, el.getAttribute("aria-label"), el.getAttribute("alt"), el.getAttribute("src")].join(" ");
@@ -193,6 +249,10 @@ export class Director {
     Object.assign(this, {page, app, format, size, screen, margin, room, deviceScale, world: served, issues, ripple, staged});
     // With `check`, every frame is measured (probe.js) and checked (checks.js) as the take goes.
     this.checking = check;
+    // Faces the stage asked for that never loaded, by family, from every mark.
+    this.fallbacks = new Map();
+    // Eyebrows already reported, by their words.
+    this.eyebrowsSeen = new Set();
     this.measured = [];
     this.findings = [];
     // Frames shot while the camera followed the hand: it crops through the screen as it goes.
@@ -699,6 +759,12 @@ export class Director {
     // A staged film's hero runs off an edge of the stage; whole, with air on every side, it floats
     // like a screenshot pasted on black.
     if (this.staged) {
+      for (const item of await this.app.evaluate(fallbackType)) this.fallbacks.set(item.family, item);
+      for (const item of await this.app.evaluate(eyebrows)) {
+        if (this.eyebrowsSeen.has(item.text)) continue;
+        this.eyebrowsSeen.add(item.text);
+        this.issues.errors.push(`At ${name}, an eyebrow: “${item.text}” sits small above “${item.under}”. Tin never uses eyebrows: delete it, and let the title or the content say it.`);
+      }
       const hero = await this.app.evaluate(floating);
       if (hero) this.warn(`At ${name}, the hero ${hero.label} (${hero.width}×${hero.height}) sits whole on the stage with air on every side: inset it a gutter from the top and left and let it run off the right or the foot.`);
       for (const diagram of await this.app.evaluate(diagramLayout)) {
@@ -1136,6 +1202,11 @@ export async function shoot(film, {format = "4:5", theme = film.theme || "dark",
     }
     director.recording = true;
     await film.play(director);
+    for (const item of director.fallbacks.values()) {
+      issues.warnings.push(item.kind === "system"
+        ? `The stage's text (“${item.sample}”) is set in ${item.family}, a system face, not the product's type: link the fonts tin-film inspect kept (look/fonts.css, with look/fonts/ beside it) and set --sans to its face.`
+        : `The stage asks for ${item.family} (“${item.sample}”), but no font file for it loaded, so it falls back to ${item.sets || "a system face"}: link the fonts tin-film inspect kept (look/fonts.css, with look/fonts/ beside it).`);
+    }
     director.caption(null);
     director.check(film.name);
     director.judgeCamera();

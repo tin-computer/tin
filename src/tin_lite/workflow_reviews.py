@@ -8,10 +8,25 @@ from tin_lite.domain import RunStatus
 from tin_lite.project_files import safe_project_file_path
 from tin_lite.workflow_review_store import ReviewConflict, accept_approval, digest, unpack
 
-SUPPORTED = frozenset({"content.generate"})
-SUPPORTED_IDS = frozenset({UUID("00000000-0000-4000-8000-000000000031")})
+SUPPORTED = frozenset({"content.generate", "creative.feature_film"})
+SUPPORTED_IDS = frozenset(
+    {UUID("00000000-0000-4000-8000-000000000031"), UUID("00000000-0000-4000-8000-000000000049")}
+)
+FILM_KEY = "creative.feature_film"
 CAPABILITY = "content-revision.v1"
 MAX_CONTEXT_BYTES = 64_000
+
+
+def film_labels(run, directions):
+    """A film's review form in its own words: a retry, other directions, or a new cut."""
+    if run.status == RunStatus.FAILED:
+        return {"feedback_hint": "Tin tries this version again.", "submit_label": "Try again"}
+    if directions:
+        return {
+            "feedback_hint": "Say what to try instead. To build one, pick it in Decisions.",
+            "submit_label": "Sketch other directions",
+        }
+    return {"feedback_hint": "For this film only.", "submit_label": "Revise film"}
 
 
 def review_token(run, artifact):
@@ -31,7 +46,7 @@ class WorkflowReviews:
             raise LookupError("Review not found.")
         definition = await self.db.get_workflow(run.workflow_id)
         if not definition or definition.project_id is not None or definition.key not in SUPPORTED:
-            raise ValueError("This workflow does not support article revisions yet.")
+            raise ValueError("This workflow does not support revisions yet.")
         return run, definition
 
     async def artifact(self, run):
@@ -67,6 +82,25 @@ class WorkflowReviews:
             # Only drafts with figures or embeds carry this, so older tokens stay the same.
             **({"assets": assets} if assets else {}),
         }
+
+    async def directions(self, project_id, artifact):
+        """A film note's directions, or None once it plays the film."""
+        from tin_lite.studio_contracts import is_film_directions, parse_film_directions
+
+        project = await self.db.get_project(project_id)
+        raw = await self.storage.read_canonical_artifact(
+            repo_id=project.state_repo_id, commit_sha=artifact["revision"], path=artifact["path"]
+        )
+        if not is_film_directions(raw):
+            return None
+        folder = page_assets.folder(artifact["path"]).rsplit("/", 1)[-1]
+        view = parse_film_directions(raw, folder=folder).view()
+        base = artifact["path"].rsplit("/", 1)[0] + "/" if "/" in artifact["path"] else ""
+        # Project paths, which the dashboard and an agent read files by.
+        for item in view["sketches"]:
+            item["still"] = base + item["still"]
+            item["page"] = base + item["page"] if item["page"] else None
+        return view
 
     async def view(self, run_id, actor, post_id=""):
         from tin_lite.content_plan import KEY as PLAN_KEY
@@ -121,6 +155,11 @@ class WorkflowReviews:
                 and prepared.result
                 and prepared.result.get("output_validator") in content_draft.CLEAN_VALIDATORS
             )
+        directions = (
+            await self.directions(run.project_id, artifact)
+            if definition.key == FILM_KEY and artifact
+            else None
+        )
         incoming = await self.db.pool.fetchrow(
             "SELECT feedback, reference_files FROM workflow_review_commands "
             "WHERE successor_run_id=$1",
@@ -138,9 +177,13 @@ class WorkflowReviews:
             "artifact": artifact,
             "review_token": review_token(run, artifact) if artifact else None,
             "can_request_changes": can_revise,
+            # A film's directions are picked from, never approved: the film is.
             "can_approve": ready
             and run.status == RunStatus.NEEDS_INPUT
-            and not artifact["assessment"],
+            and not artifact["assessment"]
+            and directions is None,
+            "directions": directions,
+            **(film_labels(run, directions) if definition.key == FILM_KEY else {}),
             "is_current": latest,
             "versions": [dict(v) for v in versions],
             "feedback": incoming["feedback"] if incoming else None,
@@ -407,7 +450,7 @@ class WorkflowReviews:
                     actor=actor,
                     token=token,
                 )
-        run, _ = await self.source(run_id, actor)
+        run, definition = await self.source(run_id, actor)
         _, artifact = await self.artifact(run)
         expected = review_token(run, artifact)
         if token is not None and token != expected:
@@ -426,6 +469,10 @@ class WorkflowReviews:
             return run
         if artifact["assessment"]:
             raise ReviewConflict("This is an editorial assessment, not an article to approve.")
+        if definition.key == FILM_KEY and await self.directions(run.project_id, artifact):
+            raise ReviewConflict(
+                "These are the film's directions. Pick one to build; the film is approved."
+            )
         command = {
             "id": uuid4(),
             "project_id": run.project_id,

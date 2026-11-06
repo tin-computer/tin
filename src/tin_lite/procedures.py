@@ -38,7 +38,7 @@ from tin_lite.studio_contracts import (
     FEATURE_FILM_VALIDATOR,
     MAX_CHARACTER_SVG_BYTES,
     MAX_DEMO_VIDEO_BYTES,
-    parse_feature_film,
+    parse_film_output,
     validate_character_svg,
     validate_demo_video,
 )
@@ -638,6 +638,10 @@ class PinnedCodexProcedure:
             # through the sandbox, as TIN_RUN_ID for its commands.
             context["run"] = {"id": str(UUID(str(run_id)))}
             context["prompt"] += run_context_instruction(context["run"]["id"])
+        # Every procedure may make something someone looks at; Tin's design rules travel with it.
+        from tin_lite import design_rules
+
+        context["prompt"] += design_rules.instruction()
         if self.services:
             context["services"] = [asdict(service) for service in self.services]
             context["prompt"] += (
@@ -694,6 +698,9 @@ class PinnedCodexProcedure:
             )
         if self.review_revision_context is not None:
             from tin_lite.article_review import revision_prompt
+
+            if self.output_validator == FEATURE_FILM_VALIDATOR:
+                from tin_lite.film_directions import revision_prompt
 
             context["prompt"] += "\n" + revision_prompt(self.review_revision_context)
         if identity is not None:
@@ -1623,7 +1630,7 @@ def validate_procedure_artifact(
     elif spec.output_validator == CHARACTER_SVG_VALIDATOR:
         validate_character_svg(content)
     elif spec.output_validator == FEATURE_FILM_VALIDATOR:
-        parse_feature_film(content, folder=(spec.assets_folder or "").rsplit("/", 1)[-1])
+        parse_film_output(content, folder=(spec.assets_folder or "").rsplit("/", 1)[-1])
     elif spec.output_validator == EMAIL_SHORTLIST_VALIDATOR:
         _validate_email_shortlist(text)
     elif spec.output_validator == SIGNUP_WALKTHROUGH_VALIDATOR:

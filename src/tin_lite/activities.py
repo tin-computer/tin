@@ -4532,7 +4532,8 @@ class TinActivities:
                 )
                 if summarized is not None:
                     result["run_summary"] = summarized
-                if procedure.review_revision_context is not None:
+                # A revision's notes say what changed; a film carries no notes file.
+                if procedure.review_revision_context is not None and procedure.companion_path:
                     from tin_lite.article_review import change_summary
 
                     revision_notes = await self._storage.read_procedure_checkpoint(

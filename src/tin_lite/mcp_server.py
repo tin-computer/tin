@@ -4171,7 +4171,9 @@ def create_mcp_app(
         post_id: str = "",
         billing_quote_id: str | None = None,
     ) -> dict[str, Any]:
-        """Revise an article, X post, X guide or waiting content plan from verbatim feedback.
+        """Revise an article, film, X post, X guide or waiting content plan from verbatim feedback.
+
+        A film's sketched directions are picked with pick_film_direction instead.
 
         A content plan waiting in Decisions is revised in place: Tin re-plans every week from
         the feedback (one metered planning-agent run) and the same review shows the revised
@@ -4221,6 +4223,61 @@ def create_mcp_app(
             "version": revised.review_version,
             "source_run_id": str(run.id),
             "result": "Revision accepted; queued for execution.",
+        }
+
+    @server.tool()
+    async def pick_film_direction(
+        run_id: str,
+        review_token: str,
+        request_id: str,
+        direction: int | None = None,
+        note: str = "",
+        billing_quote_id: str | None = None,
+    ) -> dict[str, Any]:
+        """Build one of a film's sketched directions, or ask for other directions.
+
+        A Film a feature run first offers directions: get_workflow_review returns `directions`
+        (each sketch's number, name, still and what it shows, and the one Tin recommends with
+        why) and review_token. Show the founder the stills (read_project_file on each still)
+        and let them pick; never pick for them. Pass `direction` as the picked sketch's number,
+        or leave it out to sketch other directions. `note` carries the founder's words for the
+        film, unchanged. This admits one separately metered run that builds the film (or the
+        new directions) at the same path, the review's next version; the film is approved
+        after it is watched, with approve_workflow_run. Reuse request_id to retry.
+        """
+        from tin_lite import film_directions
+        from tin_lite.workflow_reviews import WorkflowReviews
+
+        token = await caller()
+        run = await require_run(
+            _mcp_uuid(run_id, field="run_id"), token, tool_name="pick_film_direction"
+        )
+        try:
+            revised = await film_directions.pick(
+                WorkflowReviews(runtime=runtime(), settings=settings),
+                run_id=run.id,
+                actor=token.subject,
+                token=review_token,
+                request_id=_mcp_uuid(request_id, field="request_id"),
+                direction=direction,
+                note=note,
+                billing_quote_id=_mcp_uuid(billing_quote_id, field="billing_quote_id")
+                if billing_quote_id
+                else None,
+                trigger_source="mcp",
+                oauth_client_id=token.client_id,
+            )
+        except BillingError as exc:
+            raise ToolError(json.dumps(exc.diagnostic())) from exc
+        return {
+            "run_id": str(revised.id),
+            "project_id": str(revised.project_id),
+            "status": revised.status.value,
+            "version": revised.review_version,
+            "source_run_id": str(run.id),
+            "result": "Direction picked; the film is queued."
+            if direction
+            else "Other directions requested; queued.",
         }
 
     @server.tool()

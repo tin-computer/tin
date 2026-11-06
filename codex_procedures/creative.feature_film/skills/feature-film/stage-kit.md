@@ -5,7 +5,7 @@ and runtime, sets the product's look, places its parts, and leaves every part th
 hidden until a beat shows it:
 
 ```html
-<link rel="stylesheet" href="/film-fonts/fonts.css">
+<link rel="stylesheet" href="fonts.css"> <!-- the product's type, kept by tin-film inspect -->
 <link rel="stylesheet" href="/__stage/kit/stage.css">
 <style>
   :root { /* the product's tokens, from tin-film inspect */ }
@@ -18,6 +18,27 @@ hidden until a beat shows it:
 Files beside `index.html` (an image, a font) load by their name. The worked examples
 (`tin-film new --from onboarding` or `people`) are the reference for everything below: copy the
 closest one's structure, change its look and its words.
+
+## Type
+
+A film is set in the product's own type, from the product itself:
+
+1. **Its code**, when the prompt lists CONNECTED REPOSITORIES (read-only, under
+   `/home/user/repos/`). The product's faces are there: `@font-face` rules,
+   `next/font/local` sources, font files in `public/fonts/` or beside a layout, a Tailwind
+   or CSS-variable theme naming them, and the logo's SVG. The app behind sign-in is often set
+   differently from the landing page; the code shows both. Copy the files beside the stage
+   page and write their `@font-face` rules in its `fonts.css`.
+2. **Its site.** `tin-film inspect` finds the faces its visible text is set in (not the
+   body's default) and keeps their files: `WORK/look/fonts.css` and `WORK/look/fonts/`. Copy
+   both beside each sketch's and the stage's `index.html`.
+
+Link `fonts.css` and set `--sans` and `--mono` (and a heading face, when the product has one)
+to the faces you found. When neither has a font file, the product uses a system face; name
+the one inspect printed. Every
+take warns when the stage's text falls to a face that never loaded (Arial, the system's sans,
+or the kit's default): fix it before anything else, because a film in a stand-in face looks
+like any company's.
 
 ## The screen
 

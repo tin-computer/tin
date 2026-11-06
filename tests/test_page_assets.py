@@ -806,3 +806,22 @@ def test_github_writes_fit_a_page_with_its_figures():
     output = website.definition_and_resource_files()[0]["procedure"]["output"]
     assert (output["max_files"], output["max_bytes"]) == (20, 2_000_000)
     assert output["max_files"] <= PULL_REQUEST_MAX_FILES
+
+
+async def test_a_revision_without_a_notes_file_publishes(publication_db, monkeypatch):
+    # A film's next version (a pick, or changes to the cut) has no notes file: its revision
+    # publishes without a "What changed" summary instead of failing to read one.
+    f, run, sandboxes, path, folder = await drafted(publication_db, monkeypatch)
+    pinned = TinActivities._pinned_codex_procedure
+
+    async def revision(self, *args, **kwargs):
+        definition, procedure = await pinned(self, *args, **kwargs)
+        return definition, replace(procedure, review_revision_context={"feedback": "x"})
+
+    monkeypatch.setattr(TinActivities, "_pinned_codex_procedure", revision)
+    monkeypatch.setattr(PinnedCodexProcedure, "companion_path", property(lambda self: None))
+    await f.activities.persist_codex_procedure_artifact(str(run.id))
+    await f.activities.commit_codex_procedure_artifact(str(run.id))
+    published = await f.db.get_effect(f"{run.id}:procedure_canonical_commit")
+    assert published.status == "completed"
+    assert "review_change_summary" not in published.result
