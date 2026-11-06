@@ -5040,7 +5040,7 @@ function mountArticleFeedback(host, runId, reader = false, documentContext = {})
   const repositoryDelivery = repositoryDeliveryAvailable(run);
   const adapted = publishPreview(run);
   return window.TinWorkflowReview.mount(host, {
-    approvalLabel: adapted ? "Publish" : repositoryDelivery ? "Publish now" : run?.content_delivery?.approval_label,
+    approvalLabel: adapted ? "Publish" : repositoryDelivery ? "Publish now" : run?.content_delivery?.approval_label || ((workflowForRun(run)?.key || run?.workflow_name) === FILM_WORKFLOW_KEY ? "Approve film" : undefined),
     deliveryOptions: reader && repositoryDelivery && !adapted ? [{ label: "Open a pull request", delivery: "github_pr" }] : [],
     onApprove: async (button, delivery = null) => approveRun(runId, button, delivery ? { delivery } : await publishDelivery(run, repositoryDelivery ? "github_commit" : null)),
     api, projectId: context.projectId, runId, reader, toast: showToast,
