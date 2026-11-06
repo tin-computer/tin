@@ -120,6 +120,7 @@ FILM_FILES = (
             "film.js",
             "tin-film.js",
             "inspect.js",
+            "directions.js",
             "checks.js",
             "probe.js",
             "recording.js",

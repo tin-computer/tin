@@ -63,19 +63,23 @@ How a run goes:
 1. The agent works out the feature (the run's `feature` and `post`, or the Feature map) and what
    really happens when someone uses it, in the product's real wording; with a page, `tin-film
    inspect` reads its look as the stage kit's tokens, its fonts and a screenshot.
-2. `tin-film new --from` copies the worked example closest to the feature, with its contact
-   sheet (`example.jpg`, one still per shot): the bar the agent looks at once.
-3. It rewrites the example's `storyboard.md` for this feature (the story as a before and an
+2. It decides the kind of film (a product highlight, a motion graphic or both), researches how
+   such a claim has been shown, deals five directions with `tin-film directions`, sketches each
+   as a stage page and compares them side by side (`tin-film sketch`), and chooses one.
+3. `tin-film new --from` copies the worked example closest to the film, with its contact sheet
+   (`example.jpg`, one still per shot): the bar the agent looks at once; the chosen sketch
+   becomes the stage.
+4. It rewrites the example's `storyboard.md` for this feature (the story as a before and an
    after, three to six shots and a payoff, each with its mark, caption, hero, satellite, real
    words and what moves), then rebuilds the stage for this product (its tokens, its chrome, the
    kit's parts, sample content only) and writes the beats, a caption and a mark per shot.
-4. `tin-film rehearse` plays it at low resolution with every frame measured and checked
+5. `tin-film rehearse` plays it at low resolution with every frame measured and checked
    (mographc's rules, the kit's own, the pacing checks and the storyboard's); its contact sheet
    is the storyboard drawn, and the agent fixes the film until it is clean.
-5. `tin-film render` makes the final take, and `tin-film deliver` writes `films/{slug}.md` with
+6. `tin-film render` makes the final take, and `tin-film deliver` writes `films/{slug}.md` with
    `film.mp4`, `poster.png`, `captions.vtt` and `film.json` in `films/{slug}.assets/`, then runs
    `tin-studio check` on both.
-6. Tin keeps the note (`feature-film.v1`) and its files (`page_assets` kinds mp4, png, vtt and
+7. Tin keeps the note (`feature-film.v1`) and its files (`page_assets` kinds mp4, png, vtt and
    json; every file leak-scanned), and the review shows the note with the film playing.
    Approval binds the note and every file's checksum. Tin posts nothing.
 

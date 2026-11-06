@@ -1,54 +1,83 @@
 # Directions
 
 A storyboard is the second decision. The first is the direction: the one visual idea the film is
-built on. The first idea that comes is almost always the obvious one, the product's window with
-the feature in it, and a film built on it looks like every other product film. Write several
-directions, far apart, before you choose.
+built on. The idea a model reaches for first is its habit (for a product, its window with the
+feature in it; for an idea, a chart of it), and a film built on a habit looks like every other.
+So stay abstract for longer: decide the kind of film, research how such a claim has been shown,
+deal directions from outside your habits, sketch each, and choose among the sketches.
 
-## Write five
+## The kind of film
 
-In `storyboard.md`, under `## Directions` (after the story, before the shots), write five
-directions, each from a different family below. For each, one line:
+- **Product highlight**: the post shows what the product does. Stage it in the product's own
+  look, as the worked examples do. The directions are ways to tell it: which opening, which
+  moment, which card carries the point.
+- **Motion graphic**: the post argues an idea bigger than one screen (a market, a habit, a hidden
+  number). The directions are ways to picture the idea; the product may not appear at all.
+- **Both**: an idea that opens the film and lands on the product.
 
-- the poster frame: what is on screen, and the one number, word or shape that carries the claim;
-- the one move the film is built on (a band rises, the camera pulls back, a stream fades);
-- the look: its ground (the product's own, black, paper, white), its type (the product's sans, a
-  serif for a story, giant numerals) and what the one accent colour marks.
+Write `Kind:` and one line why at the top of `WORK/storyboard.md`.
 
-Keep them far apart. If two would make the same storyboard in different colours, replace one.
-Vary the idea first, then the camera, then the look.
+## Research
 
-## Choose one
+Before dealing, look at how this kind of claim has been shown, and write what you found under
+`## Research`, a line each, with where you saw it:
 
-Choose the direction whose poster says the post's claim with no caption and that the product can
-truthfully back; say why in one line, and why the runner-up lost in another. A film may join
-two: an idea that opens on the founder's problem and lands on the product answering it (an
-iceberg, then People ranked). Then write the shots for that direction only.
+- for a motion graphic: explainers, data-visualisation galleries, other products' launch films
+  and essays on the subject;
+- for a product highlight: the product's own pages, screens and wording, and how comparable
+  products film a feature like it.
+
+Write down moves, never content: what moved, what carried the number, what the poster showed,
+what the first second did. Nothing of theirs goes in the film. Read public pages only, with
+`tin-film inspect` or a plain fetch; never sign in, submit or buy.
+
+## Deal, write, sketch, choose
+
+1. `tin-film directions --kind idea|product|both` deals five cards at random: ways to picture an
+   idea with a look each, or ways to tell a product's story in its own look. Write one direction
+   per card under `## Directions`: its poster frame (what is on screen, and the number, word or
+   shape that carries the claim), its one move, and its caption. You may swap one card for a
+   way you found in research, with a reason.
+2. Sketch each as a stage page: `WORK/sketches/<n>-<name>/index.html`, its caption in
+   `caption.txt`. Only its poster frame, built with the kit and the product's tokens. When the
+   poster needs more than every part shown (a flow drawn, a value set), define `stage.poster`.
+   Rough is fine; the idea must read in one look.
+3. `tin-film sketch WORK/sketches` films each for a moment and puts the stills side by side, in
+   order, in `WORK/sketches/sketches.jpg`. Open it once.
+4. Choose the sketch whose frame says the post's claim with no caption, that the product can
+   truthfully back, and that is least like a stock picture of the subject. Write why, and why
+   the runner-up lost. Its page grows into the film's stage.
 
 ## Families
 
-Ways to show one idea, each with how a "your funnel is larger than you think" film would use it:
+Ways to picture an idea. The examples are from different subjects on purpose; none of them is the
+answer to your claim.
 
-| Family | What carries it | Funnel example |
+| Family | What carries it | For instance |
 | --- | --- | --- |
-| Product scene | The product's own window, the feature happening in it | People ranked by fit, the fits queued (the worked examples) |
-| Physical metaphor | An object whose shape is the idea | An iceberg: what you measure is the tip above the line; an hourglass: few reach the neck |
-| Scale move | The camera pulls back or pushes in; size is the reveal | A small funnel turns out to be the tip of a cone of people |
-| Flow | Streams that merge, split or fade | A wide stream of engagement fades out before the line marked "your site" |
-| Rings or orbit | Distance from a centre | Customers at the centre, then signups, visits, and a wide outer ring of people who engaged |
-| One person's story | One record's timeline | Her funnel started a month before her first visit |
-| Typographic | One huge number or sentence; the rest small | 1,140 above 380 · 41 · 7 |
-| Units | One mark per person in a field that moves | A field of 1,140 dots where 380 drift into the site |
-| Network or map | Who connects to whom, or where | One post at the centre, the people it reached around it |
-| Comparison | The same frame twice, before and after | The funnel your analytics draws beside the one Tin sees |
+| Physical metaphor | An object whose shape is the idea | An iceberg for what is hidden; an hourglass for a narrow neck; a dam for pressure held back |
+| Scale move | The camera pulls back or pushes in; size is the reveal | One dot that becomes a crowd; a street that becomes the city |
+| Flow | Quantities that move, merge, split or leak | Streams that split at a fork; where a budget goes; a pipe that leaks |
+| Rings and distance | Things arranged by closeness to a centre | An orbit around you; ripples from one event; a target |
+| One record's story | One person, order or page through time | One customer's month; one parcel's path |
+| Typography | One number or sentence carries it; the rest is small | A numeral that dwarfs the old one; a sentence that rewrites itself |
+| Field of units | One mark per thing, in a field that moves, sorts or lights | Dots that sort themselves; a crowd that parts |
+| Network | Who connects to whom | One message and everyone it reached; teams linking up |
+| Comparison | The same frame twice, or two worlds side by side | Before and after; what you see beside what is there |
+| Map or space | Where things are | A map; a floor plan; a calendar read as a place |
+| Chart in motion | A real chart whose change is the point | A line that bends where it matters; bars that re-sort |
+
+Ways to tell a product's story: problem to product (open where the founder's problem lives, then
+the product answering it), result first, one record through the feature, before and after,
+quiet hero with a loud card, close to wide, a week in seconds.
 
 Never a waffle chart (a grid of squares, one per unit): it reads as a stock infographic.
 
-## Building one
+## Building a diagram
 
-The stage kit's parts cover product scenes. For a diagram, write it the way an Observable
-notebook would: data, then a layout, then SVG. The kit carries D3 7.9.0, d3-sankey 0.12.3 and
-Observable Plot 0.6.17; load them on the stage before the kit's runtime:
+A diagram is data, then a layout, then marks, the way an Observable notebook builds one. The kit
+carries D3 7.9.0, d3-sankey 0.12.3 and Observable Plot 0.6.17 for when a direction needs them;
+none is required, and plain HTML and CSS serve many directions better:
 
 ```html
 <script src="/__stage/kit/vendor/d3.min.js"></script>
@@ -56,11 +85,9 @@ Observable Plot 0.6.17; load them on the stage before the kit's runtime:
 <script src="/__stage/kit/vendor/plot.umd.min.js"></script>
 ```
 
-Put the diagram inside an element with `data-diagram`, and give each mark an id (`.attr("id",
-…)`): the checks then measure each mark as they do the stage's other parts, follow it through a
-change by its id, and hold the diagram to the alignment rules in `stage-kit.md`; the check for a
-floating hero leaves it alone. When data arrives, lay the diagram out again and ease the old marks
-to their new places with a D3 transition, so it stays centred. Draw its flows and lines with `draw` and count its numbers up with `count`; D3's own
-transitions also play on the film's clock. Keep long labels as HTML text beside the SVG, so they
-read at the kit's sizes. Use plainly made-up numbers, and keep them consistent: a Sankey's flows
-add up at every node.
+Put a diagram inside an element with `data-diagram` and give each mark an id: the checks then
+measure each mark, follow it through a change by its id, and hold the diagram to the alignment
+rules in `stage-kit.md`; the check for a floating hero leaves it alone. Draw lines and flows with
+`draw`, count numbers up with `count`; D3's transitions play on the film's clock too. When data
+arrives, lay the diagram out again and ease the old marks to their new places, so it stays
+centred. Keep labels as HTML text beside the marks. Numbers are plainly made up and add up.

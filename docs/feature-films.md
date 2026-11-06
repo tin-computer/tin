@@ -262,6 +262,8 @@ JSON file. It is what the `creative.feature_film` workflow's agent runs in Tin's
 and works the same from the repository:
 
 ```
+node web/film/tin-film.js directions --kind idea                # five ways to show it, dealt at random
+node web/film/tin-film.js sketch .films/sketches                # one still of each sketch page, side by side
 node web/film/tin-film.js new .films/herding --from people     # the closest worked example, to rebuild
 node web/film/tin-film.js inspect https://sheepdogs.io/ --dir .films/look   # its look as tokens, outline, screenshots
 node web/film/tin-film.js record .films/herding/film.json     # once, saving what it loads from outside
@@ -270,6 +272,13 @@ node web/film/tin-film.js render .films/herding/film.json     # the final take, 
 node web/film/tin-film.js deliver .films/herding/film.json films/herding.md
 ```
 
+- **Directions before a storyboard.** A film is a product highlight (staged in the product's
+  look), a motion graphic (a general idea) or both. `directions` deals cards at random from the
+  kind's deck (`web/film/directions.js`: ways to picture an idea, each with a look dealt as far
+  from the others as the deck allows, or ways to tell a product's story in its own look), so the
+  first idea is one of several. Each direction is sketched as a stage page showing its poster
+  frame (`stage.poster`), and `sketch` films each for a moment into one numbered sheet to choose
+  from; the chosen page grows into the film's stage.
 - **The file.** `film.json` holds `title`, `story` (`before` and `after`), `stage` or
   `site.url`, `screens`, `now` (the page's clock), `format`, `theme`, `ready`, `beats` and
   `notes`; the workflow's skill documents every field and beat

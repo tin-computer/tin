@@ -3,6 +3,8 @@
 // (a page of photogenic parts beside it, stage/) or a live site; its recording (world/) and takes
 // (takes/) sit beside it, never in the project.
 //
+//   tin-film directions --kind idea|product|both [--count 5] [--seed S]  ways to show it, dealt
+//   tin-film sketch <dir> [--format 16:9]   one still of each sketch page in <dir>, side by side
 //   tin-film new <dir> [--from people]  a staged film to start from: a worked example, to rebuild
 //   tin-film inspect <url> [--dir DIR] [--format 16:9]  a page's look, outline and screenshots
 //   tin-film record <film.json>      play it once, saving what it loads from outside
@@ -13,11 +15,13 @@
 // Every take prints what went wrong, the checks' findings and the files to look at; a take with
 // an error exits 1. See docs/feature-films.md.
 import {spawnSync} from "node:child_process";
+import crypto from "node:crypto";
 import fs from "node:fs";
 import path from "node:path";
 import {fileURLToPath, pathToFileURL} from "node:url";
 import {FORMATS, ffmpeg, filmFromSpec, shoot, takeName} from "./film.js";
 import {inspect} from "./inspect.js";
+import {deal, describe} from "./directions.js";
 
 const TAKES = {
   record: {record: true, rehearse: true},
@@ -184,6 +188,50 @@ function start(dir, from = "onboarding") {
   for (const item of all) console.log(`  ${item.name}: ${item.shape}`);
 }
 
+// Directions dealt from outside the model's habits (directions.js), printed to copy into the
+// storyboard: one direction is written per card before any is chosen.
+function directions(options) {
+  const kind = options.kind || "idea";
+  if (!["idea", "product", "both"].includes(kind)) throw new Error("--kind is idea (a general idea), product (what the product does) or both.");
+  const seed = options.seed || crypto.randomBytes(4).toString("hex");
+  const count = Math.max(3, Math.min(8, Number(options.count) || 5));
+  console.log(`Directions dealt for a${kind === "idea" ? "n idea" : kind === "product" ? " product highlight" : "n idea that lands on the product"} (seed ${seed}). Write one direction for each card under ## Directions in storyboard.md, then sketch each:`);
+  deal(kind, {count, seed}).forEach((card, i) => console.log(`${i + 1}. ${describe(card)}`));
+  console.log("You may swap one card for a way of your own; say why. Keep the ideas far apart.");
+}
+
+// One still of each sketch: a folder per direction (1-iceberg/index.html, 2-orbit/index.html…)
+// holding a stage page and its caption in caption.txt; stage.poster puts the page in its poster
+// frame (the kit's shows every part). Each is
+// filmed for a moment, as a staged film is, and the stills are tiled into <dir>/sketches.jpg in
+// folder order, each caption numbered so a reader can name the one they mean.
+export async function sketch(dir, options = {}) {
+  const root = path.resolve(dir);
+  const format = options.format || "16:9";
+  const folders = fs.readdirSync(root, {withFileTypes: true}).filter(entry => entry.isDirectory() && fs.existsSync(path.join(root, entry.name, "index.html"))).map(entry => entry.name).sort();
+  if (folders.length < 2) throw new Error(`Sketch at least two directions: ${root} needs a folder per direction, each with an index.html.`);
+  const stills = [];
+  for (const [index, name] of folders.entries()) {
+    const folder = path.join(root, name);
+    const caption = fs.existsSync(path.join(folder, "caption.txt")) ? fs.readFileSync(path.join(folder, "caption.txt"), "utf8").trim() : name;
+    const spec = {title: name, story: {before: "", after: ""}, stage: "index.html", screens: {"16:9": 1080}, now: new Date().toISOString(), format, ready: ".stage",
+      beats: [{camera: "body", cut: true, pad: 0}, {caption: `${index + 1}. ${caption}`}, {do: ["poster"]}, {begin: true}, {hold: 1.2}, {mark: "poster"}, {end: true}]};
+    const film = filmFromSpec(spec, path.join(folder, "film.json"));
+    const {dir: take, report} = await shoot(film, {format, out: path.join(folder, "takes"), rehearse: true, check: false, gif: false});
+    for (const line of report.issues.errors) console.log(`  ${index + 1}. ${name}: error: ${line}`);
+    const still = fs.readdirSync(path.join(take, "marks")).find(file => /poster\.(jpg|png)$/.test(file));
+    stills.push(path.join(take, "marks", still));
+    console.log(`${index + 1}. ${name}`);
+  }
+  const tiles = fs.mkdtempSync(path.join(root, ".tiles-"));
+  stills.forEach((file, i) => fs.copyFileSync(file, path.join(tiles, `${String(i + 1).padStart(2, "0")}${path.extname(file)}`)));
+  const ext = path.extname(stills[0]);
+  const columns = Math.min(3, stills.length);
+  await ffmpeg(["-i", path.join(tiles, `%02d${ext}`), "-vf", `scale=960:-2:flags=lanczos,tile=${columns}x${Math.ceil(stills.length / columns)}:padding=24:margin=24:color=0x44403a`, "-frames:v", "1", "-q:v", "3", path.join(root, "sketches.jpg")]).done;
+  fs.rmSync(tiles, {recursive: true, force: true});
+  console.log(`look at: ${path.join(root, "sketches.jpg")}, the sketches in this order`);
+}
+
 async function main(argv) {
   const [command, ...rest] = argv;
   const options = {};
@@ -204,10 +252,13 @@ async function main(argv) {
     console.log(`wrote ${path.join(dir, "inspect.json")}, screen.jpg, page.jpg and, if it was missing, film.json`);
     return;
   }
+  if (command === "directions" && args.length === 0) return directions(options);
+  if (command === "sketch" && args.length === 1) return sketch(args[0], options);
   if (command === "new" && args.length === 1) return start(args[0], options.from);
   if (TAKES[command] && args.length === 1) return take(command, args[0], options);
   if (command === "deliver" && args.length === 2) return deliver(args[0], args[1]);
-  console.log(fs.readFileSync(fileURLToPath(import.meta.url), "utf8").split("\n").slice(0, 14).join("\n").replaceAll("// ", "").replaceAll("//", ""));
+  const header = fs.readFileSync(fileURLToPath(import.meta.url), "utf8").split("\n");
+  console.log(header.slice(0, header.findIndex(line => !line.startsWith("//"))).join("\n").replaceAll("// ", "").replaceAll("//", ""));
   if (command && command !== "help") process.exitCode = 64;
 }
 

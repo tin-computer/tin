@@ -132,6 +132,7 @@ film's clock and the film holds for as long as it takes.
 | `["page", "#app", "decisions"]` | Switch a window's page without a click. |
 | `["draw", "#link-a, #link-b", {"seconds": 1.2}]` | A diagram's paths draw themselves from their start (a flow grows along its length), 0.3 s apart unless `stagger` says otherwise. |
 | `["count", "#total", 1140, {"seconds": 1.2}]` | A number counts up to its value, as 1,140. |
+| `["poster"]` | The page's poster frame at once, for a sketch: every `.arrive` part shows. A page whose poster needs more defines its own `stage.poster`. |
 | `["together", [["hide", "#a .tickbox"], ["set", "#a .status", "Queued"]]]` | Several calls as one beat; it takes as long as the longest. |
 
 Clicks are the film's own (`{"click": "#nav-decisions"}`); the stage answers them as the product

@@ -8,7 +8,8 @@ import path from "node:path";
 import test from "node:test";
 import {filmFromSpec, shoot, vtt} from "./film/film.js";
 import {recordingKey} from "./film/recording.js";
-import {boardIssues, note} from "./film/tin-film.js";
+import {boardIssues, note, sketch} from "./film/tin-film.js";
+import {FAMILIES, STRUCTURES, deal} from "./film/directions.js";
 
 const SITE = "https://film.test/";
 const PAGE = `<!doctype html><html><head><title>Fold</title><style>
@@ -215,4 +216,29 @@ test("captions become WebVTT, and the note plays the film from its own folder", 
   assert.match(written, /- 0:00 One press herds every sheep\./);
   assert.match(written, /- Text under 22px\.\n\nThe button's shadow is the site's own\./);
   assert.match(written, /4:5, 1080×1350, 12\.4 s, filmed from a recording of film\.test\./);
+});
+
+test("directions are dealt far apart, the same again from the same seed", () => {
+  const ideas = deal("idea", {count: 5, seed: "run-1"});
+  assert.deepEqual(deal("idea", {count: 5, seed: "run-1"}), ideas);
+  assert.notDeepEqual(deal("idea", {count: 5, seed: "run-2"}).map(card => card.name), ideas.map(card => card.name));
+  assert.equal(new Set(ideas.map(card => card.name)).size, 5);
+  assert.ok(ideas.every(card => FAMILIES.some(family => family.name === card.name)));
+  const differ = (a, b) => ["ground", "type", "camera", "accent"].filter(key => a.look[key] !== b.look[key]).length;
+  for (const [i, a] of ideas.entries()) for (const b of ideas.slice(i + 1)) assert.ok(differ(a, b) >= 2, `${a.name} and ${b.name} look alike`);
+  const product = deal("product", {count: 4, seed: "run-1"});
+  assert.ok(product.every(card => STRUCTURES.some(structure => structure.name === card.name)));
+  assert.ok(product.every(card => card.look.ground === "the product's own ground" && card.look.type === "the product's own sans"));
+  assert.ok(deal("both", {seed: "run-1"}).every(card => card.lands && card.look.ground === "the product's own ground"));
+});
+
+test("sketches are filmed for a moment and put side by side, each in its poster frame", {timeout: 180000}, async () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), "tin-film-sketches-"));
+  for (const [name, words] of [["1-number", "1,140"], ["2-sentence", "Most never visit."]]) {
+    fs.mkdirSync(path.join(dir, name));
+    fs.writeFileSync(path.join(dir, name, "index.html"), `<!doctype html><html><head><link rel="stylesheet" href="/__stage/kit/stage.css"></head><body><div class="stage"><div class="arrive" style="position: absolute; left: 48px; top: 40px; font-size: 96px;">${words}</div></div><script src="/__stage/kit/stage.js"></script></body></html>`);
+    fs.writeFileSync(path.join(dir, name, "caption.txt"), "Your funnel is larger than you think.");
+  }
+  await sketch(dir);
+  assert.ok(fs.statSync(path.join(dir, "sketches.jpg")).size > 5_000);
 });

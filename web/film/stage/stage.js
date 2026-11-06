@@ -17,6 +17,7 @@
 // - page: a window switches to another of its pages.
 // - draw: a diagram's lines and flows draw themselves from their start.
 // - count: a number counts up to its value.
+// - poster: the page's poster frame at once, for a sketch.
 // - together: several of these at once, as one beat.
 (() => {
   const all = selector => [...document.querySelectorAll(selector)];
@@ -237,12 +238,19 @@
     return seconds;
   }
 
+  // The poster frame at once, for a sketch (tin-film sketch): every part arrives and stays. A page
+  // whose poster needs more (flows drawn, a value set) defines its own stage.poster after this.
+  function poster() {
+    show(".arrive", {stagger: 0});
+    return 0.8;
+  }
+
   // Several changes as one beat, [[name, ...args], ...]: it takes as long as the longest.
   function together(calls) {
     return Math.max(0, ...calls.map(([name, ...args]) => window.stage[name](...args)));
   }
 
-  window.stage = {show, hide, away, swap, print, type, set, tick, press, fill, page, draw, count, together};
+  window.stage = {show, hide, away, swap, print, type, set, tick, press, fill, page, draw, count, poster, together};
 
   // The film's clicks are real clicks, so a stage answers them as the product would:
   // [data-go] opens a page of its window and marks its nav item; [data-then] is a button whose

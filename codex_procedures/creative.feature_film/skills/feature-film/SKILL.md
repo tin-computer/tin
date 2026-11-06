@@ -5,11 +5,17 @@ description: Make a short captioned film of one feature, staged in the product's
 
 # Feature film procedure
 
-A feature film shows one thing the product does, the way a launch page shows it: a staged scene
-in the product's own look, simplified to what the viewer needs, where one thing happens per
-beat and the result stays on screen. It is not a screen recording and not a tour of the site.
-You build the scene as a small page of photogenic parts (the stage), and `tin-film` plays it on a
-virtual clock with a drawn cursor and captions, checks every frame, and renders it.
+A film shows what a post claims. Most often that is one thing the product does, shown the way a
+launch page shows it: a staged scene in the product's own look, simplified to what the viewer
+needs, where one thing happens per beat and the result stays on screen (a product highlight).
+Sometimes the post argues a general idea, and the film is a motion graphic: a diagram, a number,
+a metaphor in motion, which may land on the product. Neither is a screen recording or a tour of
+the site. You build the scene as a small page (the stage), and `tin-film` plays it on a virtual
+clock with a drawn cursor and captions, checks every frame, and renders it.
+
+Start abstract and stay open: decide what kind of film the post needs, research how such a claim
+has been shown, and try several directions as sketches before you storyboard anything. The first
+idea that comes is your habit, not the film.
 
 Everything happens through `tin-film` (run `tin-film help`). Work in a folder of your own inside
 the Studio work directory the runtime names (call it WORK; API runs use
@@ -17,8 +23,8 @@ the Studio work directory the runtime names (call it WORK; API runs use
 takes (`takes/`) and any recording (`world/`) stay beside them. Only `tin-film deliver` writes
 into the project checkout.
 
-Read `stage-kit.md` (the parts, the runtime and how to frame a scene) and `film-format.md` (the
-film's fields and beats) before step 4.
+Read `directions.md` before step 2, and `stage-kit.md` (the parts, the runtime, framing and
+alignment) and `film-format.md` (the film's fields and beats) before step 3.
 
 Every image you open stays in your context for the rest of the run, and a request has a fixed
 size limit: a run that keeps opening images ends without its film. Open each image once, open
@@ -42,54 +48,64 @@ changes between takes so each take answers several questions at once.
 4. When the run gives `product_url` (or the project names its site), run
    `tin-film inspect <url> --dir WORK/look`. It prints the page's look as the stage kit's tokens,
    its font stylesheets and its outline, and writes `screen.jpg`. Open `screen.jpg` once.
+5. Decide the kind of film: a product highlight (the post shows what the product does), a motion
+   graphic (the post argues an idea bigger than one screen) or both (an idea that lands on the
+   product). It decides which directions are dealt.
 
-## 2. Start from the closest example
+## 2. Find the direction
+
+Follow `directions.md`: research how such a claim has been shown, deal directions with
+`tin-film directions --kind …`, write one per card, sketch each as a stage page, put them side by
+side with `tin-film sketch`, and choose the one that carries the claim. Keep it in
+`WORK/storyboard.md` under `Kind:`, `## Research` and `## Directions`.
+
+## 3. Start from the closest example
 
 1. `tin-film new WORK/film --from <name>` copies a worked example: its `storyboard.md`, its
    `film.json`, its `stage/index.html` and its contact sheet as `example.jpg`. It lists the
-   examples and the shape of feature each suits; run it with the closest. `onboarding` is a setup
+   examples and the shape of film each suits; run it with the closest. `onboarding` is a setup
    through a coding agent that ends in a result on a dashboard; `people` is a list of records
    ranked or filtered, the reason behind one, a pick and a record's panel.
 2. Read its `storyboard.md` and open `example.jpg` once. The sheet is one still per shot: the
    example's storyboard, drawn. It is the bar for type size, framing, restraint and how much
-   happens in each shot.
+   happens in each shot. Copy its craft, not its idea: the idea is the direction you chose.
+3. The chosen sketch's page becomes `WORK/film/stage/index.html`; build the film from it.
 
-## 3. Storyboard
+## 4. Storyboard
 
-Rewrite `WORK/film/storyboard.md` for this feature, in the example's shape, before any stage
-code. Read `directions.md` first.
+Rewrite `WORK/film/storyboard.md` in the example's shape, carrying over your `Kind:`,
+`## Research` and `## Directions` from `WORK/storyboard.md`:
 
-1. A title, then one line on the shape of feature it shows.
+1. A title, then one line on the shape of film it shows.
 2. `Before:` and `After:`, one sentence each, in the founder's words: the story as one change.
    They go in `film.json` as `story` and open the note.
-3. `## Directions`: five directions from different families, one line each, then the one you
-   chose and why, and why the runner-up lost (`directions.md`). The example is one direction,
-   not the answer: copy its craft, not its idea.
-4. Three to six shots and a payoff for the chosen direction, 15 to 40 seconds in all. Each is a
+3. Three to six shots and a payoff for the chosen direction, 15 to 40 seconds in all. Each is a
    `## N. Name` section with:
    - `- Mark:` the still that draws it (`poster` for the one frame that tells the story at a
      glance, with the result on screen; `payoff` for the last);
    - `- Caption:` at most twelve words, one idea, exactly as the film will show it;
-   - `- Hero:` the one window, app or terminal the shot is about;
+   - `- Hero:` the one window, app, terminal or diagram the shot is about;
    - `- Satellite:` at most one card straddling the hero's edge, when the shot needs it;
    - `- Real words:` the three to seven strings a frame that the story touches, in the product's
      real wording; everything else is quiet bars;
    - `- Moves:` what changes on screen, in order. Never empty: a shot where nothing changes is a
      still, and the viewer leaves.
-5. Open where the founder's problem lives (their terminal, their post, their inbox) and travel to
-   the product answering it, as both examples do; the scene changes once, with `away` and a
-   `.slide` window. A feature that lives on one page may stay in one scene, but then something
-   in it changes every shot.
-6. Every caption claim is visible in its shot or comes from a Feature map line marked
+4. A product highlight often opens where the founder's problem lives (their terminal, their
+   post, their inbox) and travels to the product answering it, as both examples do; the scene
+   changes once, with `away` and a `.slide` window. One that lives on one page may stay in one
+   scene, but then something in it changes every shot. A motion graphic's scenes follow its
+   direction; when it grows, it reflows (`stage-kit.md`, Alignment).
+5. Every caption claim is visible in its shot or comes from a Feature map line marked
    `observed`. A wait the film compresses is labelled with its real length or with "Later".
 
 Every take checks `film.json` against the storyboard: each shot's mark and caption in the film,
 in the storyboard's order, and a poster.
 
-## 4. Stage it
+## 5. Stage it
 
-1. Rebuild `stage/index.html` for this product and this storyboard, as `stage-kit.md` describes:
-   the product's tokens from inspect, its chrome and its parts, drawn with the kit's classes.
+1. Grow the chosen sketch into `stage/index.html` for this storyboard, as `stage-kit.md`
+   describes: the product's tokens from inspect, its chrome and its parts, drawn with the kit's
+   classes, or a diagram laid out from data (`directions.md`).
    Keep the example's scale (a 1080 × 517 screen for 16:9, so 15px text reads on a phone) and
    its framing (heroes inset a gutter from the top and left, running off an edge; a satellite
    straddling the hero's edge). For 4:5 or 1:1, design a narrower stage (720 wide) with one hero.
@@ -101,14 +117,14 @@ in the storyboard's order, and a poster.
 4. Write the beats in `film.json`, shot by shot: the shot's caption, the `do` calls, moves and
    clicks its `Moves` line says, a hold, and the shot's mark. Delete what is left of the example.
 
-## 5. Rehearse and fix
+## 6. Rehearse and fix
 
 1. If the stage links anything outside its folder (the product's font stylesheet), run
    `tin-film record WORK/film/film.json` once to save it; otherwise go straight to rehearse.
 2. `tin-film rehearse WORK/film/film.json` plays it at low resolution with every check on. It
    prints errors, warnings (pacing among them) and check findings, and writes the stills.
 3. Open the take's `sheet.jpg`: your storyboard drawn, one still per shot, beside the example's
-   sheet (`example.jpg`) you saw in step 2. Ask of each: is it the shot the storyboard describes? What does the eye
+   sheet (`example.jpg`) you saw in step 3. Ask of each: is it the shot the storyboard describes? What does the eye
    land on first, and is it what the caption says? Is the type as large as the example's, the hero
    inset and running off an edge, the satellite overlapping it? Is anything cut by the stage's
    edge, empty, crowded or too small to read? Does the poster tell the story alone? Open a single
@@ -133,7 +149,7 @@ in the storyboard's order, and a poster.
    right. Rehearse at most eight times; then render the best version and say what is left in
    `notes`, one sentence each, for the founder: nothing about the run, its sources or its ID.
 
-## 6. Render and deliver
+## 7. Render and deliver
 
 1. `tin-film render WORK/film/film.json` makes the final take at full resolution. Look at its
    `sheet.png` once.
