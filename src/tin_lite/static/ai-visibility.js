@@ -4,12 +4,19 @@
 // a time. The week's score, the trend once there are two weeks, and a table of the panel's
 // questions by engines: a tick where an engine recommended the project, yellow where it only
 // named or cited it, a cross where it did neither. Selecting a cell reads that engine's answers.
+// Design: Paper "AI Visibility · dashboard (from code)", boards AV-A and AV-A round two (M1): the
+// Analytics page's summary sentence and tiles, the Recommended tile washed moss or crimson when
+// the week moved by SIGNIFICANT points or more, and the page's chips in the palette.
 // The page shows the engines that answer with web search, which is what people see today; the
 // report also holds models asked without it, which the page leaves out for now. Questions kept
 // out of the score (citation probes, honesty checks, branded comparisons) sit in their own table
 // after the main one. Everything comes from Tin's stored report for the week.
 window.TinAIVisibility = (() => {
   const MONTHS = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
+  const FULL_MONTHS = ["January", "February", "March", "April", "May", "June", "July", "August", "September", "October", "November", "December"];
+  // A week-to-week move smaller than this many points stays uncoloured: at a few hundred answers
+  // a week, the standard error of the difference between two weeks is about 2.5 points.
+  const SIGNIFICANT = 3;
   // The engine kind the page shows: answers with web search.
   const KIND = "web";
   const OUTCOME = {
@@ -22,7 +29,8 @@ window.TinAIVisibility = (() => {
   // Marks shipped in /assets/ai-engines/; any other engine shows its initials.
   const ICONS = new Set(["openai", "claude", "gemini", "google", "perplexity", "kimi", "zai"]);
   // Single-colour marks are drawn in ink, so they follow the theme like Integrations' GitHub and X.
-  const MONOCHROME = new Set(["openai", "zai"]);
+  // Kimi's K is currentColor, which an <img> renders black, so it goes in ink too.
+  const MONOCHROME = new Set(["openai", "zai", "kimi"]);
 
   let view = null;
 
@@ -38,7 +46,7 @@ window.TinAIVisibility = (() => {
     const from = day(start);
     if (!from) return "";
     const to = new Date(from.getTime() + 6 * 86400000);
-    return `${short(from)} – ${short(to)}`;
+    return `${short(from)} – ${to.getUTCMonth() === from.getUTCMonth() ? to.getUTCDate() : short(to)}`;
   }
 
   function mount(main, options) {
@@ -137,47 +145,83 @@ window.TinAIVisibility = (() => {
         <svg aria-hidden="true" viewBox="0 0 16 16"><path d="${direction === "back" ? "M10 3.5 5.5 8l4.5 4.5" : "M6 3.5 10.5 8 6 12.5"}" /></svg>
       </button>`;
     return `${arrow("back", starts[index - 1], "Previous week")}
-      <span class="visibility-week"><strong>${escape(weekLabel(data.week_start))}</strong><small>${index + 1} of ${starts.length} ${starts.length === 1 ? "week" : "weeks"}</small></span>
+      <span class="visibility-week"><strong>${escape(weekLabel(data.week_start))}</strong></span>
       ${arrow("next", starts[index + 1], "Next week")}`;
   }
 
   function page(data) {
     const engines = data.engines.filter((engine) => engine.kind === KIND);
-    return `${tiles(data, KIND)}
+    return `${summary(data, engines)}
+      ${tiles(data, KIND)}
       ${data.weeks.length > 1 ? trend(data, KIND) : ""}
       <div class="visibility-key">
         <div class="visibility-legend">
           <span>${mark("recommended")}Recommended</span>
           <span>${mark("mentioned")}Mentioned or cited</span>
+          <span><span class="visibility-key-chip">${mark("recommended")}<span class="visibility-frac">1/${data.takes}</span></span>In ${data.takes === 2 ? "one of two answers" : "some of the answers"}</span>
           <span>${mark("none")}Not mentioned</span>
-          <span><span class="visibility-frac is-key">1/${data.takes}</span>in ${data.takes === 2 ? "one of two answers" : "some of the answers"}</span>
+          <span>${mark("no_answer")}No answer</span>
         </div>
       </div>
       ${tables(data, engines, KIND)}`;
   }
 
+  // The week in a sentence, the way Analytics opens a day.
+  function summary(data, engines) {
+    const now = data.score[KIND];
+    const brand = view.brand || "you";
+    const it = view.brand ? "it" : "you";
+    const start = day(data.week_start);
+    const each = data.takes === 1 ? "one answer each" : data.takes === 2 ? "two answers each" : `${data.takes} answers each`;
+    const facts = `${now.questions} ${now.questions === 1 ? "question" : "questions"}, ${engines.length} ${engines.length === 1 ? "engine" : "engines"}, ${each}`;
+    const rival = now.rivals?.[0];
+    const reach = now.questions_named === now.questions
+      ? `Every question brought ${it} up at least once.`
+      : now.questions_named
+        ? `Of the ${now.questions} questions, ${now.questions_named} brought ${it} up at least once.`
+        : `None of the ${now.questions} questions brought ${it} up.`;
+    const sentence = now.answers
+      ? [
+          `AI engines recommended ${brand} in ${now.recommended} of ${now.answers} answers and named or cited ${it} in ${now.mentioned}.`,
+          reach,
+          rival ? `${rival.name} was recommended instead most often, in ${rival.answers} answers.` : "",
+        ].filter(Boolean).join(" ")
+      : "No engine answered this week's questions.";
+    return `<div class="analytics-summary visibility-summary">
+      <div class="analytics-heading"><h2>Week of ${escape(start ? `${FULL_MONTHS[start.getUTCMonth()]} ${start.getUTCDate()}` : "")}</h2><span>${escape(facts)}</span></div>
+      <p>${escape(sentence)}</p>
+    </div>`;
+  }
+
+  // Four numbers, Recommended first. Its tile turns moss when the share rose by SIGNIFICANT
+  // points or more on the week before and crimson when it fell as far; a smaller move or a first
+  // week leaves it plain.
   function tiles(data, kind) {
     const now = data.score[kind];
     const before = data.previous?.[kind];
-    const change = (key) => {
-      if (!before || typeof now[key] !== "number" || typeof before[key] !== "number") return before ? "" : "first week";
-      const points = Math.round((now[key] - before[key]) * 1000) / 10;
-      return points === 0 ? "same as the week before" : `${points > 0 ? "+" : "−"}${Math.abs(points)} pts on the week before`;
+    const index = data.weeks.findIndex((item) => item.week_start === data.week_start);
+    const last = index > 0 ? weekLabel(data.weeks[index - 1].week_start) : "the week before";
+    const move = (key) => (before && typeof now[key] === "number" && typeof before[key] === "number"
+      ? Math.round((now[key] - before[key]) * 1000) / 10
+      : null);
+    const said = (points) => {
+      if (points === null) return "";
+      if (points === 0) return "Same as the week before";
+      const text = `${points > 0 ? "+" : "−"}${Math.abs(points)} points`;
+      return Math.abs(points) < SIGNIFICANT ? `${text}, about the same` : `${text} on ${last}`;
     };
-    const tile = (label, value, detail, cls = "") => `<div class="analytics-tile${cls}"><span>${escape(label)}</span><strong>${escape(value)}</strong><small>${escape(detail || "")}</small></div>`;
+    const recommended = move("recommended_rate");
+    const state = recommended === null || Math.abs(recommended) < SIGNIFICANT ? "" : recommended > 0 ? " is-up" : " is-down";
+    const tile = (label, value, detail, change, cls = "") => `<div class="analytics-tile${cls}">
+        <span>${escape(label)}</span><strong>${escape(value)}</strong>
+        <small>${escape(detail)}${change ? `<span class="visibility-delta">${escape(change)}</span>` : ""}</small>
+      </div>`;
     const rival = now.rivals?.[0];
-    const delta = change("recommended_rate");
-    // Recommended is the page's number: the share of answers that put the project forward.
     return `<div class="analytics-tiles visibility-tiles">
-      <div class="analytics-tile is-hero">
-        <span>Recommended</span>
-        <strong>${escape(percent(now.recommended_rate))}</strong>
-        <small>${escape(`${now.recommended} of ${now.answers} answers put ${view.brand || "you"} forward`)}</small>
-        ${delta ? `<small class="visibility-delta">${escape(delta)}</small>` : ""}
-      </div>
-      ${tile("Mentioned or cited", percent(now.mentioned_rate), [`${now.mentioned} of ${now.answers} answers`, change("mentioned_rate")].filter(Boolean).join(" · "))}
-      ${tile(`Questions where ${view.brand || "you"} shows up`, `${now.questions_named} of ${now.questions}`, "named in at least one answer")}
-      ${tile("Recommended most often instead", rival ? rival.name : DASH, rival ? `in ${rival.answers} of ${now.answers} answers` : "", " is-name")}
+      ${tile("Recommended", percent(now.recommended_rate), `${now.recommended} of ${now.answers} answers`, before ? said(recommended) : "First week", ` is-recommended${state}`)}
+      ${tile("Mentioned or cited", percent(now.mentioned_rate), `${now.mentioned} of ${now.answers} answers`, said(move("mentioned_rate")))}
+      ${tile(`Questions that bring ${view.brand ? "it" : "you"} up`, `${now.questions_named} of ${now.questions}`, "in at least one answer", "")}
+      ${tile("Recommended instead most", rival ? rival.name : DASH, rival ? `in ${rival.answers} of ${now.answers} answers` : "", "", rival && rival.name.length > 14 ? " is-name" : "")}
     </div>`;
   }
 
@@ -261,7 +305,7 @@ window.TinAIVisibility = (() => {
     const columns = `minmax(min(${question}px, 50vw), 1fr) repeat(${engines.length}, ${width}px) minmax(160px, 200px)`;
     const head = `<div class="visibility-row is-head" style="grid-template-columns:${columns}">
         <span class="visibility-question">Question</span>
-        ${engines.map((engine) => `<span class="visibility-engine" title="${escape(`${engine.name}${engine.detail ? `, ${engine.detail}` : ""}`)}">${logo(engine)}<strong>${escape(engine.name)}</strong><small>${escape(engine.detail)}</small></span>`).join("")}
+        ${engines.map((engine) => `<span class="visibility-engine" title="${escape(`${engine.name}${engine.detail ? `, ${engine.detail}` : ""}`)}">${logo(engine)}<strong>${escape(engine.name)}</strong></span>`).join("")}
         <span class="visibility-rivals">Recommended instead</span>
       </div>`;
     const rows = [];

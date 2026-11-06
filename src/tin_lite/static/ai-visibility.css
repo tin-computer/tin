@@ -1,24 +1,32 @@
 /* AI Visibility: the week picker, score tiles, trend and the questions-by-engines table. Tiles,
    tabs, the chart card and notes reuse Analytics' classes (analytics.css). Marks keep apart by
-   shape as well as colour: a tick, a dot, a cross. */
+   shape as well as colour: a tick, a dot, a cross. Design: Paper "AI Visibility · dashboard
+   (from code)", AV-A with round two's M1 chips. This page's moss is a little more vivid than the
+   app's accent wash, with the tick deepened to keep the same contrast against its chip. */
 
 .visibility-view {
-  --visibility-recommended: rgb(var(--accent-deep-rgb) / 18%);
-  --visibility-recommended-ink: var(--accent-text);
-  --visibility-mentioned: #f4d97c;
-  --visibility-mentioned-ink: #5c4300;
-  --visibility-mentioned-line: #c99a06;
+  --visibility-recommended: #d9e7b9;
+  --visibility-recommended-ink: #47670f;
+  --visibility-mentioned: var(--paper-deep);
+  --visibility-mentioned-ink: var(--ink-secondary);
+  --visibility-mentioned-line: var(--ink-muted);
+  --visibility-up: rgb(var(--accent-deep-rgb) / 10%);
+  --visibility-up-ink: var(--accent-text);
+  --visibility-down: rgb(var(--danger-rgb) / 7%);
+  --visibility-down-ink: var(--danger);
   display: flex;
   flex-direction: column;
   gap: 22px;
 }
 
 html[data-theme="dark"] .visibility-view {
-  --visibility-recommended: rgb(153 175 98 / 26%);
-  --visibility-recommended-ink: #c9dc97;
-  --visibility-mentioned: rgb(244 217 124 / 26%);
-  --visibility-mentioned-ink: #f4d97c;
-  --visibility-mentioned-line: #e3b93a;
+  --visibility-recommended: #3e4e1c;
+  --visibility-recommended-ink: #cfe79a;
+  --visibility-mentioned: var(--paper-well);
+  --visibility-up: rgb(var(--accent-deep-rgb) / 14%);
+  --visibility-up-ink: #b5c98a;
+  --visibility-down: rgb(var(--danger-rgb) / 13%);
+  --visibility-down-ink: #e07a84;
 }
 
 .visibility-view .workspace-header { margin-bottom: 0; }
@@ -74,12 +82,7 @@ html[data-theme="dark"] .visibility-view {
 
 .visibility-week strong {
   color: var(--ink);
-  font: 600 14px/18px var(--sans);
-}
-
-.visibility-week small {
-  color: var(--ink-muted);
-  font: 12px/16px var(--sans);
+  font: 700 15px/20px var(--sans);
 }
 
 /* Week by week. */
@@ -98,7 +101,8 @@ html[data-theme="dark"] .visibility-view {
   flex-direction: column;
   justify-content: space-between;
   color: var(--ink-muted);
-  font: 11px/12px var(--mono);
+  font: 12px/12px var(--sans);
+  font-variant-numeric: tabular-nums;
   text-align: right;
 }
 
@@ -142,7 +146,7 @@ html[data-theme="dark"] .visibility-view {
   background: transparent;
   border-radius: 6px;
   color: var(--ink-muted);
-  font: 12px/16px var(--mono);
+  font: 12px/16px var(--sans);
   cursor: pointer;
 }
 
@@ -171,6 +175,9 @@ html[data-theme="dark"] .visibility-view {
   gap: 16px;
 }
 
+.visibility-key-chip { position: relative; display: inline-flex; padding: 0 8px 6px 0; margin-bottom: -6px; }
+.visibility-key-chip .visibility-frac { position: absolute; right: -2px; bottom: -1px; padding: 1px 3px; background: var(--paper-bg); border-radius: 4px; color: var(--ink-secondary); }
+
 .visibility-legend > span {
   display: inline-flex;
   align-items: center;
@@ -186,7 +193,7 @@ html[data-theme="dark"] .visibility-view {
   flex: 0 0 26px;
   align-items: center;
   justify-content: center;
-  border-radius: 7px;
+  border-radius: 6px;
 }
 
 .visibility-mark svg {
@@ -204,19 +211,12 @@ html[data-theme="dark"] .visibility-view {
 .visibility-mark.is-mentioned svg circle { fill: currentColor; stroke: none; }
 .visibility-mark.is-none { color: var(--ink-muted); }
 .visibility-mark.is-none svg { stroke-width: 1.6; }
-.visibility-mark.is-no_answer { color: var(--status-idle); font: 13px/16px var(--mono); }
+.visibility-mark.is-no_answer { color: var(--status-idle); font: 13px/16px var(--sans); }
 
 .visibility-frac {
   color: currentColor;
-  font: 10px/10px var(--mono);
-}
-
-.visibility-frac.is-key {
-  padding: 4px 6px;
-  background: var(--paper-well);
-  border-radius: 5px;
-  color: var(--ink-secondary);
-  font-size: 11px;
+  font: 10px/10px var(--sans);
+  font-variant-numeric: tabular-nums;
 }
 
 /* Questions down the left, an engine in each column, rivals on the right; the question column
@@ -256,11 +256,10 @@ html[data-theme="dark"] .visibility-view {
   display: flex;
   align-items: center;
   gap: 8px;
-  padding: 12px 16px 12px 18px;
+  padding: 10px 16px 10px 18px;
   background: var(--paper-card);
-  border-right: 1px solid var(--card-hairline);
   color: var(--ink);
-  font: 14px/21px var(--sans);
+  font: 14px/20px var(--sans);
 }
 
 
@@ -270,16 +269,17 @@ html[data-theme="dark"] .visibility-view {
   display: -webkit-box;
   overflow: hidden;
   -webkit-box-orient: vertical;
-  -webkit-line-clamp: 3;
+  -webkit-line-clamp: 2;
 }
 
 .visibility-row.is-head .visibility-question,
 .visibility-row.is-head .visibility-rivals {
   align-items: flex-start;
+  align-items: flex-end;
   padding-top: 10px;
-  padding-bottom: 10px;
-  color: var(--ink-muted);
-  font: 600 12px/16px var(--sans);
+  padding-bottom: 12px;
+  color: var(--ink-secondary);
+  font: 13px/16px var(--sans);
 }
 
 .visibility-engine {
@@ -299,9 +299,8 @@ html[data-theme="dark"] .visibility-view {
   overflow: hidden;
   -webkit-box-orient: vertical;
   -webkit-line-clamp: 2;
-  color: var(--ink);
-  font: 600 10.5px/13px var(--sans);
-  letter-spacing: -0.02em;
+  color: var(--ink-secondary);
+  font: 12px/15px var(--sans);
 }
 
 .visibility-engine small {
@@ -324,11 +323,8 @@ html[data-theme="dark"] .visibility-view {
   align-items: center;
   justify-content: center;
   overflow: hidden;
-  background: var(--paper-card);
-  border: 1px solid rgb(var(--ink-rgb) / 16%);
-  border-radius: var(--radius-chip);
   color: var(--ink-secondary);
-  font: normal 700 10px/12px var(--mono);
+  font: normal 700 10px/12px var(--sans);
   letter-spacing: 0.02em;
 }
 
@@ -372,7 +368,7 @@ html[data-theme="dark"] .visibility-logo.is-monochrome::before {
   cursor: pointer;
 }
 
-.visibility-button .visibility-mark { width: 28px; height: 28px; flex-basis: 28px; }
+.visibility-button .visibility-mark { width: 26px; height: 26px; flex-basis: 26px; }
 .visibility-button .visibility-mark.is-none { opacity: 0.45; }
 .visibility-button:hover { border-color: var(--card-border); }
 .visibility-button:hover .visibility-mark.is-none { opacity: 1; }
@@ -387,15 +383,14 @@ html[data-theme="dark"] .visibility-logo.is-monochrome::before {
   background: var(--paper-card);
   border-radius: 4px;
   color: var(--ink-secondary);
-  font-size: 9.5px;
 }
 
 .visibility-rivals {
   display: flex;
   align-items: center;
-  padding: 12px 16px;
+  padding: 10px 16px;
   color: var(--ink-secondary);
-  font: 13px/19px var(--sans);
+  font: 13px/18px var(--sans);
   overflow-wrap: anywhere;
 }
 
@@ -407,21 +402,26 @@ html[data-theme="dark"] .visibility-logo.is-monochrome::before {
   display: flex;
   align-items: baseline;
   gap: 10px;
-  border-bottom: 1px solid var(--card-hairline);
 }
 
 .visibility-band {
-  padding: 12px 18px;
-  background: var(--paper-well);
+  padding: 20px 18px 2px;
+  border-top: 1px solid var(--card-border);
 }
 
-.visibility-band strong { color: var(--ink); font: 700 14px/20px var(--sans); }
-.visibility-band small { color: var(--ink-secondary); font: 13px/20px var(--sans); }
+.visibility-row.is-head + .visibility-band { border-top: 0; }
+.visibility-band strong { color: var(--ink); font: 700 17px/22px var(--sans); }
+.visibility-band small { color: var(--ink-muted); font: 13px/16px var(--sans); }
 
-/* A group's title opens its questions: a little air above, a hairline below. */
-.visibility-group { padding: 16px 18px 8px; }
-.visibility-group strong { color: var(--ink); font: 700 13.5px/19px var(--sans); }
-.visibility-group small { color: var(--ink-muted); font: 13px/19px var(--sans); }
+/* A group's title opens its questions; its note follows on the same line. */
+.visibility-group { gap: 0; padding: 18px 18px 4px; }
+.visibility-group strong { color: var(--ink-secondary); font: 700 13px/16px var(--sans); }
+.visibility-group small { color: var(--ink-muted); font: 13px/16px var(--sans); }
+.visibility-group small::before { content: " · "; white-space: pre; }
+
+/* Hairlines between a group's questions only. */
+.visibility-row:not(.is-head):has(+ .visibility-group),
+.visibility-row:not(.is-head):has(+ .visibility-band) { border-bottom: 0; }
 
 /* One engine's answers to one question, opened under its row: the engine and a tab per
    answer, then the answer's verdict, the passage that names the project, the full answer
@@ -437,7 +437,6 @@ html[data-theme="dark"] .visibility-logo.is-monochrome::before {
   background: var(--paper-task);
   border-top: 1px solid var(--card-border);
   border-bottom: 1px solid var(--card-border);
-  box-shadow: inset 3px 0 0 var(--accent-deep);
 }
 
 .visibility-detail-head {
@@ -524,7 +523,7 @@ html[data-theme="dark"] .visibility-logo.is-monochrome::before {
   margin: 0;
   padding: 10px 14px;
   background: var(--paper-card);
-  border-left: 3px solid var(--accent-deep);
+  border-left: 2px solid var(--paper-border-strong);
   border-radius: 0 var(--radius-card) var(--radius-card) 0;
   color: var(--ink);
   font: 14px/21px var(--sans);
@@ -654,23 +653,16 @@ html[data-theme="dark"] .visibility-logo.is-monochrome::before {
 
 .visibility-tiles .analytics-tile.is-name strong { font-size: 20px; line-height: 26px; letter-spacing: -0.01em; }
 
-/* Recommended leads: its number the largest on the page, in the accent, on a light wash. */
-.visibility-tiles .analytics-tile.is-hero {
-  flex-grow: 1.15;
-  gap: 4px;
-  background: rgb(var(--accent-deep-rgb) / 7%);
-}
-
-.visibility-tiles .analytics-tile.is-hero > span { color: var(--ink); font-weight: 700; }
-
-.visibility-tiles .analytics-tile.is-hero strong {
-  color: var(--accent-text);
-  font-size: 48px;
-  line-height: 54px;
-}
-
-.visibility-tiles .analytics-tile.is-hero small { color: var(--ink-secondary); }
-.visibility-tiles .analytics-tile.is-hero .visibility-delta { color: var(--ink); font-weight: 600; }
+/* Recommended's tile: moss when the week rose by 3 points or more, crimson when it fell as far. */
+.visibility-tiles .analytics-tile small .visibility-delta { display: block; }
+.visibility-tiles .analytics-tile.is-up { background: var(--visibility-up); }
+.visibility-tiles .analytics-tile.is-down { background: var(--visibility-down); }
+.visibility-tiles .analytics-tile.is-up strong,
+.visibility-tiles .analytics-tile.is-up .visibility-delta { color: var(--visibility-up-ink); }
+.visibility-tiles .analytics-tile.is-down strong,
+.visibility-tiles .analytics-tile.is-down .visibility-delta { color: var(--visibility-down-ink); }
+.visibility-tiles .analytics-tile.is-up .visibility-delta,
+.visibility-tiles .analytics-tile.is-down .visibility-delta { font-weight: 700; }
 
 /* Questions kept out of the score: their own table after a clear break. */
 .visibility-apart {
@@ -678,30 +670,24 @@ html[data-theme="dark"] .visibility-logo.is-monochrome::before {
   flex-direction: column;
   gap: 12px;
   margin-top: 18px;
-  padding-top: 26px;
-  border-top: 1px dashed var(--paper-border-strong);
 }
 
 .visibility-apart-head h2 {
-  margin: 0 0 4px;
+  margin: 0 0 6px;
   color: var(--ink);
-  font: 700 16px/22px var(--sans);
+  font: 700 17px/22px var(--sans);
 }
 
 .visibility-apart-head p {
-  max-width: 680px;
+  max-width: 720px;
   margin: 0;
   color: var(--ink-secondary);
-  font: 13.5px/20px var(--sans);
+  font: 15px/22px var(--sans);
 }
-
-.visibility-apart .visibility-table { background: var(--paper-task); }
-.visibility-apart .visibility-question,
-.visibility-apart .visibility-row.is-head { background: var(--paper-task); }
 
 @media (max-width: 760px) {
   .visibility-view .workspace-header { flex-wrap: wrap; }
-  .visibility-tiles .analytics-tile.is-hero { flex-basis: 100%; }
+  .visibility-tiles .analytics-tile.is-recommended { flex-basis: 100%; }
   .visibility-key { flex-direction: column; align-items: flex-start; }
   .visibility-close { margin-left: 0; }
 }
