@@ -25,6 +25,7 @@ API answer is not what a person sees on claude.ai.
 | `chatgpt_cloro` | consumer app | As `chatgpt`, through cloro | [cloro, ChatGPT](https://cloro.dev/docs/api-reference/endpoint/monitor-chatgpt?utm_source=tin&utm_medium=byok) | live |
 | `gemini_cloro` | consumer app | As `gemini`, through cloro | [cloro, Gemini](https://cloro.dev/docs/api-reference/endpoint/monitor-gemini?utm_source=tin&utm_medium=byok) | live |
 | `google_ai_mode_cloro` | consumer app | As `google_ai_mode`, through cloro | [cloro, AI Mode](https://cloro.dev/docs/api-reference/endpoint/monitor-aimode?utm_source=tin&utm_medium=byok) | live |
+| `bing_ai_mode_cloro` | consumer app | Bing AI Mode's answer and its sources | [cloro, Bing AI Mode](https://cloro.dev/docs/api-reference/endpoint/monitor-bing-aimode?utm_source=tin&utm_medium=byok) | live |
 
 Not covered: Microsoft Copilot and Grok (DataForSEO offers neither), and the consumer apps
 claude.ai and perplexity.ai. ChatGPT is asked without `force_web_search`, so the row shows
@@ -46,6 +47,9 @@ Why some engines run live:
 second source, not new coverage: a caller asks them only by naming them in `engines`, and the
 default panel stays the six DataForSEO engines. A panel can name both forms of an engine.
 
+`bing_ai_mode_cloro` asks Bing AI Mode, which has no DataForSEO engine in Tin. It is also
+asked only when a caller names it. Its rows follow the cloro column below.
+
 They need `CLORO_API_KEY` on the trusted worker, next to the DataForSEO credentials the
 activity already requires. Get a key at
 <https://dashboard.cloro.dev/api-keys?utm_source=tin&utm_medium=byok>. The Free plan
@@ -57,11 +61,11 @@ How the cloro rows differ from the DataForSEO rows:
 | | DataForSEO (`chatgpt`, `gemini`, `google_ai_mode`) | cloro (`*_cloro`) |
 |---|---|---|
 | Flow | Post the panel, then collect; the standard queue can take 45 minutes | One sync `POST` per answer; cloro may take up to 5 minutes, so Tin waits 310 s |
-| Location and language | `location_code` and `language_code` | `country`; AI Mode also gets `hl` and `device: desktop`. ChatGPT and Gemini take no language |
+| Location and language | `location_code` and `language_code` | `country`; AI Mode also gets `hl` and `device: desktop`. ChatGPT, Gemini and Bing AI Mode take no language |
 | ChatGPT web search | Not forced (`force_web_search` not sent) | Not forced (`disableWebSearch: true`) |
 | Answer text | `markdown` | `result.markdown`, else `result.text` |
 | Cited URLs | ChatGPT and Gemini: `sources`; AI Mode: the overview's `references` | `result.sources`, all of them, without AI Mode links left as `google.com/goto` redirects. ChatGPT's `footnote` flag is not used, because live answers link `footnote: true` pages inline. Gemini links a page once per quoted passage (`#:~:text=`), so that fragment is removed and the page counted once |
-| Model | `model` | ChatGPT's `result.model`, which is empty on its mobile-web answers; none for Gemini and AI Mode |
+| Model | `model` | ChatGPT's `result.model`, which is empty on its mobile-web answers; none for Gemini, AI Mode and Bing AI Mode |
 | Cost | USD per task, as reported | Credits from `X-Credits-Charged`, at $0.0008 a credit |
 
 `X-Request-ID` is kept as `provider_task_id`. cloro charges only a `200` response. A
@@ -78,7 +82,7 @@ that envelope, or a `200` without a credit count, stays `unknown`.
 | Google AI Mode, standard / priority | $0.0012 / $0.0024 (live $0.004) | [pricing](https://dataforseo.com/pricing/google-serp/google-ai-mode-serp-api) |
 | Google Organic live + AI Overview | $0.002 + $0.002 | [pricing](https://dataforseo.com/pricing/google-serp/google-organic-serp-api), [docs](https://docs.dataforseo.com/v3/serp/google/organic/live/advanced/) |
 | LLM Responses live | $0.0006 + the provider's charge (`money_spent`) | [pricing](https://dataforseo.com/pricing/ai-optimization/llm-responses), [how it is calculated](https://dataforseo.com/help-center/how-the-price-for-using-llm-responses-endpoints-is-calculated) |
-| cloro ChatGPT / Gemini / AI Mode, sync (read 2026-11-05) | 7 / 6 / 6 credits (base 5 / 4 / 4, plus 2 for a sync call). At Lite's $0.0008 a credit, the highest self-serve rate: $0.0056 / $0.0048 / $0.0048 | [providers](https://cloro.dev/docs/guides/providers?utm_source=tin&utm_medium=byok), [pricing](https://cloro.dev/pricing/?utm_source=tin&utm_medium=byok) |
+| cloro ChatGPT / Gemini / AI Mode / Bing AI Mode, sync (read 2026-11-05) | 7 / 6 / 6 / 6 credits (base 5 / 4 / 4 / 4, plus 2 for a sync call). At Lite's $0.0008 a credit, the highest self-serve rate: $0.0056 / $0.0048 / $0.0048 / $0.0048 | [providers](https://cloro.dev/docs/guides/providers?utm_source=tin&utm_medium=byok), [pricing](https://cloro.dev/pricing/?utm_source=tin&utm_medium=byok) |
 
 Collecting a posted task is free for 30 days. DataForSEO does not publish per-model LLM
 Responses prices, so the estimate uses Tin's own bounds: $0.05 per Claude answer and $0.02
@@ -192,3 +196,6 @@ as released (see [the audit notes](organic-audit-implementation.md)):
   real cost.
 - AI Mode links that cloro has not resolved come back as `google.com/goto` redirects and are
   not counted as citations. Resolving one costs a credit; this module does not do it.
+- Bing AI Mode refuses a prompt longer than 3,500 characters after URL encoding. Tin prompts
+  have at most 500 characters, but a prompt with many non-ASCII characters can be longer
+  after encoding. cloro then refuses it, and the row fails with `provider_rejected` at $0.

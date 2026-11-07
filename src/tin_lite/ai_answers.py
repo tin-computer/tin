@@ -1,6 +1,6 @@
 """How AI assistants answer buyer questions, measured through DataForSEO and cloro.
 
-One call asks a bounded prompt panel on up to nine answer engines and returns one row per
+One call asks a bounded prompt panel on up to ten answer engines and returns one row per
 prompt and engine: the trimmed answer, the URLs it cites, whether the brand is mentioned,
 cited or recommended first, and what the call cost.
 
@@ -10,7 +10,8 @@ Two kinds of measurement are kept apart on every row:
   collects ChatGPT and Gemini from their consumer interfaces; its SERP API collects Google
   AI Mode and the AI Overview on a Google results page. cloro's monitor API is a second
   source for ChatGPT, Gemini and Google AI Mode, as the engines ``chatgpt_cloro``,
-  ``gemini_cloro`` and ``google_ai_mode_cloro``.
+  ``gemini_cloro`` and ``google_ai_mode_cloro``. Bing AI Mode has only a cloro source,
+  ``bing_ai_mode_cloro``.
 - ``api_model_answer``: what the vendor's API model says. DataForSEO's LLM Responses API
   asks Claude and Perplexity Sonar models, with web search on. claude.ai and
   perplexity.ai are not measured.
@@ -24,6 +25,7 @@ Contracts (read 2026-11-05):
 https://cloro.dev/docs/api-reference/endpoint/monitor-chatgpt?utm_source=tin&utm_medium=byok
 https://cloro.dev/docs/api-reference/endpoint/monitor-gemini?utm_source=tin&utm_medium=byok
 https://cloro.dev/docs/api-reference/endpoint/monitor-aimode?utm_source=tin&utm_medium=byok
+https://cloro.dev/docs/api-reference/endpoint/monitor-bing-aimode?utm_source=tin&utm_medium=byok
 
 Paid requests are never retried automatically. A caller-supplied ledger makes each paid
 request at most once per run; an attempt whose outcome is unknown is reported, not repeated.
@@ -188,6 +190,15 @@ ENGINES: dict[str, Engine] = {
         surface="Google AI Mode (cloro)",
         mode="live",
         post="v1/monitor/aimode",
+        provider="cloro",
+        price={"standard": 6 * CLORO_USD_PER_CREDIT, "high": 6 * CLORO_USD_PER_CREDIT},
+    ),
+    "bing_ai_mode_cloro": Engine(
+        key="bing_ai_mode_cloro",
+        measurement=CONSUMER_APP_ANSWER,
+        surface="Bing AI Mode (cloro)",
+        mode="live",
+        post="v1/monitor/bing/aimode",
         provider="cloro",
         price={"standard": 6 * CLORO_USD_PER_CREDIT, "high": 6 * CLORO_USD_PER_CREDIT},
     ),
@@ -816,6 +827,8 @@ def task_request(request: AIAnswersRequest, engine: str, index: int, tag: str) -
             "device": "desktop",
             "include": {"markdown": True},
         }
+    if engine == "bing_ai_mode_cloro":  # Bing AI Mode has no language field.
+        return {"prompt": prompt, "country": request.market, "include": {"markdown": True}}
     raise ValueError("Unknown answer engine.")
 
 

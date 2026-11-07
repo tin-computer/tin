@@ -265,6 +265,7 @@ def test_every_engine_is_labelled_as_one_of_two_measurements():
         "chatgpt_cloro": CONSUMER_APP_ANSWER,
         "gemini_cloro": CONSUMER_APP_ANSWER,
         "google_ai_mode_cloro": CONSUMER_APP_ANSWER,
+        "bing_ai_mode_cloro": CONSUMER_APP_ANSWER,
     }
 
 
@@ -511,13 +512,18 @@ def cloro_error(status, code):
     return httpx.Response(status, json={"success": False, "error": envelope})
 
 
-CLORO = ["chatgpt_cloro", "gemini_cloro", "google_ai_mode_cloro"]
+CLORO = ["chatgpt_cloro", "gemini_cloro", "google_ai_mode_cloro", "bing_ai_mode_cloro"]
 
 
 class FakeCloro:
     """Answers cloro's sync monitor endpoints; anything else goes to FakeDataForSEO."""
 
-    CREDITS = {"chatgpt_cloro": "7", "gemini_cloro": "6", "google_ai_mode_cloro": "6"}
+    CREDITS = {
+        "chatgpt_cloro": "7",
+        "gemini_cloro": "6",
+        "google_ai_mode_cloro": "6",
+        "bing_ai_mode_cloro": "6",
+    }
 
     def __init__(self, dataforseo=None) -> None:
         self.dataforseo = dataforseo or FakeDataForSEO(pending_rounds=0)
@@ -570,8 +576,8 @@ async def test_cloro_engines_ask_chatgpt_gemini_and_ai_mode_with_a_bearer_key():
     assert not set(CLORO) & set(DEFAULT_ENGINES)
     fake = FakeCloro()
     request = AIAnswersRequest.from_inputs(inputs(engines=["chatgpt", *CLORO]))
-    # 2 x (0.0012 + 7, 6 and 6 credits at $0.0008).
-    assert estimate_cost(request) == Decimal("0.0328")
+    # 2 x (0.0012 + 7, 6, 6 and 6 credits at $0.0008).
+    assert estimate_cost(request) == Decimal("0.0424")
     ledger = MemoryLedger()
     result = await run_cloro(fake, request, ledger=ledger)
     assert ledger.reserved["live:chatgpt_cloro:0"] == Decimal("0.0056")
@@ -592,7 +598,12 @@ async def test_cloro_engines_ask_chatgpt_gemini_and_ai_mode_with_a_bearer_key():
         (
             [
                 (path, {**body(path, p), "include": {"markdown": True}})
-                for path in ("/v1/monitor/chatgpt", "/v1/monitor/gemini", "/v1/monitor/aimode")
+                for path in (
+                    "/v1/monitor/chatgpt",
+                    "/v1/monitor/gemini",
+                    "/v1/monitor/aimode",
+                    "/v1/monitor/bing/aimode",
+                )
                 for p in PROMPTS
             ]
         ),
@@ -615,6 +626,7 @@ async def test_cloro_engines_ask_chatgpt_gemini_and_ai_mode_with_a_bearer_key():
         assert row["provider_task_id"] == f"req-{engine}"
     assert rows[("chatgpt_cloro", 1)]["cost_usd"] == "0.0056"
     assert rows[("google_ai_mode_cloro", 1)]["cost_usd"] == "0.0048"
+    assert rows[("bing_ai_mode_cloro", 1)]["cost_usd"] == "0.0048"
     assert rows[("chatgpt_cloro", 0)]["model"] == "gpt-5-3"
     assert rows[("gemini_cloro", 0)]["model"] is None
     assert result["summary"]["complete"]
@@ -713,6 +725,30 @@ async def test_cloro_rows_read_live_response_shapes():
                 "citationPills": [],
             },
         ),
+        # Bing AI Mode: sources with a description; citation pills index them by position.
+        "bing_ai_mode_cloro": live_shaped(
+            "bing_ai_mode_cloro",
+            {
+                "text": text,
+                "sources": [
+                    {
+                        "position": 1,
+                        "label": "Best form builders",
+                        "url": "https://review.example/best",
+                        "description": "The best form builders in 2026.",
+                    }
+                ],
+                "citationPills": [
+                    {
+                        "position": 1,
+                        "label": "Best form builders",
+                        "url": "https://review.example/best",
+                        "domain": "review.example",
+                        "citationPillId": 1,
+                    }
+                ],
+            },
+        ),
     }
     request = AIAnswersRequest.from_inputs(inputs(engines=CLORO, prompts=PROMPTS[:1]))
     rows = {r["engine"]: r for r in (await run_cloro(fake, request))["rows"]}
@@ -730,6 +766,8 @@ async def test_cloro_rows_read_live_response_shapes():
     ]
     assert rows["gemini_cloro"]["brand"]["cited"]
     assert rows["google_ai_mode_cloro"]["cited_urls"] == ["https://review.example/best"]
+    assert rows["bing_ai_mode_cloro"]["cited_urls"] == ["https://review.example/best"]
+    assert not rows["bing_ai_mode_cloro"]["brand"]["cited"]
     assert rows["chatgpt_cloro"]["cost_usd"] == "0.0056"
     assert rows["chatgpt_cloro"]["provider_task_id"] == "d7714ba6-9e0c-4fb4-a0fe-97b80e023210"
 
