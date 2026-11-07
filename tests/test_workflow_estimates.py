@@ -45,8 +45,10 @@ def test_unlisted_workflows_use_their_family_default():
 
 def test_versions_with_their_own_estimate():
     audit = SPECS["organic.audit"].definition
-    assert audit["audit_policy"]["version"] == "organic-audit-v16"
+    assert audit["audit_policy"]["version"] == "organic-audit-v17"
     assert estimate_nanos(audit, {}, 6 * DOLLAR) == 75 * NANOS_PER_CENT
+    previous = {**audit, "audit_policy": {**audit["audit_policy"], "version": "organic-audit-v16"}}
+    assert estimate_nanos(previous, {}, 6 * DOLLAR) == 75 * NANOS_PER_CENT
     earlier = {**audit, "audit_policy": {**audit["audit_policy"], "version": "organic-audit-v14"}}
     assert estimate_nanos(earlier, {}, 6 * DOLLAR) == 55 * NANOS_PER_CENT
     website = SPECS["website.change"].definition
