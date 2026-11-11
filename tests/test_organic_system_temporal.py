@@ -14,6 +14,7 @@ from temporalio.testing import WorkflowEnvironment
 from temporalio.worker import Replayer, Worker
 
 from tin_lite.codex_execution import ProjectCodexExecution
+from tin_lite.failures import payload_failure
 from tin_lite.workflows import CodexProcedureWorkflow, OrganicTrafficSystemWorkflow
 
 
@@ -293,6 +294,12 @@ async def test_parallel_research_exact_dependencies_and_replay(keyword_fails, re
         if event.HasField("activity_task_scheduled_event_attributes"):
             for payload in event.activity_task_scheduled_event_attributes.input.payloads:
                 value = json.loads(payload.data)
+                if isinstance(value, dict) and payload_failure(value) is not None:
+                    # Since failure-reason-v1 a failure activity also gets the classified
+                    # cause: the founder's line, its kind and bounded detail for operators.
+                    assert value["run_id"] == run_id
+                    assert set(value) <= {"run_id", "reason", "kind", "detail", "action", "code"}
+                    continue
                 assert value == run_id or value in [{"run_id": run_id, "step": key} for key in ids]
 
 
