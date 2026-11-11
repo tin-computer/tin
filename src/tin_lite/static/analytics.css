@@ -261,7 +261,10 @@
   border-radius: 2px;
 }
 
-.analytics-view .is-none { background: var(--ink-secondary); }
+/* Visits with no automation seen are stone in both themes (light mode's matches dark's ink-2), so
+   the moss is the chart's only colour (Paper Tin-2 "Analytics · bar colour", A3). */
+.analytics-view .is-none { background: #b4ac9b; }
+html[data-theme="dark"] .analytics-view .is-none { background: var(--ink-secondary); }
 .analytics-view .is-automated { background: var(--accent-deep); }
 .analytics-view .is-declared { background: rgb(var(--accent-deep-rgb) / 35%); }
 

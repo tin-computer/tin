@@ -284,6 +284,12 @@ test("page: a busy site's bars fill the chart, and today's label wraps rather th
     // declared crawlers on them, visits with no automation seen on top.
     const kinds = locator => locator.evaluateAll(bars => bars.map(bar => [...bar.querySelectorAll("i")].map(part => part.className)));
     assert.deepEqual(await kinds(page.locator(".analytics-day-bar .analytics-bar")), week.days.map(row => [["is-none", 1], ["is-declared", row.declared_crawler], ["is-automated", row.automated_browser]].filter(([, value]) => value).map(([kind]) => kind)));
+    // Visits with no automation seen are stone in both themes, so the moss is the only colour.
+    const stone = () => page.locator(".analytics-day-bar .is-none").first().evaluate(part => getComputedStyle(part).backgroundColor);
+    assert.equal(await stone(), "rgb(179, 170, 155)");
+    await page.evaluate(() => { document.documentElement.dataset.theme = "light"; });
+    assert.equal(await stone(), "rgb(180, 172, 155)");
+    await page.evaluate(() => { document.documentElement.dataset.theme = "dark"; });
     // The visits keep their share of the column, the burst day's 990 under 1,200 automated too.
     const none = await page.locator(".analytics-day-bar .is-none").evaluateAll(parts => parts.map(part => part.getBoundingClientRect().height));
     week.days.slice(1).forEach((row, index) => {
