@@ -492,7 +492,18 @@ window.TinAnalytics = (() => {
       <div class="analytics-pair">
         ${table("Companies that asked for pages", `${count(sum(operators, "verified"))} verified · ${count(sum(operators, "declared"))} declared`, [{ label: "Company" }, { label: "Verified", width: 64 }, { label: "Declared", width: 64 }], companyRows)}
         ${columns.length ? table("Pages AI companies loaded", `${count(loads)} loads`, [{ label: "Page" }, ...columns.map((operator) => ({ label: company(operator), width: 72 }))], pageRows) : ""}
-      </div>`;
+      </div>${agentNote(requests.agents)}`;
+  }
+
+  // Sites that serve markdown copies to agents: how many pages agents read that way, and the
+  // purposes agents gave in their user agents. Nothing shows until either happens.
+  function agentNote(agents) {
+    const markdown = agents?.markdown || 0;
+    const purposes = (agents?.purposes || []).slice(0, 5);
+    if (!markdown && !purposes.length) return "";
+    const read = markdown ? `Agents read ${count(markdown)} ${markdown === 1 ? "page" : "pages"} as markdown.` : "";
+    const gave = purposes.length ? ` Purposes agents gave: ${purposes.map((item) => `${item.purpose} (${count(item.loads)})`).join(", ")}.` : "";
+    return `<p class="analytics-notes">${escape(`${read}${gave}`.trim())}</p>`;
   }
 
   function bind(body) {
