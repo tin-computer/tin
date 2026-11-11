@@ -3,19 +3,21 @@
 //
 // A card is one <main data-card> at 1080 x 1350. Its headline is marked data-card-line, a logo
 // data-card-logo and a product screen or terminal data-card-screen. The words a card carries are
-// its headline and nothing else; a screen's own words are the product's and don't count.
+// its headline and nothing else; a screen's own words are the product's and don't count. Every
+// colour it paints is one of the brand's.
 
 export const WIDTH = 1080;
 export const HEIGHT = 1350;
 
 // Fonts every visible text uses, and whether the page loaded them. A generic or system family
 // (sans-serif, ui-monospace, -apple-system) is a fallback: a card set in one looks unbranded.
-export function fonts() {
+// scope is the card, or "body" for a product page shot for one.
+export function fonts(scope = "[data-card]") {
   const clean = value => value.trim().replace(/^["']|["']$/g, "");
   const loaded = new Set([...document.fonts].filter(face => face.status === "loaded").map(face => clean(face.family)));
   const generic = /^(serif|sans-serif|monospace|cursive|fantasy|system-ui|ui-sans-serif|ui-serif|ui-monospace|ui-rounded|-apple-system|BlinkMacSystemFont|emoji|math)$/i;
   const found = new Map();
-  for (const element of document.querySelectorAll("[data-card] *")) {
+  for (const element of document.querySelectorAll(`${scope} *`)) {
     const text = [...element.childNodes].filter(node => node.nodeType === 3).map(node => node.textContent).join("").trim();
     if (!text) continue;
     const box = element.getBoundingClientRect();
@@ -69,6 +71,55 @@ export function words() {
     headline: headline ? headline.innerText.replace(/\s+/g, " ").trim() : null,
     size: {width: Math.round(frame.width), height: Math.round(frame.height)},
   };
+}
+
+// Every colour the card paints with CSS: text, fills, borders, outlines and SVG paint, with
+// where it was seen. Images (artwork, a screen shot from the product) are pixels, not CSS, and
+// keep their own colours. tin-cards.js compares each with the brand's palette.
+export function colours() {
+  const seen = new Map();
+  const add = (value, what, element) => {
+    if (!value || value === "none" || value === "transparent" || /^rgba\(.*,\s*0\)$/.test(value)) return;
+    const key = value.replace(/\s+/g, "");
+    if (seen.has(key)) return;
+    const text = (element.innerText || element.textContent || element.className || element.tagName).toString();
+    seen.set(key, {value, what, sample: text.replace(/\s+/g, " ").trim().slice(0, 40) || element.tagName.toLowerCase()});
+  };
+  for (const element of [document.querySelector("[data-card]"), ...document.querySelectorAll("[data-card] *")]) {
+    if (!element) continue;
+    const style = getComputedStyle(element);
+    const box = element.getBoundingClientRect();
+    if (style.display === "none" || style.visibility === "hidden" || Number(style.opacity) < 0.05 || box.width < 1 || box.height < 1) continue;
+    const ownText = [...element.childNodes].some(node => node.nodeType === 3 && node.textContent.trim());
+    if (ownText) add(style.color, "text", element);
+    add(style.backgroundColor, "fill", element);
+    for (const match of style.backgroundImage.matchAll(/(rgba?\([^)]*\)|#[0-9a-f]{3,8})/gi)) add(match[1], "gradient", element);
+    for (const side of ["Top", "Right", "Bottom", "Left"]) {
+      if (parseFloat(style[`border${side}Width`]) > 0 && style[`border${side}Style`] !== "none") add(style[`border${side}Color`], "border", element);
+    }
+    if (parseFloat(style.outlineWidth) > 0 && style.outlineStyle !== "none") add(style.outlineColor, "outline", element);
+    if (element instanceof SVGElement) {
+      add(style.fill, "fill", element);
+      add(style.stroke, "stroke", element);
+    }
+  }
+  return [...seen.values()];
+}
+
+// A bar down the left edge of a box: a left border at least 2 px and wider than the box's
+// other borders. Tin marks nothing that way; a label or the content says what a box is.
+export function leftBars() {
+  const found = [];
+  for (const element of document.querySelectorAll("[data-card] *")) {
+    const style = getComputedStyle(element);
+    if (style.borderLeftStyle === "none") continue;
+    const left = parseFloat(style.borderLeftWidth);
+    const others = Math.max(parseFloat(style.borderTopWidth), parseFloat(style.borderRightWidth), parseFloat(style.borderBottomWidth));
+    if (left >= 2 && left > others) {
+      found.push({text: (element.innerText || element.tagName).replace(/\s+/g, " ").trim().slice(0, 40)});
+    }
+  }
+  return found;
 }
 
 // Eyebrows, the small label set above a title or a card's words (uppercase, letter-spaced or

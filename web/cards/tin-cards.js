@@ -2,17 +2,19 @@
 // Tin's card kit: render each LinkedIn post's card from its HTML, check it, and lay the batch out
 // on one sheet to look at before uploading.
 //
-//   tin-cards check <dir>   render <dir>/<post>.html to <post>.png and check every card
-//   tin-cards guide         print the guide
+//   tin-cards check <dir>               render <dir>/<post>.html to <post>.png and check every card
+//   tin-cards shoot <page> <out.png>    shoot a product page, or one part of it, for a card's screen
+//   tin-cards guide                     print the guide
 //
-// <dir>/cards.json lists the cards: [{"post": "p1", "line": "...", "alt_text": "..."}]. Each
-// card is <dir>/<post>.html, one <main data-card> at 1080 x 1350 (see guide/README.md).
+// <dir>/cards.json holds the brand's palette and lists the cards:
+//   {"palette": {"paper": "#f7f5ef", ...}, "cards": [{"post": "p1", "line": "...", "alt_text": "..."}]}
+// Each card is <dir>/<post>.html, one <main data-card> at 1080 x 1350 (see guide/README.md).
 
 import fs from "node:fs";
 import path from "node:path";
 import {fileURLToPath, pathToFileURL} from "node:url";
 import {chromium} from "playwright";
-import {HEIGHT, WIDTH, eyebrows, fonts, words} from "./checks.js";
+import {HEIGHT, WIDTH, colours, eyebrows, fonts, leftBars, words} from "./checks.js";
 
 const HERE = path.dirname(fileURLToPath(import.meta.url));
 // LinkedIn takes PNG or JPEG up to 5 MB, and so does Tin.
@@ -28,17 +30,46 @@ function normalise(text) {
   return (text || "").replace(/[’‘]/g, "'").replace(/\s+/g, " ").trim().toLowerCase();
 }
 
-async function settle(page) {
-  await page.evaluate(async () => {
-    await document.fonts.ready;
-    await Promise.all([...document.images].map(image => image.complete ? null : new Promise(done => {
-      image.addEventListener("load", done, {once: true});
-      image.addEventListener("error", done, {once: true});
-    })));
+// Each colour as [r, g, b, a] in sRGB, whatever syntax it was written in (hex, rgb(), oklch()),
+// read back from a one-pixel canvas.
+function inPageRGBA(values) {
+  const canvas = document.createElement("canvas");
+  canvas.width = canvas.height = 1;
+  const context = canvas.getContext("2d", {willReadFrequently: true});
+  return values.map(value => {
+    context.clearRect(0, 0, 1, 1);
+    context.fillStyle = "#000";
+    context.fillStyle = value;
+    context.fillRect(0, 0, 1, 1);
+    const [r, g, b, a] = context.getImageData(0, 0, 1, 1).data;
+    return [r, g, b, a / 255];
   });
 }
 
-async function checkCard(page, dir, card) {
+// A colour is the brand's when its red, green and blue match a palette colour; its opacity is
+// free, so a token at 12% is still that token. Low opacities read back less exactly, so they get
+// more room.
+function inPalette([r, g, b, a], palette) {
+  const room = 3 + Math.ceil(1 / Math.max(a, 0.02));
+  return palette.some(([pr, pg, pb]) => Math.abs(pr - r) <= room && Math.abs(pg - g) <= room && Math.abs(pb - b) <= room);
+}
+
+const hex = ([r, g, b, a]) => `#${[r, g, b].map(v => v.toString(16).padStart(2, "0")).join("")}${a < 0.99 ? ` at ${Math.round(a * 100)}%` : ""}`;
+
+async function settle(page) {
+  await page.evaluate(async () => {
+    // A lazy image below the fold never loads by itself: load every image now.
+    for (const image of document.images) image.loading = "eager";
+    await document.fonts.ready;
+    const images = Promise.all([...document.images].map(image => image.complete ? null : new Promise(done => {
+      image.addEventListener("load", done, {once: true});
+      image.addEventListener("error", done, {once: true});
+    })));
+    await Promise.race([images, new Promise(done => setTimeout(done, 10000))]);
+  });
+}
+
+async function checkCard(page, dir, card, palette) {
   const errors = [];
   const warnings = [];
   const file = path.join(dir, `${card.post}.html`);
@@ -65,6 +96,15 @@ async function checkCard(page, dir, card) {
     // A screen may run off the card's edge by design; the headline never may.
     if (item.inScreen) warnings.push(message);
     else errors.push(message);
+  }
+  const painted = await page.evaluate(colours);
+  const values = await page.evaluate(inPageRGBA, painted.map(item => item.value));
+  painted.forEach((item, index) => {
+    if (inPalette(values[index], palette)) return;
+    errors.push(`${card.post}: ${hex(values[index])}, the ${item.what} of “${item.sample}”, isn't one of the brand's colours. Use a colour from the palette in cards.json.`);
+  });
+  for (const item of await page.evaluate(leftBars)) {
+    errors.push(`${card.post}: “${item.text}” has a bar down its left edge. Tin marks nothing that way: drop the border, or give the box the same border all round.`);
   }
   for (const item of await page.evaluate(eyebrows)) {
     errors.push(`${card.post}: an eyebrow, “${item.text}”, sits small above “${item.under}”. Tin never uses eyebrows: delete it.`);
@@ -108,14 +148,17 @@ async function check(dir) {
   if (!dir || !fs.existsSync(dir)) fail("Usage: tin-cards check <dir>, the folder with cards.json and the cards' HTML.");
   const listed = path.join(dir, "cards.json");
   if (!fs.existsSync(listed)) fail(`${listed} is missing: list each card's post, line and alt_text.`);
-  const cards = JSON.parse(fs.readFileSync(listed, "utf8"));
+  const {palette: named, cards} = JSON.parse(fs.readFileSync(listed, "utf8"));
+  if (!named || !Object.keys(named).length) fail("cards.json has no palette. Copy the brand's colours from brand/BRAND.md (Tin gives them with the draft).");
   if (!Array.isArray(cards) || !cards.length) fail("cards.json lists no cards.");
   const browser = await chromium.launch();
   const page = await browser.newPage({viewport: {width: WIDTH, height: HEIGHT}, deviceScaleFactor: 1});
+  await page.setContent("<!doctype html><title>palette</title>");
+  const palette = await page.evaluate(inPageRGBA, Object.values(named));
   const images = [];
   let errors = 0;
   for (const card of cards) {
-    const result = await checkCard(page, dir, card);
+    const result = await checkCard(page, dir, card, palette);
     for (const message of result.errors) console.error(`error  ${message}`);
     for (const message of result.warnings) console.error(`note   ${message}`);
     errors += result.errors.length;
@@ -128,7 +171,50 @@ async function check(dir) {
   console.log(`${cards.length} card${cards.length === 1 ? "" : "s"} passed.`);
 }
 
-const [command, arg] = process.argv.slice(2);
-if (command === "check") await check(arg);
-else if (command === "guide") console.log(fs.readFileSync(path.join(HERE, "guide", "README.md"), "utf8"));
-else fail("Usage: tin-cards check <dir> | tin-cards guide");
+// A product page, shot as the product draws it, for a card's screen: the company's own markup,
+// stylesheet and fonts with sample data, from a local file or the running app. Shot at twice
+// the size so it stays sharp when the card scales it.
+async function shoot(source, out, options) {
+  if (!source || !out) fail("Usage: tin-cards shoot <page.html | http://localhost:…> <out.png> [--width 1280] [--height 900] [--selector css] [--scale 2] [--scheme dark]");
+  // A local page may carry a query (page.html?view=analytics) that picks what it shows.
+  const [file, query] = source.split("?");
+  const url = /^https?:\/\//.test(source) ? source : `${pathToFileURL(path.resolve(file)).href}${query ? `?${query}` : ""}`;
+  const width = Number(options.width || 1280);
+  const height = Number(options.height || 900);
+  const browser = await chromium.launch();
+  const page = await browser.newPage({viewport: {width, height}, deviceScaleFactor: Number(options.scale || 2), colorScheme: options.scheme === "dark" ? "dark" : "light"});
+  await page.goto(url, {waitUntil: "load"});
+  // A live site may never go quiet (analytics keep polling): wait a little for its data, then shoot.
+  await page.waitForLoadState("networkidle", {timeout: 5000}).catch(() => {});
+  await settle(page);
+  let problems = 0;
+  for (const face of await page.evaluate(fonts, "body")) {
+    if (!face.generic && face.loaded) continue;
+    console.error(`error  “${face.sample}” is set in ${face.family}, ${face.generic ? "a fallback" : "which didn't load"}. Load the product's own font before shooting it.`);
+    problems += 1;
+  }
+  const target = options.selector ? page.locator(options.selector).first() : page;
+  if (options.selector && !(await target.count())) fail(`Nothing on the page matches ${options.selector}.`);
+  await target.screenshot({path: out, animations: "disabled", timeout: 30000});
+  await browser.close();
+  if (problems) fail(`${problems} font problem${problems === 1 ? "" : "s"}: the shot is at ${out}, but don't use it until the fonts load.`);
+  console.log(`Shot ${url}${options.selector ? ` (${options.selector})` : ""} to ${out}.`);
+}
+
+function flags(args) {
+  const options = {};
+  const rest = [];
+  for (let i = 0; i < args.length; i += 1) {
+    if (args[i].startsWith("--")) options[args[i].slice(2)] = args[(i += 1)];
+    else rest.push(args[i]);
+  }
+  return {options, rest};
+}
+
+const [command, ...args] = process.argv.slice(2);
+if (command === "check") await check(args[0]);
+else if (command === "shoot") {
+  const {options, rest} = flags(args);
+  await shoot(rest[0], rest[1], options);
+} else if (command === "guide") console.log(fs.readFileSync(path.join(HERE, "guide", "README.md"), "utf8"));
+else fail("Usage: tin-cards check <dir> | tin-cards shoot <page> <out.png> | tin-cards guide");

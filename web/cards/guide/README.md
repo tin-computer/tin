@@ -36,6 +36,40 @@ The kinds the draft asks for:
 Make the screen large enough to read in the feed, where a card shows at about half its width:
 body text no smaller than 20 px on the card.
 
+## Screens
+
+A screen on a card is a picture of the product as the product draws it. Redrawing one by hand
+fills every gap with a colour or a shape the company never made.
+
+- Run the product, or load its own stylesheet and components, with sample data: invented people
+  and companies, never a real customer's. Where the product's code can build that data, use it.
+- Shoot the page, or the one part the post is about, at twice its size:
+
+  ```
+  tin-cards shoot http://localhost:3000/analytics screens/analytics.png --width 760 --height 1500
+  tin-cards shoot https://example.com/ screens/people.png --selector ".people-list"
+  ```
+
+  It refuses a shot whose text fell back to a system font. `--scheme dark` shoots the dark theme.
+- A narrow width lets the product's own layout reflow, so the shot reads at about 1.3 times its
+  size on the card.
+- A terminal is the company's own transcript or terminal component, from its site, with output a
+  real command gave.
+- Leave out other companies' logos; turn them off in the sample data when the product shows them.
+
+## Colours
+
+Every colour a card paints is one of the brand's. List the brand's colours from brand/BRAND.md
+in `cards.json` as its palette; the check fails any other colour, at any opacity. Shots and
+artwork keep their own colours.
+
+## Composition
+
+Start from the cards in `social/linkedin/cards/`, the layouts a member picked for the page. When
+there are none yet, make a round first: the same posts in several compositions, each taken from
+a layout the company already publishes (a section of its site, its hero, its link preview, its
+dark theme), and let a member pick before making the batch.
+
 ## Never
 
 - No eyebrows: no small uppercase, letter-spaced or mono label above a title, a card's words or
@@ -44,13 +78,18 @@ body text no smaller than 20 px on the card.
 - No customer names, prices or numbers the post doesn't give, unless they are sample data
   inside a screen.
 - No art the company doesn't publish, and no third-party logos.
+- No colour outside the brand's palette.
+- No bar down a box's left edge to mark it.
 
 ## Check
 
-List the cards in `cards.json` beside them:
+List the brand's palette and the cards in `cards.json` beside them:
 
 ```json
-[{"post": "p1", "line": "The card line", "alt_text": "What the card shows, and its headline."}]
+{
+  "palette": {"paper": "#f7f5ef", "ink": "#26231c"},
+  "cards": [{"post": "p1", "line": "The card line", "alt_text": "What the card shows, and its headline."}]
+}
 ```
 
 Then run:
@@ -65,6 +104,8 @@ It renders each card to `<post>.png` and fails a card when:
 - the headline runs past the card's edge or is clipped;
 - there is text outside the headline, a logo or a screen;
 - there is an eyebrow;
+- a colour isn't in the palette;
+- a box has a bar down its left edge;
 - the headline is over nine words;
 - the alt text is missing;
 - the image is over 5 MB, even as a JPEG.
