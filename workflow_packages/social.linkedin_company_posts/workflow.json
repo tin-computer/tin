@@ -1,0 +1,95 @@
+{
+  "package_format": "tin-workflow-package-v1",
+  "definition": {
+    "key": "social.linkedin_company_posts",
+    "title": "Write posts for your LinkedIn company page",
+    "description": "Write six posts for your company's LinkedIn page from your brand guide, notes and site wording, each with a brief for its card. Your coding agent makes the cards with Tin's card kit; you pick which post goes out. Nothing is posted.",
+    "version": "0.1.0",
+    "executor": "workflow.code",
+    "system": "linkedin",
+    "schedule_modes": ["on_demand"],
+    "prerequisites": [
+      {
+        "kind": "artifact",
+        "level": "recommended",
+        "path": "brand/BRAND.md",
+        "producer": "brand.capture",
+        "reason": "The brand guide says what the company is and how it sounds."
+      }
+    ],
+    "input_schema": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "project_id": {"type": "string", "format": "uuid"},
+        "direction": {
+          "type": "string",
+          "maxLength": 2000,
+          "default": "",
+          "title": "Optional direction",
+          "description": "What this batch should cover, in a sentence or two: a launch, a feature, a theme. Tin treats it as decided.",
+          "x-tin-ui": {"control": "textarea", "order": 10}
+        },
+        "formats_path": {
+          "type": "string",
+          "maxLength": 512,
+          "default": "social/linkedin/company/FORMATS.md",
+          "title": "Formats file",
+          "description": "The post formats your page uses. Without the file, Tin picks formats and lists them with the batch.",
+          "x-tin-ui": {"control": "project_file", "order": 20, "advanced": true}
+        },
+        "style_path": {
+          "type": "string",
+          "maxLength": 512,
+          "default": "",
+          "title": "Optional writing guide",
+          "description": "A writing guide in project Files for the page's voice. Without it, Tin uses the project's writing style guide.",
+          "x-tin-ui": {"control": "project_file", "order": 30, "advanced": true}
+        }
+      },
+      "required": ["project_id"]
+    },
+    "code": {
+      "runtime": "python3.12.8-stdlib-v1",
+      "entrypoint": "main.py",
+      "files": ["main.py", "rules/guide.md", "rules/tells.txt"],
+      "timeout_seconds": 600,
+      "model_routes": {
+        "write": {
+          "provider": "openai",
+          "model": "gpt-6.1-sol",
+          "max_calls": 2,
+          "max_input_bytes": 200000,
+          "max_output_tokens": 16000
+        }
+      },
+      "output": {
+        "kind": "project.artifact",
+        "path": "social/linkedin/drafts/{date}-{slug}.json",
+        "media_type": "application/json",
+        "max_bytes": 256000,
+        "summary": true
+      }
+    },
+    "presentation": {
+      "flow": {
+        "direction": "TD",
+        "nodes": [
+          {"id": "gather", "kind": "step", "label": "Read brand, notes and site", "fact": "code, earlier batches too"},
+          {"id": "write", "kind": "step", "label": "Write six posts", "fact": "one model call, a card brief each"},
+          {"id": "check", "kind": "step", "label": "Check each post", "fact": "code checks, one call fixes what they find"},
+          {"id": "batch", "kind": "store", "label": "Draft in project Files", "fact": "social/linkedin/drafts, waits for cards"},
+          {"id": "cards", "kind": "step", "label": "Your agent makes the cards", "fact": "Tin's card kit, checked before upload"},
+          {"id": "pick", "kind": "gate", "label": "You pick the next post", "fact": "nothing is posted without a pick"}
+        ],
+        "edges": [
+          {"from": "gather", "to": "write", "kind": "call"},
+          {"from": "write", "to": "check", "kind": "call"},
+          {"from": "check", "to": "batch", "kind": "call"},
+          {"from": "batch", "to": "cards", "kind": "signal"},
+          {"from": "cards", "to": "pick", "kind": "signal"}
+        ]
+      }
+    }
+  }
+}

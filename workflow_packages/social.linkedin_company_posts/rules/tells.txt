@@ -1,0 +1,55 @@
+# Phrases that mark machine-written copy. One per line, matched without case on word
+# boundaries. The copy check flags each paragraph that uses one.
+a myriad of
+a plethora of
+at the end of the day
+best-in-class
+cutting-edge
+deep dive
+delve
+delves
+delving
+elevate your
+embark on
+empower
+empowers
+ever-changing
+ever-evolving
+game changer
+game-changer
+harness the
+here's the thing
+imagine a world
+in conclusion
+in short
+in summary
+in today's
+in the realm of
+in the world of
+it's important to note
+it's worth noting
+key takeaways
+let's dive
+look no further
+navigate the
+navigating the
+next-level
+paradigm shift
+picture this
+plays a crucial role
+plays a pivotal role
+revolutionize
+revolutionise
+seamless
+seamlessly
+supercharge
+synergy
+tapestry
+testament to
+the power of
+the truth is
+unleash
+unlock the
+unlocking
+whether you're
+world-class
