@@ -302,20 +302,33 @@ def test_iana_link_support_follows_installed_zone_data(monkeypatch, available):
     assert requested == ["US/Eastern"]
 
 
+def _loads(name: str) -> bool:
+    try:
+        ZoneInfo(name)
+    except (ZoneInfoNotFoundError, ValueError):
+        return False
+    return True
+
+
+# A zone new schedules refuse but that still loads, as an older saved schedule's may. Zone
+# files differ by system (macOS has no `localtime`), so take one this host has.
+LEGACY_ZONE = next(name for name in ("localtime", "Factory", "posixrules") if _loads(name))
+
+
 def test_a_saved_schedule_with_a_now_refused_zone_still_loads_and_projects():
-    stored = {"cadence": "daily", "local_time": "09:00", "timezone": "localtime"}
+    stored = {"cadence": "daily", "local_time": "09:00", "timezone": LEGACY_ZONE}
     schedule = WorkflowSchedule.model_validate(stored)
     assert next_run_after(schedule) is not None
     # Keeping it unchanged in an edit is not a new save of the zone.
     require_saveable_schedule(schedule, previous=schedule.model_dump(mode="json"))
 
 
-async def test_http_refuses_a_localtime_schedule_but_keeps_an_unchanged_legacy_one(
+async def test_http_refuses_a_refused_zone_schedule_but_keeps_an_unchanged_legacy_one(
     publication_db,
 ):
     f = await fixture(publication_db)
     f.runtime.temporal = Clock()
-    legacy = {**SCHEDULE, "timezone": "localtime"}
+    legacy = {**SCHEDULE, "timezone": LEGACY_ZONE}
     await f.db.pool.execute(
         "UPDATE project_workflows SET schedule = $2::jsonb WHERE id = $1",
         f.configured.id,

@@ -10,7 +10,10 @@ from temporalio.exceptions import ApplicationError
 from temporalio.testing import WorkflowEnvironment
 from temporalio.worker import Replayer, Worker
 
+from tin_lite.failures import payload_failure
 from tin_lite.workflows import XFeedbackWorkflow
+
+FAILURE_FIELDS = {"run_id", "reason", "kind", "detail", "action", "code"}
 
 
 @pytest.mark.parametrize("fail", [False, True])
@@ -23,8 +26,9 @@ async def test_revision_history_and_replay(fail):
 
     def stub(name):
         @activity.defn(name=name)
-        async def call(argument: str):
-            assert argument == run_id
+        async def call(argument):
+            # Since failure-reason-v1 the failure activity also gets the classified cause.
+            assert (argument["run_id"] if isinstance(argument, dict) else argument) == run_id
             calls.append(name)
             if fail and name == "x_feedback_generate":
                 raise ApplicationError("Synthetic invalid output", non_retryable=True)
@@ -61,4 +65,9 @@ async def test_revision_history_and_replay(fail):
                 decoded = await env.client.data_converter.decode(
                     event.activity_task_scheduled_event_attributes.input.payloads
                 )
-                assert decoded == [run_id]
+                if isinstance(decoded[0], dict):
+                    # The founder's line, its kind and bounded detail for operators; no output.
+                    assert decoded[0]["run_id"] == run_id and payload_failure(decoded[0])
+                    assert set(decoded[0]) <= FAILURE_FIELDS
+                else:
+                    assert decoded == [run_id]
