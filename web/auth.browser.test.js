@@ -60,13 +60,13 @@ test("auth keeps the OAuth return through both account modes and bypasses provis
       const other = mode === "sign-in" ? "signUpUrl" : "signInUrl";
       assert.equal(new URL(calls[0].props[other], base).searchParams.get("redirect_url"), continuation);
       assert.equal(await page.evaluate(() => window.loadProps.localization.signIn.start.subtitle), "Connect your coding agent to your Tin account.");
+      assert.equal(await page.evaluate(() => document.documentElement.dataset.theme), theme);
+      assert.equal(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth), true);
       // An agent signing in to Curator through Tin's accounts is told it's for Curator.
       await page.goto(`${base}/${mode}?${new URLSearchParams({redirect_url: `${continuation}&${curator}`})}`);
       await page.locator("#clerk-auth").waitFor();
       for (const step of ["signIn", "signUp"]) assert.equal(await page.evaluate(step => window.loadProps.localization[step].start.subtitle, step), "Connect your coding agent to Curator. Your Tin account signs you in.");
       assert.equal(await page.evaluate(() => window.authCalls[0].props.forceRedirectUrl), `${continuation}&${curator}`);
-      assert.equal(await page.evaluate(() => document.documentElement.dataset.theme), theme);
-      assert.equal(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth), true);
       // A normal product sign-in still uses the normal destination and copy.
       await page.goto(`${base}/${mode}?invite=invitation`);
       await page.locator("#clerk-auth").waitFor();
