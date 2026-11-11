@@ -18,6 +18,8 @@ test("consent preserves request, mounts Clerk only after sign-in, and recovers f
         CLERK_PUBLISHABLE_KEY: "synthetic", SIGN_UP_URL: "https://accounts.test/sign-up",
         SIGN_IN_URL: "https://accounts.test/sign-in", PORTAL_CONSENT_URL: "https://accounts.test/oauth-consent",
         AGENT_PROMPT: "Use Tin to grow my project like a pro!",
+        CONSENT_TITLE: "Let your coding agent grow your project.",
+        CONSENT_TEXT: "Allow it to use your Tin account and it will plan your marketing from your codebase, run it on a schedule, and bring you drafts to approve.",
       };
       for (const [key, value] of Object.entries(values)) html = html.replaceAll(`{{${key}}}`, value);
       response.writeHead(200, {"Content-Type": "text/html", "Referrer-Policy": "strict-origin-when-cross-origin"});

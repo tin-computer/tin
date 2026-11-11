@@ -9241,9 +9241,14 @@ async function initializeAuth() {
   try {
     const localization = structuredClone(TIN_AUTH_LOCALIZATION);
     if (authRoot.dataset.authFlow === "mcp") {
+      // An agent signing in to another app on Tin's accounts (Curator) is told which.
+      const app = authRoot.dataset.authApp;
+      const subtitle = app && !app.startsWith("{{")
+        ? `Connect your coding agent to ${app}. Your Tin account signs you in.`
+        : "Connect your coding agent to your Tin account.";
       for (const mode of ["signIn", "signUp"]) {
-        localization[mode].start.subtitle = "Connect your coding agent to your Tin account.";
-        localization[mode].start.subtitleCombined = localization[mode].start.subtitle;
+        localization[mode].start.subtitle = subtitle;
+        localization[mode].start.subtitleCombined = subtitle;
       }
     }
     await window.Clerk.load({

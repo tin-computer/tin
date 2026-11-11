@@ -11,7 +11,7 @@ from __future__ import annotations
 from html import escape
 from pathlib import Path
 from typing import Any
-from urllib.parse import urlencode
+from urllib.parse import parse_qs, urlencode
 
 from fastapi import APIRouter, FastAPI, Request
 from fastapi.responses import (
@@ -28,6 +28,21 @@ STATIC_DIR = Path(__file__).with_name("static")
 AUTHORIZE_PATH = "/mcp/authorize"
 CONSENT_PATH = "/mcp/consent"
 AGENT_PROMPT = "Use Tin to grow my project like a pro!"
+# Other apps that share Tin's Clerk instance, by the MCP resource their agents sign in to.
+# Clerk sends every app's consent to Tin's page, so sign-in and consent name the app asked for.
+OTHER_APPS = {"https://curator.tin.computer/mcp": "Curator"}
+CONSENT_WORDS = {
+    None: (
+        "Let your coding agent grow your project.",
+        "Allow it to use your Tin account and it will plan your marketing from your codebase, "
+        "run it on a schedule, and bring you drafts to approve.",
+    ),
+    "Curator": (
+        "Let your coding agent use Curator.",
+        "Allow it to use your Tin account to make pictures, videos and sketches in Curator, "
+        "and to read what you mark on them.",
+    ),
+}
 
 
 def public_url(settings: Any) -> str:
@@ -59,6 +74,14 @@ def agent_hint(settings: Any) -> str:
         "\n"
         f'The prompt that starts the onboarding: "{AGENT_PROMPT}"\n'
     )
+
+
+def requested_app(query: str) -> str | None:
+    """The other app an agent's OAuth request is for, by the resource it names (Codex may repeat
+    it); None is Tin. It only chooses words: Clerk's component still shows the client, scopes and
+    destination."""
+    resources = {value.rstrip("/") for value in parse_qs(query).get("resource", [])}
+    return OTHER_APPS.get(resources.pop()) if len(resources) == 1 else None
 
 
 def bearer_challenge(settings: Any) -> str:
@@ -148,6 +171,7 @@ async def mcp_consent_page(request: Request) -> Response:
     # Clerk retains the original client, state, PKCE, scope and callback parameters.
     query = request.url.query
     return_url = f"{public_url(settings)}{CONSENT_PATH}?{query}"
+    title, text = CONSENT_WORDS[requested_app(query)]
     replacements = {
         "{{ASSET_VERSION}}": ASSET_VERSION,
         "{{CLERK_PUBLISHABLE_KEY}}": settings.clerk_publishable_key,
@@ -157,6 +181,8 @@ async def mcp_consent_page(request: Request) -> Response:
         "{{SIGN_IN_URL}}": f"{public_url(settings)}/sign-in?"
         + urlencode({"redirect_url": return_url}),
         "{{AGENT_PROMPT}}": AGENT_PROMPT,
+        "{{CONSENT_TITLE}}": title,
+        "{{CONSENT_TEXT}}": text,
     }
     html = (STATIC_DIR / "mcp-consent.html").read_text()
     for marker, value in replacements.items():
