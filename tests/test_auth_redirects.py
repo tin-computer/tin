@@ -55,6 +55,38 @@ async def test_auth_pages_preserve_only_validated_continuations(route, continuat
     assert response.headers["cache-control"] == "no-store, max-age=0"
 
 
+CURATOR = "resource=https%3A%2F%2Fcurator.tin.computer%2Fmcp"
+AUTHORIZE = "https://clerk.tin.computer/oauth/authorize"
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("route", ["/sign-in", "/sign-up"])
+@pytest.mark.parametrize(
+    ("continuation", "other_app"),
+    [
+        (f"{AUTHORIZE}?client_id=a&{CURATOR}", "Curator"),
+        (f"https://lite.tin.computer/mcp/consent?client_id=a&{CURATOR}", "Curator"),
+        (f"{AUTHORIZE}?{CURATOR}&{CURATOR}", "Curator"),
+        (f"{AUTHORIZE}?client_id=a&resource=https%3A%2F%2Flite.tin.computer%2Fmcp", ""),
+        (f"{AUTHORIZE}?{CURATOR}&resource=https%3A%2F%2Fevil.test%2Fmcp", ""),
+        (f"https://tin.computer/dashboard?{CURATOR}", ""),
+    ],
+)
+async def test_an_agent_signing_in_to_another_app_is_told_which(route, continuation, other_app):
+    app = FastAPI()
+    app.state.settings = SETTINGS
+    app.include_router(router)
+    async with httpx.AsyncClient(
+        transport=httpx.ASGITransport(app=app), base_url="https://lite.tin.computer"
+    ) as client:
+        response = await client.get(route, params={"redirect_url": continuation})
+    assert response.status_code == 200
+    parsed = AuthRoot()
+    parsed.feed(response.text)
+    assert parsed.attrs["data-auth-return"] == continuation
+    assert parsed.attrs["data-auth-app"] == other_app
+
+
 @pytest.mark.asyncio
 @pytest.mark.parametrize(
     "target",

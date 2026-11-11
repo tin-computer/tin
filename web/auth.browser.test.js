@@ -8,6 +8,7 @@ import { chromium } from "playwright";
 
 const assets = path.resolve("src/tin_lite/static");
 const continuation = "https://clerk.tin.computer/oauth/authorize/continue?client_id=codex&state=a%2Bb%26c&code_challenge=opaque&code_challenge_method=S256&redirect_uri=http%3A%2F%2F127.0.0.1%3A7777%2Fcallback";
+const curator = `resource=${encodeURIComponent("https://curator.tin.computer/mcp")}`;
 const escaped = value => value.replaceAll("&", "&amp;").replaceAll('"', "&quot;");
 
 test("auth keeps the OAuth return through both account modes and bypasses provisioning for signed-in users", async () => {
@@ -17,7 +18,7 @@ test("auth keeps the OAuth return through both account modes and bypasses provis
     if (["/", "/sign-in", "/sign-up"].includes(url.pathname)) {
       let html = await fs.readFile(path.join(assets, "index.html"), "utf8");
       const returning = url.searchParams.get("redirect_url") || "";
-      for (const [key, value] of Object.entries({ASSET_VERSION: "test", BILLING_ENABLED: "false", CLERK_PUBLISHABLE_KEY: "synthetic", CLERK_FRONTEND_API_URL: "https://clerk.test", AUTH_RETURN_URL: escaped(returning), AUTH_FLOW: returning ? "mcp" : "product"})) html = html.replaceAll(`{{${key}}}`, value);
+      for (const [key, value] of Object.entries({ASSET_VERSION: "test", BILLING_ENABLED: "false", CLERK_PUBLISHABLE_KEY: "synthetic", CLERK_FRONTEND_API_URL: "https://clerk.test", AUTH_RETURN_URL: escaped(returning), AUTH_FLOW: returning ? "mcp" : "product", AUTH_APP: returning.includes(curator) ? "Curator" : ""})) html = html.replaceAll(`{{${key}}}`, value);
       response.writeHead(200, {"Content-Type": "text/html"});
       return response.end(html);
     }
@@ -59,6 +60,11 @@ test("auth keeps the OAuth return through both account modes and bypasses provis
       const other = mode === "sign-in" ? "signUpUrl" : "signInUrl";
       assert.equal(new URL(calls[0].props[other], base).searchParams.get("redirect_url"), continuation);
       assert.equal(await page.evaluate(() => window.loadProps.localization.signIn.start.subtitle), "Connect your coding agent to your Tin account.");
+      // An agent signing in to Curator through Tin's accounts is told it's for Curator.
+      await page.goto(`${base}/${mode}?${new URLSearchParams({redirect_url: `${continuation}&${curator}`})}`);
+      await page.locator("#clerk-auth").waitFor();
+      for (const step of ["signIn", "signUp"]) assert.equal(await page.evaluate(step => window.loadProps.localization[step].start.subtitle, step), "Connect your coding agent to Curator. Your Tin account signs you in.");
+      assert.equal(await page.evaluate(() => window.authCalls[0].props.forceRedirectUrl), `${continuation}&${curator}`);
       assert.equal(await page.evaluate(() => document.documentElement.dataset.theme), theme);
       assert.equal(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth), true);
       // A normal product sign-in still uses the normal destination and copy.

@@ -147,6 +147,42 @@ async def test_consent_page_preserves_oauth_request_and_uses_clerk_component() -
         assert returned == f"https://tin.test/mcp/consent?{query}"
 
 
+CURATOR_TITLE = "Let your coding agent use Curator."
+TIN_TITLE = "Let your coding agent grow your project."
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("resource", "title"),
+    [
+        ("&resource=https%3A%2F%2Fcurator.tin.computer%2Fmcp", CURATOR_TITLE),
+        ("&resource=https%3A%2F%2Ftin.test%2Fmcp", TIN_TITLE),
+        ("", TIN_TITLE),
+        (
+            "&resource=https%3A%2F%2Fcurator.tin.computer%2Fmcp"
+            "&resource=https%3A%2F%2Fcurator.tin.computer%2Fmcp",
+            CURATOR_TITLE,
+        ),
+        (
+            "&resource=https%3A%2F%2Fcurator.tin.computer%2Fmcp&resource=https%3A%2F%2Ftin.test%2Fmcp",
+            TIN_TITLE,
+        ),
+    ],
+)
+async def test_consent_page_names_the_app_the_agent_asked_for(resource, title) -> None:
+    app = _app(_settings())
+    query = f"client_id=client_claude&scope=openid&state=opaque{resource}"
+    async with httpx.AsyncClient(
+        transport=httpx.ASGITransport(app=app), base_url="https://tin.test"
+    ) as client:
+        page = await client.get(f"/mcp/consent?{query}")
+    assert page.status_code == 200
+    assert f"<h1>{title}</h1>" in page.text
+    curator = title == CURATOR_TITLE
+    assert ("plan your marketing" in page.text) is not curator
+    assert ("read what you mark on them" in page.text) is curator
+
+
 @pytest.mark.asyncio
 async def test_consent_page_does_not_render_client_supplied_html_or_redirect_off_site() -> None:
     app = _app(_settings())

@@ -9,7 +9,7 @@ from datetime import UTC, date, datetime, time, timedelta
 from html import escape
 from pathlib import Path, PurePosixPath
 from typing import Any, Literal
-from urllib.parse import quote
+from urllib.parse import quote, urlsplit
 from uuid import UUID, uuid4
 from zoneinfo import ZoneInfoNotFoundError
 
@@ -551,6 +551,7 @@ def _static_page(filename: str, request: Request) -> Response:
     }
     if filename == "index.html":
         from tin_lite.auth_redirects import auth_return_url
+        from tin_lite.mcp_oauth import requested_app
 
         if len(request.query_params.getlist("redirect_url")) > 1:
             raise HTTPException(status_code=400, detail="Start sign-in again with a fresh link.")
@@ -562,6 +563,8 @@ def _static_page(filename: str, request: Request) -> Response:
             ) from exc
         replacements["{{AUTH_RETURN_URL}}"] = escape(return_url, quote=True)
         replacements["{{AUTH_FLOW}}"] = "mcp" if is_mcp else "product"
+        other_app = requested_app(urlsplit(return_url).query) if is_mcp else None
+        replacements["{{AUTH_APP}}"] = escape(other_app or "", quote=True)
     # A return URL can contain marker-like opaque state. Substitute only the
     # original template, never reinterpret text introduced by a replacement.
     html = re.sub(

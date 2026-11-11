@@ -38,6 +38,11 @@ selection, Allow/Deny buttons and form submission. Tin never auto-consents, brok
 reads a saved client token, or implements its own OTP. A failed load offers reload and a
 fresh connection from the coding agent. No third-party analytics runs on this page.
 
+Curator shares the Clerk instance, so its agents' sign-in and consent come to these pages
+too. When the request's `resource` is Curator's (`https://curator.tin.computer/mcp`,
+`OTHER_APPS` in `mcp_oauth.py`), the sign-in subtitle and the consent intro name Curator.
+Only the words change: return validation and Clerk's component are the same for every app.
+
 ## OAuth resource binding
 
 New clients use the standard sign-in → Clerk consent → connected journey. No Tin
