@@ -140,6 +140,11 @@ as released (see [the audit notes](organic-audit-implementation.md)):
    gets one row per engine under `ai_engines`.
 5. `service_pricing` raises the audit's maximum by the engines' ceiling for v13 runs only.
 
+From `organic-audit-v17`, the report's closing limits count recorded answers and engines
+with at least one answer. A missing or unconfirmed answer does not count as a result.
+The audit's sampled API baseline stays separate from the app and API-model tables.
+Earlier pinned policies retain their report wording.
+
 ## Open questions
 
 - The Claude and Perplexity bounds are estimates. Measure real `money_spent` on a few panels
