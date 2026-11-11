@@ -82,6 +82,12 @@ test("consent preserves request, mounts Clerk only after sign-in, and recovers f
       } else if (mode === "signed-out") {
         await page.locator("#consent-sign-in").waitFor();
         assert.equal(await page.evaluate(() => window.consentCalls.length), 0);
+        // A returning founder whose session lives in another browser signs in; new ones create.
+        const primary = page.locator("#consent-sign-in a.consent-create");
+        assert.equal(await primary.innerText(), "Sign in");
+        assert.equal(new URL(await primary.getAttribute("href")).pathname, "/sign-in");
+        const create = page.getByRole("link", {name: "Create an account", exact: true});
+        assert.equal(new URL(await create.getAttribute("href")).pathname, "/sign-up");
       } else {
         await page.getByRole("status").filter({hasText: "could not load"}).waitFor();
         assert.equal(await page.evaluate(() => window.consentCalls.length), 0);

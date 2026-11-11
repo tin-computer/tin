@@ -59,6 +59,10 @@ test("auth keeps the OAuth return through both account modes and bypasses provis
       const other = mode === "sign-in" ? "signUpUrl" : "signInUrl";
       assert.equal(new URL(calls[0].props[other], base).searchParams.get("redirect_url"), continuation);
       assert.equal(await page.evaluate(() => window.loadProps.localization.signIn.start.subtitle), "Connect your coding agent to your Tin account.");
+      // An email that already has an account points to Sign in, and an unknown one to sign-up.
+      const errorsCopy = await page.evaluate(() => window.loadProps.localization.unstable__errors);
+      assert.match(errorsCopy.form_identifier_exists__email_address, /already have a Tin account.*Sign in/);
+      assert.match(errorsCopy.form_identifier_not_found, /No Tin account uses this email.*create an account/);
       assert.equal(await page.evaluate(() => document.documentElement.dataset.theme), theme);
       assert.equal(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth), true);
       // A normal product sign-in still uses the normal destination and copy.

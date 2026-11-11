@@ -256,6 +256,15 @@ const TIN_AUTH_LOCALIZATION = {
       resendButton: "Resend code",
     },
   },
+  // Clerk's defaults ("That email address is taken", "Couldn't find your account") read
+  // as a wall to someone who signed up before, often on tin.computer, which shares this
+  // Clerk instance. Say which form they need instead; its link sits under the form.
+  unstable__errors: {
+    form_identifier_exists__email_address:
+      "You already have a Tin account with this email. Sign in below instead.",
+    form_identifier_not_found:
+      "No Tin account uses this email yet. Check the spelling, or create an account below.",
+  },
 };
 
 window.TinAuth = { appearance: TIN_AUTH_APPEARANCE, localization: TIN_AUTH_LOCALIZATION };
