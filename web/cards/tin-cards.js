@@ -14,12 +14,15 @@ import fs from "node:fs";
 import path from "node:path";
 import {fileURLToPath, pathToFileURL} from "node:url";
 import {chromium} from "playwright";
-import {HEIGHT, WIDTH, colours, eyebrows, fonts, leftBars, words} from "./checks.js";
+import {HEIGHT, WIDTH, colours, eyebrows, fonts, leftBars, placement, textSizes, words} from "./checks.js";
 
 const HERE = path.dirname(fileURLToPath(import.meta.url));
 // LinkedIn takes PNG or JPEG up to 5 MB, and so does Tin.
 const MAX_BYTES = 5 * 1024 * 1024;
 const MAX_LINE_WORDS = 9;
+// The smallest text a card carries, in card pixels: 2% of its width, as for films, so a screen's
+// words still read when the card shows at about half size in the feed.
+const SMALLEST_TEXT = Math.round(0.02 * WIDTH);
 
 function fail(message) {
   console.error(message);
@@ -103,8 +106,12 @@ async function checkCard(page, dir, card, palette) {
     if (inPalette(values[index], palette)) return;
     errors.push(`${card.post}: ${hex(values[index])}, the ${item.what} of “${item.sample}”, isn't one of the brand's colours. Use a colour from the palette in cards.json.`);
   });
-  for (const item of await page.evaluate(leftBars)) {
+  for (const item of await page.evaluate(leftBars, {})) {
     errors.push(`${card.post}: “${item.text}” has a bar down its left edge. Tin marks nothing that way: drop the border, or give the box the same border all round.`);
+  }
+  for (const item of await page.evaluate(placement)) {
+    if (item.satellite || item.left <= 1 || item.right <= 1 || Math.abs(item.left - item.right) <= 4) continue;
+    errors.push(`${card.post}: the screen “${item.sample}” sits ${item.left} px from the left of ${item.frame} and ${item.right} px from the right. Centre it, or inset it a gutter from the left and run it off the right edge.`);
   }
   for (const item of await page.evaluate(eyebrows)) {
     errors.push(`${card.post}: an eyebrow, “${item.text}”, sits small above “${item.under}”. Tin never uses eyebrows: delete it.`);
@@ -175,7 +182,7 @@ async function check(dir) {
 // stylesheet and fonts with sample data, from a local file or the running app. Shot at twice
 // the size so it stays sharp when the card scales it.
 async function shoot(source, out, options) {
-  if (!source || !out) fail("Usage: tin-cards shoot <page.html | http://localhost:…> <out.png> [--width 1280] [--height 900] [--selector css] [--scale 2] [--scheme dark]");
+  if (!source || !out) fail("Usage: tin-cards shoot <page.html | http://localhost:…> <out.png> [--width 1280] [--height 900] [--selector css] [--scale 2] [--scheme dark] [--wait css] [--style simplify.css] [--script simplify.js] [--card-scale 1.5]");
   // A local page may carry a query (page.html?view=analytics) that picks what it shows.
   const [file, query] = source.split("?");
   const url = /^https?:\/\//.test(source) ? source : `${pathToFileURL(path.resolve(file)).href}${query ? `?${query}` : ""}`;
@@ -186,7 +193,16 @@ async function shoot(source, out, options) {
   await page.goto(url, {waitUntil: "load"});
   // A live site may never go quiet (analytics keep polling): wait a little for its data, then shoot.
   await page.waitForLoadState("networkidle", {timeout: 5000}).catch(() => {});
+  // A page that draws its data after loading: wait for the part the shot needs.
+  if (options.wait) await page.waitForSelector(options.wait, {timeout: 15000}).catch(() => fail(`Nothing matching ${options.wait} appeared on the page.`));
   await settle(page);
+  // Simplify the page for the card: hide what the post isn't about, put quiet bars where words
+  // nobody needs to read were.
+  if (options.style) await page.addStyleTag({path: path.resolve(options.style)});
+  if (options.script) {
+    await page.addScriptTag({path: path.resolve(options.script)});
+    await settle(page);
+  }
   let problems = 0;
   for (const face of await page.evaluate(fonts, "body")) {
     if (!face.generic && face.loaded) continue;
@@ -195,9 +211,24 @@ async function shoot(source, out, options) {
   }
   const target = options.selector ? page.locator(options.selector).first() : page;
   if (options.selector && !(await target.count())) fail(`Nothing on the page matches ${options.selector}.`);
+  const region = options.selector ? await target.boundingBox() : {x: 0, y: 0, width, height};
+  // A product may mark a quote or a note with a bar down its left edge; a card never shows one.
+  for (const item of await page.evaluate(leftBars, {scope: "body", region})) {
+    console.error(`error  “${item.text}” has a bar down its left edge. Drop the border in the stage script, or give the box the same border all round.`);
+    problems += 1;
+  }
+  if (options["card-scale"]) {
+    // How much larger the shot shows on the card: every word in it must reach the card's floor.
+    const scale = Number(options["card-scale"]);
+    const small = (await page.evaluate(textSizes, region)).filter(item => item.size * scale < SMALLEST_TEXT);
+    for (const item of small.slice(0, 8)) {
+      console.error(`error  “${item.text}” is ${item.size} px, ${Math.round(item.size * scale)} px on the card; the smallest a card carries is ${SMALLEST_TEXT}. Hide it, put a bar in its place, or enlarge the shot.`);
+    }
+    problems += small.length;
+  }
   await target.screenshot({path: out, animations: "disabled", timeout: 30000});
   await browser.close();
-  if (problems) fail(`${problems} font problem${problems === 1 ? "" : "s"}: the shot is at ${out}, but don't use it until the fonts load.`);
+  if (problems) fail(`${problems} problem${problems === 1 ? "" : "s"}: the shot is at ${out}, but don't use it until they're fixed.`);
   console.log(`Shot ${url}${options.selector ? ` (${options.selector})` : ""} to ${out}.`);
 }
 

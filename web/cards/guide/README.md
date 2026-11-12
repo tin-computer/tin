@@ -34,7 +34,8 @@ The kinds the draft asks for:
 - **artwork:** a drawing or photo the company already publishes.
 
 Make the screen large enough to read in the feed, where a card shows at about half its width:
-body text no smaller than 20 px on the card.
+no text smaller than 22 px on the card, 2% of its width. That leaves room for about 480 px of a
+product's screen, so a screen on a card is a small, simplified part of the product.
 
 ## Screens
 
@@ -51,11 +52,29 @@ fills every gap with a colour or a shape the company never made.
   ```
 
   It refuses a shot whose text fell back to a system font. `--scheme dark` shoots the dark theme.
-- A narrow width lets the product's own layout reflow, so the shot reads at about 1.3 times its
-  size on the card.
+- Simplify it for the feed, the way a launch film stages a screen. Keep real words only on what
+  the post says, three to seven strings, plus the product's own chrome: its page title, its tabs,
+  its navigation. Everything else keeps its place as a quiet bar, a rounded line in the product's
+  own border colour where the words were. Hide what the post doesn't touch: other sections,
+  columns it doesn't name, captions under numbers, hint lines, metadata lines, search and
+  footers. Never shrink the product's type to fit more in; show less of the product instead.
+- Do the simplifying in the page, with the product's own markup and styles, never in a redrawn
+  copy: `--script` runs a script in the page before the shot, `--style` adds a stylesheet, and
+  `--wait` waits for a part the page draws after loading. Hide with `display: none`, and put a
+  bar where words were with the product's border colour. Drop any bar down a box's left edge,
+  such as a quote's rule: the shot fails with one in it.
+- Shoot it narrow, about 480 px wide, and say how much larger it shows on the card with
+  `--card-scale`. The shot fails when any word in it would be under 22 px on the card:
+
+  ```
+  tin-cards shoot "http://localhost:3000/analytics?tab=week" screens/analytics.png \
+    --width 486 --selector ".analytics-view" --script stage/analytics.js --card-scale 1.85
+  ```
+
 - A terminal is the company's own transcript or terminal component, from its site, with output a
-  real command gave.
+  real command gave: keep the prompt and the lines the post names, and turn the rest into bars.
 - Leave out other companies' logos; turn them off in the sample data when the product shows them.
+  Leave out real people's names, including the signed-in member's.
 
 ## Colours
 
@@ -70,6 +89,18 @@ there are none yet, make a round first: the same posts in several compositions, 
 a layout the company already publishes (a section of its site, its hero, its link preview, its
 dark theme), and let a member pick before making the batch.
 
+A screen is a window with a hard edge: the company's hairline and radius, and a shadow only where
+its own site uses one. Place it one of two ways, measured from its width, never by eye:
+
+- inset: a gutter from the left and the top of its frame, running off the right edge and the
+  foot. The window's own surface carries on past the shot, so only its empty part runs off;
+- centred: equal space on its left and right, running off the foot or ending a gutter above it.
+
+One smaller screen may sit over a corner of the main one, as a satellite: a terminal over the app,
+say. It is placed against the main screen, and nothing the post says may be under it.
+
+Nothing the post says may be cut by an edge.
+
 ## Never
 
 - No eyebrows: no small uppercase, letter-spaced or mono label above a title, a card's words or
@@ -79,7 +110,7 @@ dark theme), and let a member pick before making the batch.
   inside a screen.
 - No art the company doesn't publish, and no third-party logos.
 - No colour outside the brand's palette.
-- No bar down a box's left edge to mark it.
+- No bar down a box's left edge, a quote's rule included, on the card or in a screen on it.
 
 ## Check
 
@@ -106,6 +137,7 @@ It renders each card to `<post>.png` and fails a card when:
 - there is an eyebrow;
 - a colour isn't in the palette;
 - a box has a bar down its left edge;
+- a screen floats with more space on one side than the other, neither centred nor running off;
 - the headline is over nine words;
 - the alt text is missing;
 - the image is over 5 MB, even as a JPEG.

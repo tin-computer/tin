@@ -107,19 +107,70 @@ export function colours() {
 }
 
 // A bar down the left edge of a box: a left border at least 2 px and wider than the box's
-// other borders. Tin marks nothing that way; a label or the content says what a box is.
-export function leftBars() {
+// other borders, a quote's rule included. Tin marks nothing that way; a label or the content
+// says what a box is. scope is the card, or "body" with the region (a box in page pixels) a
+// product page is shot from, where the bar is the product's own and the stage removes it.
+export function leftBars({scope = "[data-card]", region = null} = {}) {
   const found = [];
-  for (const element of document.querySelectorAll("[data-card] *")) {
+  for (const element of document.querySelectorAll(`${scope} *`)) {
     const style = getComputedStyle(element);
-    if (style.borderLeftStyle === "none") continue;
+    if (style.borderLeftStyle === "none" || style.display === "none" || style.visibility === "hidden") continue;
     const left = parseFloat(style.borderLeftWidth);
     const others = Math.max(parseFloat(style.borderTopWidth), parseFloat(style.borderRightWidth), parseFloat(style.borderBottomWidth));
-    if (left >= 2 && left > others) {
-      found.push({text: (element.innerText || element.tagName).replace(/\s+/g, " ").trim().slice(0, 40)});
-    }
+    if (!(left >= 2 && left > others)) continue;
+    const box = element.getBoundingClientRect();
+    if (box.width < 1 || box.height < 1) continue;
+    if (region && !(box.right > region.x && box.left < region.x + region.width && box.bottom > region.y && box.top < region.y + region.height)) continue;
+    found.push({text: (element.innerText || element.tagName).replace(/\s+/g, " ").trim().slice(0, 40)});
   }
   return found;
+}
+
+// Each visible text run inside the region (a box in page pixels) and its size, so a shot can be
+// held to the smallest size a card can carry once the shot is enlarged on it.
+export function textSizes(region) {
+  const found = new Map();
+  const walker = document.createTreeWalker(document.body, NodeFilter.SHOW_TEXT);
+  for (let node = walker.nextNode(); node; node = walker.nextNode()) {
+    const text = node.textContent.replace(/\s+/g, " ").trim();
+    if (!text) continue;
+    const style = getComputedStyle(node.parentElement);
+    if (style.visibility === "hidden" || Number(style.opacity) < 0.05) continue;
+    const range = document.createRange();
+    range.selectNodeContents(node);
+    const seen = [...range.getClientRects()].some(rect => rect.width > 0 && rect.height > 0
+      && rect.right > region.x && rect.left < region.x + region.width && rect.bottom > region.y && rect.top < region.y + region.height);
+    if (!seen) continue;
+    const size = parseFloat(style.fontSize);
+    if (!found.has(text) || found.get(text).size > size) found.set(text, {text: text.slice(0, 40), size});
+  }
+  return [...found.values()].sort((a, b) => a.size - b.size);
+}
+
+// Where each screen sits in the frame that clips it (the card, or a panel with overflow hidden).
+// A screen either runs off an edge of that frame or is centred in it; one that floats whole with
+// unequal sides reads as misplaced. A satellite, a smaller screen set over a larger one's corner,
+// is placed against that screen instead.
+export function placement() {
+  const card = document.querySelector("[data-card]");
+  const screens = [...document.querySelectorAll("[data-card-screen]")];
+  const area = box => box.width * box.height;
+  const overlaps = (a, b) => a.left < b.right && b.left < a.right && a.top < b.bottom && b.top < a.bottom;
+  return screens.map(screen => {
+    let frame = card;
+    for (let parent = screen.parentElement; parent && parent !== card; parent = parent.parentElement) {
+      const style = getComputedStyle(parent);
+      if (/(hidden|clip)/.test(style.overflow + style.overflowX)) { frame = parent; break; }
+    }
+    const box = screen.getBoundingClientRect();
+    const edge = frame.getBoundingClientRect();
+    const satellite = screens.some(other => other !== screen && overlaps(box, other.getBoundingClientRect()) && area(other.getBoundingClientRect()) > area(box));
+    return {
+      left: Math.round(box.left - edge.left), right: Math.round(edge.right - box.right), satellite,
+      frame: frame === card ? "the card" : "its panel",
+      sample: (screen.innerText || screen.querySelector("img")?.getAttribute("src") || "the screen").replace(/\s+/g, " ").trim().slice(0, 40),
+    };
+  });
 }
 
 // Eyebrows, the small label set above a title or a card's words (uppercase, letter-spaced or
