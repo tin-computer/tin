@@ -84,9 +84,9 @@ A draft is an ordinary project file at `social/linkedin/drafts/<date>-<slug>.jso
 ```
 
 It is X's shape with a per-post `target`, the LinkedIn URN of one connected account, and
-LinkedIn's limits: up to six posts, text within 3,000 characters counted in UTF-16 units as
-LinkedIn counts them, and up to 20 PNG or JPEG images within Tin's media checks, in a file
-within 256 KB. Video, documents and polls come later. An empty `target` posts as the only
+LinkedIn's limits: up to twelve posts (p1 to p12), text within 3,000 characters counted in
+UTF-16 units as LinkedIn counts them, and up to 20 PNG or JPEG images within Tin's media
+checks, in a file within 256 KB. Video, documents and polls come later. An empty `target` posts as the only
 account the member may use, and is refused when there are several.
 
 `first_comment` is optional, within LinkedIn's 1,250 characters for a comment. Tin sends it

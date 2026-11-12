@@ -87,6 +87,7 @@ from tin_lite.integrations import (
 from tin_lite.keyword_plan_control import stop_keyword_plan as stop_keyword_plan_service
 from tin_lite.linkedin_posting import member_view as linkedin_member_view
 from tin_lite.linkedin_posting import visible as linkedin_visible
+from tin_lite.linkedin_posts import POST_ID as LINKEDIN_POST_ID
 from tin_lite.linkedin_posts import LinkedInPosts
 from tin_lite.linkedin_requests_api import router as linkedin_requests_router
 from tin_lite.luna import LunaProtocolError, LunaSafetyError, LunaUpstreamError
@@ -1381,6 +1382,13 @@ class XPostPreview(BaseModel):
     post_id: str = Field(pattern=r"^p[1-6]$")
 
 
+class LinkedInPostPreview(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    path: str = Field(min_length=1, max_length=512)
+    post_id: str = Field(pattern=LINKEDIN_POST_ID)
+
+
 class XPostPublish(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
@@ -1392,7 +1400,7 @@ class LinkedInRevisionRequest(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     path: str = Field(min_length=1, max_length=512)
-    post_id: str = Field(pattern=r"^p[1-6]$")
+    post_id: str = Field(pattern=LINKEDIN_POST_ID)
     feedback: str = Field(min_length=1, max_length=4000)
     request_id: UUID
 
@@ -3139,7 +3147,7 @@ async def save_linkedin_draft(
 @router.post("/api/projects/{project_id}/linkedin/preview")
 async def preview_linkedin_post(
     project_id: UUID,
-    payload: XPostPreview,
+    payload: LinkedInPostPreview,
     request: Request,
     user: AuthContext = AUTHENTICATED_USER,
 ) -> dict:
