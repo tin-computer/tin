@@ -142,6 +142,75 @@ say. It is placed against the main screen, and nothing the post says may be unde
 
 Nothing the post says may be cut by an edge.
 
+## Compose
+
+`tin-cards compose` lays the cards out once each screen is shot. It reads the brand's profile and
+a batch, and writes each post's `<post>.html` and the `cards.json` that `check` reads:
+
+```
+tin-cards compose posts/batch.json cards/
+tin-cards check cards/
+```
+
+The profile holds what is the company's, taken from its own site. Keep it in the company's
+repository beside the files it names; its paths are relative to it.
+
+```json
+{
+  "palette": {"paper": "#f7f5ef", "ink": "#26231c", "night": "#141210"},
+  "fonts": [{"family": "Example Sans", "src": "fonts/example-sans.woff2", "weight": 400}],
+  "stylesheets": [],
+  "grounds": {"light": "#f7f5ef", "dark": "#141210"},
+  "headline": {
+    "family": "'Example Sans', sans-serif", "weight": 400, "size": 76, "line": 1.04, "track": "-0.02em",
+    "light": {"lit": "#26231c", "turn": "#8a8375", "turn_style": "normal"},
+    "dark": {"lit": "#f6f1e7", "turn": "#857c6f", "turn_style": "normal"}
+  },
+  "logo": {"place": "top", "height": 40, "light": "logo-ink.png", "dark": "logo-paper.png"},
+  "artwork": {"dark": "art/painting-dark.webp", "light": "art/painting-light.webp"},
+  "window": {"ring": {"light": "#26231c1f", "dark": "#f6f1e71a"}, "radius": 14, "shadow": "0 24px 60px #0a080673"}
+}
+```
+
+- `grounds` are the brand's flat grounds by name. `art` and `art-light` paint its `artwork`.
+- `headline` is the type, and for each ground the colour of the line's words and of its turn: the
+  last words, set apart the way the brand sets them (dimmer, or in italic with `turn_style`).
+- `logo` sits at the `top`, or at the `foot` with an optional `address` (the site's address in
+  the brand's own style) opposite it and a `signature_rule` hairline above, as the brand's footer
+  draws them. `filter_dark` lightens a one-colour logo on a dark ground.
+- `stylesheets` load the brand's own CSS, for what the profile draws with the brand's classes. An
+  `edge` is one: the brand's own border between paper and a coloured band, such as
+  `{"height": 240, "classes": {"dark": "site-edge"}}`, drawn at twice its size.
+- `window` is the frame: its `ring` for a light and a dark screen, `ring_width`, `radius`, and a
+  `shadow` that shows only over artwork. With no `radius`, each post gives the product's own.
+
+The batch names the profile, relative to the batch, and each post:
+
+```json
+{"profile": "../profile.json", "posts": [
+  {"id": "p1", "layout": "L11", "surface": "light", "band": null, "lit": "See visits", "turn": "and automation apart",
+   "shot": "shots/analytics.png", "scale": 1.85, "window_theme": "light", "alt": "What the card shows, and its headline."}
+]}
+```
+
+- `lit` and `turn` together are the card line, word for word.
+- `shot` comes from `tin-cards shoot`, and `scale` is the `--card-scale` it was shot with. The
+  window is the shot's size times that scale.
+- `surface` is the card's ground. `band` is a second ground or artwork behind the window.
+- `window_theme` picks the ring for a light or a dark screen; `radius` is the product's own, in
+  the product's pixels.
+
+The layouts it composes:
+
+- **L02 Centred window:** the headline at the top and the window centred under it, on the
+  surface or on a band.
+- **L03 Window above the headline:** the window centred near the top, the headline under it on
+  the window's left edge, the logo at the foot. A band sits behind the window's upper part.
+- **L11 Centred stack:** a centred headline over one whole window, the signature at the foot.
+  Artwork stops above the signature, which can't be read on it.
+
+Write other layouts as HTML by hand: a single part in a corner, the headline alone, a framed card.
+
 ## Never
 
 - No eyebrows: no small uppercase, letter-spaced or mono label above a title, a card's words or
@@ -182,6 +251,7 @@ tin-cards check <dir>
 `tin-cards check` renders each card to `<post>.png` and fails a card when:
 
 - a font didn't load, or the text falls back to a system font;
+- an image the card names didn't load: its logo, its artwork or a shot;
 - the headline runs past the card's edge or is clipped;
 - there is text outside the headline, a logo or a screen;
 - there is an eyebrow;
