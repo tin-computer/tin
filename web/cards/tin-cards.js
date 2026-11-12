@@ -14,7 +14,7 @@ import fs from "node:fs";
 import path from "node:path";
 import {fileURLToPath, pathToFileURL} from "node:url";
 import {chromium} from "playwright";
-import {HEIGHT, WIDTH, colours, eyebrows, fonts, leftBars, placement, textSizes, words} from "./checks.js";
+import {HEIGHT, WIDTH, colours, emptyWindows, eyebrows, fonts, leftBars, placement, textSizes, words} from "./checks.js";
 
 const HERE = path.dirname(fileURLToPath(import.meta.url));
 // LinkedIn takes PNG or JPEG up to 5 MB, and so does Tin.
@@ -112,6 +112,9 @@ async function checkCard(page, dir, card, palette) {
   for (const item of await page.evaluate(placement)) {
     if (item.satellite || item.left <= 1 || item.right <= 1 || Math.abs(item.left - item.right) <= 4) continue;
     errors.push(`${card.post}: the screen “${item.sample}” sits ${item.left} px from the left of ${item.frame} and ${item.right} px from the right. Centre it, or inset it a gutter from the left and run it off the right edge.`);
+  }
+  for (const item of await page.evaluate(emptyWindows)) {
+    errors.push(`${card.post}: the window around ${item.sample} is empty for ${item.open.join(" and ")}. Size the window to its screen, and stage the screen so its own content runs off the edge.`);
   }
   for (const item of await page.evaluate(eyebrows)) {
     errors.push(`${card.post}: an eyebrow, “${item.text}”, sits small above “${item.under}”. Tin never uses eyebrows: delete it.`);

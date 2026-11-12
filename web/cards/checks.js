@@ -173,6 +173,24 @@ export function placement() {
   });
 }
 
+// A window larger than the shot it holds: inside the card, an empty strip of window reads as a box
+// left open. A window is the screen's own size; where it runs off the card, its content does.
+export function emptyWindows() {
+  const card = document.querySelector("[data-card]").getBoundingClientRect();
+  const visible = box => ({left: Math.max(box.left, card.left), top: Math.max(box.top, card.top),
+    right: Math.min(box.right, card.right), bottom: Math.min(box.bottom, card.bottom)});
+  return [...document.querySelectorAll("[data-card-screen]")].flatMap(screen => {
+    const image = screen.querySelector(":scope > img");
+    if (!image) return [];
+    const window = visible(screen.getBoundingClientRect());
+    const shot = visible(image.getBoundingClientRect());
+    // A border's width is not empty window.
+    const gaps = {right: window.right - shot.right, below: window.bottom - shot.bottom};
+    const open = Object.entries(gaps).filter(([, gap]) => gap > 4).map(([side, gap]) => `${Math.round(gap)} px ${side === "right" ? "to its right" : "below it"}`);
+    return open.length ? [{sample: image.getAttribute("src") || "the screen", open}] : [];
+  });
+}
+
 // Eyebrows, the small label set above a title or a card's words (uppercase, letter-spaced or
 // mono: "HOW IT WORKS"). Tin never uses them, on a card or in a screen on it. A table's column
 // headers are not eyebrows, and neither is data set in mono, such as a date or a time.
