@@ -92,16 +92,21 @@ dark theme), and let a member pick before making the batch.
 A screen is a window with a hard edge: the company's hairline and radius, and a shadow only where
 its own site uses one. Place it one of two ways, measured from its width, never by eye:
 
-- inset: a gutter from the left and the top of its frame, running off the right edge or the
-  foot;
-- centred: equal space on its left and right, running off the foot or ending a gutter above it.
+- closed: a gutter in on every side of the space below the headline, the window's hairline and
+  radius all round;
+- centred: equal space on its left and right, ending a gutter above the foot.
 
-A window is exactly as large as the screen it holds. Where it runs off an edge, its own content
-runs off with it: rows, lines and rules carry on past the edge, as more of the list, the page or
-the session would. Where its content ends, it closes on that side with its own padding. A window
-drawn larger than its screen leaves an empty strip that reads as a box left open, and a screen
-nested in a second frame reads as boxes inside boxes; stage the screen to the window's size
-instead (more rows, the next section, the session going on in quiet bars).
+Decide the window's size from what the post needs to show, then fit the screen to it: give the
+screen's own elements the room (a taller chart, roomier rows, the sentence the post is about set
+larger) or show it larger, keeping its padding even on every side. Never fill a window with what
+the post doesn't need: no extra sections, rows, cards or quiet lines added to reach an edge.
+Quiet bars stand only where the product shows words nobody needs to read, one or two lines at a
+time. A screen runs off an edge only when its own content is larger than the card, such as a
+table too wide to show whole, and then its window runs off with it.
+
+A window is exactly as large as the screen it holds. A window drawn larger than its screen leaves
+an empty strip that reads as a box left open, and a screen nested in a second frame reads as
+boxes inside boxes.
 
 One smaller screen may sit over a corner of the main one, as a satellite: a terminal over the app,
 say. It is placed against the main screen, and nothing the post says may be under it.
