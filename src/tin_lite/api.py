@@ -3744,21 +3744,26 @@ async def get_project_week(
     ]
     by_id = {item.id: item for item in configured}
     occurrences = upcoming_occurrences(configured, start=begin, end=end, now=datetime.now(UTC))
-    # A posting slot's next time names the post it posts; the times after it, nothing yet.
+    # A posting slot's next time names the post it posts; the times after it post a later pick.
     from tin_lite.linkedin_slots import KEY as SLOTS_KEY
     from tin_lite.linkedin_slots import up_next_title
 
     slot_details: dict = {}
-    firsts = {}
-    for item in occurrences:
-        if by_id[item.project_workflow_id].workflow_key == SLOTS_KEY and item.state == "planned":
-            firsts.setdefault(item.project_workflow_id, item.at)
-    if firsts:
+    planned = [
+        item
+        for item in occurrences
+        if by_id[item.project_workflow_id].workflow_key == SLOTS_KEY and item.state == "planned"
+    ]
+    if planned:
         title = await up_next_title(database, project_id)
-        for project_workflow_id, at in firsts.items():
-            slot_details[(project_workflow_id, at)] = (
-                f"Posts: {title}" if title else "Nothing up next, so it passes"
-            )
+        firsts = set()
+        for item in planned:
+            key = (item.project_workflow_id, item.at)
+            if item.project_workflow_id in firsts:
+                slot_details[key] = "Posts the next pick"
+                continue
+            firsts.add(item.project_workflow_id)
+            slot_details[key] = f"Posts: {title}" if title else "Nothing up next, so it passes"
     response.headers["X-Tin-Read-Source"] = "postgres"
     return ProjectWeekView(
         start=start,

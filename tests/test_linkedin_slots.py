@@ -379,7 +379,12 @@ async def test_the_calendar_names_the_post_the_next_slot_posts(publication_db, m
             for item in empty.json()["occurrences"]
             if item["workflow_key"] == linkedin_slots.KEY
         ]
-        assert [item["detail"] for item in slots] == ["Nothing up next, so it passes", None, None]
+        # The slots after the next one post whatever is picked by then.
+        assert [item["detail"] for item in slots] == [
+            "Nothing up next, so it passes",
+            "Posts the next pick",
+            "Posts the next pick",
+        ]
         assert (await pick(f)).status_code == 200
         picked = await f.client.get(f"/api/projects/{f.project.id}/week", params=week)
         slots = [
@@ -387,4 +392,8 @@ async def test_the_calendar_names_the_post_the_next_slot_posts(publication_db, m
             for item in picked.json()["occurrences"]
             if item["workflow_key"] == linkedin_slots.KEY
         ]
-        assert slots[0]["detail"] == "Posts: Exact approved text"
+        assert [item["detail"] for item in slots] == [
+            "Posts: Exact approved text",
+            "Posts the next pick",
+            "Posts the next pick",
+        ]

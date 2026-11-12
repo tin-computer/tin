@@ -664,7 +664,7 @@ test("the day before a posting slot with nothing up next, Decisions asks for a p
     await card.waitFor();
     assert.equal(await card.locator("header strong").innerText(), "Nothing is up next for Wednesday 9:00");
     assert.equal(await card.locator("header code").innerText(), "LinkedIn posts · Example project");
-    assert.equal(await card.locator(".decision-summary").innerText(), "Example project's page posts on Monday, Wednesday and Friday at 9:00. 4 posts are ready. Pick one, or the slot passes and nothing goes out.");
+    assert.equal(await card.locator(".decision-summary").innerText(), "Your LinkedIn page posts on Monday, Wednesday and Friday at 9:00. Four posts are ready. Pick one, or the slot passes and nothing goes out.");
     await card.getByRole("button", {name: "Pick a post"}).click();
     await page.waitForURL(url => new URL(url).searchParams.get("x_draft") === path);
   } finally {

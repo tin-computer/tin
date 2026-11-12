@@ -1168,8 +1168,11 @@ function systemTemplateSetupCard(workflow) {
     </div>
     <footer class="system-config-footer">
       <span class="system-config-note">Goes to My system when you finish.</span>
-      <button class="button-secondary" type="submit" data-save-workflow ${blocked ? "disabled" : ""}>Set up</button>
-      <button class="button" type="submit" data-save-and-run ${blocked ? "disabled" : ""}>Set up and run now</button>
+      ${workflow.key === LINKEDIN_SLOTS_KEY
+        // Slots post only at their times, so there is nothing to run now.
+        ? `<button class="button" type="submit" data-save-workflow ${blocked ? "disabled" : ""}>Set up</button>`
+        : `<button class="button-secondary" type="submit" data-save-workflow ${blocked ? "disabled" : ""}>Set up</button>
+      <button class="button" type="submit" data-save-and-run ${blocked ? "disabled" : ""}>Set up and run now</button>`}
     </footer>
   </form>`;
 }
@@ -1825,12 +1828,17 @@ function renderXComposer() {
       navigate("workflows");
       if (configured) openSavedWorkflowSettings(configured);
     },
+    // Its setup form sits far down the catalog, so it is opened and brought into view.
     setUpSlots: () => {
       if (!isCurrentProjectContext(context)) return;
       const slots = state.workflows.find((item) => item.key === LINKEDIN_SLOTS_KEY);
       state.workflowSection = "registry";
       state.workflowEditor = slots ? { workflowId: slots.id, projectWorkflowId: null, runId: null, field: null } : null;
       navigate("workflows");
+      if (!slots) return;
+      renderWorkflows();
+      main.querySelector(`.workflow-config-form[data-workflow-id="${CSS.escape(slots.id)}"]`)
+        ?.scrollIntoView({ block: "start" });
     },
     onUpNext: async () => {
       if (!isCurrentProjectContext(context)) return;
@@ -5193,12 +5201,18 @@ function slotDaysLine(schedule) {
 }
 
 // Paper PN-D: the day before a posting slot with nothing up next.
+// Counts start a sentence here, so small ones are written as words.
+function countWord(count) {
+  return ["Zero", "One", "Two", "Three", "Four", "Five", "Six", "Seven", "Eight", "Nine"][count] || String(count);
+}
+
 function linkedInSlotDetailHtml(item) {
   const notice = item.notice;
   const page = state.project?.name || "The project";
+  // The project's name is not the page's, so the sentence says "your page".
   const body = notice.ready
-    ? `${page}'s page posts ${slotDaysLine(notice.schedule)}. ${notice.ready === 1 ? "One post is" : `${notice.ready} posts are`} ready. Pick one, or the slot passes and nothing goes out.`
-    : `${notice.waiting_for_cards ? `${notice.waiting_for_cards === 1 ? "The newest post is" : `${notice.waiting_for_cards} posts are`} waiting for ${notice.waiting_for_cards === 1 ? "its card" : "their cards"}. Ask your coding agent to make them with Tin's card kit; once uploaded, the posts show as ready and one can be picked.` : "There are no LinkedIn posts left to pick. The slot passes and nothing goes out."}`;
+    ? `Your LinkedIn page posts ${slotDaysLine(notice.schedule)}. ${notice.ready === 1 ? "One post is" : `${countWord(notice.ready)} posts are`} ready. Pick one, or the slot passes and nothing goes out.`
+    : `${notice.waiting_for_cards ? `${notice.waiting_for_cards === 1 ? "The newest post is" : `${countWord(notice.waiting_for_cards)} posts are`} waiting for ${notice.waiting_for_cards === 1 ? "its card" : "their cards"}. Ask your coding agent to make them with Tin's card kit; once uploaded, the posts show as ready and one can be picked.` : "There are no LinkedIn posts left to pick. The slot passes and nothing goes out."}`;
   const actions = notice.ready
     ? `<button class="decision-approval" type="button" data-slot-open="${escapeHtml(notice.path || "")}">Pick a post</button>`
     : notice.path ? `<button class="film-direction-others" type="button" data-slot-open="${escapeHtml(notice.path)}">Open the posts</button>
