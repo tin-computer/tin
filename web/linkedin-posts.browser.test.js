@@ -25,18 +25,26 @@ async function openReader(page, draft, {view = {}, files = [], width} = {}) {
     window.revision = "a".repeat(40);
     window.publications = view.publications || {};
     window.uploads = [];
+    window.upNext = view.upNext || null;
     window.mockApi = async (path, options = {}) => {
       const body = options.body && JSON.parse(options.body);
       requests.push({path, method: options.method || "GET", body});
-      if (path.includes("/linkedin/drafts") && !options.method) return {path: "social/linkedin/drafts/2026-10-13-d.json", revision, draft: structuredClone(saved), sha256: "s", connected: view.connected ?? true, accounts: view.accounts || accounts, unavailable: view.unavailable || [], publications, revisable: !!view.revisable, revising: null};
+      if (path.includes("/linkedin/drafts") && !options.method) return {path: "social/linkedin/drafts/2026-10-13-d.json", revision, draft: structuredClone(saved), sha256: "s", connected: view.connected ?? true, accounts: view.accounts || accounts, unavailable: view.unavailable || [], publications, revisable: !!view.revisable, revising: null, up_next: upNext, slots: view.slots || null};
       if (path.endsWith("/linkedin/drafts") && options.method === "PUT") {
         saved = structuredClone(body.draft); revision = "b".repeat(40);
         return {path: body.path, revision, draft: structuredClone(saved), sha256: "t"};
       }
       if (path.endsWith("/linkedin/preview")) {
         const item = saved.posts.find(entry => entry.id === body.post_id);
-        return {preview_token: "exact-token", text: item.text, account: accounts.find(entry => entry.urn === item.target), attachments: item.attachments, valid_until: new Date(Date.now() + 15 * 60000).toISOString()};
+        window.previewed = item.id;
+        return {preview_token: "exact-token", text: item.text, first_comment: item.first_comment || "", account: accounts.find(entry => entry.urn === item.target), attachments: item.attachments, valid_until: new Date(Date.now() + 15 * 60000).toISOString()};
       }
+      if (path.endsWith("/linkedin/up-next") && options.method === "POST") {
+        upNext = {path: "social/linkedin/drafts/2026-10-13-d.json", post_id: previewed, title: "We shipped the thing.", account: accounts[0], picked_at: new Date().toISOString(), picked_by_you: true};
+        return {up_next: upNext, slots: view.slots || null};
+      }
+      if (path.endsWith("/linkedin/up-next") && options.method === "DELETE") {upNext = null; return {up_next: null, slots: view.slots || null};}
+      if (path.endsWith("/linkedin/up-next")) return {up_next: upNext, slots: view.slots || null};
       if (path.endsWith("/linkedin/publish")) return {id: "delivery-id", run_id: "delivery-id", status: "pending", url: null};
       if (path.includes("/linkedin/publications")) return {publications};
       if (path.endsWith("/linkedin/request-changes")) return {run_id: "revision-run", status: "pending"};
@@ -54,7 +62,7 @@ async function openReader(page, draft, {view = {}, files = [], width} = {}) {
       if (window.failNextUpload) {window.failNextUpload = false; throw new Error("The upload didn't reach Tin.");}
       return {path: new URL(path, location.href).searchParams.get("path"), revision: "c".repeat(40)};
     };
-    TinLinkedInPosts.open({projectId: "project-one", runId: "run-one", path: "social/linkedin/drafts/2026-10-13-d.json", returnLabel: "my system", api: mockApi, rawFetch: mockRawFetch, upload: mockUpload, connect: () => {window.connected = true;}, openDraft: (path, run) => {window.opened = {path, run};}});
+    TinLinkedInPosts.open({projectId: "project-one", runId: "run-one", path: "social/linkedin/drafts/2026-10-13-d.json", returnLabel: "my system", api: mockApi, rawFetch: mockRawFetch, upload: mockUpload, connect: () => {window.connected = true;}, openDraft: (path, run) => {window.opened = {path, run};}, openSlots: id => {window.openedSlots = id;}, setUpSlots: () => {window.settingUpSlots = true;}});
   }, {draft, accounts, view, files, pixel: PIXEL.toString("base64")});
   await page.locator(".li-reader .li-column").waitFor({state: "attached"});
   await page.locator(".li-reader .li-copy, .li-reader .li-gaps, .li-reader .li-card").first().waitFor();
@@ -303,5 +311,94 @@ test("At phone width the title lists the posts and the primary action sits at th
         assert.ok(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth), `${theme} ${width} overflows`);
       }
     }
+  } finally {await browser.close();}
+});
+
+const SLOTS = {project_workflow_id: "slots-1", name: "LinkedIn posting slots", status: "active", schedule: {cadence: "weekly", weekdays: ["monday", "wednesday", "friday"], local_time: "09:00", timezone: "Europe/Istanbul"}, next_at: "2026-11-18T06:00:00+00:00"};
+const COMMENT = "Explore Tin: https://tin.computer/";
+
+test("A page post goes up next for the posting slots with its first comment, or out now", async () => {
+  const browser = await chromium.launch({headless: true});
+  try {
+    const page = await browser.newPage({viewport: {width: 1440, height: 1100}});
+    const errors = [];
+    page.on("pageerror", error => errors.push(error.message));
+    const page42 = "urn:li:organization:42";
+    await openReader(page, {...initial, posts: [post("p1", {target: page42, first_comment: COMMENT}), post("p2", {target: page42, text: "A second post."})]}, {view: {slots: SLOTS}});
+    // The first comment reads under the post, as LinkedIn shows it.
+    await page.locator(".li-column .li-card-comment").getByText(COMMENT).waitFor();
+    await bar(page).getByRole("button", {name: "Preview post"}).click();
+    const exact = page.locator("[data-li-exact]");
+    await exact.waitFor();
+    await page.getByText("This is exactly what LinkedIn receives: the text, the first comment and the account.").waitFor();
+    assert.match(await exact.innerText(), /Page · Wednesday 9:00[\s\S]*Example Co\s+Explore Tin: https:\/\/tin\.computer\//);
+    assert.match(await page.locator(".li-when").innerText(), /At the next slot, Wednesday 9:00\s+Example Co's page posts on Monday, Wednesday and Friday at 9:00 Istanbul time\./);
+    // Now publishes as before; the slot is picked by default.
+    await page.locator("#li-when-now").check();
+    await bar(page).getByRole("button", {name: "Publish this exact post"}).waitFor();
+    assert.match(await exact.innerText(), /Page · now/);
+    await page.locator("#li-when-slot").check();
+    await page.getByRole("button", {name: "Change times"}).click();
+    assert.equal(await page.evaluate(() => window.openedSlots), "slots-1");
+    await bar(page).getByRole("button", {name: "Make it up next"}).click();
+    await page.getByText("Up next. Tin posts this as the Example Co page on Wednesday 9:00, with its first comment.").waitFor();
+    await bar(page).getByText("Up next · Wed 9:00").waitFor();
+    const current = page.locator(".li-rail-item[aria-current] small");
+    assert.equal(await current.textContent(), "Up next, Wed 9:00");
+    assert.equal(await current.getAttribute("class"), "is-next");
+    // Another post's preview says which post it would replace.
+    await page.locator(".li-rail-item").nth(1).click();
+    await bar(page).getByRole("button", {name: "Preview post"}).click();
+    await page.getByText("Make it up next takes Post 1's place.", {exact: false}).waitFor();
+    // The post up next opens on that, and can be taken out.
+    await page.locator(".li-rail-item").first().click();
+    await bar(page).getByRole("button", {name: "Take out of up next"}).click();
+    await page.getByText("Taken out of up next.", {exact: false}).waitFor();
+    assert.equal(await page.locator(".li-rail-item small").first().textContent(), "Ready");
+    assert.deepEqual(await writes(page), [
+      "/api/projects/project-one/linkedin/preview",
+      "/api/projects/project-one/linkedin/up-next",
+      "/api/projects/project-one/linkedin/preview",
+      "/api/projects/project-one/linkedin/up-next",
+    ]);
+    const sent = await page.evaluate(() => requests.filter(item => item.method === "POST" && item.path.endsWith("/up-next")));
+    assert.equal(sent[0].body.preview_token, "exact-token");
+    assert.deepEqual(errors, []);
+  } finally {await browser.close();}
+});
+
+test("Without posting slots the choice offers to set them up; a member's own profile posts now", async () => {
+  const browser = await chromium.launch({headless: true});
+  try {
+    const page = await browser.newPage({viewport: {width: 1440, height: 1100}});
+    await openReader(page, {...initial, posts: [post("p1", {target: "urn:li:organization:42"}), post("p2", {target: "urn:li:person:AbC123"})]});
+    await bar(page).getByRole("button", {name: "Preview post"}).click();
+    await page.locator("[data-li-exact]").waitFor();
+    assert.equal(await page.locator("#li-when-slot").isDisabled(), true);
+    assert.equal(await page.locator("#li-when-now").isChecked(), true);
+    await page.getByRole("button", {name: "Set up posting slots"}).click();
+    assert.equal(await page.evaluate(() => window.settingUpSlots), true);
+    await bar(page).getByRole("button", {name: "Publish this exact post"}).waitFor();
+    await page.locator(".li-rail-item").nth(1).click();
+    await bar(page).getByRole("button", {name: "Preview post"}).click();
+    await page.locator("[data-li-exact]").waitFor();
+    assert.equal(await page.locator(".li-when").count(), 0);
+  } finally {await browser.close();}
+});
+
+test("Edit post writes the first comment with LinkedIn's limit beside it", async () => {
+  const browser = await chromium.launch({headless: true});
+  try {
+    const page = await browser.newPage({viewport: {width: 1440, height: 1100}});
+    await openReader(page, {...initial, posts: [post("p1", {target: "urn:li:organization:42"})]});
+    await bar(page).getByRole("button", {name: "Edit post", exact: true}).click();
+    const field = page.locator("[data-li-comment]");
+    assert.equal(await field.getAttribute("maxlength"), "1250");
+    await field.fill(COMMENT);
+    assert.equal(await page.locator("[data-li-comment-count]").textContent(), "34 / 1,250");
+    await bar(page).getByRole("button", {name: "Save changes"}).click();
+    await page.locator(".li-column .li-card-comment").getByText(COMMENT).waitFor();
+    const saved = await page.evaluate(() => requests.find(item => item.method === "PUT").body.draft.posts[0].first_comment);
+    assert.equal(saved, COMMENT);
   } finally {await browser.close();}
 });

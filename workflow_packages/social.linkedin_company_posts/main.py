@@ -249,7 +249,10 @@ WRITE_SCHEMA = _object(
         "gaps": _array(_object({"angle": _string(300, 1), "reason": _string(600, 1)}), 6),
     }
 )
-FIX_SCHEMA = _object({"posts": _array(_object({"id": _string(4, 1), "post": POST_SCHEMA}), POSTS)})
+# Each fixed post carries its ID beside its fields: a model schema nests at most five deep.
+FIX_SCHEMA = _object(
+    {"posts": _array(_object({"id": _string(4, 1), **POST_SCHEMA["properties"]}), POSTS)}
+)
 
 WRITE_INSTRUCTIONS = """{guide}
 
@@ -431,7 +434,6 @@ def _notes(post, problems, unverified):
         f"Card kind: {post['card_kind']}",
         f"Card brief: {post['card_brief']}",
         f"Alt text: {post['alt_text']}",
-        f"First comment: {post['first_comment'] or 'none'}",
     ]
     if unverified:
         lines.append(f"Check: {unverified} supporting excerpt(s) aren't word for word in a source.")
@@ -541,12 +543,12 @@ async def run(ctx, inputs):
         }
         fixed = await state.call("fix", FIX_INSTRUCTIONS.format(guide=guide), fix_data, FIX_SCHEMA)
         for item in (fixed or {}).get("posts", []):
-            if not isinstance(item, dict) or not _valid_post(item.get("post")):
+            if not isinstance(item, dict) or not _valid_post(item):
                 continue
             match = re.fullmatch(r"p(\d)", str(item.get("id", "")))
             index = int(match.group(1)) - 1 if match else -1
             if index in failing:
-                candidate = _clean(item["post"])
+                candidate = _clean({key: value for key, value in item.items() if key != "id"})
                 again = _findings(candidate, known, tells, earlier, allowed)
                 if len(again) <= len(problems[index]):
                     raw[index], problems[index] = candidate, again
@@ -565,6 +567,8 @@ async def run(ctx, inputs):
                 "editor_notes": _notes(post, problems[index], unverified),
                 "attachments": [],
                 "missing_assets": [f"Card: {post['card_line']}"[:200]],
+                # Posted right after the post by the same page; where the post's link goes.
+                "first_comment": post["first_comment"].strip(),
             }
         )
     if not posts and not gaps:

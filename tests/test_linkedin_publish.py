@@ -91,9 +91,15 @@ class SyntheticZernio:
         self.uploads.append(filename)
         return f"https://media.zernio.com/{len(self.uploads)}.png"
 
-    async def create_post(self, *, account_id, text, media, idempotency_key):
+    async def create_post(self, *, account_id, text, media, idempotency_key, first_comment=""):
         self.posts.append(
-            {"account_id": account_id, "text": text, "media": media, "key": idempotency_key}
+            {
+                "account_id": account_id,
+                "text": text,
+                "media": media,
+                "key": idempotency_key,
+                "first_comment": first_comment,
+            }
         )
         answer = self.answers.pop(0) if self.answers else "published"
         if answer == "lost":

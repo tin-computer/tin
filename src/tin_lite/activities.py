@@ -416,6 +416,15 @@ class TinActivities:
             )
             return {}
         starter = {"started_by_clerk_user_id": member}
+        from tin_lite import linkedin_slots
+
+        if (
+            workflow_definition.definition.get("key") == linkedin_slots.KEY
+            and workflow_definition.project_id is None
+        ):
+            # A posting slot starts the publish run for the post up next, as the member who
+            # approved it, or passes without a run when nothing is up next.
+            return await linkedin_slots.dispatch_slot(self, configured, schedule, scheduled_for)
         evaluation = await evaluate_prerequisites(
             database=self._db,
             storage=self._storage,

@@ -1591,11 +1591,14 @@ def create_mcp_app(
         `judgment_calls` are open questions the coding agent answers with the next website
         change run; there is nothing to approve. `paid_ads_proposals` are pending Google Ads
         changes. `films` are film versions a coding agent uploaded: directions to pick from or a
-        film to watch (get_film, decide_film). Show each to the founder and ask; never decide
-        for them.
+        film to watch (get_film, decide_film). `linkedin_slot` is set the day before a LinkedIn
+        posting slot with nothing up next: how many posts are ready to pick (preview one, then
+        make_linkedin_post_up_next) or still waiting for their cards. Show each to the founder
+        and ask; never decide for them.
         """
         from tin_lite import website_change, website_change_audit
         from tin_lite.films import Films
+        from tin_lite.linkedin_slots import UpNext
 
         token = await caller()
         project = _mcp_uuid(project_id, field="project_id")
@@ -1608,6 +1611,8 @@ def create_mcp_app(
         films = await Films(database=database, storage=runtime().storage, settings=settings).open(
             project
         )
+        assert token.subject is not None
+        slot = await UpNext(LinkedInPosts(runtime(), settings)).notice(project, token.subject)
         return {
             "reviews": [
                 {
@@ -1643,6 +1648,7 @@ def create_mcp_app(
                 }
                 for item in films
             ],
+            "linkedin_slot": slot,
         }
 
     @server.tool(annotations=ToolAnnotations(destructiveHint=False))
@@ -5213,6 +5219,43 @@ def create_mcp_app(
             request_id=_mcp_uuid(request_id, field="request_id"),
             client_id=token.client_id,
         )
+
+    @server.tool()
+    async def make_linkedin_post_up_next(
+        project_id: str,
+        preview_token: str,
+        request_id: str,
+    ) -> dict[str, Any]:
+        """Make an exact previewed page post the next one the project's posting slots post.
+
+        Only after the person explicitly confirms this exact preview for the next slot: it
+        records their approval, as publishing does. Picking another post replaces it; a later
+        edit to the post takes it out. The answer names the next slot. The project needs
+        LinkedIn posting slots saved first (the "LinkedIn posting slots" workflow).
+        """
+        from tin_lite.linkedin_slots import UpNext
+
+        token = await caller()
+        project = _mcp_uuid(project_id, field="project_id")
+        await require_project(project, token, tool_name="make_linkedin_post_up_next")
+        assert token.subject is not None
+        return await UpNext(LinkedInPosts(runtime(), settings)).pick(
+            project,
+            token.subject,
+            preview_token=_mcp_uuid(preview_token, field="preview_token"),
+            request_id=_mcp_uuid(request_id, field="request_id"),
+        )
+
+    @server.tool(annotations=ToolAnnotations(destructiveHint=False, idempotentHint=True))
+    async def clear_linkedin_up_next(project_id: str) -> dict[str, Any]:
+        """Take the project's post out of up next; the next slot passes unless one is picked."""
+        from tin_lite.linkedin_slots import UpNext
+
+        token = await caller()
+        project = _mcp_uuid(project_id, field="project_id")
+        await require_project(project, token, tool_name="clear_linkedin_up_next")
+        assert token.subject is not None
+        return await UpNext(LinkedInPosts(runtime(), settings)).clear(project, token.subject)
 
     @server.tool()
     async def list_project_files(project_id: str, revision: str | None = None) -> dict[str, Any]:

@@ -23,6 +23,7 @@ from tin_lite.integrations import (
 )
 from tin_lite.keyword_plan import KEY as KEYWORD_KEY
 from tin_lite.keyword_plan import check_inputs as check_keyword_inputs
+from tin_lite.linkedin_slots import KEY as LINKEDIN_SLOTS_KEY
 from tin_lite.organic_audit import AUDIT_KEY, public_site
 from tin_lite.paid_ads import KEY as PAID_ADS_KEY
 from tin_lite.paid_ads import check_inputs as check_paid_ads_inputs
@@ -502,6 +503,10 @@ async def start_workflow_run(
         ads_reason = google_ads_gate(settings)
         if ads_reason is not None:
             raise WorkflowExecutorUnavailableError(ads_reason)
+    if workflow.executor == LINKEDIN_SLOTS_KEY:
+        raise WorkflowInputError(
+            "Posting slots post at their times. To post now, open the post and publish it."
+        )
     if workflow.executor == content_plan.KEY:
         try:
             content_plan.check_inputs(normalized_inputs)

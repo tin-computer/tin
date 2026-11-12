@@ -87,10 +87,10 @@
       at: slot.at,
       state: slot.state,
       title: slot.name,
-      detail: slot.state === "held" ? "Waits for your review first"
+      detail: slot.detail || (slot.state === "held" ? "Waits for your review first"
         : slot.state === "paused" ? "Paused"
           : slot.state === "skipped" ? "Skipped once"
-            : `Lands in ${slot.lands}`,
+            : `Lands in ${slot.lands}`),
     }));
     return [...runs, ...slots].sort((a, b) => RANK[a.state] - RANK[b.state] || a.at.localeCompare(b.at));
   }

@@ -1010,6 +1010,8 @@ class WeekOccurrenceView(BaseModel):
     at: datetime
     state: Literal["planned", "paused", "held", "skipped"]
     lands: str
+    # What a slot does when it differs by occurrence: the post a posting slot posts next.
+    detail: str | None = None
 
 
 class ProjectWeekView(BaseModel):
@@ -3188,6 +3190,69 @@ async def publish_linkedin_post(
         ) from exc
 
 
+def _linkedin_up_next(request: Request):
+    from tin_lite.linkedin_slots import UpNext
+
+    return UpNext(_linkedin_posts_service(request))
+
+
+@router.get("/api/projects/{project_id}/linkedin/up-next")
+async def read_linkedin_up_next(
+    project_id: UUID, request: Request, user: AuthContext = AUTHENTICATED_USER
+) -> dict:
+    """The post up next for the project's posting slots, the slots, and the notice Decisions
+    shows the day before an empty slot."""
+
+    await _require_project_access(project_id, request, user)
+    service = _linkedin_up_next(request)
+    try:
+        state = await service.state(project_id, user.clerk_user_id)
+        notice = await service.notice(project_id, user.clerk_user_id)
+    except LookupError as exc:
+        raise HTTPException(status_code=404, detail=public_error_text(exc)) from exc
+    return {**state, "notice": notice}
+
+
+@router.post("/api/projects/{project_id}/linkedin/up-next")
+async def pick_linkedin_up_next(
+    project_id: UUID,
+    payload: XPostPublish,
+    request: Request,
+    user: AuthContext = AUTHENTICATED_USER,
+) -> dict:
+    """Approve the exact previewed post and make it the next one the slots post."""
+
+    await _require_project_access(project_id, request, user)
+    try:
+        return await _linkedin_up_next(request).pick(
+            project_id,
+            user.clerk_user_id,
+            preview_token=payload.preview_token,
+            request_id=payload.request_id,
+        )
+    except LookupError as exc:
+        raise HTTPException(status_code=404, detail=public_error_text(exc)) from exc
+    except IntegrationError as exc:
+        raise _integration_http_error(exc) from exc
+    except ValidationError as exc:
+        raise HTTPException(status_code=422, detail="LinkedIn draft is invalid.") from exc
+    except (ValueError, SideEffectConflictError) as exc:
+        raise HTTPException(status_code=409, detail=public_error_text(exc)) from exc
+
+
+@router.delete("/api/projects/{project_id}/linkedin/up-next")
+async def clear_linkedin_up_next(
+    project_id: UUID, request: Request, user: AuthContext = AUTHENTICATED_USER
+) -> dict:
+    """Take the post out of up next; the next slot passes unless someone picks another."""
+
+    await _require_project_access(project_id, request, user)
+    try:
+        return await _linkedin_up_next(request).clear(project_id, user.clerk_user_id)
+    except LookupError as exc:
+        raise HTTPException(status_code=404, detail=public_error_text(exc)) from exc
+
+
 @router.post("/api/projects/{project_id}/files/upload")
 async def upload_project_media(
     project_id: UUID,
@@ -3679,6 +3744,21 @@ async def get_project_week(
     ]
     by_id = {item.id: item for item in configured}
     occurrences = upcoming_occurrences(configured, start=begin, end=end, now=datetime.now(UTC))
+    # A posting slot's next time names the post it posts; the times after it, nothing yet.
+    from tin_lite.linkedin_slots import KEY as SLOTS_KEY
+    from tin_lite.linkedin_slots import up_next_title
+
+    slot_details: dict = {}
+    firsts = {}
+    for item in occurrences:
+        if by_id[item.project_workflow_id].workflow_key == SLOTS_KEY and item.state == "planned":
+            firsts.setdefault(item.project_workflow_id, item.at)
+    if firsts:
+        title = await up_next_title(database, project_id)
+        for project_workflow_id, at in firsts.items():
+            slot_details[(project_workflow_id, at)] = (
+                f"Posts: {title}" if title else "Nothing up next, so it passes"
+            )
     response.headers["X-Tin-Read-Source"] = "postgres"
     return ProjectWeekView(
         start=start,
@@ -3711,6 +3791,7 @@ async def get_project_week(
                 lands=workflow_expectation(by_id[item.project_workflow_id].workflow_key)[
                     "lands"
                 ].split(",")[0],
+                detail=slot_details.get((item.project_workflow_id, item.at)),
             )
             for item in occurrences
         ],

@@ -52,7 +52,9 @@ def enabled(settings: Any, project_id: UUID | None) -> bool:
 
 
 # Workflows that read LinkedIn through this connection, listed only where it can exist.
-CONNECTED_EXECUTORS = frozenset({"social.linkedin_listen", "social.linkedin_results"})
+CONNECTED_EXECUTORS = frozenset(
+    {"social.linkedin_listen", "social.linkedin_results", "social.linkedin_post_slots"}
+)
 
 
 def visible(settings: Any, workflow: Any, project_id: UUID | None) -> bool:

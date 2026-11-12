@@ -5,6 +5,7 @@
 (() => {
   const SCHEMA = "tin.social.linkedin_draft.v1";
   const MAX_TEXT = 3000;
+  const MAX_COMMENT = 1250;
   const MAX_IMAGES = 20;
   const MAX_BYTES = 5_000_000;
   const MEDIA_DIR = "social/linkedin/media";
@@ -57,6 +58,7 @@
       root, context, key, closed: false, busy: false,
       revision: null, saved: null, draft: null, savedSha: null,
       connected: false, accounts: [], unavailable: [], publications: {},
+      upNext: null, slots: null, when: "slot", upNextRequest: null,
       selected: 0, mode: "read", outcome: false, notes: false, menu: false, switcher: false,
       preview: null, publishRequest: null, saveRequest: null, message: null,
       uploads: [], media: new Map(), picker: null, revisable: false, revising: null,
@@ -93,6 +95,7 @@
     });
     root.addEventListener("input", event => typed(state, event.target));
     root.addEventListener("change", event => {
+      if (event.target.matches("[data-li-when]")) {state.when = event.target.value; render(state); return;}
       if (event.target.matches("[data-li-upload]")) {
         const files = [...event.target.files]; event.target.value = "";
         queueUploads(state, files);
@@ -137,6 +140,7 @@
       state.fresh = false;
       state.mode = "read";
       state.outcome = showsOutcome(state);
+      if (!state.outcome && isUpNext(state, current(state))) state.mode = "upnext";
       const notice = notices.get(state.context.path);
       if (notice) {notices.delete(state.context.path); state.message = {text: notice};}
       render(state); follow(state); watchRevision(state);
@@ -162,6 +166,52 @@
     state.publications = result.publications || {};
     state.revisable = !!result.revisable;
     state.revising = result.revising || null;
+    if ("up_next" in result) state.upNext = result.up_next || null;
+    if ("slots" in result) state.slots = result.slots || null;
+  }
+
+  // ---- Posting slots (Paper PN-B, PN-C) ----
+
+  // The project's next post for its posting slots, from any batch: is it this one?
+  const isUpNext = (state, post) => !!post && state.upNext?.path === state.context.path && state.upNext?.post_id === post.id;
+  const slotsReady = state => state.slots?.status === "active" && !!state.slots?.next_at;
+  // Slots post as a page; a member's own profile posts now or not at all.
+  const offersSlot = exact => exact?.account?.kind === "organization";
+  const choosesSlot = state => offersSlot(state.preview) && slotsReady(state) && state.when === "slot";
+  const DAY_NAMES = {monday: "Monday", tuesday: "Tuesday", wednesday: "Wednesday", thursday: "Thursday", friday: "Friday", saturday: "Saturday", sunday: "Sunday"};
+
+  function slotTime(state, short = false) {
+    const at = state.slots?.next_at;
+    if (!at) return "";
+    const zone = state.slots.schedule?.timezone;
+    let parts;
+    try {
+      parts = new Intl.DateTimeFormat("en-GB", {weekday: short ? "short" : "long", hour: "numeric", minute: "2-digit", hourCycle: "h23", timeZone: zone || undefined}).formatToParts(new Date(at));
+    } catch (_error) {
+      parts = new Intl.DateTimeFormat("en-GB", {weekday: short ? "short" : "long", hour: "numeric", minute: "2-digit", hourCycle: "h23"}).formatToParts(new Date(at));
+    }
+    const part = type => parts.find(item => item.type === type)?.value || "";
+    return `${part("weekday")} ${Number(part("hour"))}:${part("minute")}`;
+  }
+
+  function slotDays(state, page) {
+    const schedule = state.slots?.schedule || {};
+    const days = (schedule.weekdays || []).map(day => DAY_NAMES[day] || day);
+    const list = days.length > 1 ? `${days.slice(0, -1).join(", ")} and ${days.at(-1)}` : days[0] || "";
+    const time = String(schedule.local_time || "").replace(/^0(\d)/, "$1");
+    const city = String(schedule.timezone || "").split("/").at(-1).replace(/_/g, " ");
+    return `${page ? `${page}'s page` : "The page"} posts on ${list} at ${time}${city ? ` ${city} time` : ""}.`;
+  }
+
+  // The post a pick would replace, named as the reader names it.
+  function replacedLabel(state) {
+    const next = state.upNext;
+    if (!next || isUpNext(state, current(state))) return "";
+    if (next.path === state.context.path) {
+      const index = posts(state).findIndex(item => item.id === next.post_id);
+      if (index >= 0) return `Post ${index + 1}`;
+    }
+    return "the post up next";
   }
 
   // A post opens on its outcome while it publishes, once it's live or uncertain, and after a
@@ -192,6 +242,7 @@
     if (state.revising?.post_id === post.id) return "Revising";
     const published = shownPublication(state, post);
     if (published) return OUTCOME_LABELS[published.state];
+    if (isUpNext(state, post)) return slotsReady(state) ? `Up next, ${slotTime(state, true)}` : "Up next";
     if (post.readiness === "needs_evidence") return "Needs evidence";
     if (post.readiness === "needs_asset" || post.missing_assets?.length) return "Needs media";
     return "Ready";
@@ -218,7 +269,8 @@
     if (state.selected === "gaps") return "gaps";
     if (state.mode === "edit") return "edit";
     if (state.mode === "preview" && state.preview) return "preview";
-    return state.outcome && shownPublication(state, current(state)) ? "outcome" : "read";
+    if (state.outcome && shownPublication(state, current(state))) return "outcome";
+    return state.mode === "upnext" && isUpNext(state, current(state)) ? "upnext" : "read";
   }
 
   // Only the bar, rail and dock: typing, uploads and outcome updates keep the column intact.
@@ -253,14 +305,20 @@
     };
     if (view === "preview") {
       const left = minutesLeft(state.preview);
+      const primary = choosesSlot(state)
+        ? {label: "Make it up next", action: "upnext", disabled: busy}
+        : {label: "Publish this exact post", action: "publish", disabled: busy};
       return {
         note: left > 0 ? `Preview good for ${plural(left, "minute")}` : "Preview expired",
         secondary: {label: "Edit post", action: "edit", disabled: busy},
-        primary: left > 0
-          ? {label: "Publish this exact post", action: "publish", disabled: busy}
-          : {label: "Preview again", action: "preview", disabled: busy},
+        primary: left > 0 ? primary : {label: "Preview again", action: "preview", disabled: busy},
       };
     }
+    if (view === "upnext") return {
+      note: slotsReady(state) ? `Up next · ${slotTime(state, true)}` : "Up next",
+      secondary: {label: "Take out of up next", action: "clear-up-next", disabled: busy},
+      primary: {label: "Back to drafts", action: "read"},
+    };
     if (view === "outcome") {
       const item = shownPublication(state, post);
       if (item.state === "publishing") return {
@@ -322,7 +380,7 @@
   }
 
   function railItems(state) {
-    const items = posts(state).map((post, index) => ({key: index, title: `Post ${index + 1}`, status: statusLabel(state, post, index)}));
+    const items = posts(state).map((post, index) => ({key: index, title: `Post ${index + 1}`, status: statusLabel(state, post, index), next: isUpNext(state, post) && !shownPublication(state, post)}));
     const gaps = state.draft?.gaps?.length || 0;
     if (gaps) items.push({key: "gaps", title: "More context needed", status: `${plural(gaps, "note")} from this run`, short: plural(gaps, "note"), gaps: true});
     return items;
@@ -330,7 +388,7 @@
 
   function rail(state) {
     if (!state.draft) return '<nav class="li-rail" aria-label="Posts in this draft"></nav>';
-    return `<nav class="li-rail" aria-label="Posts in this draft">${railItems(state).map(item => `<button type="button" class="li-rail-item${item.gaps && posts(state).length ? " is-gaps" : ""}" data-li="select" data-post="${item.key}" data-focus="rail-${item.key}" ${item.key === state.selected ? 'aria-current="true"' : ""}><span>${esc(item.title)}</span><small>${esc(item.status)}</small></button>`).join("")}</nav>`;
+    return `<nav class="li-rail" aria-label="Posts in this draft">${railItems(state).map(item => `<button type="button" class="li-rail-item${item.gaps && posts(state).length ? " is-gaps" : ""}" data-li="select" data-post="${item.key}" data-focus="rail-${item.key}" ${item.key === state.selected ? 'aria-current="true"' : ""}><span>${esc(item.title)}</span><small${item.next ? ' class="is-next"' : ""}>${esc(item.status)}</small></button>`).join("")}</nav>`;
   }
 
   function switcher(state) {
@@ -350,6 +408,7 @@
     if (view === "edit") return editView(state, post);
     if (view === "preview") return previewView(state);
     if (view === "outcome") return outcomeView(state, post);
+    if (view === "upnext") return upNextView(state, post);
     return readView(state, post);
   }
 
@@ -364,7 +423,7 @@
       ${state.feedback.open && !state.revising ? feedbackForm(state) : ""}${state.notes ? notesCard(state, post) : ""}
       <div class="li-as is-read">${readPoster(state, who)}<button type="button" class="li-link li-narrow" data-li="notes" aria-expanded="${state.notes}">${state.notes ? "Close notes" : "Draft notes"}</button></div>
       <div class="li-copy">${esc(post.text)}</div>
-      ${readImages(state, post.attachments || [])}${ask}`;
+      ${readImages(state, post.attachments || [])}${comment(who.account, post.first_comment)}${ask}`;
   }
 
   // Board LI-05: the note Tin redrafts the post from.
@@ -432,7 +491,15 @@
       ${posterField(state, post)}
       <div class="li-text-box"><label class="li-hidden" for="li-text">Post text</label><textarea id="li-text" class="li-text" data-li-text data-focus="text" maxlength="${MAX_TEXT}" spellcheck="true">${esc(post.text)}</textarea></div>
       <p class="li-count${length > MAX_TEXT ? " is-error" : ""}" data-li-count>${count(length)} / ${count(MAX_TEXT)}</p></div>
-      ${imagesField(state, post)}`;
+      ${imagesField(state, post)}${commentField(post)}`;
+  }
+
+  // Posted by the same account right after the post: where its link goes.
+  function commentField(post) {
+    const text = post.first_comment || "";
+    return `<section class="li-comment-field"><label class="li-field-title" for="li-comment">First comment</label>
+      <textarea id="li-comment" class="li-comment-text" data-li-comment data-focus="comment" maxlength="${MAX_COMMENT}" spellcheck="true" placeholder="Posted right after the post, by the same account. A link goes here.">${esc(text)}</textarea>
+      <p class="li-count${text.length > MAX_COMMENT ? " is-error" : ""}" data-li-comment-count>${count(text.length)} / ${count(MAX_COMMENT)}</p></section>`;
   }
 
   function posterField(state, post) {
@@ -530,23 +597,63 @@
 
   // LinkedIn lays images out by count: one wide, two side by side, three as one over two,
   // more as one over three with the rest counted on the last.
-  function card(account, text, attachments, exact) {
+  // The first comment as LinkedIn shows it: the account's mark, its name and the words.
+  function comment(account, text) {
+    if (!String(text || "").trim()) return "";
+    return `<div class="li-card-comment"><span class="li-card-comment-mark" aria-hidden="true">${esc(initial(account?.name))}</span><div><strong>${esc(account?.name || "LinkedIn")}</strong><span>${esc(text)}</span></div></div>`;
+  }
+
+  function card(account, text, attachments, exact, firstComment = "", stamp = "now") {
     const n = attachments.length;
     const layout = ["", "one", "two", "three"][n] || "many";
     const shown = n > 4 ? attachments.slice(0, 4) : attachments;
     return `<article class="li-card" aria-label="${exact ? "Exact LinkedIn preview" : "The post"}" ${exact ? "data-li-exact" : ""}>
-      <div class="li-card-body"><div class="li-card-head"><span class="li-card-mark" aria-hidden="true">${esc(initial(account?.name))}</span><span><strong>${esc(account?.name || "LinkedIn")}</strong><small>${account?.kind === "organization" ? "Page" : "Profile"}${exact ? " · now" : ""}</small></span></div>
+      <div class="li-card-body"><div class="li-card-head"><span class="li-card-mark" aria-hidden="true">${esc(initial(account?.name))}</span><span><strong>${esc(account?.name || "LinkedIn")}</strong><small>${account?.kind === "organization" ? "Page" : "Profile"}${exact ? ` · ${esc(stamp)}` : ""}</small></span></div>
       <div class="li-card-text">${esc(text)}</div></div>
-      ${n ? `<div class="li-card-images is-${layout}">${shown.map((item, index) => `<div class="li-media" data-li-media="${esc(item.path)}" data-alt="${esc(item.alt_text || "")}" ${exact && item.url ? `data-url="${esc(item.url)}"` : ""}>${index === 3 && n > 4 ? `<span class="li-more">+${n - 4}</span>` : ""}</div>`).join("")}</div>` : ""}</article>`;
+      ${n ? `<div class="li-card-images is-${layout}">${shown.map((item, index) => `<div class="li-media" data-li-media="${esc(item.path)}" data-alt="${esc(item.alt_text || "")}" ${exact && item.url ? `data-url="${esc(item.url)}"` : ""}>${index === 3 && n > 4 ? `<span class="li-more">+${n - 4}</span>` : ""}</div>`).join("")}</div>` : ""}${comment(account, firstComment)}</article>`;
   }
 
   function previewView(state) {
     const exact = state.preview;
     const n = exact.attachments?.length || 0;
-    const parts = n === 0 ? "the text and the account" : n === 1 ? "the text, the image and the account" : `the text, ${n === 2 ? "both" : `all ${n}`} images in this order, and the account`;
+    const images = n === 0 ? "" : n === 1 ? "the image" : `${n === 2 ? "both" : `all ${n}`} images in this order`;
+    const parts = exact.first_comment
+      ? `${["the text", images, "the first comment"].filter(Boolean).join(", ")} and the account`
+      : n === 0 ? "the text and the account" : n === 1 ? "the text, the image and the account" : `the text, ${images}, and the account`;
+    const slot = choosesSlot(state);
+    const replaced = replacedLabel(state);
+    const sentence = slot
+      ? `Make it up next ${replaced ? `takes ${esc(replaced)}'s place` : "keeps it for the next slot"}. Tin posts this as ${esc(asWho(exact.account))} on ${esc(slotTime(state))}${exact.first_comment ? ", with its first comment" : ""}. Changing the post takes it out of up next.`
+      : `Publishing posts it now as ${esc(asWho(exact.account))}. Tin records your approval first, so trying again never posts twice, and saves a report in Files.`;
     return `${line(state)}<p class="li-sentence">This is exactly what LinkedIn receives: ${parts}.</p>
-      ${card(exact.account, exact.text, exact.attachments || [], true)}
-      <p class="li-sentence">Publishing posts it now as ${esc(asWho(exact.account))}. Tin records your approval first, so trying again never posts twice, and saves a report in Files.</p>`;
+      ${card(exact.account, exact.text, exact.attachments || [], true, exact.first_comment, slot ? slotTime(state) : "now")}
+      ${offersSlot(exact) ? whenChoice(state, exact) : ""}
+      <p class="li-sentence">${sentence}</p>`;
+  }
+
+  // PN-B: the next slot, picked by default, or now. Without slots, the first row sets them up.
+  function whenChoice(state, exact) {
+    const ready = slotsReady(state);
+    const slot = ready && state.when === "slot";
+    const first = ready
+      ? `<div class="li-when-row"><input type="radio" id="li-when-slot" name="li-when" value="slot" data-li-when ${slot ? "checked" : ""}>
+          <label for="li-when-slot"><strong>At the next slot, ${esc(slotTime(state))}</strong><small>${esc(slotDays(state, exact.account?.name))}</small></label>
+          <button type="button" class="li-link" data-li="slots">Change times</button></div>`
+      : `<div class="li-when-row is-off"><input type="radio" id="li-when-slot" name="li-when" value="slot" disabled>
+          <label for="li-when-slot"><strong>At a posting slot</strong><small>${state.slots ? "The posting slots are paused." : "This project has no posting slots yet."}</small></label>
+          <button type="button" class="li-link" data-li="${state.slots ? "slots" : "slots-setup"}">${state.slots ? "Open the slots" : "Set up posting slots"}</button></div>`;
+    return `<fieldset class="li-when"><legend class="li-hidden">When to post</legend>${first}
+      <div class="li-when-row"><input type="radio" id="li-when-now" name="li-when" value="now" data-li-when ${slot ? "" : "checked"}><label for="li-when-now"><strong>Now</strong></label></div></fieldset>`;
+  }
+
+  // PN-C: the post up next, as any member sees it.
+  function upNextView(state, post) {
+    const account = whoPosts(state, post).account || state.upNext?.account || {};
+    const at = slotsReady(state) ? ` on ${slotTime(state)}` : " at the next slot";
+    const picked = state.upNext?.picked_at ? `${state.upNext.picked_by_you ? "You" : "A teammate"} picked it ${when(state.upNext.picked_at)}. ` : "";
+    return `${line(state)}<p class="li-sentence is-strong" role="status">Up next. Tin posts this as ${esc(asWho(account))}${esc(at)}${post.first_comment ? ", with its first comment" : ""}.</p>
+      ${card(account, post.text, post.attachments || [], false, post.first_comment)}
+      <p class="li-sentence">${esc(picked)}Picking another post replaces it. Changing this post takes it out of up next, and the slot passes unless someone picks another.</p>`;
   }
 
   function outcomeView(state, post) {
@@ -595,6 +702,8 @@
       // Editing carries on from post to post, except into one with an outcome to see first.
       state.outcome = showsOutcome(state);
       if (state.mode !== "edit" || key === "gaps" || state.outcome) state.mode = "read";
+      // The post up next opens on that, as a published post opens on its outcome.
+      if (state.mode === "read" && !state.outcome && isUpNext(state, current(state))) state.mode = "upnext";
       render(state);
       // Another post starts at its top, wherever the last one was read to.
       state.root.closest("main")?.scrollTo?.({top: 0});
@@ -619,6 +728,11 @@
     if (action === "save") {if (await save(state)) {state.mode = "read"; state.picker = null; render(state);} return;}
     if (action === "preview") return preview(state, post);
     if (action === "publish") return publish(state);
+    if (action === "upnext") return makeUpNext(state);
+    if (action === "clear-up-next") return clearUpNext(state);
+    if (action === "read") {state.mode = "read"; state.message = null; render(state); return;}
+    if (action === "slots") {state.context.openSlots?.(state.slots?.project_workflow_id); return;}
+    if (action === "slots-setup") {state.context.setUpSlots?.(); return;}
     if (action === "connect") {state.context.connect?.(); return;}
     if (action === "sources") {const path = sourcesPath(state); if (path) state.context.openFile?.(path, state.revision); return;}
     if (action === "menu") {state.menu = !state.menu; render(state); state.root.querySelector(state.menu ? '.li-menu [aria-selected="true"] button, .li-menu button' : ".li-picker")?.focus(); return;}
@@ -658,6 +772,14 @@
       post.text = field.value; fit(field);
       const counter = state.root.querySelector("[data-li-count]");
       if (counter) counter.textContent = `${count(field.value.length)} / ${count(MAX_TEXT)}`;
+      edited(state, true);
+    } else if (field.matches("[data-li-comment]")) {
+      post.first_comment = field.value;
+      const counter = state.root.querySelector("[data-li-comment-count]");
+      if (counter) {
+        counter.textContent = `${count(field.value.length)} / ${count(MAX_COMMENT)}`;
+        counter.classList.toggle("is-error", field.value.length > MAX_COMMENT);
+      }
       edited(state, true);
     } else if (field.matches("[data-li-alt]")) {
       post.attachments[Number(field.dataset.liAlt)].alt_text = field.value; edited(state, true);
@@ -765,6 +887,8 @@
       state.saved = copy(result.draft); state.draft = copy(result.draft); state.saveRequest = null;
       state.uploads = state.uploads.filter(item => !["too_large", "wrong_type"].includes(item.status));
       state.message = {text: "Saved to Files.", saved: true};
+      // A post changed after its pick leaves up next; read where that stands now.
+      if (state.upNext) refreshUpNext(state);
       return true;
     } catch (error) {
       if (!state.closed) {state.message = {text: `${error.message} Your edits are still here.`, error: true}; render(state);}
@@ -779,7 +903,8 @@
     try {
       const result = await state.context.api(apiUrl(state, "preview"), {method: "POST", body: JSON.stringify({path: state.context.path, post_id: post.id})});
       if (state.closed) return;
-      state.preview = result; state.publishRequest = null; state.mode = "preview"; state.outcome = false;
+      state.preview = result; state.publishRequest = null; state.upNextRequest = null; state.mode = "preview"; state.outcome = false;
+      state.when = "slot";
       state.notes = false; state.picker = null; state.message = null;
     } catch (error) {
       if (state.closed) return;
@@ -813,6 +938,48 @@
         render(state);
       }
     } finally {state.busy = false; if (!state.closed) paintChrome(state);}
+  }
+
+  async function makeUpNext(state) {
+    const exact = state.preview;
+    if (state.busy || !exact?.preview_token || dirty(state)) return;
+    state.busy = true; state.upNextRequest ||= crypto.randomUUID(); paintChrome(state);
+    try {
+      const result = await state.context.api(apiUrl(state, "up-next"), {
+        method: "POST", body: JSON.stringify({preview_token: exact.preview_token, request_id: state.upNextRequest}),
+      });
+      if (state.closed) return;
+      state.upNext = result.up_next || null; state.slots = result.slots || state.slots;
+      state.preview = null; state.upNextRequest = null; state.mode = "upnext"; state.message = null;
+      render(state);
+      await state.context.onUpNext?.();
+    } catch (error) {
+      if (!state.closed) {state.message = {text: error.message, error: true}; render(state);}
+    } finally {state.busy = false; if (!state.closed) paintChrome(state);}
+  }
+
+  async function clearUpNext(state) {
+    if (state.busy) return;
+    state.busy = true; paintChrome(state);
+    try {
+      const result = await state.context.api(apiUrl(state, "up-next"), {method: "DELETE"});
+      if (state.closed) return;
+      state.upNext = result.up_next || null; state.mode = "read";
+      state.message = {text: "Taken out of up next. The next slot passes unless someone picks a post."};
+      await state.context.onUpNext?.();
+    } catch (error) {
+      if (!state.closed) state.message = {text: error.message, error: true};
+    } finally {state.busy = false; if (!state.closed) render(state);}
+  }
+
+  async function refreshUpNext(state) {
+    try {
+      const result = await state.context.api(apiUrl(state, "up-next"));
+      if (state.closed) return;
+      state.upNext = result.up_next || null; state.slots = result.slots || null;
+      if (state.mode === "upnext" && !isUpNext(state, current(state))) state.mode = "read";
+      if (state.mode !== "edit") render(state); else paintChrome(state);
+    } catch (_error) {/* The next read says where up next stands. */}
   }
 
   async function requestChanges(state) {

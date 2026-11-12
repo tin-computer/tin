@@ -4,7 +4,7 @@
     "key": "social.linkedin_company_posts",
     "title": "Write posts for your LinkedIn company page",
     "description": "Write six posts for your company's LinkedIn page from your brand guide, notes and site wording, each with a brief for its card. Your coding agent makes the cards with Tin's card kit; you pick which post goes out. Nothing is posted.",
-    "version": "0.1.0",
+    "version": "0.2.0",
     "executor": "workflow.code",
     "system": "linkedin",
     "schedule_modes": ["on_demand"],

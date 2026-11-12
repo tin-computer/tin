@@ -428,20 +428,26 @@ class Zernio:
         return public
 
     async def create_post(
-        self, *, account_id: str, text: str, media: list[dict[str, Any]], idempotency_key: str
+        self,
+        *,
+        account_id: str,
+        text: str,
+        media: list[dict[str, Any]],
+        idempotency_key: str,
+        first_comment: str = "",
     ) -> dict[str, Any]:
-        """Publish now as one connected account.
+        """Publish now as one connected account, with its first comment when it has one.
 
         Zernio returns the original post for a repeated `Idempotency-Key` within 24 hours, so a
         caller holding a receipt resends the same key after a lost answer. A refusal raises
         IntegrationDeliveryRefusedError: nothing was created.
         """
 
-        body: dict[str, Any] = {
-            "content": text,
-            "platforms": [{"platform": "linkedin", "accountId": zernio_id(account_id)}],
-            "publishNow": True,
-        }
+        platform: dict[str, Any] = {"platform": "linkedin", "accountId": zernio_id(account_id)}
+        if first_comment:
+            # Zernio posts it as the same account right after the post.
+            platform["platformSpecificData"] = {"firstComment": first_comment}
+        body: dict[str, Any] = {"content": text, "platforms": [platform], "publishNow": True}
         if media:
             body["mediaItems"] = [
                 {

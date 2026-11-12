@@ -1702,6 +1702,20 @@ class LinkedInPublishWorkflow:
             workflow.logger.warning("LinkedIn listening did not start for run %s", run_id)
 
 
+@workflow.defn(name="social.linkedin_post_slots")
+class LinkedInPostSlotsWorkflow:
+    """Posting slots never run as themselves: when a slot comes, the scheduled dispatcher
+    starts the publish run for the post up next (linkedin_slots.dispatch_slot), and Tin
+    refuses to start a slot by hand. The executor is registered so the catalog entry has one."""
+
+    @workflow.run
+    async def run(self, run_id: str) -> None:
+        raise ApplicationError(
+            "Posting slots post through the LinkedIn publish run; nothing was posted.",
+            non_retryable=True,
+        )
+
+
 @workflow.defn(name=LINKEDIN_LISTEN_WORKFLOW_NAME)
 class LinkedInListenWorkflow:
     """Read one post Tin published at fixed times after posting. Timers hold no worker; only
@@ -2087,6 +2101,7 @@ def registered_workflows() -> list[type]:
         XFeedbackWorkflow,
         XPublishWorkflow,
         LinkedInPublishWorkflow,
+        LinkedInPostSlotsWorkflow,
         LinkedInListenWorkflow,
         LinkedInResultsWorkflow,
         LinkedInEngagersWorkflow,
@@ -2130,6 +2145,7 @@ def registered_workflow_implementations() -> dict[str, type]:
         "social.x_revise": XFeedbackWorkflow,
         "social.x_publish": XPublishWorkflow,
         "social.linkedin_publish": LinkedInPublishWorkflow,
+        "social.linkedin_post_slots": LinkedInPostSlotsWorkflow,
         LINKEDIN_LISTEN_WORKFLOW_NAME: LinkedInListenWorkflow,
         LINKEDIN_RESULTS_WORKFLOW_NAME: LinkedInResultsWorkflow,
         LINKEDIN_ENGAGERS_WORKFLOW_NAME: LinkedInEngagersWorkflow,

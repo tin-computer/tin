@@ -13,7 +13,7 @@ import { chromium } from "playwright";
 const assets = path.resolve("src/tin_lite/static");
 const minutesAgo = minutes => new Date(Date.now() - minutes * 60_000).toISOString();
 
-async function serve({draft: revision, release, extra = [], waitingTasks = false, adapted, olderDraft = false, unavailableDraft = false, review = null, films = null} = {}) {
+async function serve({draft: revision, release, extra = [], waitingTasks = false, adapted, olderDraft = false, unavailableDraft = false, review = null, films = null, slots = null} = {}) {
   const project = {id: "project-1", name: "Example project", workspace_id: "ws", workspace_name: "Example", member_count: 1, hidden: false};
   const task = {
     id: "5a7e0000-0000-4000-8000-000000000001", project_id: project.id, workflow_id: "task", workflow_name: "project.task",
@@ -127,7 +127,9 @@ async function serve({draft: revision, release, extra = [], waitingTasks = false
     }
     if (url.pathname === "/api/projects") return send([project]);
     if (url.pathname.endsWith("/publish-preview")) return send(adapted ?? {adapt: false});
-    if (/\/api\/projects\/[^/]+\/workflows$/.test(url.pathname)) return send([{id: "saved", workflow_key: "research.deep_dive", status: "active"}]);
+    if (/\/api\/projects\/[^/]+\/workflows$/.test(url.pathname)) return send([{id: "saved", workflow_key: "research.deep_dive", status: "active"}, ...(slots ? [{id: "slots-1", workflow_key: "social.linkedin_post_slots", status: "active"}] : [])]);
+    // The posting slots, the post up next and the day-before notice (linkedin_slots.py).
+    if (slots && url.pathname.endsWith("/linkedin/up-next")) return send(slots);
     if (/\/api\/projects\/[^/]+\/runs$/.test(url.pathname)) return send(olderDraft ? runs.filter(run => run.workflow_name !== "content.generate") : runs);
     const requestedRun = runs.find(run => url.pathname === `/api/workflows/runs/${run.id}`);
     if (requestedRun) {
@@ -643,4 +645,30 @@ test("a film a coding agent uploaded: its directions to pick from, then the cut 
     assert.deepEqual(errors, []);
     await context.close();
   } finally {await browser.close(); server.close();}
+});
+
+test("the day before a posting slot with nothing up next, Decisions asks for a pick", async () => {
+  const schedule = {cadence: "weekly", weekdays: ["monday", "wednesday", "friday"], local_time: "09:00", timezone: "Europe/Istanbul"};
+  const path = "social/linkedin/drafts/2026-11-11-company-posts.json";
+  const notice = {id: "linkedin-slot:slots-1", slot_at: "2026-11-18T06:00:00+00:00", timezone: "Europe/Istanbul", schedule, ready: 4, waiting_for_cards: 0, path};
+  const {server, base} = await serve({slots: {up_next: null, slots: {project_workflow_id: "slots-1", status: "active", schedule, next_at: notice.slot_at}, notice, batch: path}});
+  const browser = await chromium.launch({headless: true});
+  try {
+    const {page} = await open(browser, base, "/decisions?project=project-1");
+    const row = page.locator("[data-decision-id^='linkedin-slot:']");
+    await row.waitFor({timeout: 5000});
+    assert.equal(await row.locator("strong").innerText(), "Nothing is up next for Wed 9:00");
+    assert.match(await page.locator(".decision-group-title").first().innerText(), /^LinkedIn posts\s*1$/);
+    await row.click();
+    const card = page.locator(".linkedin-slot-card");
+    await card.waitFor();
+    assert.equal(await card.locator("header strong").innerText(), "Nothing is up next for Wednesday 9:00");
+    assert.equal(await card.locator("header code").innerText(), "LinkedIn posts · Example project");
+    assert.equal(await card.locator(".decision-summary").innerText(), "Example project's page posts on Monday, Wednesday and Friday at 9:00. 4 posts are ready. Pick one, or the slot passes and nothing goes out.");
+    await card.getByRole("button", {name: "Pick a post"}).click();
+    await page.waitForURL(url => new URL(url).searchParams.get("x_draft") === path);
+  } finally {
+    await browser.close();
+    server.close();
+  }
 });
