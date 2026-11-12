@@ -990,6 +990,23 @@ async def test_upload_puts_bytes_without_tins_key_and_checks_hosts():
 
 
 @pytest.mark.asyncio
+async def test_a_profile_gone_from_zernio_asks_for_a_reconnect():
+    from tin_lite.zernio import PROFILE_GONE
+
+    def handler(request):
+        assert request.url.path == "/api/v1/accounts"
+        body = {"error": "Profile not found or access denied", "code": "profile_not_found"}
+        return reply(404, body)
+
+    client, zernio = zernio_client(handler)
+    async with client:
+        # A deleted profile can't come back by waiting, so it isn't a temporary failure.
+        with pytest.raises(IntegrationAuthorizationError, match="Reconnect it under Integrations"):
+            await zernio.accounts("6ad9bc9a4c6ca119a7da5291")
+    assert "Reconnect" in PROFILE_GONE
+
+
+@pytest.mark.asyncio
 async def test_create_post_sends_one_keyed_post_and_reads_every_answer():
     from tin_lite.zernio import DUPLICATE
 

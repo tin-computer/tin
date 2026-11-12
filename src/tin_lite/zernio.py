@@ -78,6 +78,10 @@ ANALYTICS_REFUSED = (
 ACCOUNT_GONE = (
     "The LinkedIn account isn't connected anymore. Reconnect LinkedIn posting under Integrations."
 )
+PROFILE_GONE = (
+    "LinkedIn posting isn't connected anymore. Reconnect it under Integrations, then preview the "
+    "post again."
+)
 # What Tin keeps of one post's numbers; LinkedIn reports saves and sends for profiles only, and
 # clicks for pages only.
 METRICS = ("impressions", "reach", "reactions", "comments", "shares", "clicks", "saves", "sends")
@@ -369,6 +373,10 @@ class Zernio:
         status, payload = await self._call(
             "GET", "/accounts", params={"profileId": profile_id, "platform": "linkedin"}
         )
+        if status == 404:
+            # The project's profile is gone from Zernio, so are its accounts: reconnecting makes a
+            # new one. Waiting and trying again would never work.
+            raise IntegrationAuthorizationError(PROFILE_GONE)
         if status != 200 or not isinstance(payload, dict):
             raise IntegrationUpstreamError(UNAVAILABLE)
         values = payload.get("accounts")
