@@ -34,6 +34,10 @@ MAX_DRAFT_BYTES = 256_000
 MAX_TEXT = 3000
 # LinkedIn's limit for a comment; Tin posts the first comment as the post's own account.
 MAX_FIRST_COMMENT = 1250
+# A batch holds up to twelve posts, p1 to p12: Tin writes six, and a client's own set may run
+# longer. The up-next table checks the same IDs (migrations 082 and 083).
+MAX_POSTS = 12
+POST_ID = r"^p([1-9]|1[0-2])$"
 MAX_IMAGES = 20
 # A failed attempt that sent nothing may be confirmed again; this bounds those attempts.
 MAX_ATTEMPTS = 10
@@ -64,7 +68,7 @@ class Attachment(ClosedModel):
 
 
 class Post(ClosedModel):
-    id: str = Field(pattern=r"^p[1-6]$")
+    id: str = Field(pattern=POST_ID)
     text: str = Field(min_length=1, max_length=12000)
     # The LinkedIn URN of a connected account; empty until the founder picks one.
     target: str = Field(default="", max_length=100)
@@ -94,12 +98,12 @@ class Source(ClosedModel):
 class Parent(ClosedModel):
     path: str = Field(min_length=1, max_length=512)
     sha256: str = Field(pattern=r"^[0-9a-f]{64}$")
-    post_id: str = Field(pattern=r"^p[1-6]$")
+    post_id: str = Field(pattern=POST_ID)
 
 
 class Draft(ClosedModel):
     schema_version: Literal["tin.social.linkedin_draft.v1"]
-    posts: list[Post] = Field(max_length=6)
+    posts: list[Post] = Field(max_length=MAX_POSTS)
     # What a drafting run keeps with its posts. Tin shows the gaps to the founder; the author,
     # parent and sources let a later revision check against this batch's own material.
     author_id: str | None = Field(

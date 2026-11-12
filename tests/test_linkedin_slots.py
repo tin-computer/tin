@@ -397,3 +397,20 @@ async def test_the_calendar_names_the_post_the_next_slot_posts(publication_db, m
             "Posts the next pick",
             "Posts the next pick",
         ]
+
+
+@pytest.mark.asyncio
+async def test_a_batch_of_nine_saves_and_its_ninth_post_can_be_up_next(publication_db, monkeypatch):
+    f = await fixture(publication_db, monkeypatch, slots_at=datetime.now(UTC) + timedelta(days=1))
+    value = batch()
+    first = value["posts"][0]
+    posts = [
+        {**first, "id": f"p{n}", "text": f"Post {n} of nine", "first_comment": ""}
+        for n in range(1, 10)
+    ]
+    put(f, {**value, "posts": posts})
+    async with f.client:
+        picked = await pick(f, "p9")
+        assert picked.status_code == 200, picked.text
+        # The up-next table takes p1 to p12 (migration 083), not only Tin's batch of six.
+        assert picked.json()["up_next"]["post_id"] == "p9"
