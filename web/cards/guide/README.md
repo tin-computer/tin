@@ -63,12 +63,16 @@ fills every gap with a colour or a shape the company never made.
   `--wait` waits for a part the page draws after loading. Hide with `display: none`, and put a
   bar where words were with the product's border colour. Drop any bar down a box's left edge,
   such as a quote's rule: the shot fails with one in it.
+- Keep the product's type and spacing as they are: hide, replace words with bars, and size what
+  the product itself sizes (a chart's height, a list's length), but never change a font size, a
+  margin, a padding or a gap inside the screen. The shot fails when the script did.
 - Shoot it narrow, about 480 px wide, and say how much larger it shows on the card with
-  `--card-scale`. The shot fails when any word in it would be under 22 px on the card:
+  `--card-scale`, and how large the headline is with `--headline`. The shot fails when any word
+  in it would be under 22 px on the card, or near the headline's size:
 
   ```
   tin-cards shoot "http://localhost:3000/analytics?tab=week" screens/analytics.png \
-    --width 486 --selector ".analytics-view" --script stage/analytics.js --card-scale 1.85
+    --width 486 --selector ".analytics-view" --script stage/analytics.js --card-scale 1.85 --headline 70
   ```
 
 - A terminal is the company's own transcript or terminal component, from its site, with output a
@@ -90,19 +94,31 @@ a layout the company already publishes (a section of its site, its hero, its lin
 dark theme), and let a member pick before making the batch.
 
 A screen is a window with a hard edge: the company's hairline and radius, and a shadow only where
-its own site uses one. Place it one of two ways, measured from its width, never by eye:
+its own site uses one. The screen decides its size and the layout follows, in this order:
 
-- closed: a gutter in on every side of the space below the headline, the window's hairline and
-  radius all round;
-- centred: equal space on its left and right, ending a gutter above the foot.
-
-Decide the window's size from what the post needs to show, then fit the screen to it: give the
-screen's own elements the room (a taller chart, roomier rows, the sentence the post is about set
-larger) or show it larger, keeping its padding even on every side. Never fill a window with what
-the post doesn't need: no extra sections, rows, cards or quiet lines added to reach an edge.
-Quiet bars stand only where the product shows words nobody needs to read, one or two lines at a
-time. A screen runs off an edge only when its own content is larger than the card, such as a
-table too wide to show whole, and then its window runs off with it.
+1. **Stage the screen at the product's own proportions.** Its type, and the space between and
+   inside its parts, stay as the product draws them, so what the product groups stays grouped:
+   a label with what it labels, a question with its answer. Change only what the product itself
+   sizes to the page it is on: a chart's height, a list's length, a column's width. `shoot`
+   fails a script that changes type or spacing inside the screen.
+2. **Enlarge the whole screen by one scale**, the same for every part, so its smallest words are
+   at least 22 px on the card and its largest stay well under the headline. `shoot` fails both.
+3. **Choose the layout from the screen's shape**, measured at that scale. A page, a chart or a
+   list of several rows is a window under the headline. A single part (an answer, a few rows, a
+   button) is enlarged into a corner beside a larger headline. A post with no screen sets the
+   headline alone, or over the company's artwork. Choose per post: a batch mixes layouts because
+   its screens differ.
+4. **Place the window at its measured size**, never stretched or padded to a size the layout
+   wanted. It closes a gutter in, with its hairline and radius all round, centred in the space
+   under the headline. What is left over is the card's paper around the window, never air inside
+   it; when the screen is short, set the headline larger or choose the corner layout.
+5. **One container where the post allows.** When the post is about one box inside a panel, a
+   quote or a row, show that box and leave the panel out.
+6. **Run off an edge only with content.** A screen runs off when its own content is larger than
+   the card (a table too wide to show whole, a single part enlarged into a corner), and then its
+   window runs off with it. Nothing is added to reach an edge: no extra section, row, card or
+   quiet line. Quiet bars stand only where the product shows words nobody needs to read, one or
+   two lines at a time.
 
 A window is exactly as large as the screen it holds. A window drawn larger than its screen leaves
 an empty strip that reads as a box left open, and a screen nested in a second frame reads as
@@ -123,6 +139,8 @@ Nothing the post says may be cut by an edge.
 - No art the company doesn't publish, and no third-party logos.
 - No colour outside the brand's palette.
 - No bar down a box's left edge, a quote's rule included, on the card or in a screen on it.
+- No filler: no section, row, card or quiet line added to fill a window or reach an edge.
+- No type or spacing changed inside a screen; enlarge the whole screen instead.
 
 ## Check
 
@@ -141,7 +159,14 @@ Then run:
 tin-cards check <dir>
 ```
 
-It renders each card to `<post>.png` and fails a card when:
+`tin-cards shoot` checks each screen before it reaches a card, and fails the shot when:
+
+- its text fell back to a system font;
+- a box in it has a bar down its left edge;
+- a word would be under 22 px on the card, or near the headline's size;
+- the stage script changed a font size, a margin, a padding or a gap inside the screen.
+
+`tin-cards check` renders each card to `<post>.png` and fails a card when:
 
 - a font didn't load, or the text falls back to a system font;
 - the headline runs past the card's edge or is clipped;

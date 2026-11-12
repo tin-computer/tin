@@ -130,7 +130,9 @@ export function leftBars({scope = "[data-card]", region = null} = {}) {
 // held to the smallest size a card can carry once the shot is enlarged on it.
 export function textSizes(region) {
   const found = new Map();
-  const walker = document.createTreeWalker(document.body, NodeFilter.SHOW_TEXT);
+  // Only the shot's own words: on a site, a panel lifted out of its slot sits over other text.
+  const root = (region.selector && document.querySelector(region.selector)) || document.body;
+  const walker = document.createTreeWalker(root, NodeFilter.SHOW_TEXT);
   for (let node = walker.nextNode(); node; node = walker.nextNode()) {
     const text = node.textContent.replace(/\s+/g, " ").trim();
     if (!text) continue;
@@ -145,6 +147,53 @@ export function textSizes(region) {
     if (!found.has(text) || found.get(text).size > size) found.set(text, {text: text.slice(0, 40), size});
   }
   return [...found.values()].sort((a, b) => a.size - b.size);
+}
+
+// What a stage script may not change inside a screen: its type and the space inside it. A screen
+// keeps the product's own scale and spacing, so its parts stay grouped as the product groups them;
+// the shot is enlarged as a whole on the card instead. Kept before the script runs, compared after.
+// Both run in the page, so each names the spacing it compares.
+export function keepStyles() {
+  const SPACING = ["marginTop", "marginBottom", "paddingTop", "paddingBottom", "paddingLeft", "paddingRight", "rowGap", "columnGap"];
+  const kept = new WeakMap();
+  for (const element of document.querySelectorAll("body *")) {
+    const style = getComputedStyle(element);
+    kept.set(element, {size: style.fontSize, line: style.lineHeight, space: SPACING.map(name => style[name])});
+  }
+  window.__tinKept = kept;
+}
+
+// The window's own frame (the shot's element, and any element filling it exactly) may even out its
+// padding; nothing inside it may change size of type or space.
+export function restyled(selector) {
+  const SPACING = ["marginTop", "marginBottom", "paddingTop", "paddingBottom", "paddingLeft", "paddingRight", "rowGap", "columnGap"];
+  const root = selector ? document.querySelector(selector) : document.body;
+  if (!root || !window.__tinKept) return [];
+  const edge = root.getBoundingClientRect();
+  const frame = element => {
+    const box = element.getBoundingClientRect();
+    return Math.abs(box.width - edge.width) < 2 && Math.abs(box.height - edge.height) < 2;
+  };
+  const px = value => parseFloat(value) || 0;
+  const sample = element => (element.innerText || element.textContent || "").replace(/\s+/g, " ").trim().slice(0, 40) || element.className || element.tagName.toLowerCase();
+  const found = [];
+  for (const element of [root, ...root.querySelectorAll("*")]) {
+    const kept = window.__tinKept.get(element);
+    const style = getComputedStyle(element);
+    if (!kept || style.display === "none" || style.visibility === "hidden") continue;
+    if (element.textContent.trim() && (kept.size !== style.fontSize || (kept.line !== style.lineHeight && kept.line !== "normal"))) {
+      found.push({element, kind: "type", text: sample(element), from: `${kept.size}/${kept.line}`, to: `${style.fontSize}/${style.lineHeight}`});
+      continue;
+    }
+    if (element === root || frame(element)) continue;
+    const moved = SPACING.filter((name, index) => Math.abs(px(style[name]) - px(kept.space[index])) > 1);
+    if (moved.length) found.push({element, kind: "space", text: sample(element), what: moved.map(name => `${name} ${kept.space[SPACING.indexOf(name)]} → ${style[name]}`).join(", ")});
+  }
+  // Type set on a box changes every word inside it; name the box once.
+  const typed = found.filter(item => item.kind === "type").map(item => item.element);
+  return found
+    .filter(item => item.kind !== "type" || !typed.some(other => other !== item.element && other.contains(item.element)))
+    .map(({element, ...item}) => item);
 }
 
 // Where each screen sits in the frame that clips it (the card, or a panel with overflow hidden).

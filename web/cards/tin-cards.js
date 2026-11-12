@@ -14,7 +14,7 @@ import fs from "node:fs";
 import path from "node:path";
 import {fileURLToPath, pathToFileURL} from "node:url";
 import {chromium} from "playwright";
-import {HEIGHT, WIDTH, colours, emptyWindows, eyebrows, fonts, leftBars, placement, textSizes, words} from "./checks.js";
+import {HEIGHT, WIDTH, colours, emptyWindows, eyebrows, fonts, keepStyles, leftBars, placement, restyled, textSizes, words} from "./checks.js";
 
 const HERE = path.dirname(fileURLToPath(import.meta.url));
 // LinkedIn takes PNG or JPEG up to 5 MB, and so does Tin.
@@ -185,7 +185,7 @@ async function check(dir) {
 // stylesheet and fonts with sample data, from a local file or the running app. Shot at twice
 // the size so it stays sharp when the card scales it.
 async function shoot(source, out, options) {
-  if (!source || !out) fail("Usage: tin-cards shoot <page.html | http://localhost:…> <out.png> [--width 1280] [--height 900] [--selector css] [--scale 2] [--scheme dark] [--wait css] [--style simplify.css] [--script simplify.js] [--card-scale 1.5]");
+  if (!source || !out) fail("Usage: tin-cards shoot <page.html | http://localhost:…> <out.png> [--width 1280] [--height 900] [--selector css] [--scale 2] [--scheme dark] [--wait css] [--style simplify.css] [--script simplify.js] [--card-scale 1.5] [--headline 70]");
   // A local page may carry a query (page.html?view=analytics) that picks what it shows.
   const [file, query] = source.split("?");
   const url = /^https?:\/\//.test(source) ? source : `${pathToFileURL(path.resolve(file)).href}${query ? `?${query}` : ""}`;
@@ -201,12 +201,19 @@ async function shoot(source, out, options) {
   await settle(page);
   // Simplify the page for the card: hide what the post isn't about, put quiet bars where words
   // nobody needs to read were.
+  await page.evaluate(keepStyles);
   if (options.style) await page.addStyleTag({path: path.resolve(options.style)});
   if (options.script) {
     await page.addScriptTag({path: path.resolve(options.script)});
     await settle(page);
   }
   let problems = 0;
+  // The screen keeps the product's type and spacing; only the shot as a whole is enlarged.
+  for (const item of await page.evaluate(restyled, options.selector || null)) {
+    if (item.kind === "type") console.error(`error  “${item.text}” was set from ${item.from} to ${item.to}. A screen keeps the product's type: enlarge the whole shot with --card-scale instead.`);
+    else console.error(`error  the space at “${item.text}” changed (${item.what}). A screen keeps the product's spacing, so its parts stay grouped: give room only to what the product itself sizes (a chart's height, a list's length), or choose a layout that fits the screen.`);
+    problems += 1;
+  }
   for (const face of await page.evaluate(fonts, "body")) {
     if (!face.generic && face.loaded) continue;
     console.error(`error  “${face.sample}” is set in ${face.family}, ${face.generic ? "a fallback" : "which didn't load"}. Load the product's own font before shooting it.`);
@@ -214,7 +221,7 @@ async function shoot(source, out, options) {
   }
   const target = options.selector ? page.locator(options.selector).first() : page;
   if (options.selector && !(await target.count())) fail(`Nothing on the page matches ${options.selector}.`);
-  const region = options.selector ? await target.boundingBox() : {x: 0, y: 0, width, height};
+  const region = options.selector ? {...await target.boundingBox(), selector: options.selector} : {x: 0, y: 0, width, height};
   // A product may mark a quote or a note with a bar down its left edge; a card never shows one.
   for (const item of await page.evaluate(leftBars, {scope: "body", region})) {
     console.error(`error  “${item.text}” has a bar down its left edge. Drop the border in the stage script, or give the box the same border all round.`);
@@ -228,6 +235,14 @@ async function shoot(source, out, options) {
       console.error(`error  “${item.text}” is ${item.size} px, ${Math.round(item.size * scale)} px on the card; the smallest a card carries is ${SMALLEST_TEXT}. Hide it, put a bar in its place, or enlarge the shot.`);
     }
     problems += small.length;
+    // Nothing in a screen competes with the headline: its largest text, the page's own title
+    // included, stays well under it.
+    const headline = Number(options.headline || 72);
+    const big = (await page.evaluate(textSizes, region)).filter(item => item.size * scale > headline * 0.8);
+    for (const item of big.slice(-4)) {
+      console.error(`error  “${item.text}” is ${Math.round(item.size * scale)} px on the card, close to the headline's ${headline} px. Show the screen smaller, or choose a layout for a single part.`);
+    }
+    problems += big.length;
   }
   await target.screenshot({path: out, animations: "disabled", timeout: 30000});
   await browser.close();
