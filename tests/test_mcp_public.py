@@ -647,6 +647,7 @@ def test_reviewed_public_catalog_coverage_and_explicit_exclusions():
         "social.x_style",
         "social.x_publish",
         "social.linkedin_publish",
+        "social.linkedin_post_slots",
         "social.linkedin_listen",
         "social.linkedin_results",
         "social.linkedin_engagers",

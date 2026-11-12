@@ -4754,6 +4754,12 @@ html[data-theme="dark"] .system-week-nav button {
 }
 
 .system-config-when p,
+/* Posting slots' Up next: the links under the post's line. */
+.system-slot-links {
+  display: flex;
+  gap: 14px;
+}
+
 .system-config-note {
   margin: 0;
   color: var(--ink-secondary);

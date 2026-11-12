@@ -62,6 +62,8 @@ const MCP_URL = document.documentElement.dataset.mcpUrl?.startsWith("http")
 function configuredOrigin(value) {
   return value && !value.startsWith("{{") ? new URL(value).origin : window.location.origin;
 }
+// The saved workflow that holds a page's posting times (linkedin_slots.py).
+const LINKEDIN_SLOTS_KEY = "social.linkedin_post_slots";
 const ALLOWED_VIEWS = new Set(["workflows", "activity", "decisions", "people", "analytics", "ai-visibility", "files", "integrations"]);
 if (BILLING_ENABLED) ALLOWED_VIEWS.add("billing");
 // One small History API router. Legacy bookmarks are input-only compatibility;
@@ -245,6 +247,8 @@ const state = {
   judgmentCalls: [],
   // Film versions a coding agent uploaded, waiting for the founder (films.py).
   films: [],
+  // The post up next for the posting slots, the slots, and the day-before notice.
+  linkedInSlots: null,
   // The member's connection requests: sending on the LinkedIn card, and what People says.
   linkedInRequests: null,
   view: viewFromLocation(),
@@ -1159,13 +1163,16 @@ function systemTemplateSetupCard(workflow) {
       </section>
       <section class="system-config-when">
         ${isXAuthoring(workflow) ? "" : '<h3 class="system-config-kicker">When</h3>'}
-        ${isXAuthoring(workflow) ? xWorkflowRunControls(workflow) : `${workflowScheduleControls(workflow.id, workflow.key === "content.plan" ? {cadence: "weekly", weekdays: ["monday"], local_time: "09:00", timezone: state.project?.timezone || "UTC"} : workflowDefaultSchedule(workflow), false, workflow.definition?.schedule_modes)}<p>Saving pins v${escapeHtml(workflow.version_label)}. You can change the schedule later.</p>`}
+        ${isXAuthoring(workflow) ? xWorkflowRunControls(workflow) : `${workflowScheduleControls(workflow.id, workflow.key === "content.plan" ? {cadence: "weekly", weekdays: ["monday"], local_time: "09:00", timezone: state.project?.timezone || "UTC"} : workflowDefaultSchedule(workflow), false, workflow.definition?.schedule_modes, workflow.key === LINKEDIN_SLOTS_KEY)}<p>Saving pins v${escapeHtml(workflow.version_label)}. You can change the schedule later.</p>`}
       </section>
     </div>
     <footer class="system-config-footer">
       <span class="system-config-note">Goes to My system when you finish.</span>
-      <button class="button-secondary" type="submit" data-save-workflow ${blocked ? "disabled" : ""}>Set up</button>
-      <button class="button" type="submit" data-save-and-run ${blocked ? "disabled" : ""}>Set up and run now</button>
+      ${workflow.key === LINKEDIN_SLOTS_KEY
+        // Slots post only at their times, so there is nothing to run now.
+        ? `<button class="button" type="submit" data-save-workflow ${blocked ? "disabled" : ""}>Set up</button>`
+        : `<button class="button-secondary" type="submit" data-save-workflow ${blocked ? "disabled" : ""}>Set up</button>
+      <button class="button" type="submit" data-save-and-run ${blocked ? "disabled" : ""}>Set up and run now</button>`}
     </footer>
   </form>`;
 }
@@ -1814,6 +1821,29 @@ function renderXComposer() {
       rememberConnectRequest(context.projectId, ["social.linkedin"]);
       goToRoute("integrations");
     },
+    // Change times opens the posting slots' settings on My system; without slots, their setup.
+    openSlots: (projectWorkflowId) => {
+      if (!isCurrentProjectContext(context)) return;
+      const configured = state.projectWorkflows.find((item) => item.id === projectWorkflowId);
+      navigate("workflows");
+      if (configured) openSavedWorkflowSettings(configured);
+    },
+    // Its setup form sits far down the catalog, so it is opened and brought into view.
+    setUpSlots: () => {
+      if (!isCurrentProjectContext(context)) return;
+      const slots = state.workflows.find((item) => item.key === LINKEDIN_SLOTS_KEY);
+      state.workflowSection = "registry";
+      state.workflowEditor = slots ? { workflowId: slots.id, projectWorkflowId: null, runId: null, field: null } : null;
+      navigate("workflows");
+      if (!slots) return;
+      renderWorkflows();
+      main.querySelector(`.workflow-config-form[data-workflow-id="${CSS.escape(slots.id)}"]`)
+        ?.scrollIntoView({ block: "start" });
+    },
+    onUpNext: async () => {
+      if (!isCurrentProjectContext(context)) return;
+      await refreshLinkedInSlots();
+    },
   });
 }
 
@@ -2154,6 +2184,31 @@ function bindWorkflowResultControls(root) {
     bindTinControls(form);
     bindWorkflowFieldValidation(form);
     form.querySelector("[name=schedule_mode]")?.addEventListener("change", () => syncScheduleMode(form));
+    // A workflow with one schedule mode carries it in a hidden field; show its rows at once.
+    if (form.querySelector("input[type=hidden][name=schedule_mode]")) syncScheduleMode(form);
+  });
+  root.querySelectorAll("[data-slot-pick]").forEach((button) => {
+    button.addEventListener("click", (event) => {
+      event.stopPropagation();
+      openXComposer(button.dataset.slotPick, "manual");
+    });
+  });
+  root.querySelectorAll("[data-slot-clear]").forEach((button) => {
+    button.addEventListener("click", async (event) => {
+      event.stopPropagation();
+      const context = currentProjectContext();
+      button.disabled = true;
+      try {
+        await api(`/api/projects/${encodeURIComponent(context.projectId)}/linkedin/up-next`, { method: "DELETE" });
+        await refreshLinkedInSlots();
+        if (!isCurrentProjectContext(context)) return;
+        showToast("Taken out of up next. The next slot passes unless someone picks a post.");
+        renderWorkflows();
+      } catch (error) {
+        button.disabled = false;
+        showToast(error.message);
+      }
+    });
   });
   root.querySelectorAll(".system-config-form").forEach((form) => {
     // Polling may refresh the saved configuration while this editor stays open.
@@ -2429,8 +2484,9 @@ function systemScheduleLabel(configured) {
   if (!schedule) return "manual";
   if (schedule.cadence === "daily") return `day · ${schedule.local_time}`;
   if (schedule.cadence === "monthly") return `${monthlyWords(schedule, true)} · ${schedule.local_time}`;
-  const days = (schedule.weekdays || []).map((day) => day.slice(0, 3)).join(", ");
-  return `${days} · ${schedule.local_time}`;
+  const days = (schedule.weekdays || []).map((day) => day.slice(0, 3));
+  // Several days fit the column without the separator: "mon wed fri 09:00".
+  return days.length > 1 ? `${days.join(" ")} ${schedule.local_time}` : `${days[0] || ""} · ${schedule.local_time}`;
 }
 
 function systemNextLabel(configured) {
@@ -2443,6 +2499,11 @@ function systemNextLabel(configured) {
 
 function systemLastLabel(configured) {
   if (!configured) return "No earlier run";
+  // Posting slots show the post they post next, where other workflows show their last run.
+  if (configured.workflow_key === LINKEDIN_SLOTS_KEY) {
+    const next = state.linkedInSlots?.up_next;
+    return next ? `Up next: ${next.title}` : "Nothing up next, so this slot passes";
+  }
   const date = configured.last_finished_at ? systemShortDate(configured.last_finished_at) : "";
   if (configured.last_run_status === "failed") {
     const duration = systemRunDuration(configured.last_started_at, configured.last_finished_at);
@@ -2721,7 +2782,8 @@ function systemConfiguredCard(configured) {
   }
   const failed = configured.last_run_status === "failed";
   const scheduled = Boolean(configured.schedule);
-  const actions = failed
+  const slots = configured.workflow_key === LINKEDIN_SLOTS_KEY;
+  const actions = slots ? systemSlotsActions(configured) : failed
     ? `<button class="system-action is-retry" type="button" data-retry-project-workflow="${escapeHtml(configured.id)}">Retry</button>
        <button class="system-action is-strong" type="button" data-run-project-workflow="${escapeHtml(configured.id)}">Manual run</button>`
     : scheduled && configured.status === "paused"
@@ -2743,6 +2805,30 @@ function systemConfiguredCard(configured) {
       <span class="system-card-actions">${actions}</span>
     </div>
   </article>`;
+}
+
+// Posting slots never run by hand (to post now, publish the post): with nothing up next the
+// row offers a pick instead of skipping a slot that passes anyway.
+function systemSlotsActions(configured) {
+  const id = escapeHtml(configured.id);
+  if (configured.status === "paused") return `<button class="system-action is-strong" type="button" data-toggle-project-workflow="${id}" data-action="resume">Resume</button>`;
+  const pick = state.linkedInSlots?.batch;
+  const first = state.linkedInSlots?.up_next
+    ? `<button class="system-action is-strong" type="button" data-skip-project-workflow="${id}">Skip once</button>`
+    : pick ? `<button class="system-action is-strong" type="button" data-slot-pick="${escapeHtml(pick)}">Pick a post</button>` : "";
+  return `${first}<button class="system-action" type="button" data-toggle-project-workflow="${id}" data-action="pause">Pause</button>`;
+}
+
+// The settings' Up next: the post, who picked it, and a way to open it or take it out.
+function systemSlotsUpNext() {
+  const next = state.linkedInSlots?.up_next;
+  const pick = state.linkedInSlots?.batch;
+  if (!next) {
+    return `<div class="system-setting"><strong>Up next</strong><span class="system-config-note">Nothing is up next, so each slot passes until someone picks a post from its preview.</span>${pick ? `<span class="system-slot-links"><button class="system-action is-strong" type="button" data-slot-pick="${escapeHtml(pick)}">Pick a post</button></span>` : ""}</div>`;
+  }
+  const picked = `${next.picked_by_you ? "You" : "A teammate"} picked it ${systemShortDate(next.picked_at)}.`;
+  return `<div class="system-setting"><strong>Up next</strong><span class="system-config-note">${escapeHtml(next.title)} As ${escapeHtml(next.account?.name || "the page")}. ${escapeHtml(picked)}</span>
+    <span class="system-slot-links"><button class="system-action is-strong" type="button" data-slot-pick="${escapeHtml(next.path)}">Open the post</button><button class="system-action" type="button" data-slot-clear>Take out of up next</button></span></div>`;
 }
 
 function systemWorkflowMatches(configured, activeRuns, query) {
@@ -3033,7 +3119,8 @@ function systemProjectWorkflowEditor(workflow, configured, run = null) {
   });
   const mode = configured.schedule?.cadence || "manual";
   const isRunning = Boolean(run && RUNNING_STATES.has(run.status));
-  const rowActions = isRunning
+  const slots = workflow.key === LINKEDIN_SLOTS_KEY;
+  const rowActions = slots && !isRunning ? `<span class="system-card-actions">${systemSlotsActions(configured)}</span>` : isRunning
     ? systemOpenRunAction(run)
     : configured.schedule
     ? `<span class="system-card-actions">
@@ -3061,17 +3148,17 @@ function systemProjectWorkflowEditor(workflow, configured, run = null) {
     ${runDetail}
     <div class="system-config-body">
       <section>
-        ${fields || '<span class="system-config-note">No additional choices.</span>'}
+        ${slots ? systemSlotsUpNext() : fields || '<span class="system-config-note">No additional choices.</span>'}
         <label class="system-setting"><strong>Name</strong><input class="workflow-inline-input" name="workflow_name" required maxlength="120" value="${escapeHtml(configured.name)}" /></label>
       </section>
       <section class="system-config-when">
-        ${isXAuthoring(workflow) ? xWorkflowRunControls(workflow) : `${workflowScheduleControls(configured.id, configured.schedule, false, workflow.definition?.executor === "workflow.code" ? ["on_demand", "daily", "weekly", "monthly"] : workflow.definition?.schedule_modes)}<p>${escapeHtml(systemConfigurationFact(configured))}</p>`}
+        ${isXAuthoring(workflow) ? xWorkflowRunControls(workflow) : `${workflowScheduleControls(configured.id, configured.schedule, false, workflow.definition?.executor === "workflow.code" ? ["on_demand", "daily", "weekly", "monthly"] : workflow.definition?.schedule_modes, slots)}<p>${escapeHtml(slots ? "At each time, Tin posts the post up next as the page. A time with nothing up next passes, and Decisions asks for a pick the day before." : systemConfigurationFact(configured))}</p>`}
       </section>
       ${summaryDestinationSection(configured)}
     </div>
     <footer class="system-config-footer">
       <button class="button" type="submit">Save changes</button>
-      <button class="button-secondary" type="button" data-run-project-workflow="${escapeHtml(configured.id)}">Manual run</button>
+      ${slots ? "" : `<button class="button-secondary" type="button" data-run-project-workflow="${escapeHtml(configured.id)}">Manual run</button>`}
       <span></span>
       ${configured.schedule ? `<button class="button-quiet" type="button" data-toggle-project-workflow="${escapeHtml(configured.id)}" data-action="${configured.status === "paused" ? "resume" : "pause"}">${configured.status === "paused" ? "Resume" : "Pause"}</button>` : ""}
       <button class="button-quiet is-muted" type="button" data-remove-project-workflow="${escapeHtml(configured.id)}">Remove</button>
@@ -3940,7 +4027,7 @@ function workflowDraftForm(workflow) {
       </div>
       ${fields || '<p class="workflow-no-inputs">This workflow has no additional inputs.</p>'}
       <div class="workflow-config-divider"><span>Schedule</span></div>
-      ${workflowScheduleControls(workflow.id, workflowDefaultSchedule(workflow), false, workflow.definition?.schedule_modes)}
+      ${workflowScheduleControls(workflow.id, workflowDefaultSchedule(workflow), false, workflow.definition?.schedule_modes, workflow.key === LINKEDIN_SLOTS_KEY)}
     </div>
     <div class="workflow-config-actions">
       <code>Run now uses these inputs once · saving pins v${escapeHtml(workflow.version_label)}</code>
@@ -4210,7 +4297,7 @@ function workflowDefaultSchedule(workflow) {
   return schedule ? {...schedule, timezone: state.project?.timezone || "UTC"} : null;
 }
 
-function workflowScheduleControls(id, schedule, ledger = false, scheduleModes = null) {
+function workflowScheduleControls(id, schedule, ledger = false, scheduleModes = null, multiDay = false) {
   const mode = schedule?.cadence || "manual";
   const timezone = schedule?.timezone || Intl.DateTimeFormat().resolvedOptions().timeZone || "UTC";
   const weekday = schedule?.weekdays?.[0] || "tuesday";
@@ -4235,14 +4322,24 @@ function workflowScheduleControls(id, schedule, ledger = false, scheduleModes = 
     ["weekly", "Weekly", "weekly"],
     ["monthly", "Monthly", "monthly"],
   ].filter((item) => allowed.has(item[2])).map((item) => item.slice(0, 2));
-  return `<div class="workflow-config-row schedule-mode ${ledger ? "workflow-ledger-row is-editing" : ""}">
+  const days = ["monday", "tuesday", "wednesday", "thursday", "friday", "saturday", "sunday"];
+  const chosen = new Set(schedule?.weekdays?.length ? schedule.weekdays : [weekday]);
+  // Posting slots are only weekly: no choice to show, and the form still says which it is.
+  const modeRow = multiDay && modeOptions.length === 1
+    ? `<input type="hidden" name="schedule_mode" value="${escapeHtml(modeOptions[0][0])}" />`
+    : `<div class="workflow-config-row schedule-mode ${ledger ? "workflow-ledger-row is-editing" : ""}">
       <span class="workflow-row-label">Runs</span>
       <div class="workflow-row-control">${tinSegmentedControl("schedule_mode", mode, modeOptions, "Runs")}</div>
       ${actions}
-    </div>
+    </div>`;
+  // Several days, as posting slots take them, are ticked rather than picked.
+  const dayControl = multiDay
+    ? `<div class="workflow-row-control" data-code-weekdays="true">${days.map((day) => `<label><input type="checkbox" name="schedule_days" value="${day}" ${chosen.has(day) ? "checked" : ""} />${humanize(day)}</label>`).join("")}</div>`
+    : `<div class="workflow-row-control">${tinSelectControl("schedule_weekday", weekday, days.map((day) => [day, humanize(day)]), "Day")}</div>`;
+  return `${modeRow}
     <div class="workflow-config-row schedule-weekday ${ledger ? "workflow-ledger-row is-nested" : ""}">
-      <span class="workflow-row-label">Day</span>
-      <div class="workflow-row-control">${tinSelectControl("schedule_weekday", weekday, ["monday", "tuesday", "wednesday", "thursday", "friday", "saturday", "sunday"].map((day) => [day, humanize(day)]), "Day")}</div>
+      <span class="workflow-row-label">${multiDay ? "Days" : "Day"}</span>
+      ${dayControl}
     </div>
     <div class="workflow-config-row schedule-monthly ${ledger ? "workflow-ledger-row is-nested" : ""}">
       <span class="workflow-row-label">Day</span>
@@ -5076,13 +5173,65 @@ function decisionItems() {
   const calls = state.judgmentCalls.map((call) => ({
     id: `question:${call.id}`, kind: "judgment_call", title: call.question, created_at: call.recorded_at, call,
   }));
-  return [...state.decisions, ...films, ...changes, ...calls];
+  const notice = state.linkedInSlots?.notice;
+  const slots = notice ? [{
+    id: `linkedin-slot:${notice.slot_at}`, kind: "linkedin_slot", created_at: new Date().toISOString(), notice,
+    title: notice.ready ? `Nothing is up next for ${slotTime(notice, true)}` : `Nothing is ready to post on ${slotTime(notice, true)}`,
+  }] : [];
+  return [...slots, ...state.decisions, ...films, ...changes, ...calls];
+}
+
+// A posting slot's time in the slots' own zone: "Wednesday 9:00", or "Wed 9:00" in a list.
+function slotTime(notice, short = false) {
+  const options = { weekday: short ? "short" : "long", hour: "numeric", minute: "2-digit", hourCycle: "h23" };
+  let parts;
+  try {
+    parts = new Intl.DateTimeFormat("en-GB", { ...options, timeZone: notice.timezone || undefined }).formatToParts(new Date(notice.slot_at));
+  } catch (_error) {
+    parts = new Intl.DateTimeFormat("en-GB", options).formatToParts(new Date(notice.slot_at));
+  }
+  const part = (type) => parts.find((item) => item.type === type)?.value || "";
+  return `${part("weekday")} ${Number(part("hour"))}:${part("minute")}`;
+}
+
+function slotDaysLine(schedule) {
+  const days = (schedule?.weekdays || []).map(humanize);
+  const list = days.length > 1 ? `${days.slice(0, -1).join(", ")} and ${days.at(-1)}` : days[0] || "";
+  return `on ${list} at ${String(schedule?.local_time || "").replace(/^0(\d)/, "$1")}`;
+}
+
+// Paper PN-D: the day before a posting slot with nothing up next.
+// Counts start a sentence here, so small ones are written as words.
+function countWord(count) {
+  return ["Zero", "One", "Two", "Three", "Four", "Five", "Six", "Seven", "Eight", "Nine"][count] || String(count);
+}
+
+function linkedInSlotDetailHtml(item) {
+  const notice = item.notice;
+  const page = state.project?.name || "The project";
+  // The project's name is not the page's, so the sentence says "your page".
+  const body = notice.ready
+    ? `Your LinkedIn page posts ${slotDaysLine(notice.schedule)}. ${notice.ready === 1 ? "One post is" : `${countWord(notice.ready)} posts are`} ready. Pick one, or the slot passes and nothing goes out.`
+    : `${notice.waiting_for_cards ? `${notice.waiting_for_cards === 1 ? "The newest post is" : `${countWord(notice.waiting_for_cards)} posts are`} waiting for ${notice.waiting_for_cards === 1 ? "its card" : "their cards"}. Ask your coding agent to make them with Tin's card kit; once uploaded, the posts show as ready and one can be picked.` : "There are no LinkedIn posts left to pick. The slot passes and nothing goes out."}`;
+  const actions = notice.ready
+    ? `<button class="decision-approval" type="button" data-slot-open="${escapeHtml(notice.path || "")}">Pick a post</button>`
+    : notice.path ? `<button class="film-direction-others" type="button" data-slot-open="${escapeHtml(notice.path)}">Open the posts</button>
+       ${notice.waiting_for_cards ? '<button class="decision-approval" type="button" data-slot-copy>Copy the request for your agent</button>' : ""}` : "";
+  return `<article class="decision-detail-card linkedin-slot-card">
+    <header>
+      <span class="decision-workflow-mark">L</span>
+      <span><strong>${escapeHtml(notice.ready ? `Nothing is up next for ${slotTime(notice)}` : `Nothing is ready to post on ${slotTime(notice)}`)}</strong><code>${escapeHtml(`LinkedIn posts · ${page}`)}</code></span>
+    </header>
+    <div class="decision-detail-body"><p class="decision-summary">${escapeHtml(body)}</p></div>
+    ${actions ? `<footer>${actions}</footer>` : ""}
+  </article>`;
 }
 
 // The list shows each kind under its own heading, in decisionItems' order: what to approve
 // first, then what changes the site, then what the coding agent will answer.
 const DECISION_GROUPS = [
-  { title: "Reviews", has: (item) => !["website_change", "judgment_call"].includes(item.kind) },
+  { title: "LinkedIn posts", has: (item) => item.kind === "linkedin_slot" },
+  { title: "Reviews", has: (item) => !["website_change", "judgment_call", "linkedin_slot"].includes(item.kind) },
   { title: "Website changes", has: (item) => item.kind === "website_change" },
   { title: "Questions", has: (item) => item.kind === "judgment_call" },
 ];
@@ -5097,18 +5246,36 @@ function decisionGroups(items) {
 // member's connection requests (which also carry their sending, for the LinkedIn card).
 async function fetchWebsiteChanges(projectId) {
   const id = encodeURIComponent(projectId);
-  const [changes, questions, requests, films] = await Promise.all([
+  const [changes, questions, requests, films, slots] = await Promise.all([
     api(`/api/projects/${id}/website-changes?status=pending`).catch(() => []),
     api(`/api/projects/${id}/website-changes/questions`).catch(() => ({ questions: [] })),
     api(`/api/projects/${id}/linkedin-requests`).catch(() => null),
     api(`/api/projects/${id}/films`).catch(() => ({ films: [] })),
+    fetchLinkedInSlots(projectId),
   ]);
   return {
     changes: Array.isArray(changes) ? changes : [],
     questions: Array.isArray(questions?.questions) ? questions.questions : [],
     requests: requests && !Array.isArray(requests) && typeof requests === "object" ? requests : null,
     films: Array.isArray(films?.films) ? films.films : [],
+    slots,
   };
+}
+
+// The posting slots change at most at a pick or a slot: read them once a minute. A project
+// without slots answers with nothing to show.
+async function fetchLinkedInSlots(projectId, force = false) {
+  const kept = state.linkedInSlots;
+  if (!force && kept?.projectId === projectId && Date.now() - kept.readAt < 60_000) return kept;
+  const result = await api(`/api/projects/${encodeURIComponent(projectId)}/linkedin/up-next`).catch(() => null);
+  return result ? { ...result, projectId, readAt: Date.now() } : kept?.projectId === projectId ? kept : null;
+}
+
+async function refreshLinkedInSlots() {
+  const context = currentProjectContext();
+  const slots = await fetchLinkedInSlots(context.projectId, true);
+  if (!isCurrentProjectContext(context)) return;
+  state.linkedInSlots = slots;
 }
 
 function requestsContext() {
@@ -5500,6 +5667,7 @@ function renderDecisions() {
   const items = decisionItems();
   const detail = decision?.kind === "website_change" ? websiteChangeDetailHtml(decision)
     : decision?.kind === "judgment_call" ? judgmentCallDetailHtml(decision)
+    : decision?.kind === "linkedin_slot" ? linkedInSlotDetailHtml(decision)
     : decision?.kind === "film" ? filmHtml(decision) : decisionDetailHtml(decision);
   main.innerHTML = `<section class="product-view decisions-view">
     <header class="decisions-header"><h1>Decisions</h1>${decisionsPace() ? `<code>${escapeHtml(decisionsPace())}</code>` : ""}</header>
@@ -5522,6 +5690,15 @@ function renderDecisions() {
     });
   });
   main.querySelector("[data-open-system]")?.addEventListener("click", () => navigate("workflows"));
+  main.querySelectorAll("[data-slot-open]").forEach((button) => {
+    button.addEventListener("click", () => openXComposer(button.dataset.slotOpen, "manual"));
+  });
+  main.querySelector("[data-slot-copy]")?.addEventListener("click", async () => {
+    const path = decision?.notice?.path || "";
+    const request = `Make the LinkedIn cards for ${path} in this project with Tin's card kit, then upload them to the draft.`;
+    try { await navigator.clipboard.writeText(request); showToast("Copied. Paste it into your coding agent."); }
+    catch (_error) { showToast(request); }
+  });
   main.querySelectorAll("[data-decision-read]").forEach((button) => {
     button.addEventListener("click", () => openDecisionReview(decision));
   });
@@ -8313,12 +8490,13 @@ async function pollRuns() {
     if (generation !== state.projectGeneration || state.project?.id !== projectId) return;
     const collectionsChanged = workflowsChanged || runsHaveChanged(state.runs, results)
       || JSON.stringify(state.decisions) !== JSON.stringify(decisions)
-      || JSON.stringify([state.websiteChanges, state.judgmentCalls, state.linkedInRequests, state.films]) !== JSON.stringify([websiteChanges.changes, websiteChanges.questions, websiteChanges.requests, websiteChanges.films]);
+      || JSON.stringify([state.websiteChanges, state.judgmentCalls, state.linkedInRequests, state.films, state.linkedInSlots?.notice, state.linkedInSlots?.up_next]) !== JSON.stringify([websiteChanges.changes, websiteChanges.questions, websiteChanges.requests, websiteChanges.films, websiteChanges.slots?.notice, websiteChanges.slots?.up_next]);
     state.decisions = decisions;
     state.websiteChanges = websiteChanges.changes;
     state.films = websiteChanges.films;
     state.judgmentCalls = websiteChanges.questions;
     state.linkedInRequests = websiteChanges.requests;
+    state.linkedInSlots = websiteChanges.slots;
     state.runs = results;
     const summaryChanged = JSON.stringify(state.systemSummary) !== JSON.stringify(systemSummary);
     state.systemSummary = systemSummary;
@@ -8533,6 +8711,7 @@ async function loadProject(project, { announce = false, integrationReturn = null
     state.judgmentCalls = websiteChanges.questions;
     state.linkedInRequests = websiteChanges.requests;
     state.films = websiteChanges.films;
+    state.linkedInSlots = websiteChanges.slots;
     state.integrations = integrations;
     await loadRunWorkflows(allRuns);
     if (generation !== state.projectGeneration || state.project?.id !== project.id) return false;

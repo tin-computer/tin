@@ -1,0 +1,16 @@
+{
+  "name": "tin-cards",
+  "version": "0.1.0",
+  "description": "Tin's card kit: each LinkedIn post's card rendered from the company's own HTML and CSS, checked before it is uploaded to a Tin project.",
+  "type": "module",
+  "bin": {
+    "tin-cards": "tin-cards.js"
+  },
+  "engines": {
+    "node": ">=20"
+  },
+  "dependencies": {
+    "playwright": "1.63.0"
+  },
+  "license": "SEE LICENSE IN guide/README.md"
+}

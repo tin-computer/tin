@@ -22,6 +22,7 @@ from tin_lite.failures import failure_projection, payload_failure, split_failure
 from tin_lite.integrations import IntegrationAuthorizationError, IntegrationDeliveryRefusedError
 from tin_lite.linkedin_posting import may_post_as
 from tin_lite.linkedin_posts import KEY, approved_payload, post_key
+from tin_lite.linkedin_slots import clear_posted
 from tin_lite.organic_audit_publication import publish_artifacts
 
 # Zernio keeps an Idempotency-Key for 24 hours; stop resending well inside that.
@@ -143,6 +144,7 @@ class LinkedInPublishActivities:
                     text=payload["text"],
                     media=media,
                     idempotency_key=f"tin-linkedin-{payload['approval_id']}",
+                    first_comment=payload.get("first_comment", ""),
                 )
             except (IntegrationDeliveryRefusedError, IntegrationAuthorizationError):
                 # Zernio answered and made nothing, so a later attempt may send it.
@@ -178,6 +180,11 @@ class LinkedInPublishActivities:
             f"URL: {post['url']}\n\n"
             "## Published text\n\n"
             f"{payload['text']}\n"
+            + (
+                f"\n## First comment\n\n{payload['first_comment']}\n"
+                if payload.get("first_comment")
+                else ""
+            )
         ).encode()
         async with self.db.effect_lock(key, KEY) as (conn, saved):
             if saved and saved.status == "completed":
@@ -277,6 +284,8 @@ class LinkedInPublishActivities:
             raise ApplicationError(
                 FAILED.get(post.get("error_category") or "", NOT_PUBLISHED), non_retryable=True
             )
+        # The post is out, so it is nobody's next post any more, however it was published.
+        await clear_posted(self.db, run.project_id, payload["path"], payload["post_id"])
         await self._progress(run.id, "save", 3, "Saving the LinkedIn publication result")
         report = await self._publish_report(run, project, post, payload)
         key = f"{run.id}:linkedin_publish_projection"

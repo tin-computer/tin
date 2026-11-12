@@ -177,6 +177,8 @@ async def test_mcp_exposes_personal_project_bootstrap_explicitly() -> None:
         "save_linkedin_draft",
         "preview_linkedin_post",
         "publish_linkedin_post",
+        "make_linkedin_post_up_next",
+        "clear_linkedin_up_next",
     } <= {tool.name for tool in tools}
     assert {
         "list_website_changes",
@@ -220,7 +222,7 @@ async def test_mcp_exposes_personal_project_bootstrap_explicitly() -> None:
     send = next(tool for tool in tools if tool.name == "send_connection_requests")
     assert {"person_ids", "request_id"} <= set(send.input_schema["required"])
     assert {"get_site_analytics", "get_analytics_install"} <= {tool.name for tool in tools}
-    assert len(tools) == 122
+    assert len(tools) == 124
     assert "refund_billing_payment" not in {tool.name for tool in tools}
     start = next(tool for tool in tools if tool.name == "start_workflow")
     assert "instruction and title are only for project.task" in start.description

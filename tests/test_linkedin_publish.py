@@ -91,9 +91,15 @@ class SyntheticZernio:
         self.uploads.append(filename)
         return f"https://media.zernio.com/{len(self.uploads)}.png"
 
-    async def create_post(self, *, account_id, text, media, idempotency_key):
+    async def create_post(self, *, account_id, text, media, idempotency_key, first_comment=""):
         self.posts.append(
-            {"account_id": account_id, "text": text, "media": media, "key": idempotency_key}
+            {
+                "account_id": account_id,
+                "text": text,
+                "media": media,
+                "key": idempotency_key,
+                "first_comment": first_comment,
+            }
         )
         answer = self.answers.pop(0) if self.answers else "published"
         if answer == "lost":
@@ -981,6 +987,23 @@ async def test_upload_puts_bytes_without_tins_key_and_checks_hosts():
         with pytest.raises(IntegrationUpstreamError):
             await zernio.upload_media(filename="a.png", media_type="image/png", content=IMAGE)
     assert len(calls) == 3
+
+
+@pytest.mark.asyncio
+async def test_a_profile_gone_from_zernio_asks_for_a_reconnect():
+    from tin_lite.zernio import PROFILE_GONE
+
+    def handler(request):
+        assert request.url.path == "/api/v1/accounts"
+        body = {"error": "Profile not found or access denied", "code": "profile_not_found"}
+        return reply(404, body)
+
+    client, zernio = zernio_client(handler)
+    async with client:
+        # A deleted profile can't come back by waiting, so it isn't a temporary failure.
+        with pytest.raises(IntegrationAuthorizationError, match="Reconnect it under Integrations"):
+            await zernio.accounts("6ad9bc9a4c6ca119a7da5291")
+    assert "Reconnect" in PROFILE_GONE
 
 
 @pytest.mark.asyncio

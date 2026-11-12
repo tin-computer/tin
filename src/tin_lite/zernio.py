@@ -78,6 +78,10 @@ ANALYTICS_REFUSED = (
 ACCOUNT_GONE = (
     "The LinkedIn account isn't connected anymore. Reconnect LinkedIn posting under Integrations."
 )
+PROFILE_GONE = (
+    "LinkedIn posting isn't connected anymore. Reconnect it under Integrations, then preview the "
+    "post again."
+)
 # What Tin keeps of one post's numbers; LinkedIn reports saves and sends for profiles only, and
 # clicks for pages only.
 METRICS = ("impressions", "reach", "reactions", "comments", "shares", "clicks", "saves", "sends")
@@ -369,6 +373,10 @@ class Zernio:
         status, payload = await self._call(
             "GET", "/accounts", params={"profileId": profile_id, "platform": "linkedin"}
         )
+        if status == 404:
+            # The project's profile is gone from Zernio, so are its accounts: reconnecting makes a
+            # new one. Waiting and trying again would never work.
+            raise IntegrationAuthorizationError(PROFILE_GONE)
         if status != 200 or not isinstance(payload, dict):
             raise IntegrationUpstreamError(UNAVAILABLE)
         values = payload.get("accounts")
@@ -428,20 +436,26 @@ class Zernio:
         return public
 
     async def create_post(
-        self, *, account_id: str, text: str, media: list[dict[str, Any]], idempotency_key: str
+        self,
+        *,
+        account_id: str,
+        text: str,
+        media: list[dict[str, Any]],
+        idempotency_key: str,
+        first_comment: str = "",
     ) -> dict[str, Any]:
-        """Publish now as one connected account.
+        """Publish now as one connected account, with its first comment when it has one.
 
         Zernio returns the original post for a repeated `Idempotency-Key` within 24 hours, so a
         caller holding a receipt resends the same key after a lost answer. A refusal raises
         IntegrationDeliveryRefusedError: nothing was created.
         """
 
-        body: dict[str, Any] = {
-            "content": text,
-            "platforms": [{"platform": "linkedin", "accountId": zernio_id(account_id)}],
-            "publishNow": True,
-        }
+        platform: dict[str, Any] = {"platform": "linkedin", "accountId": zernio_id(account_id)}
+        if first_comment:
+            # Zernio posts it as the same account right after the post.
+            platform["platformSpecificData"] = {"firstComment": first_comment}
+        body: dict[str, Any] = {"content": text, "platforms": [platform], "publishNow": True}
         if media:
             body["mediaItems"] = [
                 {

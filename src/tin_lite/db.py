@@ -6997,6 +6997,7 @@ class Database:
             # project.
             "DELETE FROM linkedin_requests WHERE project_id = $1",
             "DELETE FROM linkedin_request_batches WHERE project_id = $1",
+            "DELETE FROM linkedin_up_next WHERE project_id = $1",
             "DELETE FROM linkedin_sending WHERE project_id = $1",
             "DELETE FROM record_events WHERE project_id = $1",
             "DELETE FROM record_notes WHERE project_id = $1",

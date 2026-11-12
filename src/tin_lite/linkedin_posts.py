@@ -32,6 +32,8 @@ SCHEMA = "tin.social.linkedin_draft.v1"
 MAX_DRAFT_BYTES = 256_000
 # LinkedIn's limits; the text is counted in UTF-16 units, as LinkedIn and browsers count it.
 MAX_TEXT = 3000
+# LinkedIn's limit for a comment; Tin posts the first comment as the post's own account.
+MAX_FIRST_COMMENT = 1250
 MAX_IMAGES = 20
 # A failed attempt that sent nothing may be confirmed again; this bounds those attempts.
 MAX_ATTEMPTS = 10
@@ -71,6 +73,9 @@ class Post(ClosedModel):
     editor_notes: str = Field(max_length=4000)
     attachments: list[Attachment] = Field(max_length=MAX_IMAGES)
     missing_assets: list[str] = Field(max_length=10)
+    # Posted as the same account right after the post: where its link goes, since LinkedIn
+    # shows fewer people a post with a link in it.
+    first_comment: str = Field(default="", max_length=4000)
 
 
 class Gap(ClosedModel):
@@ -120,8 +125,10 @@ def validate_draft(value) -> dict:
         if post.id in ids or not post.text.strip() or text_length(post.text) > MAX_TEXT:
             raise ValueError("Each post needs a unique ID and text within 3,000 characters.")
         ids.add(post.id)
-        if any(ord(c) < 32 and c not in "\n\t" for c in post.text):
+        if any(ord(c) < 32 and c not in "\n\t" for c in post.text + post.first_comment):
             raise ValueError("Remove control characters from the post.")
+        if text_length(post.first_comment) > MAX_FIRST_COMMENT:
+            raise ValueError("Keep the first comment within 1,250 characters.")
         if post.target and not TARGET.fullmatch(post.target):
             raise ValueError("Choose a connected LinkedIn account to post as.")
         paths = set()
@@ -302,11 +309,15 @@ class LinkedInPosts:
         return latest
 
     async def read(self, project_id, actor, path):
+        from tin_lite.linkedin_slots import UpNext
+
         view = await self._read(project_id, actor, path)
         revising = await self.db.pool.fetchrow(REVISING, project_id, path)
         return {
             **view,
             **await self.posting_as(project_id, actor),
+            # The post up next for the posting slots, from any batch, and the slots' times.
+            **await UpNext(self).state(project_id, actor),
             "publications": await self.publications(project_id, actor, path),
             "revisable": await self._writer(project_id, path) is not None,
             "revising": {"run_id": str(revising["id"]), "post_id": revising["post_id"]}
@@ -408,6 +419,10 @@ class LinkedInPosts:
         content = json.dumps(value, ensure_ascii=False, indent=2)
         if len(content.encode("utf-8")) > MAX_DRAFT_BYTES:
             raise ValueError("The LinkedIn draft is too large to save and read back.")
+        try:
+            before = (await self._read(project_id, actor, path))["draft"]
+        except (LookupError, ValueError):
+            before = None
         result = await self.runtime.project_files.commit(
             project=project,
             actor_clerk_user_id=actor,
@@ -417,6 +432,12 @@ class LinkedInPosts:
             message="Edit LinkedIn draft",
             changes=[{"operation": "upsert", "path": path, "content": content}],
         )
+        if before is not None:
+            from tin_lite.linkedin_slots import clear_changed
+
+            # A post changed after it was picked leaves up next: no slot posts a version
+            # nobody confirmed.
+            await clear_changed(self.db, project_id, path, before, value)
         return {
             "path": path,
             "revision": result.revision,
@@ -470,6 +491,10 @@ class LinkedInPosts:
             "account_id": account["id"],
             "target": account["urn"],
         }
+        # Only a post with a first comment carries one, so a post without keeps the same
+        # fingerprint, and the same approval, it had before first comments existed.
+        if post["first_comment"].strip():
+            payload["first_comment"] = post["first_comment"].strip()
         return {
             **payload,
             "fingerprint": digest(payload),
@@ -485,6 +510,7 @@ class LinkedInPosts:
         return {
             "preview_token": token,
             "text": value["text"],
+            "first_comment": value.get("first_comment", ""),
             "account": value["account"],
             "valid_until": expires,
             "attachments": [
@@ -514,8 +540,12 @@ class LinkedInPosts:
                 return approval_id
         raise ValueError("This post failed to publish too many times. Change it and try again.")
 
-    async def publish(self, project_id, actor, *, preview_token, request_id, client_id=None):
-        from tin_lite.run_service import start_workflow_run
+    async def approve(self, project_id, actor, *, preview_token, request_id):
+        """Record the member's approval of the exact previewed post, once per request.
+
+        Publishing starts a run with it now; making it up next keeps it for the next posting
+        slot. Either way the approval freezes the text, images, first comment and account.
+        """
 
         await self.project(project_id, actor)
         token = str(UUID(str(preview_token)))
@@ -548,6 +578,14 @@ class LinkedInPosts:
             self.db,
             f"linkedin:approved:{approval_id}",
             {**value, "actor": actor, "approved_at": datetime.now(UTC).isoformat()},
+        )
+        return approval_id, approval
+
+    async def publish(self, project_id, actor, *, preview_token, request_id, client_id=None):
+        from tin_lite.run_service import start_workflow_run
+
+        approval_id, approval = await self.approve(
+            project_id, actor, preview_token=preview_token, request_id=request_id
         )
         start_key = f"linkedin-publish:{approval_id}"
         existing = await self.db.get_run_by_start_key(

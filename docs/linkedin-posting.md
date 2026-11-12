@@ -76,7 +76,8 @@ A draft is an ordinary project file at `social/linkedin/drafts/<date>-<slug>.jso
       "support": [{"source_path": "notes/release.md", "excerpt": "What the post rests on"}],
       "editor_notes": "Never published",
       "attachments": [{"type": "image", "path": "social/linkedin/media/shot.png", "alt_text": ""}],
-      "missing_assets": []
+      "missing_assets": [],
+      "first_comment": "Read the guide: https://example.com/guide"
     }
   ]
 }
@@ -87,6 +88,13 @@ LinkedIn's limits: up to six posts, text within 3,000 characters counted in UTF-
 LinkedIn counts them, and up to 20 PNG or JPEG images within Tin's media checks, in a file
 within 256 KB. Video, documents and polls come later. An empty `target` posts as the only
 account the member may use, and is refused when there are several.
+
+`first_comment` is optional, within LinkedIn's 1,250 characters for a comment. Tin sends it
+with the post (Zernio's `platformSpecificData.firstComment` on the LinkedIn entry), and Zernio
+posts it as the same account right after the post. It is where a post's link goes, since
+LinkedIn shows fewer people a post with a link in its text. It is part of the preview and the
+approval like the text; a post without one keeps the fingerprint it had before the field
+existed.
 
 A drafting run also keeps four optional fields with its posts; a hand-written draft needs
 none of them:
@@ -153,6 +161,38 @@ the run with LinkedIn's category in Tin's words.
 MCP: `read_linkedin_drafts`, `save_linkedin_draft`, `preview_linkedin_post` and
 `publish_linkedin_post`. Each returns the browser editor's link for uploading images; MCP
 never takes image bytes.
+
+## Posting slots
+
+A page can post at set times instead of the moment someone confirms
+(`linkedin_slots.py`, migration 082).
+
+- **Slots.** The saved workflow `social.linkedin_post_slots` ("LinkedIn posting slots")
+  carries the times: weekly, Monday, Wednesday and Friday at 9:00 in the project's time zone
+  to start with, editable like any schedule. It is listed only where LinkedIn posting is.
+- **Up next.** From a page post's preview, a member makes it up next
+  (`POST …/linkedin/up-next`, `make_linkedin_post_up_next`). That records the same approval
+  a publish records, for the exact text, images, first comment and page, and keeps one row in
+  `linkedin_up_next`: one post per project, from any batch. Picking another replaces it;
+  `DELETE …/linkedin/up-next` (`clear_linkedin_up_next`) takes it out. Picking needs active
+  slots, and slots post as a page only. `read_linkedin_drafts` returns `up_next` and `slots`.
+- **A slot comes.** The scheduled dispatcher hands the occurrence to `dispatch_slot`. With
+  nothing up next it passes: no run, the next time is set. Otherwise it takes the snapshot
+  again as the member who approved it and starts `social.linkedin_publish` for that approval
+  through the publish gate (`_prepare_only`), as that member, and runs it as its child. The
+  publish run carries no `project_workflow_id`; it shows in Activity as a scheduled publish.
+- **Changes.** A post saved with different text, images, first comment or page leaves up
+  next as soon as it is saved, with an Activity line; a change made any other way is caught
+  by the slot's snapshot, and the slot passes. A slot never posts a version nobody
+  confirmed. A published post leaves up next however it was published.
+- **Failures.** A publish run that fails without sending keeps the post up next, and the
+  next slot tries again under a new attempt of the same approval. A send whose answer never
+  came leaves up next and asks the founder to check the page; Tin never posts it again.
+- **The day before.** With nothing up next and a slot within 24 hours,
+  `GET …/linkedin/up-next` returns a `notice` (and `list_open_decisions` a `linkedin_slot`)
+  saying how many unposted posts are ready to pick and how many still wait for their card.
+  It is worked out on read; nothing is stored.
+- Starting the slots workflow by hand is refused: to post now, publish the post.
 
 ## Listening
 

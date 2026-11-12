@@ -37,9 +37,10 @@
 .li-rail-item:hover > span { color: var(--ink); }
 .li-rail-item[aria-current] > span { color: var(--bermellon-text); font-weight: 700; }
 .li-rail-item.is-gaps { padding-top: 14px; border-top: 1px solid var(--paper-border); }
+.li-rail-item small.is-next { color: var(--accent-text); }
 .li-column { display: flex; width: 728px; max-width: 100%; min-width: 0; flex-direction: column; gap: 36px; }
 .li-column-read, .li-column-gaps, .li-column-loading { width: 680px; }
-.li-column-preview, .li-column-outcome { width: 600px; gap: 20px; }
+.li-column-preview, .li-column-outcome, .li-column-upnext { width: 600px; gap: 20px; }
 .li-line, .li-sentence { margin: 0; color: var(--ink-secondary); font: 400 14px/22px var(--sans); overflow-wrap: anywhere; }
 .li-reader .li-line.is-error, .li-reader .li-sentence.is-error { color: var(--bermellon-text); }
 .li-sentence.is-strong { color: var(--ink); }
@@ -243,3 +244,28 @@
   .app-shell .li-bar { top: var(--top-menu-height); }
   .app-shell .li-reader { min-height: calc(100svh - var(--top-menu-height)); }
 }
+
+/* The first comment, as LinkedIn shows it under a post (Paper PN-A, PN-B). */
+.li-card-comment { display: flex; gap: 10px; padding: 4px 20px 20px; }
+.li-card:not(:has(.li-card-images)) .li-card-comment { padding-top: 0; }
+.li-card-comment-mark { display: inline-flex; flex: 0 0 32px; width: 32px; height: 32px; align-items: center; justify-content: center; border-radius: var(--radius-chip); background: var(--ink); color: var(--paper-bg); font: 700 13px/16px var(--sans); }
+.li-card-comment > div { display: flex; min-width: 0; flex: 1; flex-direction: column; gap: 2px; padding: 10px 12px; border-radius: var(--radius-card); background: var(--paper-deep); }
+.li-card-comment strong { font: 700 13px/18px var(--sans); }
+.li-card-comment span { white-space: pre-wrap; overflow-wrap: anywhere; font: 400 14px/22px var(--sans); }
+.li-column-read .li-card-comment { padding: 0; }
+.li-comment-field { display: flex; flex-direction: column; gap: 10px; }
+.li-field-title { margin: 0; font: 700 15px/22px var(--sans); }
+.li-comment-text { width: 100%; min-height: 88px; padding: 14px 16px; resize: vertical; border: 1px solid var(--paper-border); border-radius: var(--radius-chip); background: var(--paper-well); color: var(--ink); font: 400 15px/24px var(--sans); }
+.li-comment-text:focus { border-color: var(--accent-deep); outline: none; }
+
+/* When it posts: the next slot or now (Paper PN-B). */
+.li-when { display: flex; flex-direction: column; margin: 0; padding: 0; border: 1px solid var(--paper-border); border-radius: var(--radius-card); }
+.li-when-row { display: flex; align-items: flex-start; gap: 12px; padding: 14px 16px; }
+.li-when-row + .li-when-row { border-top: 1px solid var(--paper-border); }
+.li-when-row input { flex: 0 0 auto; width: 16px; height: 16px; margin: 3px 0 0; accent-color: var(--accent); }
+.li-when-row label { display: flex; min-width: 0; flex: 1; flex-direction: column; gap: 2px; cursor: pointer; }
+.li-when-row strong { font: 400 14px/22px var(--sans); }
+.li-when-row small { color: var(--ink-muted); font: 400 13px/18px var(--sans); }
+.li-when-row .li-link { flex: 0 0 auto; font: 400 13px/22px var(--sans); }
+.li-when-row.is-off label { cursor: default; }
+.li-when-row.is-off strong { color: var(--ink-secondary); }

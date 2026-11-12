@@ -22,6 +22,7 @@ from tin_lite import (
     linkedin_posts,
     linkedin_profile_viewers,
     linkedin_requests,
+    linkedin_slots,
     organic_system,
     paid_ads,
     paid_ads_launch,
@@ -1421,6 +1422,27 @@ BUILTIN_WORKFLOWS = (
         system=LINKEDIN_SYSTEM,
         agent_only=True,
         input_schema=linkedin_posts.INPUT_SCHEMA,
+    ),
+    BuiltinWorkflow(
+        id=linkedin_slots.WORKFLOW_ID,
+        key=linkedin_slots.KEY,
+        title="LinkedIn posting slots",
+        description=(
+            "Post your page's next LinkedIn post at the times you choose. A member picks it "
+            "from its exact preview, and a slot with nothing picked passes without posting."
+        ),
+        executor=linkedin_slots.KEY,
+        version_label="1.0.0",
+        presentation=linkedin_slots.PRESENTATION,
+        schedule_modes=("weekly",),
+        default_schedule=linkedin_slots.DEFAULT_SCHEDULE,
+        system=LINKEDIN_SYSTEM,
+        input_schema=linkedin_slots.INPUT_SCHEMA,
+        integration_requirements=(
+            IntegrationRequirement(
+                LINKEDIN_POSTING_PROVIDER, ("linkedin.posts.publish",), required=True
+            ),
+        ),
     ),
     BuiltinWorkflow(
         id=linkedin_listening.LISTEN_WORKFLOW_ID,

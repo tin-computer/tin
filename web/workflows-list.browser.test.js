@@ -18,6 +18,10 @@ const workflows = [
   workflow("organic.audit", "Audit organic visibility", "Audit technical SEO and AI visibility (GEO). Read robots.txt, sitemaps and Search Console queries, and check up to 100 public pages by default.", {last_run_id: "audit-run", last_run_at: "2026-09-14T16:00:00Z"}),
   workflow("organic.traffic_snapshot", "Take a weekly traffic snapshot and growth readout", "Each week, read Search Console, and PostHog when it is connected, once into one file. A change is called only when an exact test with Holm's correction says it is real."),
   workflow("organic.content_efficacy", "Decide what each page needs", "Each week, judge every page and ask through website.change before anything changes on the site. Edits nothing itself."),
+  workflow("social.linkedin_post_slots", "LinkedIn posting slots", "Post your page's next LinkedIn post at the times you choose.", {
+    system_id: "linkedin", system_name: "LinkedIn", system_order: 2, executor: "social.linkedin_post_slots",
+    definition: {input_schema: schema, schedule_modes: ["weekly"], default_schedule: {cadence: "weekly", weekdays: ["monday", "wednesday", "friday"], local_time: "09:00"}},
+  }),
 ];
 
 test("the Workflows list shows each description's first sentence and the last run beside the key", async () => {
@@ -72,6 +76,7 @@ test("the Workflows list shows each description's first sentence and the last ru
       "Audit technical SEO and AI visibility (GEO).",
       "Each week, read Search Console, and PostHog when it is connected, once into one file.",
       "Each week, judge every page and ask through website.change before anything changes on the site.",
+      "Post your page's next LinkedIn post at the times you choose.",
     ]);
     // The last run sits in the key's line, not under the actions, and still opens the run.
     assert.equal(await cards.nth(0).locator(".system-template-identity code").innerText(), "organic.audit · last run sep 14, 16:00");
@@ -104,6 +109,14 @@ test("the Workflows list shows each description's first sentence and the last ru
     await page.locator(".system-template-card").first().waitFor();
     await page.waitForFunction(() => document.querySelectorAll(".system-template-card").length === 1);
     assert.match(await page.locator(".system-template-description").innerText(), /Holm's correction/);
+
+    // Posting slots post only at their times: their setup saves, and offers no run now.
+    await page.locator("#workflow-search").fill("posting slots");
+    await page.waitForFunction(() => document.querySelectorAll(".system-template-card").length === 1);
+    await page.locator(".system-template-card").getByRole("button", {name: "Set up", exact: true}).click();
+    const setup = page.locator(".system-template-card.is-open");
+    assert.deepEqual(await setup.locator(".system-config-footer button").allInnerTexts(), ["Set up"]);
+    assert.deepEqual(await setup.locator('[name="schedule_days"]:checked').evaluateAll((boxes) => boxes.map((box) => box.value)), ["monday", "wednesday", "friday"]);
     assert.deepEqual(errors, []);
   } finally {
     await browser.close();
