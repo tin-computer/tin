@@ -1073,12 +1073,13 @@ def test_definition_pins_the_contract_and_the_assets_stay_consistent():
     # configurations, but the plan never names them.
     hidden = {item.key for item in PUBLIC_WORKFLOWS if not item.public_discovery}
     hidden.add("visibility.audit")
-    # The project-gated collector and LinkedIn publishing and results are separate from the
-    # general starter plan.
+    # The project-gated collector and LinkedIn publishing, posting slots and results are separate
+    # from the general starter plan.
     hidden.update(
         {
             "connections.collect",
             "social.linkedin_publish",
+            "social.linkedin_post_slots",
             "social.linkedin_listen",
             "social.linkedin_results",
             "social.linkedin_engagers",
