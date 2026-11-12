@@ -149,6 +149,67 @@ export function textSizes(region) {
   return [...found.values()].sort((a, b) => a.size - b.size);
 }
 
+// Each screen's box on the card, for figureGround.
+export function screenBoxes() {
+  const card = document.querySelector("[data-card]").getBoundingClientRect();
+  return [...document.querySelectorAll("[data-card-screen]")].map(screen => {
+    const box = screen.getBoundingClientRect();
+    return {x: box.left - card.left, y: box.top - card.top, width: box.width, height: box.height,
+      sample: screen.querySelector("img")?.getAttribute("src") || "the screen"};
+  });
+}
+
+// A screen stands off the ground it sits on: a light one on a dark ground or artwork, a dark one
+// on a light ground. Compares the rendered card just inside each window's edge with just outside
+// it, where the card shows; a pale window on pale paper reads as one muted surface.
+export async function figureGround({src, boxes, scale}) {
+  const image = new Image();
+  image.src = src;
+  await image.decode();
+  const canvas = document.createElement("canvas");
+  canvas.width = image.width;
+  canvas.height = image.height;
+  const context = canvas.getContext("2d", {willReadFrequently: true});
+  context.drawImage(image, 0, 0);
+  const linear = value => {
+    const v = value / 255;
+    return v <= 0.03928 ? v / 12.92 : ((v + 0.055) / 1.055) ** 2.4;
+  };
+  const luminance = strips => {
+    let total = 0;
+    let count = 0;
+    for (const [x, y, w, h] of strips) {
+      const left = Math.max(0, Math.round(x * scale)), top = Math.max(0, Math.round(y * scale));
+      const right = Math.min(canvas.width, Math.round((x + w) * scale)), bottom = Math.min(canvas.height, Math.round((y + h) * scale));
+      if (right - left < 1 || bottom - top < 1) continue;
+      const data = context.getImageData(left, top, right - left, bottom - top).data;
+      for (let i = 0; i < data.length; i += 4) {
+        total += 0.2126 * linear(data[i]) + 0.7152 * linear(data[i + 1]) + 0.0722 * linear(data[i + 2]);
+        count += 1;
+      }
+    }
+    return count ? total / count : null;
+  };
+  const ring = (box, from, to) => {
+    // A band between from and to px from the box's edge: positive inside, negative outside.
+    const [a, b] = [Math.min(from, to), Math.max(from, to)];
+    const w = b - a;
+    return [
+      [box.x + a, box.y + a, box.width - 2 * a, w],
+      [box.x + a, box.y + box.height - b, box.width - 2 * a, w],
+      [box.x + a, box.y + b, w, box.height - 2 * b],
+      [box.x + box.width - b, box.y + b, w, box.height - 2 * b],
+    ];
+  };
+  return boxes.map(box => {
+    const inside = luminance(ring(box, 6, 18));
+    const outside = luminance(ring(box, -36, -12));
+    if (inside === null || outside === null) return {sample: box.sample, ratio: null};
+    const ratio = (Math.max(inside, outside) + 0.05) / (Math.min(inside, outside) + 0.05);
+    return {sample: box.sample, ratio: Math.round(ratio * 100) / 100};
+  });
+}
+
 // What a stage script may not change inside a screen: its type and the space inside it. A screen
 // keeps the product's own scale and spacing, so its parts stay grouped as the product groups them;
 // the shot is enlarged as a whole on the card instead. Kept before the script runs, compared after.

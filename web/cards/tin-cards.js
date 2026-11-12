@@ -14,11 +14,13 @@ import fs from "node:fs";
 import path from "node:path";
 import {fileURLToPath, pathToFileURL} from "node:url";
 import {chromium} from "playwright";
-import {HEIGHT, WIDTH, colours, emptyWindows, eyebrows, fonts, keepStyles, leftBars, placement, restyled, textSizes, words} from "./checks.js";
+import {HEIGHT, WIDTH, colours, emptyWindows, eyebrows, figureGround, fonts, keepStyles, leftBars, placement, restyled, screenBoxes, textSizes, words} from "./checks.js";
 
 const HERE = path.dirname(fileURLToPath(import.meta.url));
 // LinkedIn takes PNG or JPEG up to 5 MB, and so does Tin.
 const MAX_BYTES = 5 * 1024 * 1024;
+// How far a screen's edge stands off the ground around it, as a contrast ratio of their lightness.
+const MIN_FIGURE_GROUND = 1.5;
 const MAX_LINE_WORDS = 9;
 // The smallest text a card carries, in card pixels: 2% of its width, as for films, so a screen's
 // words still read when the card shows at about half size in the feed.
@@ -129,7 +131,16 @@ async function checkCard(page, dir, card, palette) {
     errors.push(`${card.post}: write alt text in cards.json that describes the card and says its headline.`);
   }
   let image = path.join(dir, `${card.post}.png`);
-  await page.screenshot({path: image, clip: {x: 0, y: 0, width: WIDTH, height: HEIGHT}});
+  const rendered = await page.screenshot({path: image, clip: {x: 0, y: 0, width: WIDTH, height: HEIGHT}});
+  const boxes = await page.evaluate(screenBoxes);
+  if (boxes.length) {
+    const src = `data:image/png;base64,${rendered.toString("base64")}`;
+    const scale = (await page.evaluate(() => window.devicePixelRatio)) || 1;
+    for (const item of await page.evaluate(figureGround, {src, boxes, scale})) {
+      if (item.ratio === null || item.ratio >= MIN_FIGURE_GROUND) continue;
+      errors.push(`${card.post}: the screen ${item.sample} barely stands off the card's ground (${item.ratio} : 1, under ${MIN_FIGURE_GROUND}). Set a light screen on the brand's dark ground or its artwork, or show the product's dark theme on a light ground.`);
+    }
+  }
   if (fs.statSync(image).size > MAX_BYTES) {
     fs.rmSync(image);
     image = path.join(dir, `${card.post}.jpg`);

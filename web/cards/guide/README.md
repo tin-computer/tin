@@ -120,6 +120,17 @@ its own site uses one. The screen decides its size and the layout follows, in th
    quiet line. Quiet bars stand only where the product shows words nobody needs to read, one or
    two lines at a time.
 
+7. **Stand the screen off its ground.** A light screen goes on the brand's dark ground or over
+   its artwork, with the shadow its site uses there; a dark screen, the product's dark theme, goes
+   on a light ground. A pale screen on pale paper reads as one muted surface, and `check` fails a
+   window whose edge differs from the ground around it by less than 1.5 : 1.
+8. **Mark the one thing the post says.** The words or the number the post is about may carry one
+   mark the product doesn't draw, in the colour the product already uses for that meaning, such
+   as Tin's "recommended" green behind the sentence that recommends. One mark per card; the rest
+   of the screen stays as the product draws it.
+9. **Anchor a single part.** One answer, a few rows or a button sits centred over a ground, a band
+   of artwork or a panel. It is the subject of the card, so it isn't tucked against an edge.
+
 A window is exactly as large as the screen it holds. A window drawn larger than its screen leaves
 an empty strip that reads as a box left open, and a screen nested in a second frame reads as
 boxes inside boxes.
@@ -176,6 +187,7 @@ tin-cards check <dir>
 - a box has a bar down its left edge;
 - a screen floats with more space on one side than the other, neither centred nor running off;
 - a window is larger than the shot it holds, leaving empty window inside the card;
+- a window barely stands off the ground around it, under 1.5 : 1;
 - the headline is over nine words;
 - the alt text is missing;
 - the image is over 5 MB, even as a JPEG.
