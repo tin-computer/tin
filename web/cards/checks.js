@@ -160,8 +160,9 @@ export function screenBoxes() {
 }
 
 // A screen stands off the ground it sits on: a light one on a dark ground or artwork, a dark one
-// on a light ground. Compares the rendered card just inside each window's edge with just outside
-// it, where the card shows; a pale window on pale paper reads as one muted surface.
+// on a light ground, or, for a brand whose depth is a keyline, inside a keyline that contrasts with
+// the ground. Compares the rendered card just inside each window's edge, and its edge itself, with
+// just outside it, where the card shows; a pale window on pale paper reads as one muted surface.
 export async function figureGround({src, boxes, scale}) {
   const image = new Image();
   image.src = src;
@@ -203,10 +204,11 @@ export async function figureGround({src, boxes, scale}) {
   };
   return boxes.map(box => {
     const inside = luminance(ring(box, 6, 18));
+    const edge = luminance(ring(box, 0.5, 1.5));
     const outside = luminance(ring(box, -36, -12));
-    if (inside === null || outside === null) return {sample: box.sample, ratio: null};
-    const ratio = (Math.max(inside, outside) + 0.05) / (Math.min(inside, outside) + 0.05);
-    return {sample: box.sample, ratio: Math.round(ratio * 100) / 100};
+    if (inside === null || outside === null) return {sample: box.sample, ratio: null, keyline: null};
+    const contrast = (a, b) => Math.round((Math.max(a, b) + 0.05) / (Math.min(a, b) + 0.05) * 100) / 100;
+    return {sample: box.sample, ratio: contrast(inside, outside), keyline: edge === null ? null : contrast(edge, outside)};
   });
 }
 

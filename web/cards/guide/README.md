@@ -122,8 +122,10 @@ its own site uses one. The screen decides its size and the layout follows, in th
 
 7. **Stand the screen off its ground.** A light screen goes on the brand's dark ground or over
    its artwork, with the shadow its site uses there; a dark screen, the product's dark theme, goes
-   on a light ground. A pale screen on pale paper reads as one muted surface, and `check` fails a
-   window whose edge differs from the ground around it by less than 1.5 : 1.
+   on a light ground. A brand whose depth is a keyline, with no shadows, frames the window in its
+   keyline colour instead. A pale screen on pale paper with a faint border reads as one muted
+   surface, and `check` fails a window whose edge differs from the ground around it by less than
+   1.5 : 1 unless its keyline does by 3 : 1.
 8. **Mark the one thing the post says.** The words or the number the post is about may carry one
    mark the product doesn't draw, in the colour the product already uses for that meaning, such
    as Tin's "recommended" green behind the sentence that recommends. One mark per card; the rest
@@ -187,7 +189,7 @@ tin-cards check <dir>
 - a box has a bar down its left edge;
 - a screen floats with more space on one side than the other, neither centred nor running off;
 - a window is larger than the shot it holds, leaving empty window inside the card;
-- a window barely stands off the ground around it, under 1.5 : 1;
+- a window barely stands off the ground around it, under 1.5 : 1, with no keyline of 3 : 1;
 - the headline is over nine words;
 - the alt text is missing;
 - the image is over 5 MB, even as a JPEG.

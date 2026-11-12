@@ -21,6 +21,8 @@ const HERE = path.dirname(fileURLToPath(import.meta.url));
 const MAX_BYTES = 5 * 1024 * 1024;
 // How far a screen's edge stands off the ground around it, as a contrast ratio of their lightness.
 const MIN_FIGURE_GROUND = 1.5;
+// Or how far a window's own keyline stands off that ground, for a brand whose depth is a keyline.
+const MIN_KEYLINE = 3;
 const MAX_LINE_WORDS = 9;
 // The smallest text a card carries, in card pixels: 2% of its width, as for films, so a screen's
 // words still read when the card shows at about half size in the feed.
@@ -137,8 +139,8 @@ async function checkCard(page, dir, card, palette) {
     const src = `data:image/png;base64,${rendered.toString("base64")}`;
     const scale = (await page.evaluate(() => window.devicePixelRatio)) || 1;
     for (const item of await page.evaluate(figureGround, {src, boxes, scale})) {
-      if (item.ratio === null || item.ratio >= MIN_FIGURE_GROUND) continue;
-      errors.push(`${card.post}: the screen ${item.sample} barely stands off the card's ground (${item.ratio} : 1, under ${MIN_FIGURE_GROUND}). Set a light screen on the brand's dark ground or its artwork, or show the product's dark theme on a light ground.`);
+      if (item.ratio === null || item.ratio >= MIN_FIGURE_GROUND || (item.keyline ?? 0) >= MIN_KEYLINE) continue;
+      errors.push(`${card.post}: the screen ${item.sample} barely stands off the card's ground (${item.ratio} : 1, under ${MIN_FIGURE_GROUND}, and no keyline of ${MIN_KEYLINE} : 1). Set a light screen on the brand's dark ground or its artwork, show the product's dark theme on a light ground, or, where the brand's depth is a keyline, frame it in the brand's keyline colour.`);
     }
   }
   if (fs.statSync(image).size > MAX_BYTES) {
