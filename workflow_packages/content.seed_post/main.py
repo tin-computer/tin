@@ -34,7 +34,7 @@ CONTEXT_FILES = (
 CONTEXT_SECTIONS = (("### Feature map", 8_000), ("### Code map", 6_000))
 EXTRA_CONTEXT_GLOB = "context/*.md"
 EXTRA_CONTEXT_FILES = 3
-EXTRA_CONTEXT_CHARS = 4_000
+EXTRA_CONTEXT_CHARS = 10_000
 POST_GLOBS = (
     "content/drafts/*.md",
     "content/articles/*.md",
@@ -471,7 +471,8 @@ def _angle_instructions(guide, style):
         "sources and related use only URLs that appear in the data; leave them empty otherwise. "
         "heading_reading: read the headings alone, in order, and write the story they tell and "
         "what you repaired. opening_reading: the same for each heading with its opening "
-        "sentence. slug: 3 to 8 lowercase words from the question, joined by hyphens.\n\n"
+        "sentence. answer: the short answer the opening ends with, one or two plain sentences. "
+        "slug: 3 to 8 lowercase words from the question, joined by hyphens.\n\n"
         + guide
         + "\n\n"
         + style
@@ -499,14 +500,18 @@ def _draft_instructions(guide, style, words):
     )
 
 
-def _single_instructions(style, words):
+def _single_instructions(guide, style, words):
     return (
-        "Write a blog post for this business's website from the seed. Choose a question the "
-        "business's readers ask that the seed can answer, and answer it. "
+        "Write a blog post for this business's website from the seed, by the rules below. Choose "
+        "the reader from the business files (who the business serves) and the question from what "
+        "the seed can answer for them, and answer it. "
         + UNTRUSTED
         + f" Use only facts in the data. Keep staff names, customer names and internal details "
-        f"out of the post. Write {words[0]:,} to {words[1]:,} words. Return only the post as "
-        "Markdown, starting with an H1: no front matter, notes or code fences.\n\n" + style
+        f"out of the post. Use the site's call to action only in the closing. Write "
+        f"{words[0]:,} to {words[1]:,} words for the sections, the worked example and the "
+        "checklist together. Follow style_guide and blog_rules where they add to the rules "
+        "below. Return only the post as Markdown, starting with the H1: no front matter, notes "
+        "or code fences.\n\n" + guide + "\n\n" + style
     )
 
 
@@ -593,8 +598,10 @@ def _plan_findings(plan):
     if not 6 <= question <= 14:
         findings.append(f"The question has {question} words; it needs 6 to 14.")
     answer = len(_words(plan["answer"]))
-    if not 40 <= answer <= 70:
-        findings.append(f"The answer has {answer} words; it needs 40 to 70.")
+    if answer > 45 or len(_sentences(plan["answer"])) > 2:
+        findings.append(
+            f"The answer has {answer} words; keep it to one or two sentences, at most 45 words."
+        )
     headings = [("section", section["heading"]) for section in plan["sections"]]
     headings += [
         ("worked example", plan["worked_example"]["heading"]),
@@ -699,7 +706,7 @@ def _copy_findings(post, allowed, private, tells):
     return found
 
 
-def _post_notes(post, plan, words):
+def _post_notes(post, words):
     """Whole-post observations for the founder; they never change the copy."""
     notes = []
     blocks = _blocks(post)
@@ -725,11 +732,6 @@ def _post_notes(post, plan, words):
             notes.append(
                 f"The body runs {count:,} words; the recipe asks for {words[0]:,} to {words[1]:,}."
             )
-        name = (plan or {}).get("business_name", "").strip()
-        if len(name) >= 3:
-            mentions = len(re.findall(rf"(?<!\w){re.escape(name)}(?!\w)", body, re.IGNORECASE))
-            if mentions > 1:
-                notes.append(f"The body names {name} {mentions} times; the guide allows once.")
     return notes
 
 
@@ -850,7 +852,7 @@ async def _write_new(run, inputs, package, rules):
         }
 
     if recipe["pipeline"] == "single":
-        instructions = _single_instructions(style, words)
+        instructions = _single_instructions(guide, style, words)
         data, _ = _fit(instructions, None, base, context)
         text = await run.call("write", "draft", instructions, data)
         post = _clean_markdown(text) if text else ""
@@ -996,12 +998,8 @@ def _summary(post, plan, final, run, package, written):
     if plan:
         how.append({"text": f"Reader: {plan['reader']}"})
         how.append({"text": f"Outcome: {plan['buyer_outcome']}"})
-    how.append(
-        {
-            "text": "Read: "
-            + (", ".join(item["path"] for item in package["context"]) or "no business files")
-        }
-    )
+    read = [item["path"] for item in package["context"]] + package["read"]
+    how.append({"text": "Read: " + (", ".join(read) or "no business files")})
     how.append({"text": f"Recipe {run.recipe['id']}; steps: " + (", ".join(run.steps) or "none")})
     sections.append({"heading": "How it was written", "items": how})
     if not written:
@@ -1044,8 +1042,8 @@ async def run(ctx, inputs):
         if inputs.get("style_path")
         else STYLE_PATH
     )
-    style_text, _ = _cut(_optional(files, style_path), STYLE_CHARS)
-    blog_rules, _ = _cut(_optional(files, BLOG_RULES_PATH), BLOG_RULES_CHARS)
+    style_text, style_cut = _cut(_optional(files, style_path), STYLE_CHARS)
+    blog_rules, blog_cut = _cut(_optional(files, BLOG_RULES_PATH), BLOG_RULES_CHARS)
     context = _context(ctx, skip)
     direction = _text_input(inputs, "direction", 2_000, "Direction")
     package = {
@@ -1058,6 +1056,9 @@ async def run(ctx, inputs):
         "existing_posts": _existing_posts(files, skip),
         "previous": previous,
         "feedback": feedback,
+        "read": [
+            path for path, text in ((style_path, style_text), (BLOG_RULES_PATH, blog_rules)) if text
+        ],
     }
     package["allowed"] = {
         _norm_url(url)
@@ -1067,6 +1068,16 @@ async def run(ctx, inputs):
     state = Run(ctx, recipe)
     state.notes.extend(notes)
     state.notes.extend(f"{item['path']} was cut to fit." for item in context if item["cut"])
+    if not style_text:
+        state.notes.append(
+            f"No writing guide at {style_path}, so the post follows Tin's own language rules only."
+        )
+    for path, cut, limit in (
+        (style_path, style_cut, STYLE_CHARS),
+        (BLOG_RULES_PATH, blog_cut, BLOG_RULES_CHARS),
+    ):
+        if cut:
+            state.notes.append(f"{path} was cut to its first {limit:,} characters.")
     if revise_path:
         post, plan = await _write_revision(state, inputs, package, rules)
         name = revise_path.rsplit("/", 1)[-1].removesuffix(".md")
@@ -1084,7 +1095,7 @@ async def run(ctx, inputs):
             p for p in (plan or {}).get("private", []) if len(p.strip()) >= PRIVATE_MIN_CHARS
         ]
         post = await _copy_pass(state, post, package["allowed"], private, rules[1])
-        state.notes.extend(_post_notes(post, plan, recipe["words"]))
+        state.notes.extend(_post_notes(post, recipe["words"]))
         if recipe.get("final_read", True) and state.time_for("final"):
             data = {"post": post, "seed": seed, "plan": plan}
             if _request_bytes(FINAL_INSTRUCTIONS, data, FINAL_SCHEMA) > INPUT_BYTES:

@@ -37,9 +37,7 @@ def plan(**overrides):
         "covered_by": "",
         "reader": "A software founder who reads their site analytics each week",
         "question": "How do I tell AI agent visits from people in my analytics?",
-        "answer": " ".join(
-            ["Sort every visit by what made it and count agents on their own line."] * 4
-        ),
+        "answer": "Sort every visit by what made it and count agents on their own line.",
         "buyer_outcome": "Weekly numbers that show real readers and AI assistants apart",
         "seed_support": "The sorting rule and the install step",
         "private": ["Mira", "Acme"],
@@ -311,6 +309,72 @@ async def test_steps_in_order_and_a_clean_draft():
     assert sections["Check before publishing"][0]["text"].startswith('"120 people"')
     assert any("removed 1 link" in item["text"] for item in sections["Notes"])
     assert "seed-post.r1" in sections["How it was written"][-1]["text"]
+    read = next(i["text"] for i in sections["How it was written"] if i["text"].startswith("Read:"))
+    assert read == "Read: brand/BRAND.md, wiki/INDEX.md Feature map, " + module.STYLE_PATH
+
+
+async def test_the_guide_asks_for_a_plain_opening_and_the_product_by_name():
+    """The rules every step receives: the opening starts from the reader's situation, and a
+    post from the business's own work explains the product by name where it answers."""
+    module, definition = load()
+    spec = validate_code_definition(definition)
+    calls = []
+    long_answer = " ".join(["Sort every visit by what made it and count agents apart."] * 5)
+    ctx = context(spec, outputs(angle=plan(answer=long_answer), plan_fix=plan()), calls)
+    result = await module.run(ctx, inputs())
+    assert [c["step"] for c in calls][:2] == ["angle", "plan_fix"]
+    assert any("at most 45 words" in p for p in calls[1]["data"]["problems"])
+    for call in calls:
+        if call["step"] in {"angle", "draft", "review", "revise"}:
+            assert "## The product in the answer" in call["instructions"]
+            assert "at most once" not in call["instructions"]
+    notes = [i["text"] for s in result["summary"]["sections"] for i in s["items"]]
+    assert not any("the guide allows once" in n for n in notes)
+
+
+async def test_the_chosen_writing_guide_is_read_named_and_checked():
+    module, definition = load()
+    spec = validate_code_definition(definition)
+    guide_path = "context/voice/ege.md"
+    icp = "# Ideal customers\n\n" + "\n\n".join(f"ICP line {n} " + "x" * 90 for n in range(80))
+    files = project_files(**{guide_path: "Write like Ege.", "context/ICP.md": icp})
+    calls = []
+    result = await module.run(context(spec, outputs(), calls, files), inputs(style_path=guide_path))
+    assert calls[0]["data"]["style_guide"] == "Write like Ege."
+    icp_item = next(i for i in calls[0]["data"]["business_files"] if i["path"] == "context/ICP.md")
+    assert len(icp) > 7_000 and icp_item["text"] == icp.strip() and not icp_item["cut"]
+    how = next(s for s in result["summary"]["sections"] if s["heading"] == "How it was written")
+    assert any(
+        i["text"].startswith("Read:") and i["text"].endswith(guide_path) for i in how["items"]
+    )
+
+    calls = []
+    missing = await module.run(context(spec, outputs(), calls), inputs(style_path="context/no.md"))
+    notes = next(s for s in missing["summary"]["sections"] if s["heading"] == "Notes")["items"]
+    assert any("No writing guide at context/no.md" in i["text"] for i in notes)
+    assert calls[0]["data"]["style_guide"] == ""
+
+
+def test_the_style_prerequisite_follows_the_chosen_guide():
+    from uuid import uuid4
+
+    from tin_lite.workflow_inputs import normalize_workflow_inputs
+    from tin_lite.workflow_prerequisites import _resolve_path, parse_workflow_prerequisites
+
+    module, definition = load()
+    schema = definition["input_schema"]
+    style = next(
+        p
+        for p in parse_workflow_prerequisites(definition["prerequisites"], input_schema=schema)
+        if p.producer == "style.capture"
+    )
+    project = uuid4()
+    default = normalize_workflow_inputs(schema=schema, project_id=project, inputs={})
+    assert _resolve_path(style, default) == module.STYLE_PATH
+    chosen = normalize_workflow_inputs(
+        schema=schema, project_id=project, inputs={"style_path": "context/voice/ege.md"}
+    )
+    assert _resolve_path(style, chosen) == "context/voice/ege.md"
 
 
 async def test_a_plan_that_breaks_heading_rules_gets_one_fix():
@@ -345,7 +409,8 @@ async def test_unusable_drafts_leave_the_plan_written_out():
     chat = "Sure! Here is a short outline you could expand into a post about analytics."
     ctx = context(spec, outputs(draft=chat, draft_retry=chat), calls)
     result = await module.run(ctx, inputs())
-    assert [c["step"] for c in calls] == ["angle", "draft", "draft_retry", "copy_fix", "final"]
+    # The plan written out passes the copy check, so no fix call runs.
+    assert [c["step"] for c in calls] == ["angle", "draft", "draft_retry", "final"]
     assert result["content"].startswith("# How do I tell AI agent visits from people")
     assert "## Four kinds of visit in your logs" in result["content"]
     notes = next(s for s in result["summary"]["sections"] if s["heading"] == "Notes")["items"]
@@ -452,6 +517,8 @@ async def test_a_recipe_copy_changes_the_steps(tmp_path):
     calls = []
     result = await module.run(context(spec, outputs(draft=draft(dash=False)), calls), inputs())
     assert [c["step"] for c in calls] == ["draft", "copy_fix"]
+    # One call gets the same post rules as the steps it skips.
+    assert "## The product in the answer" in calls[0]["instructions"]
     assert result["path"].endswith("-how-do-i-tell-ai-agent-visits-from.md")
     assert re.search(r"Recipe seed-post\.single", json.dumps(result["summary"]))
 

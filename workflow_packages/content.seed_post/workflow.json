@@ -4,7 +4,7 @@
     "key": "content.seed_post",
     "title": "Write a blog post from notes, a PR or a draft",
     "description": "Turn material you already have (meeting notes, a merged pull request, a draft or a record of work) into a guide for your site's readers: it finds the question your material answers, plans the post, drafts it, reviews and revises it, and checks the copy. The draft waits in Decisions with the claims to confirm; Tin never publishes it.",
-    "version": "1.0.0",
+    "version": "1.1.0",
     "executor": "workflow.code",
     "schedule_modes": ["on_demand"],
     "human_review": {
@@ -15,7 +15,7 @@
       {
         "kind": "artifact",
         "level": "recommended",
-        "path": ".agents/skills/writing-style/SKILL.md",
+        "path": "{style_path}",
         "producer": "style.capture",
         "reason": "The writing style guide gives the post the founder's voice."
       },
@@ -37,7 +37,7 @@
           "maxLength": 512,
           "default": "",
           "title": "Seed file",
-          "description": "The material to write from, as a file in project Files: meeting notes, a merged pull request's description and diff summary, a draft or a record of work. Commit it first, for example as context/notes/<date>-<topic>.md with a source line at the top. Raw material works best: Tin plans the post itself.",
+          "description": "The material to write from, as a file in project Files: meeting notes, a merged pull request's description and diff summary, a draft or a record of work. Commit it first, for example as context/notes/<date>-<topic>.md with a source line at the top. Raw material works best: Tin plans the post itself. Gather what a reader needs: what changed, why, and how it works. Where a later note replaces an earlier statement, keep only the later one. Leave out credentials and customer data.",
           "x-tin-ui": {"control": "project_file", "order": 10}
         },
         "seed_text": {
@@ -59,9 +59,9 @@
         "style_path": {
           "type": "string",
           "maxLength": 512,
-          "default": "",
-          "title": "Optional writing guide",
-          "description": "A writing guide in project Files to write in, such as one author's guide. Without it, Tin uses the project's writing style guide.",
+          "default": ".agents/skills/writing-style/SKILL.md",
+          "title": "Writing guide",
+          "description": "The writing guide in project Files to write in: the project's style guide, or another one such as one author's guide.",
           "x-tin-ui": {"control": "project_file", "order": 40}
         },
         "revise_path": {
