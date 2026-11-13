@@ -11,6 +11,7 @@ from types import SimpleNamespace
 from uuid import UUID, uuid4
 
 import pytest
+from pydantic import SecretStr
 from temporalio.exceptions import ApplicationError
 from temporalio.testing import ActivityEnvironment
 from test_ai_answers import Clock, FakeDataForSEO, client_for, inputs
@@ -131,6 +132,14 @@ async def test_activity_refuses_without_a_panel_an_active_run_or_credentials():
     unconfigured = AIAnswersActivities(database=db, settings=SimpleNamespace())
     with pytest.raises(ApplicationError, match="not configured"):
         await env.run(unconfigured.ai_answers_measure, control)
+    # The optional cloro key reaches the client; without it the client has none.
+    login = {"dataforseo_login": SecretStr("l"), "dataforseo_password": SecretStr("p")}
+    keyed = SimpleNamespace(**login, cloro_api_key=SecretStr("cloro-key"))
+    assert AIAnswersActivities(database=db, settings=keyed).client._cloro_key == "cloro-key"
+    assert (
+        AIAnswersActivities(database=db, settings=SimpleNamespace(**login)).client._cloro_key
+        is None
+    )
     db.run.status.value = "stopped"
     with pytest.raises(ApplicationError, match="no longer active"):
         await env.run(activities(db, FakeDataForSEO()).ai_answers_measure, control)
