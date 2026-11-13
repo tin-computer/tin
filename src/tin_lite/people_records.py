@@ -31,6 +31,9 @@ SIGNALS = ("reacted", "commented", "viewed")
 RELATIONSHIPS = ("connected", "pending", "none")
 # What a person was on the project's site or product when a run last read them.
 WEB_TIERS = ("lead", "new_user", "user")
+# How their last visit arrived: an ad click, a search engine, an AI assistant, a social site,
+# another site, or no referrer. The value's reason names it ("Google Ads, keyword …").
+WEB_SOURCES = ("ad", "organic", "ai", "social", "referral", "direct")
 # Built-in fields: key → (type, label, choices).
 FIELDS: dict[str, tuple[str, str, tuple[str, ...] | None]] = {
     "name": ("text", "Name", None),
@@ -41,6 +44,7 @@ FIELDS: dict[str, tuple[str, str, tuple[str, ...] | None]] = {
     "customer": ("choice", "Customer", ("yes", "no")),
     "web_tier": ("choice", "On the site", WEB_TIERS),
     "web_summary": ("text", "Last visit", None),
+    "web_source": ("choice", "Came from", WEB_SOURCES),
 }
 SET_BY = ("run", "member")
 TEXT_LIMIT = 2000
@@ -668,7 +672,7 @@ WRITERS = {
     "product.visitor_journeys": "visitors",
 }
 # LinkedIn shows each member their own relationship, from `record_relationships`.
-VIEW_FIELDS = ("icp", "icp_fit", "customer", "web_tier", "web_summary")
+VIEW_FIELDS = ("icp", "icp_fit", "customer", "web_tier", "web_summary", "web_source")
 # Values computed under a definition, such as the ICP file, go stale when it changes.
 DEFINED_FIELDS = ("icp", "icp_fit")
 POST = re.compile(r"urn:li:(?:activity|ugcPost|share):[0-9]{1,30}")

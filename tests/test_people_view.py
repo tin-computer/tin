@@ -443,6 +443,46 @@ async def test_mcp_reads_and_corrects_people_like_a_member(collection_db, monkey
     )
     assert [p["email"] for p in found["people"]] == ["ana@fieldnotes.dev"]
 
+    # A visit's source reads as came_from, and the from_ads segment keeps ad clicks.
+    async with f.db.pool.acquire() as conn:
+        clicked = await people_records.upsert_person(
+            conn,
+            f.project.id,
+            {"linkedin_slug": "ad-clicker"},
+            source="rb2b",
+        )
+        await people_records.set_values(
+            conn,
+            f.project.id,
+            clicked,
+            [people_records.Value("web_source", "ad", "Google Ads, keyword “epic data warehouse”")],
+            set_by_kind="run",
+            set_by="rb2b",
+        )
+        with pytest.raises(people_records.RecordError):
+            await people_records.set_values(
+                conn,
+                f.project.id,
+                clicked,
+                [people_records.Value("web_source", "billboard")],
+                set_by_kind="run",
+                set_by="rb2b",
+            )
+    ads = structured(
+        await server.call_tool("list_people", {"project_id": project, "segment": "from_ads"})
+    )
+    assert [(p["profile_url"], p["came_from"], p["came_from_detail"]) for p in ads["people"]] == [
+        (
+            "https://www.linkedin.com/in/ad-clicker",
+            "ad",
+            "Google Ads, keyword “epic data warehouse”",
+        )
+    ]
+    found = structured(
+        await server.call_tool("list_people", {"project_id": project, "query": "epic data"})
+    )
+    assert [p["came_from"] for p in found["people"]] == ["ad"]
+
     outsider = mcp(f, monkeypatch, actor="user_outsider")
     with pytest.raises(ToolError, match="not_found"):
         await outsider.call_tool("list_people", {"project_id": project})

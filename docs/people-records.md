@@ -61,6 +61,9 @@ The built-in fields are:
 - `web_tier` (`lead`, `new_user` or `user`: what they were on the site when visitor journeys last
   read them, with where they stopped as the reason) and `web_summary` (that run's one-line
   summary). A visitor journeys run sets `name` only when no other source has.
+- `web_source` (`ad`, `organic`, `ai`, `social`, `referral` or `direct`): how their last visit
+  arrived, from its UTM tags, ad click IDs and referrer, with the source as the reason
+  ("Google Ads, keyword “epic data warehouse”").
 
 ## LinkedIn relationships
 
@@ -155,7 +158,10 @@ tools share `people_service.People`.
 The menu shows People where the project is offered a workflow that finds people
 (`social.linkedin_engagers` or `social.linkedin_profile_viewers`, both gated per project, or
 `product.visitor_journeys`), and on `/people` itself. People a visitor journeys run named have an
-"On the site" segment and field; the grid's Headline shows their last visit's summary, the panel
+"On the site" segment and field; once any visit's source is known the grid adds a sortable
+"Came from" column (descending reads ads first) and a "From ads" segment, and MCP's
+`list_people` returns `came_from` and takes the `from_ads` segment. The LinkedIn column links to
+the person's profile when Tin knows it; the grid's Headline shows their last visit's summary, the panel
 shows their email, and a visit in the timeline opens its replay with the suggested next step under
 it. Any project
 member can read, correct, annotate and forget the project's people; other users get 404.
