@@ -2,8 +2,9 @@
 // Tin's card kit: render each LinkedIn post's card from its HTML, check it, and lay the batch out
 // on one sheet to look at before uploading.
 //
-//   tin-cards check <dir>               render <dir>/<post>.html to <post>.png and check every card
 //   tin-cards shoot <page> <out.png>    shoot a product page, or one part of it, for a card's screen
+//   tin-cards compose <batch> <dir>     lay each post's card out from the brand's profile and its shot
+//   tin-cards check <dir>               render <dir>/<post>.html to <post>.png and check every card
 //   tin-cards guide                     print the guide
 //
 // <dir>/cards.json holds the brand's palette and lists the cards:
@@ -14,7 +15,8 @@ import fs from "node:fs";
 import path from "node:path";
 import {fileURLToPath, pathToFileURL} from "node:url";
 import {chromium} from "playwright";
-import {HEIGHT, WIDTH, colours, emptyWindows, eyebrows, figureGround, fonts, keepStyles, leftBars, placement, restyled, screenBoxes, textSizes, words} from "./checks.js";
+import {ComposeError, compose} from "./compose.js";
+import {HEIGHT, WIDTH, colours, emptyWindows, eyebrows, figureGround, fonts, keepStyles, leftBars, missingImages, placement, restyled, screenBoxes, textSizes, words} from "./checks.js";
 
 const HERE = path.dirname(fileURLToPath(import.meta.url));
 // LinkedIn takes PNG or JPEG up to 5 MB, and so does Tin.
@@ -91,6 +93,9 @@ async function checkCard(page, dir, card, palette) {
   for (const face of await page.evaluate(fonts)) {
     if (face.generic) errors.push(`${card.post}: “${face.sample}” is set in ${face.family}, a fallback. Load the company's own font.`);
     else if (!face.loaded) errors.push(`${card.post}: the font ${face.family} didn't load, so “${face.sample}” falls back. Check its @font-face.`);
+  }
+  for (const src of await page.evaluate(missingImages)) {
+    errors.push(`${card.post}: ${src.startsWith("data:") ? "an inline image" : src} didn't load. Check its path from ${card.post}.html.`);
   }
   if (!seen.headline) errors.push(`${card.post}: mark the headline with data-card-line.`);
   const stray = seen.items.filter(item => !item.inScreen && !item.inLogo && !item.line);
@@ -278,5 +283,14 @@ if (command === "check") await check(args[0]);
 else if (command === "shoot") {
   const {options, rest} = flags(args);
   await shoot(rest[0], rest[1], options);
+} else if (command === "compose") {
+  if (!args[0] || !args[1]) fail("Usage: tin-cards compose <batch.json> <dir>");
+  try {
+    const cards = compose(args[0], args[1]);
+    console.log(`Composed ${cards.map(card => card.post).join(", ")} in ${args[1]}. Check them with tin-cards check ${args[1]}.`);
+  } catch (error) {
+    if (error instanceof ComposeError) fail(error.message);
+    throw error;
+  }
 } else if (command === "guide") console.log(fs.readFileSync(path.join(HERE, "guide", "README.md"), "utf8"));
-else fail("Usage: tin-cards check <dir> | tin-cards shoot <page> <out.png> | tin-cards guide");
+else fail("Usage: tin-cards shoot <page> <out.png> | tin-cards compose <batch.json> <dir> | tin-cards check <dir> | tin-cards guide");

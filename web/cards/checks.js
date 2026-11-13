@@ -29,6 +29,25 @@ export function fonts(scope = "[data-card]") {
   return [...found.values()];
 }
 
+// Images the card names that didn't load, as an <img> or a background, such as a painting or a
+// shot whose path is wrong. A card renders without them and would pass every other check.
+export async function missingImages() {
+  const card = document.querySelector("[data-card]");
+  if (!card) return [];
+  const missing = [...card.querySelectorAll("img")].filter(image => !image.naturalWidth).map(image => image.getAttribute("src"));
+  const backgrounds = new Set();
+  for (const element of [card, ...card.querySelectorAll("*")]) {
+    for (const match of getComputedStyle(element).backgroundImage.matchAll(/url\("?(.*?)"?\)/g)) backgrounds.add(match[1]);
+  }
+  const loads = src => new Promise(done => {
+    const image = new Image();
+    image.onload = () => done(null);
+    image.onerror = () => done(src);
+    image.src = src;
+  });
+  return [...missing, ...(await Promise.all([...backgrounds].map(loads))).filter(Boolean)];
+}
+
 // The card's own words, outside its screens and logo, and where they sit. Text past the card's
 // edge, or clipped by a box that hides overflow, is reported with the words it cuts.
 export function words() {
