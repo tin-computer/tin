@@ -51,8 +51,8 @@
 .people-table th.is-icp { width: 100px; }
 .people-table th.is-fit { width: 96px; }
 .people-table th.is-linkedin { width: 128px; }
-/* How their last visit arrived: "Ad Google Ads, keyword …", shown once any source is known. */
-.people-table th.is-source { width: 200px; }
+/* How their last visit arrived ("Ad · Google Ads"), shown once any source is known. */
+.people-table th.is-source { width: 148px; }
 /* Last touch names who: "oct 16 · invited by Mira" (TEAM-A). */
 .people-table th.is-touch { width: 212px; }
 

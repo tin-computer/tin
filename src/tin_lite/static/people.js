@@ -28,7 +28,7 @@ window.TinPeople = (() => {
   // What a person was on the site when a visitor journeys run last read them.
   const WEB_TIER = { lead: "Lead", new_user: "New user", user: "User" };
   // How their last visit arrived; the value's reason names the source ("Google Ads, keyword …").
-  const WEB_SOURCE = { ad: "Ad", organic: "Organic search", ai: "AI assistant", social: "Social", referral: "Referral", direct: "Direct" };
+  const WEB_SOURCE = { ad: "Ad", organic: "Organic", ai: "AI", social: "Social", referral: "Referral", direct: "Direct" };
   const SOURCE_ORDER = ["ad", "organic", "ai", "social", "referral", "direct"];
   const SORTS = {
     name: (a, b) => a.name.localeCompare(b.name),
@@ -59,6 +59,8 @@ window.TinPeople = (() => {
   };
   // "Ad · Google Ads, keyword “epic data warehouse”"
   const sourceText = (source) => (source ? [WEB_SOURCE[source.value] || source.value, source.reason].filter(Boolean).join(" · ") : "");
+  // The grid names the place ("Google Ads"); the keyword or campaign after it reads on hover.
+  const sourcePlace = (source) => (source?.reason || "").split(",")[0].trim();
   // The column shows only on a project where some visit's source is known.
   const hasSources = () => (view.people || []).some((person) => field(person, "web_source"));
   const peoplePath = (id = "") => `/api/projects/${encodeURIComponent(view.projectId)}/people${id ? `/${encodeURIComponent(id)}` : ""}`;
@@ -92,6 +94,14 @@ window.TinPeople = (() => {
     if (person.request === "queued") return "Queued";
     if (relationship === "pending" && person.invited_at) return `Invited ${day(person.invited_at)}`;
     return RELATIONSHIP[relationship] || "—";
+  }
+
+  // The LinkedIn cell opens their profile when Tin knows it; with no relationship read for the
+  // viewer it says "Profile".
+  function linkedinCell(person, relationship) {
+    const label = relationshipLabel(person, relationship);
+    if (!person.profile_url) return `<span>${escape(label)}</span>`;
+    return `<a class="people-linkedin" href="${escape(person.profile_url)}" target="_blank" rel="noopener noreferrer" aria-label="Open ${escape(person.name || "this person")} on LinkedIn" data-people-profile><span>${escape(label === "—" ? "Profile" : label)}</span>${OUT}</a>`;
   }
 
   // A value a member set, rather than a run: no run replaces it.
@@ -413,8 +423,8 @@ window.TinPeople = (() => {
       <td class="is-icp ${icpLabel.muted ? "is-muted" : ""}" title="${escape(icpLabel.muted ? "" : icpLabel.text)}"><span class="is-short">${escape(icpLabel.short)}</span><span class="is-full">${escape(icpLabel.text)}</span></td>
       <td class="is-fit ${fitClass}" ${fit ? `data-fit="${escape(person.id)}"` : ""}>${mark ? `<small>${mark}</small>` : ""}<span>${fitValue === null ? "—" : fitValue.toFixed(2)}</span></td>
       <td class="is-notes" ${note ? `data-note="${escape(person.id)}"` : ""}><span>${note ? escape(note.body.split("\n")[0]) : ""}</span></td>
-      ${sources ? `<td class="is-source ${source ? "" : "is-muted"}" title="${escape(sourceText(source))}"><span>${source ? `<strong>${escape(WEB_SOURCE[source.value] || source.value)}</strong>${source.reason ? ` ${escape(source.reason)}` : ""}` : "—"}</span></td>` : ""}
-      <td class="is-linkedin">${person.profile_url ? `<a class="people-linkedin" href="${escape(person.profile_url)}" target="_blank" rel="noopener noreferrer" aria-label="Open ${escape(person.name || "this person")} on LinkedIn" data-people-profile><span>${escape(relationshipLabel(person, relationship))}</span>${OUT}</a>` : `<span>${escape(relationshipLabel(person, relationship))}</span>`}</td>
+      ${sources ? `<td class="is-source ${source ? "" : "is-muted"}" title="${escape(sourceText(source))}"><span>${source ? `<strong>${escape(WEB_SOURCE[source.value] || source.value)}</strong>${sourcePlace(source) ? ` · ${escape(sourcePlace(source))}` : ""}` : "—"}</span></td>` : ""}
+      <td class="is-linkedin">${linkedinCell(person, relationship)}</td>
       <td class="is-touch"><span>${touch ? `${escape(day(touch.at))} · ${escape(touchText(touch))}` : "—"}</span></td>
     </tr>`;
   }
