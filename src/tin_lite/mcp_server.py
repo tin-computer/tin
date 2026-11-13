@@ -1278,6 +1278,10 @@ def create_mcp_app(
             "email": person.get("email") or None,
             "on_the_site": value("web_tier"),
             "last_visit": value("web_summary"),
+            # How their last visit arrived: ad, organic, ai, social, referral or direct, and
+            # the source behind it ("Google Ads, keyword …").
+            "came_from": value("web_source"),
+            "came_from_detail": (fields.get("web_source") or {}).get("reason") or None,
             "icp": value("icp"),
             "icp_fit": value("icp_fit"),
             "fit_set_by": fit.get("by"),
@@ -1299,14 +1303,16 @@ def create_mcp_app(
         who set it and why, whether they are a customer, and their newest note.
 
         segment: "all", "icp_fit" (fit at or above fit_shown), "not_connected" (not
-        connected on LinkedIn) or "on_the_site" (named by a visitor journeys run, with their
-        email, tier and last visit). query matches name, headline, email, last visit, ICP and
-        notes. `profiles` are the ICP file's profiles, the values update_person accepts.
+        connected on LinkedIn), "on_the_site" (named by a visitor journeys run, with their
+        email, tier and last visit) or "from_ads" (their last visit came from an ad click).
+        came_from is how the last visit arrived (ad, organic, ai, social, referral, direct).
+        query matches name, headline, email, last visit, ICP and notes. `profiles` are the ICP
+        file's profiles, the values update_person accepts.
         """
         parsed, viewer, people = await people_service(project_id, "list_people")
-        if segment not in {"all", "icp_fit", "not_connected", "on_the_site"}:
+        if segment not in {"all", "icp_fit", "not_connected", "on_the_site", "from_ads"}:
             raise ToolError(
-                'invalid: segment is "all", "icp_fit", "not_connected" or "on_the_site"'
+                'invalid: segment is "all", "icp_fit", "not_connected", "on_the_site" or "from_ads"'
             )
         listed = await people_result(people.list(parsed, viewer))
         rows = [person_row(person) for person in listed["people"]]
@@ -1316,6 +1322,8 @@ def create_mcp_app(
             rows = [r for r in rows if r["linkedin"] in {"none", "pending"}]
         elif segment == "on_the_site":
             rows = [r for r in rows if r["on_the_site"]]
+        elif segment == "from_ads":
+            rows = [r for r in rows if r["came_from"] == "ad"]
         if query:
             words = query.casefold()
             texts = {str(p["id"]): p.get("notes_text") or "" for p in listed["people"]}
@@ -1329,6 +1337,7 @@ def create_mcp_app(
                         r["headline"],
                         r["email"] or "",
                         r["last_visit"] or "",
+                        r["came_from_detail"] or "",
                         r["icp"] or "",
                         texts[r["id"]],
                     ]
