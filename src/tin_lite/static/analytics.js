@@ -257,10 +257,12 @@ window.TinAnalytics = (() => {
   // REP-V2e: the report's own items, with Tin's action where one helps.
   function needs(data) {
     const card = data.card;
+    // Count instead only for the domain the service says the site moved to, never for a host
+    // the report merely names; any other item is its text alone.
     const items = (data.report?.needs_you || []).map((item) => {
-      const moved = (card.moved_hosts || [])[0];
+      const moved = card.moved_to;
       const action = item.code === "uncounted_hosts" && moved
-        ? `<button class="analytics-count" type="button" data-analytics-count="${escape(moved.host)}">Count ${escape(moved.host)} instead</button>`
+        ? `<button class="analytics-count" type="button" data-analytics-count="${escape(moved)}">Count ${escape(moved)} instead</button>`
         : item.code === "script_quiet" ? `<button class="analytics-link" type="button" data-analytics-integrations>See the line</button>` : "";
       return { text: item.text, action };
     });

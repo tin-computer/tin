@@ -7400,10 +7400,10 @@ function analyticsHealth(view) {
   if (view.state === "quiet") return ["No visits recorded in 7 days. Check that the script is still on the site."];
   if (view.state === "waiting") return analyticsWaiting(view);
   if (view.state === "live") {
-    const moved = (view.moved_hosts || [])[0];
+    const moved = view.moved_to;
     return [
       `${view.pages_today ?? "–"} pages today`,
-      moved ? `${moved.host} isn't counted`
+      moved ? `${moved} isn't counted`
         : view.reporter_connected ? `reporter on · last request ${ledgerTime(view.requests_last_at)}` : analyticsReporterLeft(view),
     ];
   }
@@ -7470,15 +7470,15 @@ function renderAnalyticsAddress() {
 }
 
 function renderAnalyticsExpanded(integration, view) {
-  const moved = (view.moved_hosts || [])[0];
+  const moved = view.moved_to;
   const source = { setup: "from setup · a new address there is counted from then on", entered: "entered on this card", uncounted_host: "counted instead of the address from setup" }[view.address_source] || "";
   const seen = view.hosts_seen || [];
   const hosts = seen.map((item, index) => `${item.host} ${item.pages_7d ?? "–"}${index ? "" : " pages"}`).join(", ");
   const rows = [
     moved
-      ? linkedInPart("Address", `The script also ran on ${moved.host}, which isn't counted: ${moved.pages_7d ?? "–"} pages in the last 7 days.`, {
+      ? linkedInPart("Address", `Most of the script's loads in the last 3 days came from ${moved}, which isn't counted.`, {
         meta: `counting ${analyticsCounted(view)} now · the script line stays the same`,
-        action: `<button class="analytics-count" type="button" data-analytics-count="${escapeHtml(moved.host)}"${state.analyticsBusy ? " disabled" : ""}>Count ${escapeHtml(moved.host)} instead</button>`,
+        action: `<button class="analytics-count" type="button" data-analytics-count="${escapeHtml(moved)}"${state.analyticsBusy ? " disabled" : ""}>Count ${escapeHtml(moved)} instead</button>`,
       })
       : linkedInPart("Address", analyticsCounted(view), { meta: source }),
     linkedInPart("Script", view.first_page_at

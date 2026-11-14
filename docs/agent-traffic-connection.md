@@ -52,10 +52,13 @@ The site's state moves on its own, so Tin keeps it apart from the configuration,
 
 **Address changes.** When a newer Start here names a different host (compared without a leading
 `www.`), Tin sends PUT again the next time it reads the site's status. A newer setup with the
-same host changes nothing. When status lists a real domain under `uncounted_hosts` (not a
-preview on a shared host such as `vercel.app` or `netlify.app`), the card offers to count that
-address instead; one press sends PUT with it. That choice stands until a newer Start here names
-another host.
+same host changes nothing. When status names a domain under `moved_to` (the site seems to have
+moved: in the last 3 days an uncounted domain loaded the script more often than the counted
+hosts), the card and the Analytics page offer to count it instead; one press sends PUT with it,
+and Tin accepts no other host there. That choice stands until a newer Start here names another
+host. Tin never offers a host from `uncounted_hosts` or shows that list: it also holds previews,
+a site's second domains (the report's `other_domains`, fixed by a redirect on the founder's
+side) and any host a client names in a request.
 
 ## The card
 
@@ -113,8 +116,9 @@ days read a week ending today.
   "other bots", and browser-like loads with how many never ran the script), the companies that
   asked for pages (the top three, then the rest in one row), and the three pages AI companies
   loaded most, split by company as `ai_pages` gives them, with the rest under "Other pages".
-- The needs-you bar shows the report's `needs_you` text as it is, with Count instead for a moved
-  host. Every number is exact (the service withholds nothing); a `null` would show as a dash,
+- The needs-you bar shows the report's `needs_you` text as it is. Only `uncounted_hosts` gets a
+  button, Count instead, and only when status names `moved_to`; `other_domains` and any code
+  Tin doesn't know are their text alone. Every number is exact (the service withholds nothing); a `null` would show as a dash,
   as a guard. The report's notes close the page in small print.
 
 ## MCP
@@ -260,7 +264,7 @@ the time zone is the founder's (Start here's answer, then the newest schedule's,
 
 | Operation | Capability | Arguments | Returns |
 |---|---|---|---|
-| `site.status` | `status.read` | none | state, first and last page, `pages_today`, hosts seen, uncounted hosts, `requests_last_at`, `checked_at` |
+| `site.status` | `status.read` | none | state, first and last page, `pages_today`, hosts seen, uncounted hosts, `moved_to`, `requests_last_at`, `checked_at` |
 | `report.read` | `reports.read` | `period` (`day` or `week`, default `day`), `date` (`YYYY-MM-DD` within the last 180 days, default today) | the contract's report record, whole, including its `markdown` |
 
 Each call writes an `integration_call_receipts` row. A `401` or `404` marks the connection as

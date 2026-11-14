@@ -25,7 +25,7 @@ from tin_lite.agent_traffic_connection import (
     AnalyticsAccessLost,
     ServiceArgumentError,
     comparison,
-    moved_hosts,
+    moved_to,
     project_ref,
     removal_wait,
     request_for,
@@ -179,16 +179,20 @@ def test_addresses_are_checked_before_any_call() -> None:
             site_address(bad)
 
 
-def test_moved_hosts_skip_previews_and_shared_hosting() -> None:
-    status = {
+def test_only_the_services_moved_to_is_offered() -> None:
+    # Second domains, previews and hosts a client named by hand stay in the raw list.
+    raw = {
         "uncounted_hosts": [
-            {"host": "www.newname.com", "pages_7d": 40},
+            {"host": "databasin.co", "pages_7d": 40},
+            {"host": "evil.com", "pages_7d": 2},
             {"host": "example-git-main-acme.vercel.app", "pages_7d": 3},
-            {"host": "deploy-preview-12--example.netlify.app", "pages_7d": 1},
-            {"host": "localhost", "pages_7d": 9},
         ]
     }
-    assert moved_hosts(status) == [{"host": "www.newname.com", "pages_7d": 40}]
+    assert moved_to(raw) is None
+    assert moved_to({**raw, "moved_to": None}) is None
+    assert moved_to({**raw, "moved_to": "www.newname.com"}) == "www.newname.com"
+    for unusable in ("example-git-main-acme.vercel.app", "localhost", "10.0.0.2", 7):
+        assert moved_to({"moved_to": unusable}) is None
 
 
 def test_project_references_follow_the_deployment() -> None:
@@ -451,22 +455,29 @@ async def test_the_card_offers_to_count_the_host_the_script_moved_to(publication
     service, api, project = await analytics(publication_db)
     await service.agent_traffic.set_up(project_id=project.id, clerk_user_id=USER_ID)
     api.state = "live"
+    # A second domain in the raw list is no move: nothing is offered and nothing is counted.
+    api.status_extra = {"uncounted_hosts": [{"host": "www.otherdomain.com", "pages_7d": 3}]}
+    shown = await card(service, project.id)
+    assert shown["moved_to"] is None
+    with pytest.raises(IntegrationInputError, match="seems to have moved to"):
+        await service.agent_traffic.count_host(
+            project_id=project.id, clerk_user_id=USER_ID, host="www.otherdomain.com"
+        )
+    await age(publication_db, project.id, 601)
     api.status_extra = {
         "uncounted_hosts": [
             {"host": "www.newname.com", "pages_7d": 40},
             {"host": "example-git-main.vercel.app", "pages_7d": 2},
-        ]
+        ],
+        "moved_to": "WWW.NewName.com",
     }
     shown = await card(service, project.id)
-    assert shown["moved_hosts"] == [{"host": "www.newname.com", "pages_7d": 40}]
-    with pytest.raises(IntegrationInputError, match="only an address the script ran on"):
-        await service.agent_traffic.count_host(
-            project_id=project.id, clerk_user_id=USER_ID, host="example-git-main.vercel.app"
-        )
-    with pytest.raises(IntegrationInputError):
-        await service.agent_traffic.count_host(
-            project_id=project.id, clerk_user_id=USER_ID, host="attacker.example"
-        )
+    assert shown["moved_to"] == "www.newname.com"
+    for other in ("example-git-main.vercel.app", "attacker.example"):
+        with pytest.raises(IntegrationInputError):
+            await service.agent_traffic.count_host(
+                project_id=project.id, clerk_user_id=USER_ID, host=other
+            )
     connection = await service.agent_traffic.count_host(
         project_id=project.id, clerk_user_id=USER_ID, host="www.newname.com"
     )
@@ -795,12 +806,13 @@ async def test_routes_set_up_show_the_card_and_never_send_a_token(publication_db
         assert saved.json()["status"] == "connected"
         assert saved.json()["analytics"]["state"] == "waiting"
         api.state = "live"
-        api.status_extra = {"uncounted_hosts": [{"host": "newname.com", "pages_7d": 12}]}
+        api.status_extra = {
+            "uncounted_hosts": [{"host": "newname.com", "pages_7d": 12}],
+            "moved_to": "newname.com",
+        }
         await age(publication_db, project.id, 31)
         refreshed = await web.post(f"{base}/analytics.agent_traffic/refresh")
-        assert refreshed.json()["analytics"]["moved_hosts"] == [
-            {"host": "newname.com", "pages_7d": 12}
-        ]
+        assert refreshed.json()["analytics"]["moved_to"] == "newname.com"
         moved = await web.post(
             f"{base}/analytics.agent_traffic/address", json={"host": "newname.com"}
         )
