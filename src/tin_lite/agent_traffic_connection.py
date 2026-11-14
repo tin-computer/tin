@@ -158,8 +158,8 @@ BUILDERS: dict[str, dict[str, Any]] = {
         "settings, or the layout file every page uses. Then publish the site.",
     },
 }
-# Hosts a founder's site lives on as one exact host among many. A host on one of them in
-# `uncounted_hosts` is usually a preview deployment, not a move.
+# Hosts a founder's site lives on as one exact host among many. A host on one of them is
+# usually a preview deployment, not a move.
 SHARED_HOSTING = (
     "vercel.app",
     "netlify.app",
@@ -284,15 +284,15 @@ def on_shared_hosting(host: str) -> bool:
     return any(host == item or host.endswith("." + item) for item in SHARED_HOSTING)
 
 
-def moved_hosts(status: dict[str, Any] | None) -> list[dict[str, Any]]:
-    """Uncounted hosts that look like the site's real new address, not previews."""
+def moved_to(status: dict[str, Any] | None) -> str | None:
+    """The domain the service says the site moved to: the only address Tin offers to count
+    instead. `uncounted_hosts` never makes an offer: it also holds previews, a site's second
+    domains and any host a client names in a request."""
 
-    found = []
-    for item in (status or {}).get("uncounted_hosts") or []:
-        host = item.get("host") if isinstance(item, dict) else None
-        if isinstance(host, str) and _public_name(host) and not on_shared_hosting(host):
-            found.append({"host": host, "pages_7d": item.get("pages_7d")})
-    return found
+    host = (status or {}).get("moved_to")
+    if isinstance(host, str) and _public_name(host) and not on_shared_hosting(host):
+        return host
+    return None
 
 
 # ---------------------------------------------------------------- the service
@@ -547,6 +547,7 @@ def status_from(payload: Any, site_id: str) -> dict[str, Any]:
         "pages_today": integer(payload.get("pages_today")),
         "hosts_seen": _hosts(payload.get("hosts_seen")),
         "uncounted_hosts": _hosts(payload.get("uncounted_hosts")),
+        "moved_to": (text(payload.get("moved_to"), 255) or "").lower() or None,
         "requests_last_at": _moment(payload.get("requests_last_at")),
         "checked_at": _moment(payload.get("checked_at")),
     }
@@ -781,10 +782,10 @@ class AgentTrafficConnections:
 
         self._require_configured(project_id)
         site = await self.site(project_id)
-        offered = {item["host"] for item in moved_hosts((site or {}).get("status"))}
-        if not isinstance(host, str) or host.lower() not in offered:
+        offered = moved_to((site or {}).get("status"))
+        if not offered or not isinstance(host, str) or host.lower() != offered:
             raise IntegrationInputError(
-                "Tin can count only an address the script ran on in the last 7 days."
+                "Tin can count instead only the domain the site seems to have moved to."
             )
         latest = await self.address(project_id)
         return await self._put(
@@ -1218,7 +1219,7 @@ class AgentTrafficConnections:
             "hosts_seen": status.get("hosts_seen") or [],
             "requests_last_at": status.get("requests_last_at"),
             "reporter_connected": reporter_connected(status),
-            "moved_hosts": moved_hosts(status),
+            "moved_to": moved_to(status),
             "checked_at": _iso((site or {}).get("status_checked_at")),
             # Tin couldn't ask just now (rate limit, outage) and shows its stored copy.
             "stale": bool(

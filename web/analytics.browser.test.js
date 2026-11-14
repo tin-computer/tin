@@ -20,7 +20,7 @@ function card(state, extra = {}) {
     csp: {"script-src": ["https://edge.tin.computer"], "connect-src": ["https://edge.tin.computer"]},
     pages_today: state === "live" ? 37 : 0, first_page_at: state === "waiting" ? null : "2026-10-02T09:31:10Z",
     last_page_at: state === "waiting" ? null : recent(), hosts_seen: state === "live" ? [{host: "www.example.com", pages_7d: 212}, {host: "blog.example.com", pages_7d: 9}] : [],
-    requests_last_at: null, reporter_connected: false, moved_hosts: [], checked_at: recent(), stale: false,
+    requests_last_at: null, reporter_connected: false, moved_to: null, checked_at: recent(), stale: false,
   } : {state, address: "https://www.example.com"};
   Object.assign(view, extra);
   return {
@@ -101,7 +101,7 @@ test("card: a project without Start here types one address; staging's limit says
 });
 
 test("card: live with the reporter, Configure, count a moved host, stop measuring", {timeout: 120000}, async () => {
-  const live = card("live", {reporter_connected: true, requests_last_at: recent(), moved_hosts: [{host: "newname.com", pages_7d: 31}]});
+  const live = card("live", {reporter_connected: true, requests_last_at: recent(), moved_to: "newname.com"});
   const integrations = [live];
   const writes = [];
   const analytics = {writes, pages: {}, answer: (action, body) => ({body: card("live", {address: `https://${body.host}`})})};
@@ -112,7 +112,7 @@ test("card: live with the reporter, Configure, count a moved host, stop measurin
     assert.equal(await health.locator("small").innerText(), "newname.com isn't counted");
     await analyticsCard(page).getByRole("button", {name: "Configure"}).click();
     const rows = analyticsCard(page).locator(".linkedin-part");
-    assert.match(await rows.nth(0).innerText(), /Address\s*The script also ran on newname\.com, which isn't counted: 31 pages in the last 7 days\.\s*counting example\.com and every subdomain now · the script line stays the same\s*Count newname\.com instead/);
+    assert.match(await rows.nth(0).innerText(), /Address\s*Most of the script's loads in the last 3 days came from newname\.com, which isn't counted\.\s*counting example\.com and every subdomain now · the script line stays the same\s*Count newname\.com instead/);
     assert.match(await rows.nth(1).innerText(), /Script\s*On the site since oct 2 · last page \d\d:\d\d\s*site st-8k3m9q2x7v4c · last 7 days: www\.example\.com 212 pages, blog\.example\.com 9\s*See the line/);
     assert.match(await rows.nth(2).innerText(), /Reporter\s*Every page request, including crawlers that don't run scripts\s*last request \d\d:\d\d/);
     await analyticsCard(page).getByRole("button", {name: "See the line"}).click();
@@ -162,11 +162,15 @@ test("card: needs attention, quiet, stopping and not set up on this deployment",
 });
 
 test("page: today so far, each number against the day before, every page request", {timeout: 120000}, async () => {
-  const live = card("live", {reporter_connected: true, requests_last_at: "2026-10-21T07:58:00Z", moved_hosts: [{host: "newname.com", pages_7d: 31}]});
+  const live = card("live", {reporter_connected: true, requests_last_at: "2026-10-21T07:58:00Z", moved_to: "newname.com"});
   const today = fixture("report_day.json");
   Object.assign(today, {complete: false, start: "2026-10-21", end: "2026-10-21", built_at: "2026-10-21T08:02:00Z"});
   today.previous = {...today.previous, start: "2026-10-20", end: "2026-10-20", until: "2026-10-20T08:02:00Z"};
-  today.needs_you = [{code: "uncounted_hosts", text: "The script ran on newname.com, which isn't counted: 31 pages in the last 7 days."}];
+  today.needs_you = [
+    {code: "uncounted_hosts", host: "newname.com", text: "Most of the script's loads in the last 3 days came from newname.com, where visits aren't counted. If the site moved there, update its address in Tin."},
+    {code: "other_domains", hosts: ["example.co"], text: "The script also runs on example.co, where visits aren't counted (2% of its loads in the last 3 days). Redirect it to example.com to count those visits."},
+    {code: "something_new", text: "A note Tin doesn't know yet."},
+  ];
   today.top_pages.push({path: "/careers", visits: null, page_views: null});
   // An operator ID added after Tin's list stays as it is.
   today.kinds.automated_browser.named.push({operator: "newcorp", visits: 1, evidence: "network"});
@@ -228,6 +232,10 @@ test("page: today so far, each number against the day before, every page request
     ]);
     assert.equal(await aiPages.locator(".analytics-card-head small").innerText(), "91 loads");
     assert.match(await page.locator(".analytics-notes").innerText(), /A visit ends after 30 minutes without activity\.$/);
+    // Only the move gets a button; a second domain and a note Tin doesn't know are their text.
+    const needs = page.locator(".analytics-needs-row");
+    assert.deepEqual(await needs.evaluateAll(rows => rows.map(row => [...row.querySelectorAll("button")].map(button => button.innerText))), [["Count newname.com instead"], [], []]);
+    assert.match(await needs.nth(1).innerText(), /^The script also runs on example\.co, where visits aren't counted/);
     // Counting the moved host from the needs-you bar.
     await page.getByRole("button", {name: "Count newname.com instead"}).click();
     await page.getByText("Now counting newname.com and its subdomains. The script line on your site stays the same.").waitFor();
