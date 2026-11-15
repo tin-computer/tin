@@ -251,6 +251,7 @@ def test_public_reads_are_an_explicit_reviewed_capability() -> None:
         "x.media.upload",
         "x.public.read",
         "x.bookmarks.read",
+        "x.likes.read",
     )
     assert "public posts" in definition.description
     assert x_connection.CAPABILITY_SCOPES["x.public.read"] == {"tweet.read", "users.read"}

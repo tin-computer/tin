@@ -8,8 +8,8 @@ Code packages read public posts through the service gateway (``call``): recent s
 one public account's recent posts. Each is a paid X read on Tin's X app, made with the
 project's own connection; the package's declared call limit is the runaway guard.
 
-The connected account's bookmarks (``bookmarks``) are private on X, so only the member who
-connected it reads them, over MCP; they are never a gateway operation.
+The connected account's bookmarks and likes (``bookmarks``, ``likes``) are private on X, so
+only the member who connected it reads them, over MCP; they are never a gateway operation.
 """
 
 from __future__ import annotations
@@ -65,6 +65,7 @@ REFRESH_MARGIN_SECONDS = 120
 ID = re.compile(r"^[0-9]{1,19}$")
 PUBLIC_READ = "x.public.read"
 BOOKMARKS = "x.bookmarks.read"
+LIKES = "x.likes.read"
 CAPABILITY_SCOPES = {
     "x.posts.read": {"tweet.read", "users.read"},
     "x.posts.publish": {"tweet.write"},
@@ -73,18 +74,33 @@ CAPABILITY_SCOPES = {
     # opts in to reading other accounts' public posts explicitly (see capabilities_for).
     PUBLIC_READ: {"tweet.read", "users.read"},
     BOOKMARKS: {"bookmark.read", "tweet.read", "users.read"},
+    LIKES: {"like.read", "tweet.read", "users.read"},
 }
 # Granted only when a connection asked for them, never inferred from the scopes alone.
-OPT_IN_CAPABILITIES = frozenset({PUBLIC_READ, BOOKMARKS})
-# Bookmarks are private on X: one member's, never the project's.
-NOT_YOUR_BOOKMARKS = (
-    "Only the member who connected X in this project can read its bookmarks; bookmarks are "
-    "private on X."
-)
-ALLOW_BOOKMARKS = (
-    "X hasn't allowed Tin to read bookmarks yet. On the X card in Integrations choose Allow "
-    "bookmarks, or start the X connection again with the x.bookmarks.read capability."
-)
+OPT_IN_CAPABILITIES = frozenset({PUBLIC_READ, BOOKMARKS, LIKES})
+# The connected account's own lists. X keeps bookmarks and likes private, so each is one
+# member's, never the project's: capability -> (what, X's path under the user, fewest a page).
+OWN_LISTS = {
+    BOOKMARKS: ("bookmarks", "bookmarks", 1),
+    LIKES: ("likes", "liked_tweets", 5),
+}
+
+
+def not_yours(capability: str) -> str:
+    what = OWN_LISTS[capability][0]
+    return (
+        f"Only the member who connected X in this project can read its {what}; {what} are "
+        "private on X."
+    )
+
+
+def allow_first(capability: str) -> str:
+    what = OWN_LISTS[capability][0]
+    return (
+        f"X hasn't allowed Tin to read {what} yet. Allow {what} on the X card in Integrations, "
+        f"or start the X connection again with the {capability} capability."
+    )
+
 
 # Public reads through the service gateway: operation -> closed argument names.
 OPERATIONS = {
@@ -543,8 +559,9 @@ def _public_page(
     return {"posts": clean, "next_token": cursor}
 
 
-def _bookmark_page(result: dict[str, Any], *, limit: int) -> dict[str, Any]:
-    """Bookmarked posts with the post each quotes; protected authors' posts are counted only.
+def _own_list_page(result: dict[str, Any], *, limit: int, what: str) -> dict[str, Any]:
+    """Bookmarked or liked posts with the post each quotes; protected authors' posts are
+    counted only.
 
     A quoted post X couldn't return (deleted, protected or malformed) leaves `quoted` empty
     rather than failing the page.
@@ -552,7 +569,7 @@ def _bookmark_page(result: dict[str, Any], *, limit: int) -> dict[str, Any]:
     posts = result.get("data", [])
     meta = result.get("meta", {})
     if not isinstance(posts, list) or not isinstance(meta, dict) or len(posts) > limit:
-        raise IntegrationUpstreamError("X returned an invalid page of bookmarks")
+        raise IntegrationUpstreamError(f"X returned an invalid page of {what}")
     authors, media = _includes(result)
     includes = result.get("includes", {})
     listed = includes.get("posts") if isinstance(includes, dict) else None
@@ -1076,16 +1093,41 @@ class XConnection:
         max_results: int = 25,
         pagination_token: str | None = None,
     ) -> dict[str, Any]:
-        """One page of the connected account's bookmarks, newest first, for the member who
-        connected it. Each page is a paid read on Tin's X app."""
+        """One page of the connected account's bookmarks, most recent first."""
+        return await self._own_list(
+            BOOKMARKS, project_id, clerk_user_id, max_results, pagination_token
+        )
+
+    async def likes(
+        self,
+        project_id: UUID,
+        clerk_user_id: str,
+        *,
+        max_results: int = 25,
+        pagination_token: str | None = None,
+    ) -> dict[str, Any]:
+        """One page of the posts the connected account liked, most recent first."""
+        return await self._own_list(LIKES, project_id, clerk_user_id, max_results, pagination_token)
+
+    async def _own_list(
+        self,
+        capability: str,
+        project_id: UUID,
+        clerk_user_id: str,
+        max_results: int,
+        pagination_token: str | None,
+    ) -> dict[str, Any]:
+        """A page of one of the account's private lists, for the member who connected it.
+        Each page is a paid read on Tin's X app."""
+        what, path, fewest = OWN_LISTS[capability]
         connection = await self.connection(project_id)
         if connection.connected_by_clerk_user_id != clerk_user_id:
-            raise IntegrationAuthorizationError(NOT_YOUR_BOOKMARKS)
+            raise IntegrationAuthorizationError(not_yours(capability))
         granted = connection.configuration.get("granted_capabilities")
-        if not isinstance(granted, list) or BOOKMARKS not in granted:
-            raise IntegrationAuthorizationError(ALLOW_BOOKMARKS)
+        if not isinstance(granted, list) or capability not in granted:
+            raise IntegrationAuthorizationError(allow_first(capability))
         params: dict[str, Any] = {
-            "max_results": _limit(max_results, 1),
+            "max_results": _limit(max_results, fewest),
             "post.fields": PUBLIC_POST_FIELDS,
             "expansions": "author_id,attachments.media_keys,referenced_posts",
             "user.fields": "protected",
@@ -1095,9 +1137,9 @@ class XConnection:
             params["pagination_token"] = pagination_token
         account = _id(connection.external_account_id, name="account ID")
         result = await self._request(
-            connection, BOOKMARKS, "GET", f"/2/users/{account}/bookmarks", params=params
+            connection, capability, "GET", f"/2/users/{account}/{path}", params=params
         )
-        page = _bookmark_page(result, limit=max_results)
+        page = _own_list_page(result, limit=max_results, what=what)
         username = connection.configuration.get("username")
         return {"account": {"id": account, "username": username}, **page}
 
