@@ -63,11 +63,19 @@ test("X integration shows account and capabilities, upgrades without resource op
     await card.waitFor();
     assert.match(await card.innerText(), /@tin[\s\S]*reading only/);
     await card.getByRole("button", {name: "Configure"}).click();
-    assert.match(await card.innerText(), /Read your own posts[\s\S]*Publish posts you approve[\s\S]*Upload media[\s\S]*○ Read public posts/);
+    assert.match(await card.innerText(), /Read your own posts[\s\S]*Publish posts you approve[\s\S]*Upload media[\s\S]*○ Read public posts[\s\S]*○ Read bookmarks/);
+    assert.doesNotMatch(await card.innerText(), /Bookmarks stay private/);
     assert.equal(calls.filter(call => call.path.endsWith("/options")).length, 0);
     await card.getByRole("button", {name: "Enable publishing"}).click();
     await page.waitForURL(`${base}/authorize`);
     assert.deepEqual(calls.filter(call => call.method === "POST").map(call => call.body), [{capabilities: ["x.posts.publish"]}]);
+    // Bookmarks are asked for on their own: the reconnect keeps what was granted.
+    await page.goto(`${base}/integrations?project=project-one`);
+    await card.waitFor();
+    await card.getByRole("button", {name: "Configure"}).click();
+    await card.getByRole("button", {name: "Allow bookmarks"}).click();
+    await page.waitForURL(`${base}/authorize`);
+    assert.deepEqual(calls.filter(call => call.method === "POST").map(call => call.body).at(-1), {capabilities: ["x.bookmarks.read"]});
     await page.goto(`${base}/integrations?project=project-one`);
     await card.waitFor();
     await card.getByRole("button", {name: "Configure"}).click();

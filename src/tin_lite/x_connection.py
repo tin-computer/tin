@@ -7,6 +7,9 @@ document a create-post idempotency key.
 Code packages read public posts through the service gateway (``call``): recent search and
 one public account's recent posts. Each is a paid X read on Tin's X app, made with the
 project's own connection; the package's declared call limit is the runaway guard.
+
+The connected account's bookmarks (``bookmarks``) are private on X, so only the member who
+connected it reads them, over MCP; they are never a gateway operation.
 """
 
 from __future__ import annotations
@@ -61,6 +64,7 @@ MAX_VIDEO_BYTES = 64_000_000
 REFRESH_MARGIN_SECONDS = 120
 ID = re.compile(r"^[0-9]{1,19}$")
 PUBLIC_READ = "x.public.read"
+BOOKMARKS = "x.bookmarks.read"
 CAPABILITY_SCOPES = {
     "x.posts.read": {"tweet.read", "users.read"},
     "x.posts.publish": {"tweet.write"},
@@ -68,9 +72,19 @@ CAPABILITY_SCOPES = {
     # The scopes every connection already holds, recorded as its own capability so a project
     # opts in to reading other accounts' public posts explicitly (see capabilities_for).
     PUBLIC_READ: {"tweet.read", "users.read"},
+    BOOKMARKS: {"bookmark.read", "tweet.read", "users.read"},
 }
 # Granted only when a connection asked for them, never inferred from the scopes alone.
-OPT_IN_CAPABILITIES = frozenset({PUBLIC_READ})
+OPT_IN_CAPABILITIES = frozenset({PUBLIC_READ, BOOKMARKS})
+# Bookmarks are private on X: one member's, never the project's.
+NOT_YOUR_BOOKMARKS = (
+    "Only the member who connected X in this project can read its bookmarks; bookmarks are "
+    "private on X."
+)
+ALLOW_BOOKMARKS = (
+    "X hasn't allowed Tin to read bookmarks yet. On the X card in Integrations choose Allow "
+    "bookmarks, or start the X connection again with the x.bookmarks.read capability."
+)
 
 # Public reads through the service gateway: operation -> closed argument names.
 OPERATIONS = {
@@ -527,6 +541,52 @@ def _public_page(
     if cursor is not None and (not isinstance(cursor, str) or not CURSOR.fullmatch(cursor)):
         raise IntegrationUpstreamError("X returned an invalid next_token")
     return {"posts": clean, "next_token": cursor}
+
+
+def _bookmark_page(result: dict[str, Any], *, limit: int) -> dict[str, Any]:
+    """Bookmarked posts with the post each quotes; protected authors' posts are counted only.
+
+    A quoted post X couldn't return (deleted, protected or malformed) leaves `quoted` empty
+    rather than failing the page.
+    """
+    posts = result.get("data", [])
+    meta = result.get("meta", {})
+    if not isinstance(posts, list) or not isinstance(meta, dict) or len(posts) > limit:
+        raise IntegrationUpstreamError("X returned an invalid page of bookmarks")
+    authors, media = _includes(result)
+    includes = result.get("includes", {})
+    listed = includes.get("posts") if isinstance(includes, dict) else None
+    included = {
+        item["id"]: item
+        for item in (listed if isinstance(listed, list) else [])
+        if isinstance(item, dict) and isinstance(item.get("id"), str)
+    }
+    clean, protected = [], 0
+    for item in posts:
+        post = _public_post(item, authors, media, None)
+        if post is None:
+            protected += 1
+            continue
+        refs = item.get("referenced_posts")
+        quoted_id = next(
+            (
+                ref.get("id")
+                for ref in (refs if isinstance(refs, list) else [])
+                if isinstance(ref, dict) and ref.get("type") == "quoted"
+            ),
+            None,
+        )
+        quoted = None
+        if quoted_id in included:
+            try:
+                quoted = _public_post(included[quoted_id], authors, media, None)
+            except IntegrationUpstreamError:
+                quoted = None
+        clean.append({**post, "quoted": quoted})
+    cursor = meta.get("next_token")
+    if cursor is not None and (not isinstance(cursor, str) or not CURSOR.fullmatch(cursor)):
+        raise IntegrationUpstreamError("X returned an invalid next_token")
+    return {"posts": clean, "left_out_protected": protected, "next_token": cursor}
 
 
 def _fit(page: dict[str, Any], maximum: int | None) -> dict[str, Any]:
@@ -1007,6 +1067,39 @@ class XConnection:
         )
         page = _public_page(result, limit=max_results, account=account)
         return {"account": {key: account[key] for key in ("id", "username", "name")}, **page}
+
+    async def bookmarks(
+        self,
+        project_id: UUID,
+        clerk_user_id: str,
+        *,
+        max_results: int = 25,
+        pagination_token: str | None = None,
+    ) -> dict[str, Any]:
+        """One page of the connected account's bookmarks, newest first, for the member who
+        connected it. Each page is a paid read on Tin's X app."""
+        connection = await self.connection(project_id)
+        if connection.connected_by_clerk_user_id != clerk_user_id:
+            raise IntegrationAuthorizationError(NOT_YOUR_BOOKMARKS)
+        granted = connection.configuration.get("granted_capabilities")
+        if not isinstance(granted, list) or BOOKMARKS not in granted:
+            raise IntegrationAuthorizationError(ALLOW_BOOKMARKS)
+        params: dict[str, Any] = {
+            "max_results": _limit(max_results, 1),
+            "post.fields": PUBLIC_POST_FIELDS,
+            "expansions": "author_id,attachments.media_keys,referenced_posts",
+            "user.fields": "protected",
+            "media.fields": PUBLIC_MEDIA_FIELDS,
+        }
+        if _cursor(pagination_token, "pagination_token"):
+            params["pagination_token"] = pagination_token
+        account = _id(connection.external_account_id, name="account ID")
+        result = await self._request(
+            connection, BOOKMARKS, "GET", f"/2/users/{account}/bookmarks", params=params
+        )
+        page = _bookmark_page(result, limit=max_results)
+        username = connection.configuration.get("username")
+        return {"account": {"id": account, "username": username}, **page}
 
     async def _public_account(self, connection: Any, username: str) -> dict[str, Any]:
         result = await self._request(

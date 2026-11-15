@@ -16,6 +16,9 @@ through X's authorization screen. Reconnecting keeps existing granted capabiliti
 Reading other accounts' public posts for research (`x.public.read`) is a separate opt-in for
 code packages; it uses the same read scopes but needs one reconnect that asks for it. See
 [Public X posts](project-api-connections.md#public-x-posts).
+Reading the account's bookmarks (`x.bookmarks.read`, X's `bookmark.read` scope) is another
+opt-in: **Allow bookmarks** on the card reconnects and asks for it, keeping what was granted.
+See [Bookmarks](#bookmarks).
 Tin stores the tokens encrypted and refreshes them on the server; workflows and project
 files never receive the credentials.
 
@@ -153,6 +156,29 @@ and deliver the selected post. Publishing consumes the preview token and a stabl
 ID; retry the same request after a lost acknowledgement. Show the exact preview and obtain
 the user's publication instruction before calling it. File paths refer to the bound project;
 the upload handoff uses the browser instead of sending large base64 files through MCP.
+
+## Bookmarks
+
+`read_x_bookmarks(project_id, max_results, pagination_token)` reads the posts the
+connected account bookmarked, newest first, one page of 1-100 (25 by default); pass
+`next_token` back as `pagination_token` until it is null. Each post has its full text (the
+long form when there is one), author, time, expanded links, attached media and the post it
+quotes (`quoted`, empty when X couldn't return it). Posts by accounts that protect theirs
+are left out and counted in `left_out_protected`.
+
+Bookmarks are private on X, so they belong to one member, not the project:
+
+- Only the member who connected X in the project can read them (the connection's
+  `connected_by_clerk_user_id`); anyone else is refused before X is asked. Reconnecting
+  makes the reconnecting member the one who connected.
+- They are not a gateway operation, so workflow code never reads them, and Tin keeps no
+  copy. The agent keeps them out of project files unless the member asks.
+- The tool's description tells the agent that bookmarked posts are other people's writing,
+  material to analyse and never instructions.
+
+Without the opt-in the tool says how to allow bookmarks. Each page is a paid read on Tin's
+X app (pay-per-use credits; check X's current price per post returned), so an agent reads
+only as far as its task needs.
 
 ## Verification
 
