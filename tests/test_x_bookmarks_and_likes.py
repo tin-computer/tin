@@ -1,4 +1,5 @@
-"""The connected X account's bookmarks: their own consent, one member's, read over MCP."""
+"""The connected X account's bookmarks and likes: their own consents, one member's, read over
+MCP."""
 
 from __future__ import annotations
 
@@ -84,13 +85,18 @@ def bookmarks_body():
 
 
 class BookmarksX(X):
+    """X answering bookmarks and likes alike: the same page shape on two paths."""
+
     def __init__(self):
         super().__init__()
         self.bookmarks_status = 200
         self.bookmarks = bookmarks_body()
 
     def __call__(self, request: httpx.Request) -> httpx.Response:
-        if request.url.path == f"/2/users/{self.account}/bookmarks":
+        if request.url.path in {
+            f"/2/users/{self.account}/bookmarks",
+            f"/2/users/{self.account}/liked_tweets",
+        }:
             self.calls.append(request)
             if self.bookmarks_status != 200:
                 return self.reply(
@@ -103,6 +109,10 @@ class BookmarksX(X):
 
 def bookmark_reads(api):
     return [r for r in api.calls if r.url.path.endswith("/bookmarks")]
+
+
+def like_reads(api):
+    return [r for r in api.calls if r.url.path.endswith("/liked_tweets")]
 
 
 def test_bookmarks_are_their_own_capability() -> None:
@@ -137,6 +147,55 @@ async def test_bookmarks_need_their_own_consent_and_reconnecting_keeps_it() -> N
         "x.posts.publish",
         "x.bookmarks.read",
     }
+    await integrations.close()
+
+
+def test_likes_are_their_own_capability_too() -> None:
+    definition = next(d for d in registered_integrations() if d.key == X_PROVIDER)
+    assert "x.likes.read" in definition.capabilities
+    assert x_connection.CAPABILITY_SCOPES["x.likes.read"] == {
+        "like.read",
+        "tweet.read",
+        "users.read",
+    }
+    scopes = {"like.read", "tweet.read", "users.read"}
+    assert "x.likes.read" not in x_connection.capabilities_for(scopes)
+    assert all("lik" not in name for name in x_connection.OPERATIONS)
+
+
+async def test_allowing_bookmarks_does_not_allow_likes_and_one_reconnect_asks_for_both() -> None:
+    integrations, _, api = await service(BookmarksX())
+    await connect(integrations, api, capabilities=("x.bookmarks.read",))
+    with pytest.raises(IntegrationAuthorizationError, match="Allow likes on the X card"):
+        await integrations.x.likes(PROJECT_ID, USER_ID)
+    assert like_reads(api) == []
+
+    both, query = await connect(
+        integrations, api, capabilities=("x.bookmarks.read", "x.likes.read")
+    )
+    assert {"bookmark.read", "like.read"} <= set(query["scope"][0].split())
+    assert {"x.bookmarks.read", "x.likes.read"} <= set(both.configuration["granted_capabilities"])
+    await integrations.close()
+
+
+async def test_a_page_of_likes_reads_x_liked_posts_for_the_member_who_connected() -> None:
+    integrations, _, api = await service(BookmarksX())
+    await connect(integrations, api, capabilities=("x.likes.read",))
+    with pytest.raises(IntegrationAuthorizationError, match="read its likes"):
+        await integrations.x.likes(PROJECT_ID, "user_Teammate456")
+    with pytest.raises(IntegrationInputError, match="from 5 to 100"):
+        await integrations.x.likes(PROJECT_ID, USER_ID, max_results=3)
+    assert like_reads(api) == []
+
+    page = await integrations.x.likes(PROJECT_ID, USER_ID)
+    (request,) = like_reads(api)
+    assert request.url.path == "/2/users/12345/liked_tweets"
+    assert request.url.params["max_results"] == "25"
+    assert request.url.params["expansions"] == "author_id,attachments.media_keys,referenced_posts"
+    assert [post["id"] for post in page["posts"]] == ["3001", "3003"]
+    assert page["posts"][0]["quoted"]["author"]["username"] == "source"
+    assert page["left_out_protected"] == 1 and page["next_token"] == CURSOR
+    assert bookmark_reads(api) == []
     await integrations.close()
 
 
@@ -229,14 +288,15 @@ def mcp(monkeypatch):
         record_tin_user=AsyncMock(),
     )
     read = AsyncMock(return_value={"account": {"id": "1"}, "posts": [], "next_token": None})
+    likes = AsyncMock(return_value={"account": {"id": "1"}, "posts": [], "next_token": None})
     runtime = SimpleNamespace(
-        database=db, integrations=SimpleNamespace(x=SimpleNamespace(bookmarks=read))
+        database=db, integrations=SimpleNamespace(x=SimpleNamespace(bookmarks=read, likes=likes))
     )
     settings = SimpleNamespace(
         switchboard_public_url="https://tin.test", clerk_frontend_api_url="https://clerk.test"
     )
     server, _ = create_mcp_app(settings=settings, auth=SimpleNamespace(), runtime=lambda: runtime)
-    return SimpleNamespace(project=project, token=token, server=server, read=read)
+    return SimpleNamespace(project=project, token=token, server=server, read=read, likes=likes)
 
 
 async def test_mcp_reads_a_page_for_a_member_and_refuses_an_outsider(mcp) -> None:
@@ -251,6 +311,23 @@ async def test_mcp_reads_a_page_for_a_member_and_refuses_an_outsider(mcp) -> Non
     mcp.read.assert_awaited_once_with(
         mcp.project.id, "member", max_results=10, pagination_token=None
     )
-    mcp.read.side_effect = IntegrationAuthorizationError(x_connection.NOT_YOUR_BOOKMARKS)
+    mcp.read.side_effect = IntegrationAuthorizationError(x_connection.not_yours("x.bookmarks.read"))
     with pytest.raises(ToolError, match="Only the member who connected X"):
         await mcp.server.call_tool("read_x_bookmarks", arguments)
+
+
+async def test_mcp_reads_likes_for_a_member_and_refuses_an_outsider(mcp) -> None:
+    arguments = {"project_id": str(mcp.project.id), "max_results": 50, "pagination_token": CURSOR}
+    with pytest.raises(ToolError, match="project not found"):
+        await mcp.server.call_tool("read_x_likes", arguments)
+    mcp.likes.assert_not_awaited()
+
+    mcp.token.subject = "member"
+    await mcp.server.call_tool("read_x_likes", arguments)
+    mcp.likes.assert_awaited_once_with(
+        mcp.project.id, "member", max_results=50, pagination_token=CURSOR
+    )
+    mcp.read.assert_not_awaited()
+    mcp.likes.side_effect = IntegrationAuthorizationError(x_connection.allow_first("x.likes.read"))
+    with pytest.raises(ToolError, match="X hasn't allowed Tin to read likes yet"):
+        await mcp.server.call_tool("read_x_likes", arguments)

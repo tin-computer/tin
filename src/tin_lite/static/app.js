@@ -7791,21 +7791,26 @@ function renderXIntegrationExpanded(integration) {
     ["x.media.upload", "Upload media for approved posts"],
     ["x.public.read", "Read public posts"],
     ["x.bookmarks.read", "Read bookmarks"],
+    ["x.likes.read", "Read likes"],
   ];
   const missingPublish = !granted.has("x.posts.publish");
   const missingMedia = !granted.has("x.media.upload");
-  const missingBookmarks = !granted.has("x.bookmarks.read");
+  // Bookmarks and likes are private on X: one button asks for whichever is still missing.
+  const ownLists = [["x.bookmarks.read", "bookmarks"], ["x.likes.read", "likes"]];
+  const missingLists = ownLists.filter(([key]) => !granted.has(key));
+  const allowedLists = ownLists.filter(([key]) => granted.has(key)).map(([, what]) => what);
+  const allowedSentence = allowedLists.length ? ` ${allowedLists.join(" and ").replace(/^./, (c) => c.toUpperCase())} stay private: only the person who connected X can read them.` : "";
   return `<div class="integration-expanded">
     ${integration.status === "needs_attention" ? `<p class="integration-setup-prompt" role="status"><strong>X needs reconnecting.</strong> Tin cannot use this connection until access is restored.</p>` : ""}
     <div class="integration-detail-row"><span class="integration-detail-label">Account</span><span class="integration-detail-value">${escapeHtml(integration.external_account_label || "Connected X account")}</span></div>
     <div class="integration-detail-row"><span class="integration-detail-label">Access</span><span class="integration-detail-value">${capabilityRows.map(([key, label]) => `${granted.has(key) ? "✓" : "○"} ${escapeHtml(label)}`).join(" · ")}</span></div>
     <div class="integration-detail-row"><span class="integration-detail-label">Unlocks</span><span class="integration-detail-value is-muted">${escapeHtml((integration.unlocks || []).join(" · "))}</span></div>
-    <p class="integration-setup-prompt">Drafting never posts to X. Tin publishes only the exact post you preview and confirm.${missingBookmarks ? "" : " Bookmarks stay private: only the person who connected X can read them."}</p>
+    <p class="integration-setup-prompt">Drafting never posts to X. Tin publishes only the exact post you preview and confirm.${escapeHtml(allowedSentence)}</p>
     <div class="integration-control-footer">
       <span>connected ${escapeHtml(integration.connected_at ? timeLabel(integration.connected_at) : "recently")} · ${escapeHtml(integration.last_checked_at ? `checked ${timeLabel(integration.last_checked_at)}` : "not checked yet")}</span>
       ${missingPublish ? `<button class="integration-reconnect" type="button" data-integration-upgrade="social.x" data-integration-capabilities="x.posts.publish">Enable publishing</button>` : ""}
       ${missingMedia ? `<button class="integration-reconnect" type="button" data-integration-upgrade="social.x" data-integration-capabilities="x.media.upload">Enable media</button>` : ""}
-      ${missingBookmarks ? `<button class="integration-reconnect" type="button" data-integration-upgrade="social.x" data-integration-capabilities="x.bookmarks.read">Allow bookmarks</button>` : ""}
+      ${missingLists.length ? `<button class="integration-reconnect" type="button" data-integration-upgrade="social.x" data-integration-capabilities="${missingLists.map(([key]) => key).join(",")}">Allow ${missingLists.map(([, what]) => what).join(" and ")}</button>` : ""}
       ${integration.status === "needs_attention" ? `<button class="integration-reconnect" type="button" data-integration-connect="social.x">Reconnect</button>` : ""}
       <button class="integration-disconnect" type="button" data-integration-disconnect="social.x">Disconnect</button>
       <button class="integration-done" type="button" data-integration-expand="social.x">Done</button>
