@@ -160,7 +160,9 @@ the run with LinkedIn's category in Tin's words.
 
 MCP: `read_linkedin_drafts`, `save_linkedin_draft`, `preview_linkedin_post` and
 `publish_linkedin_post`. Each returns the browser editor's link for uploading images; MCP
-never takes image bytes.
+never takes image bytes. A coding agent that made the cards itself puts them in Files with
+`prepare_file_upload` ([agent file uploads](agent-file-uploads.md)) and names their paths in
+the draft.
 
 ## Posting slots
 
