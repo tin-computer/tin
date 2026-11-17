@@ -7031,6 +7031,8 @@ class Database:
             # Films' versions and their upload links; the files go with the project's Files.
             "DELETE FROM film_upload_links WHERE project_id = $1",
             "DELETE FROM film_versions WHERE project_id = $1",
+            # Links a member's agent uploads files through; the files go with the project's Files.
+            "DELETE FROM file_upload_links WHERE project_id = $1",
             # Failed-payment recovery keeps Stripe and mailbox evidence in its run receipts and
             # one send receipt per invoice, keyed payment_recovery:<run or project>:...
             "DELETE FROM effect_receipts WHERE operation = 'revenue.payment_recovery' AND "

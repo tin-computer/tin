@@ -724,6 +724,10 @@ post), you make it, on this machine, and Tin keeps it. Call get_film(project_id,
 follow its guide and `next`; upload each version with its link, and the founder decides on it in
 Decisions. Tin never makes or changes the film.
 
+Files you made on this machine (card images for a LinkedIn draft, a video, an SVG) go into
+project Files through prepare_file_upload(project_id, folder): send each file to its link with
+its curl command, then name the paths in the draft. commit_project_changes is for text you write.
+
 Tool errors start with a code, then the reason: forbidden (sign in or scope; stop), not_found
 (wrong id or no access; stop), invalid (fix the input and retry), conflict (state moved; re-read
 it and retry once), or a workflow-specific code explained in its text."""
@@ -1688,6 +1692,30 @@ def create_mcp_app(
             ).get(project, check_slug(slug), token.subject, guide=guide)
         except FilmError as error:
             raise ToolError(str(error)) from None
+
+    @server.tool(annotations=ToolAnnotations(destructiveHint=False))
+    async def prepare_file_upload(project_id: str, folder: str) -> dict[str, Any]:
+        """A link to put files you made on this machine into project Files: card images, a
+        video, an SVG or another text file. MCP carries no file bytes, so send each file to
+        the link with `command` (curl -T keeps the file's own name; `several` sends a list).
+        Each lands at `folder`/<its name> as its own change, made by you, replacing a file
+        already there. PNG and JPEG (5 MB) and MP4 (64 MB) are checked as a dashboard upload
+        is; any other file must be UTF-8 text, at most 1 MB, with no credentials. The link
+        works for 45 minutes and only for `folder`; ask again for a new one. Then use the
+        paths, for example as a LinkedIn draft's images (save_linkedin_draft).
+        """
+        from tin_lite.file_uploads import FileUploadError, FileUploads
+
+        token = await caller()
+        project_id_value = _mcp_uuid(project_id, field="project_id")
+        await require_project(project_id_value, token, tool_name="prepare_file_upload")
+        assert token.subject is not None
+        try:
+            return await FileUploads(
+                database=runtime().database, storage=runtime().storage, settings=settings
+            ).link(project_id_value, folder, token.subject)
+        except FileUploadError as error:
+            raise ToolError(f"invalid: {error}") from None
 
     @server.tool(annotations=ToolAnnotations(destructiveHint=False, idempotentHint=True))
     async def decide_film(
@@ -5178,7 +5206,8 @@ def create_mcp_app(
         """Give the member the secure X draft editor to upload local images or video.
 
         MCP accepts project file paths in draft attachments but never raw media bytes,
-        local device paths or arbitrary external URLs.
+        local device paths or arbitrary external URLs. To put files you made on this machine
+        into Files yourself, use prepare_file_upload.
         """
         from tin_lite.project_files import safe_project_file_path
 
@@ -5223,7 +5252,8 @@ def create_mcp_app(
 
         Use schema_version "tin.social.linkedin_draft.v1" under social/linkedin/drafts/.
         Keep stable post IDs, text within 3,000 characters, up to 20 PNG or JPEG images
-        already in Files, and notes apart from publishable text. Reuse the same request_id
+        already in Files (prepare_file_upload puts cards you made there), and notes apart from
+        publishable text. Reuse the same request_id
         only when retrying identical edits after an uncertain response. This does not
         approve or publish any post.
         """
