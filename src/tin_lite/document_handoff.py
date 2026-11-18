@@ -19,6 +19,7 @@ from tin_lite.workflow_reviews import SUPPORTED_IDS
 TEXT_SUFFIXES = frozenset(
     {".md", ".markdown", ".txt", ".csv", ".tsv", ".json", ".mmd", ".yaml", ".yml", ".html"}
 )
+MARKDOWN_SUFFIXES = frozenset({".md", ".markdown"})
 ONBOARDING_EXECUTORS = frozenset({"growth.onboarding", "growth.onboarding_plan"})
 CURRENT = "<revision from list_project_files>"
 NEW_REQUEST = "<new UUID; reuse it only to retry this same call>"
@@ -38,6 +39,14 @@ def document_url(settings: Any, run: Any) -> str:
     if path.startswith(DRAFT_FOLDERS) and path.endswith(".json"):
         query = urlencode({"project": str(run.project_id), "x_draft": path, "x_run": str(run.id)})
         return f"{dashboard_url(settings)}/files?{query}"
+    revision = getattr(run, "canonical_commit_sha", None)
+    # The document reader opens Markdown only. Any other output (a CSV, JSON, a diagram, a video)
+    # opens in the Files viewer at the run's revision, as the dashboard opens it.
+    if path and revision and PurePosixPath(path).suffix.casefold() not in MARKDOWN_SUFFIXES:
+        values = {"project": str(run.project_id), "path": path, "revision": revision}
+        if review_pending(run):
+            values["reviewRun"] = str(run.id)
+        return f"{dashboard_url(settings)}/file?{urlencode(values)}"
     return f"{dashboard_url(settings)}/document/{run.id}?project={run.project_id}"
 
 

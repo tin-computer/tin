@@ -152,10 +152,10 @@ def test_a_draft_batch_opens_in_the_post_reader_and_changes_through_its_tools():
         assert route["before"][0]["tool"] == f"read_{platform}_drafts"
         assert route["tool"] == f"save_{platform}_draft"
         assert route["arguments"]["path"] == path
-    # Any other JSON file is still an ordinary document.
+    # Any other JSON file is an ordinary file: the Files viewer, not the post reader.
     other = run(artifact_path="reports/linkedin/summary.json")
     [link] = result_links(SETTINGS, other)
-    assert f"/document/{other.id}" in link["url"]
+    assert link["url"].startswith("https://tin.test/file?") and "x_draft" not in link["url"]
     assert link["revise"]["tool"] == "commit_project_changes"
 
 
@@ -163,6 +163,31 @@ def test_a_file_mcp_cannot_edit_has_no_route():
     video = document_handoff(SETTINGS, run(artifact_path="creative/demo.mp4"))["revise"]
     assert video["direct_edit"] is False and video["tool"] is None
     assert "UTF-8 text files only" in video["reason"]
+
+
+def test_an_output_that_is_not_markdown_opens_in_the_files_viewer():
+    # The document reader refuses anything but Markdown, so a collection's manifest, a CSV or a
+    # video links to the Files viewer at the run's revision, as the dashboard opens it.
+    collected = run(
+        executor="connections.collect",
+        artifact_path="connections/c798/manifest.json",
+    )
+    [link] = result_links(SETTINGS, collected)
+    assert (
+        link["url"]
+        == link["review_url"]
+        == (
+            f"https://tin.test/file?project={collected.project_id}"
+            f"&path=connections%2Fc798%2Fmanifest.json&revision={REVISION}"
+        )
+    )
+    video = run(artifact_path="creative/demo.MP4")
+    assert "/file?" in result_links(SETTINGS, video)[0]["url"]
+    # A review still waiting opens with its decision beside the file.
+    waiting = run(status=RunStatus.NEEDS_INPUT, review_required=True, artifact_path="plans/map.mmd")
+    assert result_links(SETTINGS, waiting)[0]["url"].endswith(f"&reviewRun={waiting.id}")
+    # Markdown keeps the document reader, in any case.
+    assert "/document/" in result_links(SETTINGS, run(artifact_path="notes/A.MARKDOWN"))[0]["url"]
 
 
 def test_a_run_without_a_document_has_no_handoff():
