@@ -194,6 +194,7 @@ class LinkedInCloud:
                         "browser_preparation_required",
                         "friend_not_connected",
                         "filters_changed",
+                        "location_not_found",
                         "cloud_failed",
                     }:
                         raise CollectionError("cloud_failed")
@@ -207,8 +208,10 @@ class LinkedInCloud:
                     if "source" in value:
                         resolved = CollectionSource.model_validate(value["source"])
                         resolved.scope(keywords=job["inputs"]["keywords"])
+                        friends = job["inputs"]["friends"]
                         if (
-                            resolved.friend_url != job["inputs"]["friends"][job["friend_index"]]
+                            resolved.friend_url
+                            != (friends[job["friend_index"]] if friends else None)
                             or resolved.actor.model_dump() != job["actor"]
                         ):
                             raise CollectionError("account_changed")

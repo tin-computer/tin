@@ -4537,8 +4537,8 @@ BUILTIN_WORKFLOWS = (
                 DiagramNode(
                     "scope",
                     "step",
-                    "Pin friends and filters",
-                    "Up to 3 friends, second-degree only",
+                    "Pin the search",
+                    "Your whole network, or up to 3 friends",
                 ),
                 DiagramNode(
                     "ready",
@@ -4571,7 +4571,7 @@ BUILTIN_WORKFLOWS = (
                     "files",
                     "receipt",
                     "Save collection files",
-                    "JSON, CSV and visible-results coverage",
+                    "Most mutual connections first",
                 ),
             ),
             edges=(
@@ -4586,7 +4586,10 @@ BUILTIN_WORKFLOWS = (
                 DiagramEdge("save", "files", label="View exhausted or limit reached"),
             ),
         ),
-        description="Collect visible second-degree connections through selected friends.",
+        description=(
+            "Collect your second-degree connections, with who you know in common: across your "
+            "whole network, or through selected friends."
+        ),
         executor=connection_collection.KEY,
         system=LINKEDIN_SYSTEM,
         version_label="v2",

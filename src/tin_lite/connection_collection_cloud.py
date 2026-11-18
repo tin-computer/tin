@@ -81,6 +81,11 @@ async def _step(store, runtime, cipher, run_id):
                 **source,
                 "collection_url": view_url(source["collection_url"], job["next_page"]),
             }
+        elif not job["inputs"]["friends"]:
+            # The whole network: the first page resolves the location and pins the search.
+            if job["cloud_transport"] != "http_v2":
+                raise CollectionError("cloud_permission_required")
+            source = {"actor": job["actor"], "location": job["inputs"].get("location", "")}
         else:
             source = {
                 "friend_url": job["inputs"]["friends"][job["friend_index"]],
@@ -140,6 +145,7 @@ async def step(store, runtime, cipher, run_id):
                         "browser_preparation_required",
                         "friend_not_connected",
                         "filters_changed",
+                        "location_not_found",
                     }
                     else "cloud_failed"
                 )
@@ -160,6 +166,12 @@ async def step(store, runtime, cipher, run_id):
                     )
                 )
                 if state == "handoff_pending" and permission(config).get("mode") == "cloud_only":
+                    state = "paused"
+                if not current["inputs"]["friends"] and state in {
+                    "handoff_pending",
+                    "waiting_browser",
+                }:
+                    # Chrome can't search the whole network: the member resumes it in the cloud.
                     state = "paused"
                 if reason in {"session_expired", "account_changed", "challenge"} and current.get(
                     "credential_generation"

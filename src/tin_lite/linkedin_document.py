@@ -7,7 +7,7 @@ import re
 import unicodedata
 from functools import cached_property
 from html.parser import HTMLParser
-from urllib.parse import parse_qs, unquote, urlencode, urljoin, urlsplit
+from urllib.parse import parse_qs, quote, unquote, urlencode, urljoin, urlsplit
 
 import tinycss2
 
@@ -16,6 +16,21 @@ from tin_lite.connection_collection import CollectionError, CollectionSource, Pe
 
 def clean(value):
     return " ".join(unicodedata.normalize("NFC", value).split())
+
+
+# A whole page ends with </html>. LinkedIn's newer pages follow it with their own rehydration
+# scripts, which repeat the page as data for its scripts; the document is what came before.
+DOCUMENT_END = re.compile(r"</html\s*>(\s*(?:<script\b[^>]*>.*?</script>\s*)*)$", re.I | re.S)
+# "X is a mutual connection", "X & Y are mutual connections", "X, Y & 12 other mutual
+# connections": the named mutuals are profile links, the rest a count.
+MUTUAL = re.compile(r"\bmutual connections?\b", re.I)
+OTHERS = re.compile(r"\b([0-9][0-9,]*)\s+other mutual connections?\b", re.I)
+# LinkedIn's public place search, which its job search uses signed out: a fixed request with no
+# session.
+PLACES = (
+    "https://www.linkedin.com/jobs-guest/api/typeaheadHits?origin=jserp&typeaheadType=GEO"
+    "&geoTypes=POPULATED_PLACE,ADMIN_DIVISION_2,MARKET_AREA,COUNTRY_REGION&query="
+)
 
 
 class Node:
@@ -94,10 +109,11 @@ class Document(HTMLParser):
         super().__init__(convert_charrefs=True)
         self.root = Node("document")
         self.stack, self.count = [self.root], 0
-        self.feed(html)
-        self.close()
-        if not re.search(r"</html\s*>\s*$", html, re.I):
+        end = DOCUMENT_END.search(html)
+        if not end:
             raise CollectionError("unsupported_search_contract")
+        self.feed(html[: end.start(1)])
+        self.close()
         self.apply_styles(styles)
 
     def apply_styles(self, styles):
@@ -322,16 +338,23 @@ def prepare_source(document, source, profile, keywords):
 
 def search_results(document, page):
     content = document.content()
-    people = {}
+    # A card's "X, Y & 12 other mutual connections" links to people who connect you; they are
+    # never the result.
+    mutual_lines = {id(n) for n in content.nodes() if n.tag == "p" and MUTUAL.search(n.text)}
+
+    def in_mutual_line(node):
+        return any(id(n) in mutual_lines for n in [node, *node.ancestors()])
+
+    people, rank = {}, {}
     for link in content.nodes():
         url = link_profile(link)
-        if not url or not link.text:
+        if not url or not link.text or in_mutual_line(link):
             continue
         candidate = None
         for scope in link.ancestors():
             if scope is content or scope.tag in {"body", "document"}:
                 break
-            urls = {u for n in scope.nodes() if (u := link_profile(n))}
+            urls = {u for n in scope.nodes() if (u := link_profile(n)) and not in_mutual_line(n)}
             if len(urls) != 1:
                 break
             degrees = relationship(scope)
@@ -352,8 +375,16 @@ def search_results(document, page):
             ).model_dump()
             if scope.tag in {"li", "article"} or scope.attrs.get("role") == "listitem":
                 break
-        if candidate:
-            people.setdefault(url, candidate)
+        if not candidate:
+            continue
+        # Some cards wrap everything in a second link to the person; its text is the whole
+        # card. The name is the link beside the "• 2nd" badge, which also leads to the details.
+        wraps = bool(relationship(link))
+        if url in people and rank[url] >= (0 if wraps else 1):
+            continue
+        if not wraps:
+            candidate.update(card_details(content, link, url, mutual_lines))
+        people[url], rank[url] = candidate, 0 if wraps else 1
     if len(people) > 10:
         raise CollectionError("unsupported_search_contract")
     empty = any(
@@ -412,6 +443,39 @@ def search_results(document, page):
     if not people:
         raise CollectionError("unsupported_search_contract")
     return {"people": list(people.values()), "next_page": more}
+
+
+def card_details(content, link, url, mutual_lines):
+    """Headline, location and mutual connections around a person's name in a result card."""
+
+    found = {}
+    para = next((n for n in [link, *link.ancestors()] if n.tag == "p"), None)
+    if para is not None and para.parent is not None and relationship(para):
+        # The name's paragraph, then the headline's and the location's.
+        siblings = [c for c in para.parent.children if isinstance(c, Node) and not c.hidden]
+        texts = [c.text for c in siblings[siblings.index(para) + 1 :] if c.text]
+        texts = [t for t in texts if not MUTUAL.search(t)]
+        if texts:
+            found["headline"] = texts[0][:1000]
+        if len(texts) > 1:
+            found["location"] = texts[1][:300]
+    # The card: the widest block around the name that holds no other result.
+    card = para or link
+    for node in card.ancestors():
+        if node is content or node.tag in {"body", "document"} or len(relationship(node)) > 1:
+            break
+        card = node
+    line = next((n for n in card.nodes() if id(n) in mutual_lines), None)
+    if line is not None:
+        named = []
+        for node in line.nodes():
+            other = link_profile(node)
+            if other and other != url and node.text and node.text not in named:
+                named.append(node.text)
+        rest = OTHERS.search(line.text)
+        found["mutual_count"] = len(named) + (int(rest[1].replace(",", "")) if rest else 0)
+        found["mutual_names"] = [name[:200] for name in named[:3]]
+    return found
 
 
 def final_pager(next_button, current, page):
@@ -488,7 +552,8 @@ async def get_document(client, session, url):
         data = bytearray()
         async for chunk in response.aiter_bytes():
             data.extend(chunk)
-            if len(data) > 2_000_000:
+            # A search page is about 1.4 MB with its rehydration scripts.
+            if len(data) > 4_000_000:
                 raise CollectionError("unsupported_search_contract")
     document = Document(data.decode("utf-8", errors="replace"))
     stylesheets = list(
@@ -527,11 +592,64 @@ async def get_document(client, session, url):
     return document
 
 
+def network_source(source, keywords, geo):
+    """The member's whole second-degree network as one search, in one place when given."""
+
+    params = {"network": '["S"]', "keywords": keywords}
+    if geo:
+        params["geoUrn"] = json.dumps([geo])
+    result = CollectionSource(
+        friend_url=None,
+        friend_name="",
+        actor=source["actor"],
+        first_degree=None,
+        collection_url="https://www.linkedin.com/search/results/people/?" + urlencode(params),
+    )
+    result.scope(keywords=keywords)
+    return result.model_dump()
+
+
+async def place(client, session, name):
+    """LinkedIn's ID for the place a member named: its first match, or none for no place. A
+    fresh request without the session, like the stylesheets."""
+
+    if not name:
+        return None
+    import httpx
+
+    from tin_lite.linkedin_session import headers
+
+    request = httpx.Request(
+        "GET",
+        PLACES + quote(name, safe=""),
+        headers={"accept": "application/json", "user-agent": headers(session)["user-agent"]},
+    )
+    response = await client.send(request, follow_redirects=False, auth=None)
+    if response.status_code == 429:
+        raise CollectionError("rate_limited")
+    if response.status_code != 200 or len(response.content) > 200_000:
+        raise CollectionError("cloud_failed")
+    try:
+        hits = response.json()
+    except ValueError:
+        raise CollectionError("cloud_failed") from None
+    for hit in hits if isinstance(hits, list) else []:
+        if isinstance(hit, dict) and hit.get("type") == "GEO":
+            if isinstance(hit.get("id"), str) and re.fullmatch(r"[0-9]{1,20}", hit["id"]):
+                return hit["id"]
+    raise CollectionError("location_not_found")
+
+
 async def read_document_page(client, session, source, keywords, page):
     from tin_lite.linkedin_session import _get
 
     resolved = None
-    if "collection_url" not in source:
+    if "collection_url" not in source and "friend_url" not in source:
+        resolved = network_source(
+            source, keywords, await place(client, session, source.get("location", ""))
+        )
+        source = resolved
+    elif "collection_url" not in source:
         friend = profile_url(source["friend_url"])
         identifier = unquote(friend.rsplit("/", 1)[1])
         payload = await _get(
