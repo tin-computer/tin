@@ -265,7 +265,11 @@ async def test_a_run_keeps_who_viewed_scores_them_finds_their_ids_and_asks_them(
     assert state["result_summary"] == (
         "4 new profile views, 4 people new to Tin. 2 connection requests queued for people who fit."
     )
-    assert "LinkedIn counts 455 views in the last 90 days. 2 of the views" in summary
+    # LinkedIn's count is views, not people: said beside it, so the list doesn't look short.
+    assert (
+        "LinkedIn counts 455 views in the last 90 days. Someone who views twice counts twice, so "
+        "LinkedIn's list of viewers is shorter. 2 of the viewers Tin read browsed privately"
+    ) in summary
     # No receipt keeps anyone's name once their page is written.
     kept = await f.db.pool.fetch(
         "SELECT result::text AS result FROM effect_receipts WHERE operation=$1",
@@ -323,11 +327,22 @@ async def test_a_list_tin_cant_read_keeps_the_overview_and_says_so(collection_db
     assert summary.startswith(
         "1 new profile view, 1 person new to Tin. 1 connection request queued for someone who fits."
     )
-    # Tin's own problem to fix: said in the list, not put to the founder as a step.
-    assert (
-        "LinkedIn changed its profile-views list, so Tin read only its overview"
-        in listed(f.storage)[1]
+    # Tin's own problem to fix: said in the list, not put to the founder as a step. Whether the
+    # account has Premium isn't known yet, so the list names both causes.
+    text = listed(f.storage)[1]
+    assert "Tin couldn't read LinkedIn's full list of viewers this time" in text
+    assert "Without Premium this is expected" in text
+    assert "its overview names only a few. 0 of the viewers in the overview" in text
+
+    # Once LinkedIn has said the account has no Premium, that is the reason given.
+    await f.db.pool.execute(
+        "UPDATE integration_connections SET configuration = configuration || "
+        "'{\"premium\": false}'::jsonb WHERE provider_key = 'network.linkedin'"
     )
+    await run_through(work(f, cloud), await viewers_run(f))
+    text = listed(f.storage)[1]
+    assert "This LinkedIn account has no Premium, and LinkedIn shows accounts without" in text
+    assert "Tin is looking into it" not in text
 
 
 async def test_the_daily_read_says_who_accepted_your_connection_requests(collection_db):

@@ -190,6 +190,15 @@ class LinkedInProfileViewersActivities(LinkedInEngagersActivities):
             run.project_id,
             run.id,
         )
+        # Whether the member has Premium, as LinkedIn said when their session was last saved.
+        premium = await self.db.pool.fetchval(
+            "SELECT configuration->'premium' FROM integration_connections WHERE project_id = $1 "
+            "AND provider_key = 'network.linkedin' AND connected_by_clerk_user_id = $2",
+            run.project_id,
+            run.started_by_clerk_user_id,
+        )
+        if premium in ("true", "false"):
+            notes["premium"] = premium == "true"
         await self._queue(run, notes)
         await self._progress(run.id, "publish", 4, STEPS, "Writing the list")
         project = await self.db.get_project(run.project_id)

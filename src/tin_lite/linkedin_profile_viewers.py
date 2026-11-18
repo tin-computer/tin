@@ -322,30 +322,13 @@ def summary_markdown(people: list[dict], notes: dict, *, now: datetime) -> str:
         f"The full list is in `{CSV_PATH}`, best fit first.",
         "",
         *([f"**{notes['notice']}**", ""] if notes.get("notice") else []),
-        *(
-            [
-                "**LinkedIn changed its profile-views list, so Tin read only its overview this "
-                "time. Tin is looking into it.**",
-                "",
-            ]
-            if notes.get("format_changed")
-            else []
-        ),
+        *([f"**{overview_only(notes)}**", ""] if notes.get("format_changed") else []),
         f"- {sentence(notes)}",
         f"- {len(people)} {'person' if len(people) == 1 else 'people'} in the list, "
         f"{len(new)} not connected to you yet.",
     ]
     if notes.get("total_views") is not None or notes.get("anonymous"):
-        hidden = notes.get("anonymous", 0)
-        lines.append(
-            "- "
-            + (
-                f"LinkedIn counts {notes['total_views']} views in the last 90 days. "
-                if notes.get("total_views") is not None
-                else ""
-            )
-            + f"{hidden} of the views Tin read came from people browsing privately."
-        )
+        lines.append(f"- {counted(notes)}")
     if notes.get("icp"):
         lines.append(
             f"- {len(fitting)} fit an ICP in `{notes['icp']}` at {engagers.FIT_SHOWN} or more, "
@@ -371,6 +354,45 @@ def summary_markdown(people: list[dict], notes: dict, *, now: datetime) -> str:
         "",
     ]
     return "\n".join(lines)
+
+
+def overview_only(notes: dict) -> str:
+    """Why this run named only the viewers in LinkedIn's overview."""
+
+    if notes.get("premium") is False:
+        return (
+            "This LinkedIn account has no Premium, and LinkedIn shows accounts without Premium "
+            "only their latest few viewers, so Tin named the ones in LinkedIn's overview."
+        )
+    text = (
+        "Tin couldn't read LinkedIn's full list of viewers this time, so it named only the ones "
+        "in LinkedIn's overview, a sample of recent viewers. Tin is looking into it."
+    )
+    if notes.get("premium") is None:
+        text += " Without Premium this is expected: LinkedIn lists only the latest few viewers."
+    return text
+
+
+def counted(notes: dict) -> str:
+    """LinkedIn's count of views beside what Tin read: the count is views, not people."""
+
+    total, hidden = notes.get("total_views"), notes.get("anonymous", 0)
+    if notes.get("format_changed"):
+        text = (
+            f"LinkedIn counts {total} views in the last 90 days; its overview names only a few. "
+            if total is not None
+            else ""
+        )
+        return text + f"{hidden} of the viewers in the overview aren't named by LinkedIn."
+    text = (
+        f"LinkedIn counts {total} views in the last 90 days. Someone who views twice counts "
+        "twice, so LinkedIn's list of viewers is shorter. "
+        if total is not None
+        else ""
+    )
+    return (
+        text + f"{hidden} of the viewers Tin read browsed privately, so LinkedIn doesn't name them."
+    )
 
 
 def sentence(notes: dict) -> str:
