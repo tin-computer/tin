@@ -1,10 +1,17 @@
 # Connection collection
 
-`connections.collect` is a native workflow every project can run. It takes one to three
-LinkedIn profile URLs, an optional keyword query and an execution policy. Each selected
-profile must be a visible first-degree connection. Results are second-degree connections;
-mutual first-degree connections are excluded. This integration supplies reusable collection
-and export machinery. Project-specific research and delivery belong in private packages.
+`connections.collect` is a native workflow every project can run. It searches the member's
+second-degree connections in one of two ways:
+- **Their whole network** (no friends): one LinkedIn search, "Connections: 2nd", with an
+  optional keyword query and an optional location. It runs in the cloud only; see
+  [The whole network](#the-whole-network).
+- **Through friends:** one to three LinkedIn profile URLs, each a visible first-degree
+  connection, and an optional keyword query. Mutual first-degree connections are excluded.
+
+Each person comes with their name, headline, location and the people you know in common, as
+LinkedIn's card shows them ("X, Y & 12 other mutual connections"). The CSV lists the most
+mutual connections first. This integration supplies reusable collection and export machinery.
+Project-specific research and delivery belong in private packages.
 
 ## Set up a deployment
 
@@ -88,6 +95,30 @@ The second-degree filter applies either way.
 
 ![Optional keyword filter explained in workflow setup](images/connection-keywords.png)
 
+## The whole network
+
+Leave the friends empty to search everyone LinkedIn counts as your second degree, the search
+LinkedIn shows under People, Connections: 2nd.
+
+- **Location.** A place such as `Istanbul` or `Germany`. On the first page, the cloud reader asks
+  LinkedIn's public place search (the one its job search uses signed out, with no session) for
+  its ID and pins the first match in the search (`geoUrn`). A place LinkedIn doesn't know stops
+  the run with `location_not_found`. Location only narrows the whole network; with friends it's
+  refused.
+- **Cloud only.** Tin for Chrome searches a friend's connections and never claims a whole-network
+  job. Local only is refused when the run starts. A cloud failure pauses the run instead of
+  handing it to Chrome, and a run without cloud permission pauses before it starts.
+- **Budget.** One search with the budget of all three friends from the run's pinned policy: 60
+  pages, 600 people and the run's 45 minutes. LinkedIn itself shows at most about 100 pages of
+  one search.
+- **Scope.** The pinned search may hold only `network=["S"]`, the run's keywords and one
+  location. A friend (`connectionOf`) or any other filter is `filters_changed`.
+
+Every result card is read for its name (the link beside "• 2nd", never a link wrapping the whole
+card), headline, location and mutual connections. People named in the mutual line are never
+taken for the result. The CSV adds `mutual_count` (named plus "N other") and `mutual_names`
+(the first named, up to three).
+
 ## Resume and limits
 
 Each run pins its inputs and policy. Version 2 allows up to 24 hours waiting for Chrome
@@ -164,7 +195,10 @@ page with the pinned keyword and second-degree filters, using visible profile li
 relationship labels and pagination controls. It does not execute website scripts. The document adapter resolves unconditional atomic
 visibility rules from bounded public stylesheets on `static.licdn.com`; those requests carry
 no session headers or cookies. It supports this server-rendered contract, not arbitrary CSS
-or client-only layouts. Unsupported or ambiguous evidence stops rather than guessing.
+or client-only layouts. LinkedIn's newer pages follow `</html>` with rehydration scripts that
+repeat the page as data; the adapter reads the document before them and refuses anything else
+after it. A page may be up to 4 MB with those scripts. Unsupported or ambiguous evidence stops
+rather than guessing.
 
 Every page first verifies the authenticated account through `/voyager/api/me` with the same
 explicit cookie header. Account identity does not depend on an avatar rendering in the page.

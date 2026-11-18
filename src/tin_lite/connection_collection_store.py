@@ -19,6 +19,7 @@ from tin_lite.connection_collection import (
     CollectionError,
     CollectionInputs,
     PageBatch,
+    budget,
     canonical_json,
     cloud_ready,
     digest,
@@ -310,6 +311,16 @@ class CollectionStore:
                         run.id,
                         config["session_generation"],
                     )
+            if not inputs.friends and row["cloud_transport"] in {None, "local_backup", "http_v1"}:
+                # The whole network is searched only in the cloud, with a saved session.
+                row = await conn.fetchrow(
+                    "UPDATE connection_collection_jobs SET state='paused',reason=$2 "
+                    "WHERE run_id=$1 RETURNING *",
+                    run.id,
+                    "cloud_unavailable"
+                    if row["cloud_transport"] == "local_backup"
+                    else "cloud_permission_required",
+                )
             if grant.get("mode") == "cloud_only" and row["cloud_transport"] == "local_backup":
                 row = await conn.fetchrow(
                     "UPDATE connection_collection_jobs SET state='paused',"
@@ -435,7 +446,11 @@ class CollectionStore:
                 or device["clerk_user_id"] != job["clerk_user_id"]
             ):
                 raise CollectionError("account_changed")
-            if job["state"] not in {"waiting_browser", "collecting", "handoff_pending"}:
+            # Chrome searches a friend's connections; the whole network is read in the cloud.
+            if (
+                job["state"] not in {"waiting_browser", "collecting", "handoff_pending"}
+                or not job["inputs"]["friends"]
+            ):
                 raise CollectionError("collection_paused")
             if job["execution_mode"] == "cloud" and job["state"] == "collecting":
                 raise CollectionError("cloud_active")
@@ -548,10 +563,15 @@ class CollectionStore:
                 raise CollectionError("account_changed")
             friends = job["inputs"]["friends"]
             if (
-                batch.friend_index >= len(friends)
-                or friends[batch.friend_index] != batch.source.friend_url
+                (
+                    batch.friend_index >= len(friends)
+                    or friends[batch.friend_index] != batch.source.friend_url
+                )
+                if friends
+                else (batch.friend_index != 0 or batch.source.friend_url is not None)
             ):
                 raise CollectionError("friend_changed")
+            limits = budget(job)
             body = batch.model_dump(exclude={"lease", "generation"})
             stamp = digest(body)
             previous = await conn.fetchrow(
@@ -573,9 +593,7 @@ class CollectionStore:
                 str(batch.page)
             ]:
                 raise CollectionError("page_out_of_order")
-            if datetime.now(UTC) >= job["friend_started_at"] + timedelta(
-                seconds=job["policy"]["seconds_per_friend"]
-            ):
+            if datetime.now(UTC) >= job["friend_started_at"] + timedelta(seconds=limits["seconds"]):
                 raise CollectionError("friend_time_limit")
             # A profile cannot silently resolve to another connectionOf id after a restart.
             old_source = job["sources"].get(str(batch.friend_index))
@@ -596,7 +614,7 @@ class CollectionStore:
                 raise CollectionError("repeated_page")
             seen = {person["profile_url"] for p in pages for person in document(p["records"])}
             count = len(seen | {p.profile_url for p in batch.people})
-            if count > job["policy"]["people_per_friend"]:
+            if count > limits["people"]:
                 raise CollectionError("people_limit")
             await conn.execute(
                 """INSERT INTO connection_collection_pages
@@ -617,16 +635,16 @@ class CollectionStore:
             reason = None
             if not batch.next_page:
                 reason = "visible_results_exhausted"
-            elif count >= job["policy"]["people_per_friend"]:
+            elif count >= limits["people"]:
                 reason = "people_limit"
-            elif batch.page >= job["policy"]["pages_per_friend"]:
+            elif batch.page >= limits["pages"]:
                 reason = "page_limit"
             coverage = dict(job["coverage"])
             index, page, state = batch.friend_index, batch.page + 1, "collecting"
             if reason:
                 coverage[str(index)] = {"reason": reason, "pages": batch.page, "people": count}
                 index, page = index + 1, 1
-                if index == len(friends):
+                if index == max(len(friends), 1):
                     state = (
                         "completed"
                         if all(
@@ -777,7 +795,8 @@ class CollectionStore:
             source.scope(keywords=job["inputs"]["keywords"])
             index = job["friend_index"]
             if (
-                job["cloud_transport"] not in {"http_v1", "http_v2"}
+                not job["inputs"]["friends"]
+                or job["cloud_transport"] not in {"http_v1", "http_v2"}
                 or not source.query_id
                 or source.actor.key != job["actor"]["key"]
                 or source.friend_url != job["inputs"]["friends"][index]

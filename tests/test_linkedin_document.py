@@ -253,3 +253,154 @@ async def test_public_stylesheet_receives_no_auth_and_is_bounded_to_fixed_asset_
         ) as client:
             with pytest.raises(CollectionError, match="unsupported_search_contract"):
                 await get_document(client, validate_session(session_envelope()), FRIEND)
+
+
+# LinkedIn's newer result cards: the name beside its "• 2nd", the headline and location below
+# it, and a line naming mutual connections. Some cards wrap everything in a second link.
+def network_card(index, *, named=0, others=0, wrap=False):
+    url = f"https://www.linkedin.com/in/person-{index}"
+    person = (
+        f'<div><p><a href="{url}"><span>Person {index}</span></a>'
+        "<span><span>• 2nd</span></span></p>"
+        f"<div><p><span>Founder at Company {index}</span></p></div>"
+        "<div><p><span>Istanbul, Türkiye</span></p></div></div>"
+    )
+    if wrap:
+        person = f'<a href="{url}">{person}</a>'
+    links = [
+        f'<a href="https://www.linkedin.com/in/mutual-{index}-{n}">Mutual {index}.{n}</a>'
+        for n in range(named)
+    ]
+    if others:
+        line = ", ".join(links) + (
+            ' & <a href="https://www.linkedin.com/search/results/people/?connectionOf='
+            f'%5B%22m{index}%22%5D&amp;network=%5B%22F%22%5D">{others} other mutual connections</a>'
+        )
+    elif named == 1:
+        line = links[0] + " is a mutual connection"
+    elif named:
+        line = " & ".join(links) + " are mutual connections"
+    mutual = (
+        '<div><ul role="presentation"><li><figure aria-hidden="true"></figure></li></ul>'
+        f"<div><p><span>{line}</span></p></div></div>"
+        if named
+        else ""
+    )
+    return f"<div>{person}{mutual}<div><button>Connect</button></div></div>"
+
+
+def network_results(page=1, more=True):
+    first = (page - 1) * 3 + 1
+    cards = (
+        network_card(first, named=2, others=12, wrap=True)
+        + network_card(first + 1, named=1)
+        + network_card(first + 2)
+    )
+    return (
+        document(
+            f"<div>{cards}</div>"
+            f'<div><button aria-current="page">{page}</button>'
+            f"<button {'' if more else 'disabled'}>Next</button></div>"
+        )
+        + '<script>window.__como_rehydration__.push("0:[]");</script>\n'
+        + '<script>window.__como_rehydration__.push("1:[\\"$\\"]");</script>'
+    )
+
+
+def test_newer_cards_give_the_headline_location_and_mutual_connections():
+    found = search_results(Document(network_results()), 1)
+    first, second, third = found["people"]
+    # The wrapping link's text is the whole card; the name is the link beside "• 2nd".
+    assert first["name"] == "Person 1" and first["profile_url"].endswith("/person-1")
+    assert first["headline"] == "Founder at Company 1"
+    assert first["location"] == "Istanbul, Türkiye"
+    assert first["mutual_count"] == 14 and first["mutual_names"] == ["Mutual 1.0", "Mutual 1.1"]
+    assert second["mutual_count"] == 1 and second["mutual_names"] == ["Mutual 2.0"]
+    assert third["mutual_count"] == 0 and third["mutual_names"] == []
+    # Nobody named in a mutual line is taken for a result.
+    assert not any("/mutual-" in p["profile_url"] for p in found["people"])
+    assert found["next_page"] is True
+
+
+def test_a_mutual_connection_is_never_taken_for_the_result():
+    # A card whose own name isn't a link Tin reads: its mutual line still names a profile.
+    card = (
+        "<div><div><p><span>Someone</span><span>• 2nd</span></p>"
+        "<div><p>Founder</p></div></div><div><p>"
+        '<a href="https://www.linkedin.com/in/friend">Test Friend</a> is a mutual connection'
+        "</p></div></div>"
+    )
+    page = document(
+        f"<div>{card}{network_card(5)}</div>"
+        '<div><button aria-current="page">1</button><button disabled>Next</button></div>'
+    )
+    people = search_results(Document(page), 1)["people"]
+    assert [p["profile_url"] for p in people] == ["https://www.linkedin.com/in/person-5"]
+
+
+def test_the_page_may_end_in_linkedins_rehydration_scripts_and_nothing_else():
+    assert search_results(Document(network_results()), 1)["people"]
+    with pytest.raises(CollectionError, match="unsupported_search_contract"):
+        Document(network_results() + "<p>after the page</p>")
+    with pytest.raises(CollectionError, match="unsupported_search_contract"):
+        Document(network_results().split("</html>")[0])
+
+
+def test_the_whole_network_is_second_degree_with_one_place_and_no_friend():
+    from tin_lite.connection_collection import CollectionSource
+    from tin_lite.linkedin_document import network_source
+
+    source = network_source({"actor": ACTOR}, "founder", "90010422")
+    assert source["friend_url"] is None and source["first_degree"] is None
+    view = CollectionSource.model_validate(source)
+    assert view.scope(keywords="founder") == "network:90010422"
+    assert (
+        CollectionSource.model_validate(network_source({"actor": ACTOR}, "", None)).scope(
+            keywords=""
+        )
+        == "network:"
+    )
+    base = "https://www.linkedin.com/search/results/people/?network=%5B%22S%22%5D&keywords=founder"
+    for changed in (
+        base + "&connectionOf=%5B%22member1%22%5D",
+        base + "&geoUrn=%5B%221%22%2C%222%22%5D",
+        base + "&industry=%5B%224%22%5D",
+        base.replace("%22S%22", "%22F%22"),
+    ):
+        with pytest.raises(CollectionError, match="filters_changed"):
+            CollectionSource.model_validate({**source, "collection_url": changed}).scope(
+                keywords="founder"
+            )
+    with pytest.raises(CollectionError, match="filters_changed"):
+        view.scope(keywords="investor")
+    # Pydantic carries the code inside its own ValueError, as for every source field.
+    with pytest.raises(ValueError, match="invalid_collection_view"):
+        CollectionSource.model_validate({**source, "first_degree": True})
+
+
+async def test_a_place_is_looked_up_without_the_session():
+    from tin_lite.linkedin_document import place
+
+    seen = []
+
+    def respond(request):
+        seen.append(request)
+        assert request.url.path == "/jobs-guest/api/typeaheadHits"
+        if request.url.params["query"] == "Nowhere":
+            return httpx.Response(200, json=[])
+        return httpx.Response(
+            200,
+            json=[
+                {"id": "100170895", "type": "GEO", "displayName": "Istanbul, Istanbul, Türkiye"},
+                {"id": "90010422", "type": "GEO", "displayName": "Greater Istanbul"},
+            ],
+        )
+
+    session = validate_session(session_envelope())
+    async with httpx.AsyncClient(transport=httpx.MockTransport(respond)) as client:
+        assert await place(client, session, "Istanbul") == "100170895"
+        assert await place(client, session, "") is None
+        with pytest.raises(CollectionError, match="location_not_found"):
+            await place(client, session, "Nowhere")
+    assert len(seen) == 2
+    assert all("cookie" not in r.headers and "csrf-token" not in r.headers for r in seen)

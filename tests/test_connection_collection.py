@@ -892,3 +892,28 @@ async def test_collection_failure_reads_codes_and_keeps_its_fixed_text():
     assert unknown["error_message"] == FAILURE_FALLBACK and unknown["error_kind"] == "internal"
     assert unknown["error_detail"] == "y"
     assert internal["error_message"] == FAILURE_FALLBACK and internal["error_detail"] == "z"
+
+
+def test_the_whole_network_needs_the_cloud_and_a_place_needs_no_friends():
+    from uuid import uuid4
+
+    from tin_lite.connection_collection import validate_inputs
+    from tin_lite.workflow_inputs import WorkflowInputError
+
+    project = uuid4()
+    assert validate_inputs(
+        project, {"keywords": "founder", "location": " Istanbul ", "execution": "cloud_only"}
+    ) == {
+        "friends": [],
+        "keywords": "founder",
+        "location": "Istanbul",
+        "execution": "cloud_only",
+    }
+    with pytest.raises(WorkflowInputError, match="runs in the cloud"):
+        validate_inputs(project, {"keywords": "founder"})
+    with pytest.raises(WorkflowInputError, match="Leave the friends empty"):
+        validate_inputs(
+            project, {"friends": [FRIEND], "location": "Istanbul", "execution": "cloud_only"}
+        )
+    with pytest.raises(WorkflowInputError, match="location of up to 100"):
+        validate_inputs(project, {"location": "x" * 101, "execution": "cloud_only"})

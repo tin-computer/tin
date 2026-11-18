@@ -1,5 +1,7 @@
 """Continuing consent, encrypted reuse and unattended preparation, using synthetic accounts."""
 
+import csv
+import io
 import json
 from datetime import UTC, datetime, timedelta
 from uuid import uuid4
@@ -57,9 +59,14 @@ async def prepared(db):
     return f
 
 
-async def new_run(f, *, friends=None, mode="cloud_preferred"):
+async def new_run(f, *, friends=None, mode="cloud_preferred", **extra):
     identifier = uuid4()
-    inputs = {"friends": friends or [FRIEND], "keywords": "", "execution": mode}
+    inputs = {
+        "friends": [FRIEND] if friends is None else friends,
+        "keywords": "",
+        "execution": mode,
+        **extra,
+    }
     await f.db.pool.execute(
         """INSERT INTO workflow_runs
         (id,project_id,workflow_id,executor,definition_commit_sha,temporal_workflow_id,thread_id,
@@ -669,3 +676,102 @@ async def test_a_new_photo_or_link_for_the_same_member_keeps_the_connection(coll
     with pytest.raises(CollectionError, match="account_changed"):
         await saved(actor_key=FRIEND)
     assert sealed()["actor"]["key"] == photo and sealed()["actor"]["member"] == "ACoAAMember0001"
+
+
+async def test_the_whole_network_is_one_cloud_search_with_its_place_and_mutuals(collection_db):
+    from test_linkedin_document import network_results
+
+    from tin_lite.connection_collection_activities import artifacts
+
+    f = await prepared(collection_db)
+    job = await new_run(f, friends=[], keywords="founder", location="Istanbul")
+    assert job["state"] == "cloud_ready"
+    # Chrome searches a friend's connections; it never takes the whole network.
+    with pytest.raises(CollectionError, match="collection_paused"):
+        await f.store.claim(job["run_id"], f.project.id, TOKEN, ACTOR["key"])
+    searches = []
+
+    def respond(request):
+        if request.url.path == "/voyager/api/me":
+            return httpx.Response(200, json={"miniProfile": {"publicIdentifier": "owner"}})
+        if request.url.path == "/jobs-guest/api/typeaheadHits":
+            assert "cookie" not in request.headers
+            return httpx.Response(200, json=[{"id": "90010422", "type": "GEO"}])
+        assert request.url.path == "/search/results/people/"
+        searches.append(dict(request.url.params))
+        page = int(request.url.params.get("page", "1"))
+        return httpx.Response(200, text=network_results(page, more=page == 1))
+
+    class Cloud:
+        async def page(self, job, session, source):
+            async with httpx.AsyncClient(transport=httpx.MockTransport(respond)) as client:
+                result = await read_page(
+                    session,
+                    source,
+                    job["inputs"]["keywords"],
+                    job["next_page"],
+                    client=client,
+                    document=True,
+                )
+                return {**result, "observed_at": datetime.now(UTC).isoformat()}
+
+    await step(f.store, Cloud(), f.cipher, job["run_id"])
+    await step(f.store, Cloud(), f.cipher, job["run_id"])
+    final = record(
+        await f.db.pool.fetchrow(
+            "SELECT * FROM connection_collection_jobs WHERE run_id=$1", job["run_id"]
+        )
+    )
+    assert final["state"] == "completed"
+    assert final["coverage"]["0"] == {
+        "reason": "visible_results_exhausted",
+        "pages": 2,
+        "people": 6,
+    }
+    assert final["sources"]["0"]["friend_url"] is None
+    assert all(
+        s["network"] == '["S"]' and s["keywords"] == "founder" and s["geoUrn"] == '["90010422"]'
+        for s in searches
+    )
+    assert not any("connectionOf" in s for s in searches)
+
+    pages = [
+        record(row)
+        for row in await f.db.pool.fetch(
+            "SELECT * FROM connection_collection_pages WHERE run_id=$1 ORDER BY friend_index,page",
+            job["run_id"],
+        )
+    ]
+    files = artifacts(final, pages)
+    rows = list(
+        csv.reader(io.StringIO(files[f"connections/{job['run_id']}/connections.csv"].decode()))
+    )
+    assert rows[0][4:6] == ["mutual_count", "mutual_names"]
+    # Most mutual connections first: the people someone you know can introduce.
+    assert [row[0] for row in rows[1:3]] == ["Person 1", "Person 4"]
+    assert rows[1][2:6] == [
+        "Founder at Company 1",
+        "Istanbul, Türkiye",
+        "14",
+        "Mutual 1.0; Mutual 1.1",
+    ]
+    assert [row[4] for row in rows[1:]] == ["14", "14", "1", "1", "0", "0"]
+    manifest = json.loads(files[f"connections/{job['run_id']}/manifest.json"])
+    assert manifest["scope"]["search"] == "whole_network"
+    assert manifest["scope"]["location"] == "Istanbul"
+
+
+async def test_a_network_search_never_waits_for_chrome(collection_db):
+    f = await prepared(collection_db)
+    job = await new_run(f, friends=[], mode="cloud_preferred")
+
+    class Down:
+        async def page(self, job, session, source):
+            raise CollectionError("cloud_failed")
+
+    await step(f.store, Down(), f.cipher, job["run_id"])
+    state = await f.db.pool.fetchrow(
+        "SELECT state, reason FROM connection_collection_jobs WHERE run_id=$1", job["run_id"]
+    )
+    # A friend's search would move to Chrome here; the whole network pauses for the member.
+    assert state["state"] == "paused" and state["reason"] == "cloud_failed"

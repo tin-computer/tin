@@ -58,6 +58,8 @@ def artifacts(job, pages):
             "profile_url",
             "headline",
             "location",
+            "mutual_count",
+            "mutual_names",
             "friend_name",
             "friend_profile_url",
             "degree",
@@ -74,7 +76,11 @@ def artifacts(job, pages):
             else text
         )
 
-    for path in paths:
+    # Most mutual connections first: the people someone you know can introduce. Ties keep the
+    # order LinkedIn listed them in.
+    for path in sorted(
+        paths, key=lambda path: -people[path["person_profile_url"]].get("mutual_count", 0)
+    ):
         p = people[path["person_profile_url"]]
         writer.writerow(
             [
@@ -84,8 +90,10 @@ def artifacts(job, pages):
                     p["profile_url"],
                     p["headline"],
                     p["location"],
+                    p.get("mutual_count", 0),
+                    "; ".join(p.get("mutual_names", [])),
                     path["friend_name"],
-                    path["friend_profile_url"],
+                    path["friend_profile_url"] or "",
                     "2nd",
                     path["page"],
                     path["observed_at"],
@@ -101,8 +109,10 @@ def artifacts(job, pages):
             "reason": job["reason"],
             "coverage": job["coverage"],
             "scope": {
+                "search": "friends" if job["inputs"]["friends"] else "whole_network",
                 "friends": job["inputs"]["friends"],
                 "keywords": job["inputs"]["keywords"],
+                "location": job["inputs"].get("location", ""),
                 "degree": "2nd",
                 "evidence": "visible_results_only",
             },
@@ -251,6 +261,11 @@ class CollectionActivities:
             job["state"],
             f"Collecting connections. {count} {'page' if count == 1 else 'pages'} saved.",
         )
+        if job["state"] == "paused" and not job["inputs"]["friends"]:
+            summary = (
+                "Searching your whole network needs cloud collection. Check that cloud "
+                "collection is allowed in LinkedIn settings, then resume."
+            )
         if job["state"] == "waiting_browser" and job["reason"] == "cloud_unavailable":
             summary = (
                 "Cloud collection is unavailable. Tin will collect in Chrome; "
@@ -268,6 +283,10 @@ class CollectionActivities:
                 "Tin could not read the LinkedIn page. Refresh it in Chrome, then retry."
             ),
             "session_expired": "Reconnect LinkedIn in Integrations to continue.",
+            "location_not_found": (
+                "LinkedIn found no place by that name. Start again with another location, such "
+                "as a city or a country."
+            ),
             "account_changed": "The LinkedIn account changed. Check the account in Integrations.",
             "challenge": "LinkedIn needs your attention. Open LinkedIn in Chrome.",
             "rate_limited": "LinkedIn asked us to wait. Saved pages are kept.",

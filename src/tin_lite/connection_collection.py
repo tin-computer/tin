@@ -81,8 +81,11 @@ class ClosedModel(BaseModel):
 
 class CollectionInputs(ClosedModel):
     project_id: str
-    friends: list[str] = Field(min_length=1, max_length=3)
+    # No friends: one search of the member's whole second-degree network, in the cloud.
+    friends: list[str] = Field(default_factory=list, max_length=3)
     keywords: str = Field(default="", max_length=300)
+    # A place, as LinkedIn's location search names it; only for the whole network.
+    location: str = Field(default="", max_length=100)
     execution: Literal["local_only", "cloud_only", "cloud_preferred"] = "local_only"
 
     @field_validator("friends")
@@ -99,6 +102,13 @@ class CollectionInputs(ClosedModel):
         if any(ord(c) < 32 for c in value):
             raise CollectionError("invalid_keywords")
         return value.strip()
+
+    @field_validator("location")
+    @classmethod
+    def location_valid(cls, value):
+        if any(ord(c) < 32 for c in value):
+            raise CollectionError("invalid_location")
+        return " ".join(value.split())
 
 
 def validate_inputs(project_id: UUID, inputs: dict) -> dict:
@@ -118,10 +128,40 @@ def validate_inputs(project_id: UUID, inputs: dict) -> dict:
             )
         elif "keywords" in fields:
             message = "Enter a keyword query of up to 300 characters on one line."
+        elif "location" in fields:
+            message = "Enter a location of up to 100 characters on one line, such as Istanbul."
         else:
             message = "Choose Local only, Cloud preferred or Cloud only for collection."
         raise WorkflowInputError(message) from None
+    if not parsed.friends and parsed.execution == "local_only":
+        raise WorkflowInputError(
+            "Searching your whole network runs in the cloud. Choose Cloud only or Cloud "
+            "preferred, or add up to three friends to search their connections in Chrome."
+        )
+    if parsed.friends and parsed.location:
+        raise WorkflowInputError(
+            "A location narrows a search of your whole network. Leave the friends empty to "
+            "use it, or remove the location."
+        )
     return parsed.model_dump(exclude={"project_id"})
+
+
+def budget(job) -> dict[str, int]:
+    """The pages, people and seconds one search may take, from the run's pinned policy. The
+    whole network is one search with the budget of all its friends."""
+
+    policy = job["policy"]
+    if job["inputs"]["friends"]:
+        return {
+            "pages": policy["pages_per_friend"],
+            "people": policy["people_per_friend"],
+            "seconds": policy["seconds_per_friend"],
+        }
+    return {
+        "pages": policy["pages_per_friend"] * policy["friends"],
+        "people": policy["people_per_friend"] * policy["friends"],
+        "seconds": policy["job_seconds"],
+    }
 
 
 INPUT_SCHEMA = {
@@ -131,12 +171,12 @@ INPUT_SCHEMA = {
         "project_id": {"type": "string", "format": "uuid"},
         "friends": {
             "type": "array",
-            "title": "Friends' LinkedIn profile URLs",
+            "title": "Friends' LinkedIn profile URLs (optional)",
             "description": (
-                "Paste profile links for 1–3 first-degree connections, separated by commas. "
-                "Open each friend's LinkedIn profile and copy the URL from the address bar."
+                "Leave empty to search your whole second-degree network in the cloud. Or paste "
+                "profile links for up to three first-degree connections, separated by commas, "
+                "to search only their connections."
             ),
-            "minItems": 1,
             "maxItems": 3,
             "uniqueItems": True,
             "items": {"type": "string", "maxLength": 700},
@@ -147,9 +187,19 @@ INPUT_SCHEMA = {
             "default": "",
             "title": "Keywords (optional)",
             "description": (
-                "Narrow the LinkedIn search within each friend's connections with a "
-                "term such as founder, investor or designer. Leave blank to collect "
-                "without a keyword filter. Only your second-degree connections are included."
+                "Narrow the LinkedIn search with a term such as founder, investor or "
+                "designer. Leave blank to collect without a keyword filter. Only your "
+                "second-degree connections are included."
+            ),
+        },
+        "location": {
+            # No default: collections saved before it existed keep their exact inputs.
+            "type": "string",
+            "maxLength": 100,
+            "title": "Location (optional)",
+            "description": (
+                "Only when searching your whole network: a place such as Istanbul or "
+                "Germany. Tin uses LinkedIn's closest match."
             ),
         },
         "execution": {
@@ -164,7 +214,7 @@ INPUT_SCHEMA = {
             ),
         },
     },
-    "required": ["project_id", "friends"],
+    "required": ["project_id"],
 }
 
 
@@ -189,17 +239,24 @@ class Actor(ClosedModel):
 
 
 class CollectionSource(ClosedModel):
-    friend_url: str
+    # A friend's connections, or (no friend) the member's whole second-degree network.
+    friend_url: str | None
     friend_name: str = Field(max_length=200)
     actor: Actor
-    first_degree: Literal[True]
+    first_degree: Literal[True] | None
     collection_url: str = Field(max_length=2500)
     query_id: str | None = Field(default=None, max_length=200)
 
     @field_validator("friend_url")
     @classmethod
     def friend_valid(cls, value):
-        return profile_url(value)
+        return profile_url(value) if value is not None else None
+
+    @model_validator(mode="after")
+    def one_kind(self):
+        if (self.friend_url is None) != (self.first_degree is None):
+            raise CollectionError("invalid_collection_view")
+        return self
 
     @field_validator("query_id")
     @classmethod
@@ -226,6 +283,8 @@ class CollectionSource(ClosedModel):
             params.pop("prioritizeMessage")
         if any(len(v) != 1 for v in params.values()):
             raise CollectionError("invalid_collection_view")
+        if self.friend_url is None:
+            return network_scope(params, keywords)
         try:
             friends = json.loads(params.get("connectionOf", [""])[0])
             if isinstance(friends, str):
@@ -255,18 +314,29 @@ class Person(ClosedModel):
     location: str = Field(default="", max_length=300)
     degree: Literal["2nd"]
     visible_text: str = Field(default="", max_length=3000)
+    # "X, Y & 12 other mutual connections": everyone who connects you, and the first named.
+    mutual_count: int = Field(default=0, ge=0, le=100_000)
+    mutual_names: list[str] = Field(default_factory=list, max_length=3)
 
     @field_validator("profile_url")
     @classmethod
     def url_valid(cls, value):
         return profile_url(value)
 
+    @field_validator("mutual_names")
+    @classmethod
+    def names_valid(cls, values):
+        if any(not name or len(name) > 200 for name in values):
+            raise CollectionError("invalid_page_record")
+        return values
+
 
 class PageBatch(ClosedModel):
     generation: int = Field(ge=1)
     lease: str = Field(min_length=32, max_length=128)
     friend_index: int = Field(ge=0, le=2)
-    page: int = Field(ge=1, le=20)
+    # A friend's search reads up to 20 pages; the whole network, the budget of three friends.
+    page: int = Field(ge=1, le=60)
     actor_key: str = Field(max_length=1000)
     source: CollectionSource
     people: list[Person] = Field(max_length=50)
@@ -293,6 +363,28 @@ class PageBatch(ClosedModel):
 
     def fingerprint(self):
         return digest(sorted(p.profile_url for p in self.people))
+
+
+def network_scope(params: dict, keywords: str) -> str:
+    """The whole network: second degree, the run's keywords and at most one location; never a
+    friend, nor any other filter."""
+
+    try:
+        degree = json.loads(params.get("network", [""])[0])
+        places = json.loads(params["geoUrn"][0]) if "geoUrn" in params else []
+    except (ValueError, TypeError):
+        raise CollectionError("invalid_collection_view") from None
+    if (
+        degree != ["S"]
+        or params.get("keywords", [""])[0] != keywords
+        or not isinstance(places, list)
+        or len(places) > 1
+        or any(not isinstance(p, str) or not re.fullmatch(r"[0-9]{1,20}", p) for p in places)
+    ):
+        raise CollectionError("filters_changed")
+    if set(params) - {"network", "keywords", "geoUrn", "origin", "page", "sid", "trk"}:
+        raise CollectionError("filters_changed")
+    return "network:" + "".join(places)
 
 
 def failure_transition(policy: str, mode: str, reason: str) -> str:
