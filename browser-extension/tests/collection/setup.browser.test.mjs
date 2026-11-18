@@ -43,6 +43,9 @@ for (const mode of ["stored", "embedded", "unavailable"]) test(mode === "embedde
   const context=await chromium.launchPersistentContext(join(dir,"profile"),{channel:"chromium",headless:true,args:[`--disable-extensions-except=${extension}`,`--load-extension=${extension}`]});t.after(()=>context.close());
   const requested=[];
   let worker;
+  // A request can arrive before Playwright has created its frame; the page's URL is then the
+  // request's referer.
+  const pageURL=request=>{try{return request.frame().url();}catch{return request.headers().referer;}};
   await context.route("https://www.linkedin.com/**",async r=>{
     const url = new URL(r.request().url());
     requested.push(url.pathname);
@@ -56,7 +59,7 @@ for (const mode of ["stored", "embedded", "unavailable"]) test(mode === "embedde
         const tab=(await chrome.tabs.query({url}))[0];
         const observed={at:Date.now(),tab_id:tab.id,context:{accept_language:"en-US",li_lang:"en_US",li_track:{clientVersion:"fixture-v1",osName:"Mac OS",timezoneOffset:0,timezone:"UTC",deviceFormFactor:"DESKTOP",mpName:"voyager-web"}}};
         await chrome.storage.local.set({[`tin.linkedin.collection.context.${tab.id}`]:observed,"tin.linkedin.collection.context.v3":{...observed,tab_id:999999}});
-      },r.request().frame().url());
+      },pageURL(r.request()));
       return r.fulfill({contentType:"application/json",body:"{}"});
     }
     const track={clientVersion:"fixture-v1",osName:"Mac OS",timezoneOffset:0,timezone:"UTC",deviceFormFactor:"DESKTOP",mpName:"voyager-web"};
