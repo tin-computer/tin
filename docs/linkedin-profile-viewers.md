@@ -104,9 +104,19 @@ then:
 - keeps what the overview named;
 - stops paging.
 
-The run still succeeds, and its file says it read only the overview; the founder's summary line
-doesn't put it to them, since there is nothing for them to do. The reader supports English pages
-today.
+The run still succeeds, and its file says it named only the viewers in the overview, and why:
+- **No Premium.** When Tin saves a member's LinkedIn session, it records whether `/me` says they
+  have Premium (`premium` on their connection). Without it, the file says LinkedIn shows the
+  account only its latest few viewers.
+- **Anything else** (Premium, or not known yet): the file says Tin couldn't read the list and is
+  looking into it, and that without Premium this is expected.
+
+The founder's summary line doesn't put it to them, since there is nothing for them to do. The
+reader supports English pages today.
+
+The file sets LinkedIn's count of views beside what Tin read. The count is views, not people:
+someone who views twice counts twice, so LinkedIn's list of viewers is shorter, and the file says
+so.
 
 ## Receipts and history
 

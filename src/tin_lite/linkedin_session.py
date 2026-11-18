@@ -245,6 +245,13 @@ def member_id(payload) -> str | None:
     return member if MEMBER.fullmatch(member) else None
 
 
+def premium(payload) -> bool | None:
+    """Whether /me says the signed-in member has Premium; None when it doesn't say."""
+
+    value = payload.get("premiumSubscriber") if isinstance(payload, dict) else None
+    return value if isinstance(value, bool) else None
+
+
 def identity_matches(payload, actor):
     # The member ID Tin recorded when it saved the session decides when there is one: a photo or
     # a profile link can change, the account's ID can't.
@@ -486,9 +493,10 @@ async def _get(client, session, path, params=None, *, request_headers=None):
             raise CollectionError("unsupported_search_contract") from None
 
 
-async def check_account(session, actor, *, client=None):
+async def check_account(session, actor, *, client=None, facts=None):
     """One bounded, read-only identity check before marking saved access ready. Returns the
-    member's LinkedIn ID, which Tin records with the session."""
+    member's LinkedIn ID, which Tin records with the session; `facts` gets whether the member
+    has Premium, which decides how much of their profile viewers LinkedIn lists."""
     own = client is None
     client = client or httpx.AsyncClient(timeout=8, follow_redirects=False, trust_env=False)
     try:
@@ -496,6 +504,8 @@ async def check_account(session, actor, *, client=None):
             me = await _get(client, session, "/voyager/api/me")
             if not identity_matches(me, actor):
                 raise CollectionError("account_changed")
+            if facts is not None:
+                facts["premium"] = premium(me)
             return member_id(me)
     except (httpx.HTTPError, TimeoutError):
         raise CollectionError("cloud_unavailable") from None

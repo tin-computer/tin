@@ -31,7 +31,7 @@ def choice(mode="cloud_preferred"):
     return {"actor": ACTOR, "mode": mode, "consent_version": 1}
 
 
-async def verified(*_):
+async def verified(*_, **__):
     return None
 
 
@@ -302,7 +302,7 @@ async def test_document_cloud_preparation_without_query_preserves_pages_and_dedu
 
     f = await prepared(collection_db)
 
-    async def verify(*_):
+    async def verify(*_, **__):
         return member
 
     f.connection.verify = verify
@@ -568,8 +568,22 @@ async def test_setup_checks_the_transferred_account_without_following_redirects(
             with pytest.raises(CollectionError, match=expected):
                 await check_account(validate_session(session_envelope()), ACTOR, client=client)
         else:
-            await check_account(validate_session(session_envelope()), ACTOR, client=client)
+            facts = {}
+            await check_account(
+                validate_session(session_envelope()), ACTOR, client=client, facts=facts
+            )
+            # The /me answer says whether the member has Premium only when it says so.
+            assert facts == {"premium": payload.get("premiumSubscriber")}
     assert len(calls) == 1
+
+
+def test_premium_is_read_only_from_a_true_or_false_answer():
+    from tin_lite.linkedin_session import premium
+
+    assert premium({"premiumSubscriber": True}) is True
+    assert premium({"premiumSubscriber": False}) is False
+    assert premium({"premiumSubscriber": "yes"}) is None
+    assert premium({}) is None and premium(None) is None
 
 
 @pytest.mark.parametrize("existing", [False, True])
@@ -580,7 +594,7 @@ async def test_failed_setup_check_cannot_mark_a_session_ready(collection_db, exi
         await f.connection.preferences(f.project.id, USER, choice())
     before = await config(f)
 
-    async def rejected(*_):
+    async def rejected(*_, **__):
         raise CollectionError("account_changed")
 
     f.connection.verify = rejected
@@ -603,12 +617,14 @@ async def test_a_new_photo_or_link_for_the_same_member_keeps_the_connection(coll
     decides. A new photo with the same ID is still the member; another ID never is."""
 
     f = await prepared(collection_db)
-    signed_in = {"member": "ACoAAMember0001"}
+    signed_in = {"member": "ACoAAMember0001", "premium": True}
 
-    async def me(session, actor):
+    async def me(session, actor, facts=None):
         # What /me answers for the uploaded session, checked as check_account checks it.
         if actor.get("member") and actor["member"] != signed_in["member"]:
             raise CollectionError("account_changed")
+        if facts is not None:
+            facts["premium"] = signed_in["premium"]
         return signed_in["member"]
 
     f.connection.verify = me
@@ -628,9 +644,13 @@ async def test_a_new_photo_or_link_for_the_same_member_keeps_the_connection(coll
             "SELECT * FROM integration_connections WHERE project_id=$1", f.project.id
         )
 
-    # A save records the member's ID with the session.
+    # A save records the member's ID with the session, and whether they have Premium.
     await saved()
     assert sealed()["actor"]["member"] == "ACoAAMember0001"
+    assert document(f.db_row["configuration"])["premium"] is True
+    signed_in["premium"] = False
+    await saved()
+    assert document(f.db_row["configuration"])["premium"] is False
 
     # A new profile photo: Tin for Chrome names the account anew, LinkedIn's ID is the same.
     photo = "avatar:/dms/image/v2/new-photo"

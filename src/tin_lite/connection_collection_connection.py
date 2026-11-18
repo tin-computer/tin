@@ -174,9 +174,13 @@ class CollectionConnection:
             actor = (
                 renamed_actor(device["actor"], value["actor_key"]) if renamed else device["actor"]
             )
+            facts: dict = {}
             member = await self.verify(
-                session, {**actor, "member": known} if known else device["actor"]
+                session, {**actor, "member": known} if known else device["actor"], facts=facts
             )
+            if facts.get("premium") is not None:
+                # Without Premium, LinkedIn lists only a member's latest few profile viewers.
+                config["premium"] = facts["premium"]
             if renamed:
                 # The same member under a new link or photo: everything that names the account
                 # follows it.
