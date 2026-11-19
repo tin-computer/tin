@@ -1575,10 +1575,12 @@ BUILTIN_WORKFLOWS = (
             "them, keep each person in People with whether you're already connected, score "
             "them against strategy/ICP.md, and list them best fit first in "
             "people/linkedin-engagers.csv. People who fit and aren't connected get a connection "
-            "request from you, a few each weekday. Reads with your saved LinkedIn session."
+            "request from you, a few each weekday. Runs daily by default and reads with your "
+            "saved LinkedIn session."
         ),
         executor=linkedin_engagers.KEY,
-        version_label="1.4.0",
+        # 1.5.0: a saved copy can run daily, and a new one starts daily.
+        version_label="1.5.0",
         presentation=WorkflowDiagram(
             direction="TD",
             nodes=(
@@ -1642,7 +1644,9 @@ BUILTIN_WORKFLOWS = (
                 DiagramEdge("ask", "files"),
             ),
         ),
-        schedule_modes=("on_demand",),
+        schedule_modes=("on_demand", "daily"),
+        # After profile viewers (08:00), so one member's two reads don't start together.
+        default_schedule={"cadence": "daily", "local_time": linkedin_engagers.DAILY_DEFAULT_TIME},
         system=LINKEDIN_SYSTEM,
         input_schema=linkedin_engagers.INPUT_SCHEMA,
         model_route=linkedin_engagers.ROUTE,

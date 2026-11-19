@@ -47,6 +47,32 @@ async def _repair_schedule_timeouts(*, apply: bool) -> None:
         print(f"{action}: {schedule.id}")
 
 
+async def _schedule_linkedin_engagers(*, apply: bool) -> None:
+    from types import SimpleNamespace
+
+    from tin_lite.linkedin_engagers_schedule import schedule_saved_copies
+
+    settings = get_settings()
+    temporal = await Client.connect(
+        settings.temporal_endpoint,
+        namespace=settings.temporal_namespace,
+        api_key=settings.temporal_api_key.get_secret_value(),
+        tls=True,
+    )
+    database = Database(settings.runtime_dsn)
+    await database.connect()
+    try:
+        runtime = SimpleNamespace(database=database, temporal=temporal)
+        lines = await schedule_saved_copies(runtime=runtime, settings=settings, apply=apply)
+    finally:
+        await database.close()
+    for line in lines:
+        schedule = f" {line['schedule']}" if "schedule" in line else ""
+        print(f"{line['outcome']}: {line['project_workflow_id']}{schedule}")
+    if not apply:
+        print("dry run: pass --apply to schedule them")
+
+
 async def _create_project(name: str, repo_id: str) -> None:
     settings = get_settings()
     storage = CodeStorage(
@@ -314,6 +340,13 @@ def main() -> None:
     schedule_timeouts.add_argument(
         "--apply", action="store_true", help="update stored schedules (default: dry run)"
     )
+    engagers = commands.add_parser(
+        "schedule-linkedin-engagers",
+        help="run every saved LinkedIn engagers copy without a schedule daily, as its member",
+    )
+    engagers.add_argument(
+        "--apply", action="store_true", help="save the schedules (default: dry run)"
+    )
     community = commands.add_parser(
         "validate-community", help="check the contributed workflow packages in this checkout"
     )
@@ -370,6 +403,8 @@ def main() -> None:
         asyncio.run(_sync_builtins())
     elif args.command == "repair-schedule-timeouts":
         asyncio.run(_repair_schedule_timeouts(apply=args.apply))
+    elif args.command == "schedule-linkedin-engagers":
+        asyncio.run(_schedule_linkedin_engagers(apply=args.apply))
     elif args.command == "validate-community":
         asyncio.run(_validate_community(args.root, args.private, args.package))
     elif args.command == "serve":

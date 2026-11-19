@@ -56,6 +56,22 @@ ROUTE = ModelRoute(
     capabilities=frozenset({ModelCapability.TEXT, ModelCapability.JSON_SCHEMA}),
 )
 MAX_OUTPUT_TOKENS = 6000
+# One read a day per member. A new copy starts at 13:00 in the founder's time zone, after
+# profile viewers' 08:00. Copies Tin schedules itself get a minute between 11:00 and 16:00 from
+# their project and member, so members' reads don't all reach the LinkedIn sandbox lane at once.
+DAILY_DEFAULT_TIME = "13:00"
+DAILY_FROM_MINUTE = 11 * 60
+DAILY_UNTIL_MINUTE = 16 * 60
+
+
+def daily_time(project_id: UUID, member: str) -> str:
+    """The member's own local time for a daily read, the same on every call."""
+
+    digest = hashlib.sha256(f"{project_id}:{member}".encode()).digest()
+    span = DAILY_UNTIL_MINUTE - DAILY_FROM_MINUTE
+    minute = DAILY_FROM_MINUTE + int.from_bytes(digest[:4], "big") % span
+    return f"{minute // 60:02d}:{minute % 60:02d}"
+
 
 INPUT_SCHEMA: dict[str, Any] = {
     "type": "object",
