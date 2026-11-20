@@ -1,0 +1,144 @@
+/* Brand > Images: the tab strip and search reuse Analytics' tabs (analytics.css); kind chips,
+   then a grid of cards. Thumbnails sit on a checkerboard so a transparent ground shows. */
+
+.brand-view {
+  display: flex;
+  flex-direction: column;
+  gap: 18px;
+}
+
+.brand-view .workspace-header { margin-bottom: 0; }
+
+.brand-search {
+  width: min(280px, 100%);
+  margin-bottom: 8px;
+  padding: 7px 10px;
+  border: 1px solid var(--paper-border);
+  border-radius: 8px;
+  background: var(--paper-card);
+  color: var(--ink);
+  font: 14px/18px var(--sans);
+}
+
+.brand-search:focus {
+  border-color: var(--paper-border-strong);
+  outline: none;
+  background: var(--paper-input-focus);
+}
+
+.brand-kinds {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.brand-kind {
+  padding: 5px 12px;
+  border: 1px solid var(--paper-border);
+  border-radius: 999px;
+  background: transparent;
+  color: var(--ink-secondary);
+  font: 13px/16px var(--sans);
+  cursor: pointer;
+}
+
+.brand-kind:hover { color: var(--ink); }
+
+.brand-kind.is-active {
+  border-color: var(--paper-border-strong);
+  background: var(--paper-deep);
+  color: var(--ink);
+}
+
+.brand-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(200px, 1fr));
+  gap: 16px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.brand-card {
+  display: flex;
+  min-width: 0;
+  flex-direction: column;
+  overflow: hidden;
+  border: 1px solid var(--paper-border);
+  border-radius: 10px;
+  background: var(--paper-card);
+}
+
+.brand-card.is-retired { opacity: 0.6; }
+
+.brand-thumb {
+  display: grid;
+  aspect-ratio: 1;
+  place-items: center;
+  overflow: hidden;
+  background-color: var(--paper-well);
+  background-image:
+    linear-gradient(45deg, var(--paper-deep) 25%, transparent 25%),
+    linear-gradient(-45deg, var(--paper-deep) 25%, transparent 25%),
+    linear-gradient(45deg, transparent 75%, var(--paper-deep) 75%),
+    linear-gradient(-45deg, transparent 75%, var(--paper-deep) 75%);
+  background-position: 0 0, 0 8px, 8px -8px, -8px 0;
+  background-size: 16px 16px;
+}
+
+.brand-thumb img {
+  width: 100%;
+  height: 100%;
+  object-fit: contain;
+}
+
+.brand-thumb-wait {
+  padding: 12px;
+  color: var(--ink-muted);
+  font: 12px/16px var(--sans);
+  text-align: center;
+}
+
+.brand-diagram {
+  width: 100%;
+  height: 100%;
+  padding: 8px;
+  background: var(--paper-card);
+}
+
+.brand-diagram svg {
+  width: 100%;
+  height: 100%;
+}
+
+.brand-card-text {
+  display: flex;
+  min-width: 0;
+  flex-direction: column;
+  gap: 2px;
+  padding: 10px 12px 4px;
+}
+
+.brand-card-text strong {
+  overflow: hidden;
+  color: var(--ink);
+  font: 600 14px/18px var(--sans);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.brand-card-text span {
+  color: var(--ink-muted);
+  font: 12px/16px var(--sans);
+}
+
+.brand-card-actions {
+  display: flex;
+  gap: 4px;
+  padding: 4px 6px 8px;
+}
+
+@media (max-width: 640px) {
+  .brand-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 10px; }
+  .brand-search { width: 100%; }
+}

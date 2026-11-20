@@ -64,11 +64,11 @@ function configuredOrigin(value) {
 }
 // The saved workflow that holds a page's posting times (linkedin_slots.py).
 const LINKEDIN_SLOTS_KEY = "social.linkedin_post_slots";
-const ALLOWED_VIEWS = new Set(["workflows", "activity", "decisions", "people", "analytics", "ai-visibility", "files", "integrations"]);
+const ALLOWED_VIEWS = new Set(["workflows", "activity", "decisions", "people", "analytics", "ai-visibility", "brand", "files", "integrations"]);
 if (BILLING_ENABLED) ALLOWED_VIEWS.add("billing");
 // One small History API router. Legacy bookmarks are input-only compatibility;
 // new links use paths. Document heading fragments are not application routes.
-const DASHBOARD_ROUTE = /^(?:system|workflows|chat|activity|decisions|people|analytics|ai-visibility|files|integrations|connect|billing|file|(?:document|task|compare)\/[^/?]+)(?:\?|$)/;
+const DASHBOARD_ROUTE = /^(?:system|workflows|chat|activity|decisions|people|analytics|ai-visibility|brand|files|integrations|connect|billing|file|(?:document|task|compare)\/[^/?]+)(?:\?|$)/;
 // `carry` names the only current query parameters that survive; null keeps the rest.
 function routeUrl(route, base = window.location.href, carry = null) {
   const url = new URL(base);
@@ -1964,6 +1964,7 @@ function render() {
   if (state.view !== "people" || state.projectAccess !== "ready") window.TinPeople?.close();
   if (state.view !== "analytics" || state.projectAccess !== "ready") window.TinAnalytics?.close();
   if (state.view !== "ai-visibility" || state.projectAccess !== "ready") window.TinAIVisibility?.close();
+  if (state.view !== "brand" || state.projectAccess !== "ready") window.TinBrandImages?.close();
   state.comparePage?.destroy();
   state.comparePage = null;
   disposeDocument();
@@ -1996,6 +1997,7 @@ function render() {
   if (state.view === "people") renderPeople();
   if (state.view === "analytics") renderAnalytics();
   if (state.view === "ai-visibility") renderAIVisibility();
+  if (state.view === "brand") renderBrand();
   if (state.view === "files") renderFiles();
   if (state.view === "integrations") renderIntegrations();
   if (state.view === "billing") window.TinBilling.mount(main, {
@@ -2032,6 +2034,25 @@ function renderAIVisibility() {
     api,
     projectId: state.project.id,
     brand: state.project.name,
+  });
+}
+
+// Brand > Images: the project's image library (brand-images.js). Files are read at the
+// library's revision with the member's session, as the Files viewer reads them.
+function renderBrand() {
+  const projectId = state.project.id;
+  const rawBytes = (route) => authorizedFetch(projectFileRawUrl(route, false, projectId), {
+    headers: { Accept: "*/*" },
+  }).then((response) => response.arrayBuffer());
+  window.TinBrandImages.mount(main, {
+    api,
+    projectId,
+    toast: showToast,
+    rawBytes,
+    rawText: (route) => rawBytes(route).then((bytes) => new TextDecoder("utf-8", { fatal: true }).decode(bytes)),
+    mediaUrl: projectMediaUrl,
+    loadDiagram: loadDiagramRenderer,
+    download: (route) => downloadProjectFile(route),
   });
 }
 
