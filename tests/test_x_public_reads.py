@@ -252,6 +252,9 @@ def test_public_reads_are_an_explicit_reviewed_capability() -> None:
         "x.public.read",
         "x.bookmarks.read",
         "x.likes.read",
+        "x.feed.read",
+        "x.follows.write",
+        "x.lists.manage",
     )
     assert "public posts" in definition.description
     assert x_connection.CAPABILITY_SCOPES["x.public.read"] == {"tweet.read", "users.read"}
@@ -272,30 +275,22 @@ def test_public_reads_are_an_explicit_reviewed_capability() -> None:
         )
 
 
-async def test_public_reads_need_their_own_consent_and_reconnecting_keeps_it() -> None:
+async def test_an_older_connection_without_public_reads_reconnects_first() -> None:
     integrations, db, api = await service(PublicX())
-    first, query = await connect(integrations, api)
-    assert first.configuration["granted_capabilities"] == ["x.posts.read"]
+    first, _ = await connect(integrations, api)
+    assert "x.public.read" in first.configuration["granted_capabilities"]
+    # A connection made before connecting asked for everything.
+    first.configuration["granted_capabilities"] = ["x.posts.read"]
     with pytest.raises(IntegrationAuthorizationError, match="additional access"):
         await integrations.x.search_recent(first, query="brand identity")
     with pytest.raises(IntegrationAuthorizationError, match="additional access"):
         await integrations.x.user_posts(first, username="studio")
     assert reads(api) == []
-
-    opted, opted_query = await connect(integrations, api, capabilities=("x.public.read",))
-    # The same scopes as reading your own posts: X's screen asks for nothing new.
-    assert opted_query["scope"] == query["scope"]
-    assert opted.configuration["granted_capabilities"] == ["x.posts.read", "x.public.read"]
-    assert await integrations.x.connection(PROJECT_ID, "x.public.read")
-
-    # A later publishing upgrade merges what was granted, so public reads stay.
-    upgraded, _ = await connect(integrations, api, capabilities=("x.posts.publish",))
-    assert set(upgraded.configuration["granted_capabilities"]) == {
+    assert x_connection.capabilities_for({"tweet.read", "users.read"}) == [
         "x.posts.read",
-        "x.posts.publish",
         "x.public.read",
-    }
-    assert x_connection.capabilities_for({"tweet.read", "users.read"}) == ["x.posts.read"]
+        "x.feed.read",
+    ]
     await integrations.close()
 
 
@@ -633,6 +628,7 @@ async def test_gateway_call_settles_x_refusals_with_what_x_said() -> None:
 
 async def test_gateway_call_without_the_capability_is_a_settled_refusal() -> None:
     integrations, db, api, connection = await public_service(capabilities=None)
+    connection.configuration["granted_capabilities"] = ["x.posts.read"]
     with pytest.raises(ServiceCallRefused, match="additional access") as refused:
         await integrations.x.call(
             "x.user.posts",
@@ -715,6 +711,14 @@ async def test_gateway_reads_public_posts_with_receipts_replay_and_settled_refus
 
     try:
         await authorize()
+        # A connection made before connecting asked for everything: own posts only.
+        await f.db.pool.execute(
+            "UPDATE integration_connections SET configuration = jsonb_set("
+            "configuration, '{granted_capabilities}', '[\"x.posts.read\"]'::jsonb) "
+            "WHERE project_id=$1 AND provider_key=$2",
+            f.project.id,
+            X_PROVIDER,
+        )
         run, workflow, _, _, _ = await code.selected(run_id)
         body = definition()
         body["integration_requirements"] = [

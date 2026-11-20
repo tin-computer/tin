@@ -239,12 +239,9 @@ Stripe and PostHog arguments, projected fields, paging and errors are documented
 ### Public X posts
 
 A package reads public X posts through the project's own X connection (`social.x`) with the
-`x.public.read` capability: recent search, and one public account's own recent posts. The
-capability uses the scopes every X connection already holds, but Tin records it on its own so a
-project opts in to it. A connection made for voice capture or publishing needs one reconnect
-that asks for it, for example `start_integration_connection` with
-`capabilities: ["x.public.read"]`; reconnecting keeps what was granted before. Until then a
-workflow that requires it does not start, and a call without it is refused before X is asked.
+`x.public.read` capability: recent search, and one public account's own recent posts. Every X
+connection gets it. A connection made before Tin asked for it needs one reconnect; until then
+a workflow that requires it does not start, and a call without it is refused before X is asked.
 Procedures can bind it through `call_service` the same way.
 
 ```json

@@ -96,9 +96,9 @@ STRIPE_CAPABILITIES = (
 )
 # Read-only PostHog capabilities for the one project the founder selects.
 POSTHOG_CAPABILITIES = ("query.read", "definitions.read", "insights.read")
-# x.public.read reads other accounts' public posts for research; a project opts in to it.
-# x.bookmarks.read and x.likes.read read the account's own bookmarks and likes, only for the
-# member who connected it.
+# Connecting X asks for all of these. x.bookmarks.read, x.likes.read and x.feed.read read the
+# account's own bookmarks, likes and Following feed, and x.follows.write and x.lists.manage
+# follow accounts and manage its Lists, only for the member who connected it.
 X_CAPABILITIES = (
     "x.posts.read",
     "x.posts.publish",
@@ -106,6 +106,9 @@ X_CAPABILITIES = (
     "x.public.read",
     "x.bookmarks.read",
     "x.likes.read",
+    "x.feed.read",
+    "x.follows.write",
+    "x.lists.manage",
 )
 # List the channels Tin can post to (public, and private ones it was added to) and post Tin's
 # messages; nothing is read from channels.
@@ -535,8 +538,9 @@ def registered_integrations() -> tuple[IntegrationDefinition, ...]:
             name="X",
             badge="X",
             description=(
-                "Read your own posts, optionally public posts for research and your bookmarks "
-                "and likes, and publish only posts you explicitly approve."
+                "Read your own posts, public posts for research and your bookmarks, likes and "
+                "Following feed, follow accounts and manage Lists when you ask, and publish only "
+                "posts you explicitly approve."
             ),
             access_label="Reads posts · approved publishing",
             capabilities=X_CAPABILITIES,
@@ -1093,8 +1097,6 @@ class IntegrationService:
             requested_capabilities = (
                 WORKSPACE_DEFAULT_CAPABILITIES
                 if provider_key == GOOGLE_WORKSPACE_PROVIDER
-                else ("x.posts.read",)
-                if provider_key == X_PROVIDER
                 else definition.capabilities
             )
         else:
@@ -1105,7 +1107,10 @@ class IntegrationService:
                 raise IntegrationAuthorizationError(
                     "requested integration capabilities are empty or unsupported"
                 )
-        if provider_key in {GOOGLE_WORKSPACE_PROVIDER, X_PROVIDER}:
+        if provider_key == X_PROVIDER:
+            # Connecting X always asks for everything Tin reads and publishes.
+            requested_capabilities = tuple(definition.capabilities)
+        if provider_key == GOOGLE_WORKSPACE_PROVIDER:
             existing = await self._database.get_integration_connection(
                 project_id=project_id, provider_key=provider_key
             )

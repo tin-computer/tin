@@ -8,8 +8,10 @@ Code packages read public posts through the service gateway (``call``): recent s
 one public account's recent posts. Each is a paid X read on Tin's X app, made with the
 project's own connection; the package's declared call limit is the runaway guard.
 
-The connected account's bookmarks and likes (``bookmarks``, ``likes``) are private on X, so
-only the member who connected it reads them, over MCP; they are never a gateway operation.
+The connected account's bookmarks, likes and Following feed (``bookmarks``, ``likes``,
+``feed``) are private on X, so only the member who connected it reads them, over MCP; they are
+never a gateway operation. Following, unfollowing and the account's Lists act as the account,
+so only that member does them too, over MCP, one account at a time.
 """
 
 from __future__ import annotations
@@ -66,39 +68,46 @@ ID = re.compile(r"^[0-9]{1,19}$")
 PUBLIC_READ = "x.public.read"
 BOOKMARKS = "x.bookmarks.read"
 LIKES = "x.likes.read"
+FEED = "x.feed.read"
+FOLLOWS = "x.follows.write"
+LISTS = "x.lists.manage"
 CAPABILITY_SCOPES = {
     "x.posts.read": {"tweet.read", "users.read"},
     "x.posts.publish": {"tweet.write"},
     "x.media.upload": {"tweet.write", "media.write"},
-    # The scopes every connection already holds, recorded as its own capability so a project
-    # opts in to reading other accounts' public posts explicitly (see capabilities_for).
     PUBLIC_READ: {"tweet.read", "users.read"},
     BOOKMARKS: {"bookmark.read", "tweet.read", "users.read"},
     LIKES: {"like.read", "tweet.read", "users.read"},
+    FEED: {"tweet.read", "users.read"},
+    FOLLOWS: {"follows.write", "tweet.read", "users.read"},
+    LISTS: {"list.read", "list.write", "tweet.read", "users.read"},
 }
-# Granted only when a connection asked for them, never inferred from the scopes alone.
-OPT_IN_CAPABILITIES = frozenset({PUBLIC_READ, BOOKMARKS, LIKES})
-# The connected account's own lists. X keeps bookmarks and likes private, so each is one
-# member's, never the project's: capability -> (what, X's path under the user, fewest a page).
+# The connected account's own lists. X keeps bookmarks, likes and the home timeline private, so
+# each is one member's, never the project's: capability -> (what, X's path under the user,
+# fewest a page). X's API has only the chronological Following timeline, no For You.
 OWN_LISTS = {
     BOOKMARKS: ("bookmarks", "bookmarks", 1),
     LIKES: ("likes", "liked_tweets", 5),
+    FEED: ("Following feed", "timelines/reverse_chronological", 1),
 }
 
 
 def not_yours(capability: str) -> str:
+    if capability not in OWN_LISTS:
+        return "Only the member who connected X in this project can act as its account."
     what = OWN_LISTS[capability][0]
     return (
-        f"Only the member who connected X in this project can read its {what}; {what} are "
-        "private on X."
+        f"Only the member who connected X in this project can read its {what}, which X keeps "
+        "private."
     )
 
 
 def allow_first(capability: str) -> str:
-    what = OWN_LISTS[capability][0]
+    what = OWN_LISTS[capability][0] if capability in OWN_LISTS else "follows and Lists"
+    verb = "read its" if capability in OWN_LISTS else "manage"
     return (
-        f"X hasn't allowed Tin to read {what} yet. Allow {what} on the X card in Integrations, "
-        f"or start the X connection again with the {capability} capability."
+        f"X hasn't allowed Tin to {verb} {what} yet. Reconnect X on the X card in "
+        "Integrations; connecting asks for everything Tin reads and publishes."
     )
 
 
@@ -117,6 +126,8 @@ OPERATIONS = {
     ),
 }
 USERNAME = re.compile(r"[A-Za-z0-9_]{1,15}")
+MAX_LIST_NAME = 25
+MAX_LIST_DESCRIPTION = 100
 CURSOR = re.compile(r"[A-Za-z0-9]{1,256}")
 TIME = re.compile(r"\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}Z")
 MEDIA_KEY = re.compile(r"[A-Za-z0-9_]{1,64}")
@@ -167,12 +178,8 @@ def scopes_for(capabilities: tuple[str, ...] | list[str]) -> set[str]:
     return scopes
 
 
-def capabilities_for(scopes: set[str], requested: tuple[str, ...] | list[str] = ()) -> list[str]:
-    return [
-        key
-        for key, required in CAPABILITY_SCOPES.items()
-        if required <= scopes and (key not in OPT_IN_CAPABILITIES or key in requested)
-    ]
+def capabilities_for(scopes: set[str]) -> list[str]:
+    return [key for key, required in CAPABILITY_SCOPES.items() if required <= scopes]
 
 
 def authorization_url(
@@ -559,12 +566,25 @@ def _public_page(
     return {"posts": clean, "next_token": cursor}
 
 
-def _own_list_page(result: dict[str, Any], *, limit: int, what: str) -> dict[str, Any]:
-    """Bookmarked or liked posts with the post each quotes; protected authors' posts are
-    counted only.
+def _referenced(item: dict[str, Any], kind: str) -> Any:
+    refs = item.get("referenced_posts")
+    return next(
+        (
+            ref.get("id")
+            for ref in (refs if isinstance(refs, list) else [])
+            if isinstance(ref, dict) and ref.get("type") == kind
+        ),
+        None,
+    )
 
-    A quoted post X couldn't return (deleted, protected or malformed) leaves `quoted` empty
-    rather than failing the page.
+
+def _own_list_page(result: dict[str, Any], *, limit: int, what: str) -> dict[str, Any]:
+    """Bookmarked, liked or Following-feed posts with the post each quotes; protected authors'
+    posts are counted only.
+
+    A repost is replaced by the post it reposts, with `reposted_by`; when X didn't return that
+    post, the repost itself stays. A quoted post X couldn't return (deleted, protected or
+    malformed) leaves `quoted` empty rather than failing the page.
     """
     posts = result.get("data", [])
     meta = result.get("meta", {})
@@ -584,22 +604,25 @@ def _own_list_page(result: dict[str, Any], *, limit: int, what: str) -> dict[str
         if post is None:
             protected += 1
             continue
-        refs = item.get("referenced_posts")
-        quoted_id = next(
-            (
-                ref.get("id")
-                for ref in (refs if isinstance(refs, list) else [])
-                if isinstance(ref, dict) and ref.get("type") == "quoted"
-            ),
-            None,
-        )
+        reposted_by = None
+        original_id = _referenced(item, "retweeted")
+        if original_id in included:
+            try:
+                original = _public_post(included[original_id], authors, media, None)
+            except IntegrationUpstreamError:
+                original = None
+            if original is None:
+                protected += 1
+                continue
+            reposted_by, post, item = post["author"], original, included[original_id]
+        quoted_id = _referenced(item, "quoted")
         quoted = None
         if quoted_id in included:
             try:
                 quoted = _public_post(included[quoted_id], authors, media, None)
             except IntegrationUpstreamError:
                 quoted = None
-        clean.append({**post, "quoted": quoted})
+        clean.append({**post, "quoted": quoted, "reposted_by": reposted_by})
     cursor = meta.get("next_token")
     if cursor is not None and (not isinstance(cursor, str) or not CURSOR.fullmatch(cursor)):
         raise IntegrationUpstreamError("X returned an invalid next_token")
@@ -748,10 +771,7 @@ class XConnection:
                     "username": user["username"][:100],
                     "protected": user["protected"],
                     "granted_scopes": sorted(scopes),
-                    # Reconnecting asks again for what was granted (start_connect merges it).
-                    "granted_capabilities": capabilities_for(
-                        scopes, attempt.requested_capabilities
-                    ),
+                    "granted_capabilities": capabilities_for(scopes),
                     "oauth_client_id": self.integrations._settings.x_oauth_client_id,
                     "auth_attempt": state_hash,
                 },
@@ -1109,6 +1129,37 @@ class XConnection:
         """One page of the posts the connected account liked, most recent first."""
         return await self._own_list(LIKES, project_id, clerk_user_id, max_results, pagination_token)
 
+    async def feed(
+        self,
+        project_id: UUID,
+        clerk_user_id: str,
+        *,
+        max_results: int = 25,
+        pagination_token: str | None = None,
+        since_id: str | None = None,
+        exclude_replies: bool = False,
+        exclude_reposts: bool = False,
+    ) -> dict[str, Any]:
+        """One page of the connected account's Following feed, newest first.
+
+        X keeps the latest 3,200 posts or seven days. `since_id` reads only posts newer than
+        one already seen. A repost is returned as the post it reposts, with `reposted_by`."""
+        filters: dict[str, Any] = {}
+        if since_id is not None:
+            filters["since_id"] = _id(since_id, name="since_id")
+        if type(exclude_replies) is not bool or type(exclude_reposts) is not bool:
+            raise IntegrationInputError("exclude_replies and exclude_reposts must be true or false")
+        exclude = [
+            name
+            for name, wanted in (("replies", exclude_replies), ("retweets", exclude_reposts))
+            if wanted
+        ]
+        if exclude:
+            filters["exclude"] = ",".join(exclude)
+        return await self._own_list(
+            FEED, project_id, clerk_user_id, max_results, pagination_token, filters
+        )
+
     async def _own_list(
         self,
         capability: str,
@@ -1116,16 +1167,12 @@ class XConnection:
         clerk_user_id: str,
         max_results: int,
         pagination_token: str | None,
+        filters: dict[str, Any] | None = None,
     ) -> dict[str, Any]:
         """A page of one of the account's private lists, for the member who connected it.
         Each page is a paid read on Tin's X app."""
         what, path, fewest = OWN_LISTS[capability]
-        connection = await self.connection(project_id)
-        if connection.connected_by_clerk_user_id != clerk_user_id:
-            raise IntegrationAuthorizationError(not_yours(capability))
-        granted = connection.configuration.get("granted_capabilities")
-        if not isinstance(granted, list) or capability not in granted:
-            raise IntegrationAuthorizationError(allow_first(capability))
+        connection, account = await self._member_connection(capability, project_id, clerk_user_id)
         params: dict[str, Any] = {
             "max_results": _limit(max_results, fewest),
             "post.fields": PUBLIC_POST_FIELDS,
@@ -1135,13 +1182,216 @@ class XConnection:
         }
         if _cursor(pagination_token, "pagination_token"):
             params["pagination_token"] = pagination_token
-        account = _id(connection.external_account_id, name="account ID")
+        params.update(filters or {})
         result = await self._request(
             connection, capability, "GET", f"/2/users/{account}/{path}", params=params
         )
         page = _own_list_page(result, limit=max_results, what=what)
         username = connection.configuration.get("username")
         return {"account": {"id": account, "username": username}, **page}
+
+    async def _member_connection(
+        self, capability: str, project_id: UUID, clerk_user_id: str
+    ) -> tuple[Any, str]:
+        """The connection and its account ID, for the member who connected it, once X allowed
+        `capability`; refused before X is asked otherwise."""
+        connection = await self.connection(project_id)
+        if connection.connected_by_clerk_user_id != clerk_user_id:
+            raise IntegrationAuthorizationError(not_yours(capability))
+        granted = connection.configuration.get("granted_capabilities")
+        if not isinstance(granted, list) or capability not in granted:
+            raise IntegrationAuthorizationError(allow_first(capability))
+        return connection, _id(connection.external_account_id, name="account ID")
+
+    async def _user(self, connection: Any, capability: str, username: Any) -> dict[str, Any]:
+        """Look up one account by username, protected or not."""
+        name = username.removeprefix("@") if isinstance(username, str) else None
+        if name is None or not USERNAME.fullmatch(name):
+            raise IntegrationInputError("X username must be 1-15 letters, digits or _")
+        result = await self._request(
+            connection,
+            capability,
+            "GET",
+            f"/2/users/by/username/{name}",
+            params={"user.fields": "protected"},
+            problems=True,
+        )
+        user = result.get("data")
+        if not isinstance(user, dict):
+            raise IntegrationInputError(f"X found no account @{name}")
+        found = user.get("username")
+        if (
+            not isinstance(user.get("id"), str)
+            or not ID.fullmatch(user["id"])
+            or not isinstance(found, str)
+            or not USERNAME.fullmatch(found)
+        ):
+            raise IntegrationUpstreamError("X returned an invalid account")
+        return {"id": user["id"], "username": found}
+
+    async def follow(self, project_id: UUID, clerk_user_id: str, *, username: str):
+        """Follow one account as the connected account. A protected account gets a request."""
+        connection, me = await self._member_connection(FOLLOWS, project_id, clerk_user_id)
+        user = await self._user(connection, FOLLOWS, username)
+        result = await self._request(
+            connection,
+            FOLLOWS,
+            "POST",
+            f"/2/users/{me}/following",
+            ambiguous_write=True,
+            json={"target_user_id": user["id"]},
+        )
+        data = result.get("data")
+        if not isinstance(data, dict) or type(data.get("following")) is not bool:
+            raise IntegrationDeliveryUnknownError("X's follow result is uncertain; check it on X")
+        return {
+            "username": user["username"],
+            "following": data["following"],
+            "pending": data.get("pending_follow") is True,
+        }
+
+    async def unfollow(self, project_id: UUID, clerk_user_id: str, *, username: str):
+        """Stop following one account as the connected account."""
+        connection, me = await self._member_connection(FOLLOWS, project_id, clerk_user_id)
+        user = await self._user(connection, FOLLOWS, username)
+        result = await self._request(
+            connection,
+            FOLLOWS,
+            "DELETE",
+            f"/2/users/{me}/following/{user['id']}",
+            ambiguous_write=True,
+        )
+        data = result.get("data")
+        if not isinstance(data, dict) or type(data.get("following")) is not bool:
+            raise IntegrationDeliveryUnknownError("X's unfollow result is uncertain; check it on X")
+        return {"username": user["username"], "following": data["following"]}
+
+    async def create_list(
+        self,
+        project_id: UUID,
+        clerk_user_id: str,
+        *,
+        name: str,
+        description: str | None = None,
+        private: bool = False,
+    ) -> dict[str, Any]:
+        """Create a List owned by the connected account."""
+        if not isinstance(name, str) or not 1 <= len(name.strip()) <= MAX_LIST_NAME:
+            raise IntegrationInputError(f"X List name must be 1-{MAX_LIST_NAME} characters")
+        if description is not None and (
+            not isinstance(description, str) or len(description) > MAX_LIST_DESCRIPTION
+        ):
+            raise IntegrationInputError(
+                f"X List description must be at most {MAX_LIST_DESCRIPTION} characters"
+            )
+        if type(private) is not bool:
+            raise IntegrationInputError("private must be true or false")
+        connection, _ = await self._member_connection(LISTS, project_id, clerk_user_id)
+        body: dict[str, Any] = {"name": name.strip(), "private": private}
+        if description:
+            body["description"] = description
+        result = await self._request(
+            connection, LISTS, "POST", "/2/lists", ambiguous_write=True, json=body
+        )
+        data = result.get("data")
+        if not isinstance(data, dict) or not isinstance(data.get("id"), str):
+            raise IntegrationDeliveryUnknownError(
+                "X's List result is uncertain; check the account's Lists before trying again"
+            )
+        list_id = _id(data["id"], name="List ID")
+        return {
+            "list_id": list_id,
+            "name": name.strip(),
+            "private": private,
+            "url": f"https://x.com/i/lists/{list_id}",
+        }
+
+    async def owned_lists(self, project_id: UUID, clerk_user_id: str) -> dict[str, Any]:
+        """The Lists the connected account owns, up to 100."""
+        connection, me = await self._member_connection(LISTS, project_id, clerk_user_id)
+        result = await self._request(
+            connection,
+            LISTS,
+            "GET",
+            f"/2/users/{me}/owned_lists",
+            params={"max_results": 100, "list.fields": "description,private,member_count"},
+        )
+        rows = result.get("data", [])
+        if not isinstance(rows, list):
+            raise IntegrationUpstreamError("X returned invalid Lists")
+        lists = []
+        for row in rows:
+            if not isinstance(row, dict) or not ID.fullmatch(str(row.get("id", ""))):
+                raise IntegrationUpstreamError("X returned invalid Lists")
+            count = row.get("member_count")
+            lists.append(
+                {
+                    "list_id": row["id"],
+                    "name": row.get("name") if isinstance(row.get("name"), str) else None,
+                    "description": row.get("description")
+                    if isinstance(row.get("description"), str)
+                    else None,
+                    "private": row.get("private") is True,
+                    "member_count": count if _count(count) is not None else None,
+                    "url": f"https://x.com/i/lists/{row['id']}",
+                }
+            )
+        return {"lists": lists}
+
+    async def list_member(
+        self, project_id: UUID, clerk_user_id: str, *, list_id: str, username: str, add: bool
+    ) -> dict[str, Any]:
+        """Add one account to, or remove it from, a List the connected account owns."""
+        list_id = _id(list_id, name="List ID")
+        connection, _ = await self._member_connection(LISTS, project_id, clerk_user_id)
+        user = await self._user(connection, LISTS, username)
+        if add:
+            result = await self._request(
+                connection,
+                LISTS,
+                "POST",
+                f"/2/lists/{list_id}/members",
+                ambiguous_write=True,
+                json={"user_id": user["id"]},
+            )
+        else:
+            result = await self._request(
+                connection,
+                LISTS,
+                "DELETE",
+                f"/2/lists/{list_id}/members/{user['id']}",
+                ambiguous_write=True,
+            )
+        data = result.get("data")
+        if not isinstance(data, dict) or type(data.get("is_member")) is not bool:
+            raise IntegrationDeliveryUnknownError("X's List result is uncertain; check the List")
+        return {"list_id": list_id, "username": user["username"], "is_member": data["is_member"]}
+
+    async def list_posts(
+        self,
+        project_id: UUID,
+        clerk_user_id: str,
+        *,
+        list_id: str,
+        max_results: int = 25,
+        pagination_token: str | None = None,
+    ) -> dict[str, Any]:
+        """One page of a List's posts, newest first."""
+        list_id = _id(list_id, name="List ID")
+        params: dict[str, Any] = {
+            "max_results": _limit(max_results, 1),
+            "post.fields": PUBLIC_POST_FIELDS,
+            "expansions": "author_id,attachments.media_keys,referenced_posts",
+            "user.fields": "protected",
+            "media.fields": PUBLIC_MEDIA_FIELDS,
+        }
+        if _cursor(pagination_token, "pagination_token"):
+            params["pagination_token"] = pagination_token
+        connection, _ = await self._member_connection(LISTS, project_id, clerk_user_id)
+        result = await self._request(
+            connection, LISTS, "GET", f"/2/lists/{list_id}/tweets", params=params
+        )
+        return {"list_id": list_id, **_own_list_page(result, limit=max_results, what="List posts")}
 
     async def _public_account(self, connection: Any, username: str) -> dict[str, Any]:
         result = await self._request(
