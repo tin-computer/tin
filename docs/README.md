@@ -107,6 +107,8 @@ your own accounts before use; ordinary contributor tests need no production cred
 - [Technical repair](technical-fix.md): site-fix-v5, the rules website.change applies to the latest audit.
 - [Diagram renderer](diagram-renderer.md), [composition checks](diagram-composition-quality.md)
   and [creative Studio](creative-studio.md).
+- [Project image library](project-image-library.md): illustrations, icons, photos and diagrams
+  per project, searched and drawn by a member's agent through MCP, shown at Brand > Images.
 - [Agent file uploads](agent-file-uploads.md): how a member's coding agent puts images, videos
   and text files it made into project Files through a short-lived link, since MCP carries no
   file bytes.
