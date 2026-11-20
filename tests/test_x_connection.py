@@ -15,6 +15,7 @@ from pydantic import SecretStr
 from test_integrations import PROJECT_ID, USER_ID, FakeIntegrationDatabase, settings
 
 from tin_lite.integrations import (
+    X_CAPABILITIES,
     X_PROVIDER,
     IntegrationAuthorizationError,
     IntegrationDeliveryUnknownError,
@@ -170,30 +171,31 @@ async def connect(integrations, api, *, capabilities=None):
 
 
 @pytest.mark.asyncio
-async def test_read_only_first_connection_upgrade_and_account_identity():
+async def test_connecting_asks_for_everything_and_keeps_account_identity():
     integrations, db, api = await service()
     assert integrations.is_configured(X_PROVIDER)
-    first, query = await connect(integrations, api)
-    assert query["scope"][0].split() == ["offline.access", "tweet.read", "users.read"]
-    assert first.external_account_id == "12345"
-    assert first.configuration["protected"] is False
-    assert first.configuration["granted_capabilities"] == ["x.posts.read"]
-    with pytest.raises(IntegrationAuthorizationError):
-        await integrations.x.connection(PROJECT_ID, "x.posts.publish")
-    second, query = await connect(
-        integrations, api, capabilities=("x.posts.publish", "x.media.upload")
-    )
-    assert "tweet.read" in query["scope"][0]
-    assert "tweet.write" in query["scope"][0]
-    assert "media.write" in query["scope"][0]
-    assert set(second.configuration["granted_capabilities"]) == {
-        "x.posts.read",
-        "x.posts.publish",
-        "x.media.upload",
-    }
+    second, query = await connect(integrations, api)
+    assert query["scope"][0].split() == [
+        "bookmark.read",
+        "follows.write",
+        "like.read",
+        "list.read",
+        "list.write",
+        "media.write",
+        "offline.access",
+        "tweet.read",
+        "tweet.write",
+        "users.read",
+    ]
+    assert second.external_account_id == "12345"
+    assert second.configuration["protected"] is False
+    assert second.configuration["granted_capabilities"] == list(X_CAPABILITIES)
     assert await integrations.x.connection(PROJECT_ID, "x.posts.publish")
+    # A narrower request still asks for everything.
+    second, narrow = await connect(integrations, api, capabilities=("x.posts.publish",))
+    assert narrow["scope"] == query["scope"]
     assert (
-        await integrations.x.complete(state=query["state"][0], code="good", clerk_user_id=USER_ID)
+        await integrations.x.complete(state=narrow["state"][0], code="good", clerk_user_id=USER_ID)
         == second
     )
     api.account = "99999"

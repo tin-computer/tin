@@ -1,5 +1,4 @@
-"""The connected X account's bookmarks and likes: their own consents, one member's, read over
-MCP."""
+"""The connected X account's bookmarks, likes and Following feed: one member's, read over MCP."""
 
 from __future__ import annotations
 
@@ -85,7 +84,7 @@ def bookmarks_body():
 
 
 class BookmarksX(X):
-    """X answering bookmarks and likes alike: the same page shape on two paths."""
+    """X answering bookmarks, likes and the feed alike: the same page shape on three paths."""
 
     def __init__(self):
         super().__init__()
@@ -96,6 +95,7 @@ class BookmarksX(X):
         if request.url.path in {
             f"/2/users/{self.account}/bookmarks",
             f"/2/users/{self.account}/liked_tweets",
+            f"/2/users/{self.account}/timelines/reverse_chronological",
         }:
             self.calls.append(request)
             if self.bookmarks_status != 200:
@@ -115,72 +115,56 @@ def like_reads(api):
     return [r for r in api.calls if r.url.path.endswith("/liked_tweets")]
 
 
-def test_bookmarks_are_their_own_capability() -> None:
+def feed_reads(api):
+    return [r for r in api.calls if r.url.path.endswith("/timelines/reverse_chronological")]
+
+
+def test_private_lists_come_with_every_connection_and_stay_off_the_gateway() -> None:
     definition = next(d for d in registered_integrations() if d.key == X_PROVIDER)
-    assert "x.bookmarks.read" in definition.capabilities
+    assert {"x.bookmarks.read", "x.likes.read", "x.feed.read"} <= set(definition.capabilities)
     assert x_connection.CAPABILITY_SCOPES["x.bookmarks.read"] == {
         "bookmark.read",
         "tweet.read",
         "users.read",
     }
-    # Never inferred from scopes alone, and never a gateway operation for workflow code.
-    scopes = {"bookmark.read", "tweet.read", "users.read"}
-    assert "x.bookmarks.read" not in x_connection.capabilities_for(scopes)
-    assert "x.bookmarks.read" in x_connection.capabilities_for(scopes, ["x.bookmarks.read"])
-    assert all("bookmark" not in name for name in x_connection.OPERATIONS)
-
-
-async def test_bookmarks_need_their_own_consent_and_reconnecting_keeps_it() -> None:
-    integrations, _, api = await service(BookmarksX())
-    first, query = await connect(integrations, api)
-    assert "bookmark.read" not in query["scope"][0].split()
-    with pytest.raises(IntegrationAuthorizationError, match="Allow bookmarks"):
-        await integrations.x.bookmarks(PROJECT_ID, USER_ID)
-    assert bookmark_reads(api) == []
-
-    allowed, allowed_query = await connect(integrations, api, capabilities=("x.bookmarks.read",))
-    assert "bookmark.read" in allowed_query["scope"][0].split()
-    assert allowed.configuration["granted_capabilities"] == ["x.posts.read", "x.bookmarks.read"]
-    upgraded, _ = await connect(integrations, api, capabilities=("x.posts.publish",))
-    assert set(upgraded.configuration["granted_capabilities"]) == {
-        "x.posts.read",
-        "x.posts.publish",
-        "x.bookmarks.read",
-    }
-    await integrations.close()
-
-
-def test_likes_are_their_own_capability_too() -> None:
-    definition = next(d for d in registered_integrations() if d.key == X_PROVIDER)
-    assert "x.likes.read" in definition.capabilities
     assert x_connection.CAPABILITY_SCOPES["x.likes.read"] == {
         "like.read",
         "tweet.read",
         "users.read",
     }
-    scopes = {"like.read", "tweet.read", "users.read"}
-    assert "x.likes.read" not in x_connection.capabilities_for(scopes)
-    assert all("lik" not in name for name in x_connection.OPERATIONS)
-
-
-async def test_allowing_bookmarks_does_not_allow_likes_and_one_reconnect_asks_for_both() -> None:
-    integrations, _, api = await service(BookmarksX())
-    await connect(integrations, api, capabilities=("x.bookmarks.read",))
-    with pytest.raises(IntegrationAuthorizationError, match="Allow likes on the X card"):
-        await integrations.x.likes(PROJECT_ID, USER_ID)
-    assert like_reads(api) == []
-
-    both, query = await connect(
-        integrations, api, capabilities=("x.bookmarks.read", "x.likes.read")
+    assert x_connection.CAPABILITY_SCOPES["x.feed.read"] == {"tweet.read", "users.read"}
+    # Never a gateway operation for workflow code.
+    assert all(
+        word not in name for name in x_connection.OPERATIONS for word in ("bookmark", "lik", "feed")
     )
+
+
+async def test_one_connection_reads_all_three_and_an_older_one_reconnects_first() -> None:
+    integrations, _, api = await service(BookmarksX())
+    connection, query = await connect(integrations, api)
     assert {"bookmark.read", "like.read"} <= set(query["scope"][0].split())
-    assert {"x.bookmarks.read", "x.likes.read"} <= set(both.configuration["granted_capabilities"])
+    assert {"x.bookmarks.read", "x.likes.read", "x.feed.read"} <= set(
+        connection.configuration["granted_capabilities"]
+    )
+    await integrations.x.bookmarks(PROJECT_ID, USER_ID)
+    await integrations.x.likes(PROJECT_ID, USER_ID)
+    await integrations.x.feed(PROJECT_ID, USER_ID)
+    assert len(bookmark_reads(api)) == len(like_reads(api)) == len(feed_reads(api)) == 1
+
+    # A connection made before connecting asked for everything.
+    stored = integrations.x.db.connections[(PROJECT_ID, X_PROVIDER)]
+    stored.configuration["granted_capabilities"] = ["x.posts.read"]
+    with pytest.raises(IntegrationAuthorizationError, match="Reconnect X"):
+        await integrations.x.likes(PROJECT_ID, USER_ID)
+    with pytest.raises(IntegrationAuthorizationError, match="read its Following feed yet"):
+        await integrations.x.feed(PROJECT_ID, USER_ID)
+    assert len(like_reads(api)) == len(feed_reads(api)) == 1
     await integrations.close()
 
 
 async def test_a_page_of_likes_reads_x_liked_posts_for_the_member_who_connected() -> None:
     integrations, _, api = await service(BookmarksX())
-    await connect(integrations, api, capabilities=("x.likes.read",))
+    await connect(integrations, api)
     with pytest.raises(IntegrationAuthorizationError, match="read its likes"):
         await integrations.x.likes(PROJECT_ID, "user_Teammate456")
     with pytest.raises(IntegrationInputError, match="from 5 to 100"):
@@ -201,7 +185,7 @@ async def test_a_page_of_likes_reads_x_liked_posts_for_the_member_who_connected(
 
 async def test_only_the_member_who_connected_reads_the_bookmarks() -> None:
     integrations, _, api = await service(BookmarksX())
-    await connect(integrations, api, capabilities=("x.bookmarks.read",))
+    await connect(integrations, api)
     with pytest.raises(IntegrationAuthorizationError, match="Only the member who connected X"):
         await integrations.x.bookmarks(PROJECT_ID, "user_Teammate456")
     assert bookmark_reads(api) == []
@@ -210,7 +194,7 @@ async def test_only_the_member_who_connected_reads_the_bookmarks() -> None:
 
 async def test_a_page_of_bookmarks_with_quoted_posts_and_protected_ones_counted() -> None:
     integrations, _, api = await service(BookmarksX())
-    await connect(integrations, api, capabilities=("x.bookmarks.read",))
+    await connect(integrations, api)
     page = await integrations.x.bookmarks(
         PROJECT_ID,
         USER_ID,
@@ -260,7 +244,7 @@ async def test_a_page_of_bookmarks_with_quoted_posts_and_protected_ones_counted(
 )
 async def test_malformed_arguments_fail_before_x_is_asked(arguments, message) -> None:
     integrations, _, api = await service(BookmarksX())
-    await connect(integrations, api, capabilities=("x.bookmarks.read",))
+    await connect(integrations, api)
     with pytest.raises(IntegrationInputError, match=message):
         await integrations.x.bookmarks(PROJECT_ID, USER_ID, **arguments)
     assert bookmark_reads(api) == []
@@ -269,10 +253,116 @@ async def test_malformed_arguments_fail_before_x_is_asked(arguments, message) ->
 
 async def test_x_refusing_the_read_names_it() -> None:
     integrations, _, api = await service(BookmarksX())
-    await connect(integrations, api, capabilities=("x.bookmarks.read",))
+    await connect(integrations, api)
     api.bookmarks_status = 403
     with pytest.raises(IntegrationAuthorizationError, match="X rejected this access"):
         await integrations.x.bookmarks(PROJECT_ID, USER_ID)
+    await integrations.close()
+
+
+def feed_body():
+    return {
+        "data": [
+            {
+                "id": "4001",
+                "text": "RT @builder: Agents took prod down for an hour, here is what we cha…",
+                "author_id": "701",
+                "referenced_posts": [{"type": "retweeted", "id": "4000"}],
+            },
+            {
+                "id": "4002",
+                "text": "RT @quiet_one: followers only",
+                "author_id": "701",
+                "referenced_posts": [{"type": "retweeted", "id": "3500"}],
+            },
+            {
+                "id": "4003",
+                "text": "RT @gone: a post X didn't return",
+                "author_id": "701",
+                "referenced_posts": [{"type": "retweeted", "id": "3400"}],
+            },
+            {"id": "4004", "text": "Shipping the new pricing page today", "author_id": "702"},
+        ],
+        "includes": {
+            "users": [
+                {"id": "701", "username": "friend", "name": "Friend", "protected": False},
+                {"id": "702", "username": "maker", "name": "Maker", "protected": False},
+                {"id": "703", "username": "builder", "name": "Builder", "protected": False},
+                {"id": "704", "username": "quiet_one", "name": "Quiet", "protected": True},
+                {"id": "705", "username": "source", "name": "Source", "protected": False},
+            ],
+            "posts": [
+                {
+                    "id": "4000",
+                    "text": "Agents took prod down for an hour, here is what we changed. " * 3,
+                    "author_id": "703",
+                    "referenced_posts": [{"type": "quoted", "id": "3999"}],
+                },
+                {"id": "3999", "text": "The incident report.", "author_id": "705"},
+                {"id": "3500", "text": "followers only", "author_id": "704"},
+            ],
+        },
+        "meta": {"result_count": 4, "next_token": CURSOR},
+    }
+
+
+async def test_a_page_of_the_following_feed_with_reposts_unwrapped() -> None:
+    api = BookmarksX()
+    api.bookmarks = feed_body()
+    integrations, _, api = await service(api)
+    await connect(integrations, api)
+    with pytest.raises(IntegrationAuthorizationError, match="read its Following feed"):
+        await integrations.x.feed(PROJECT_ID, "user_Teammate456")
+    assert feed_reads(api) == []
+
+    page = await integrations.x.feed(
+        PROJECT_ID,
+        USER_ID,
+        max_results=100,
+        since_id="3990",
+        exclude_replies=True,
+        exclude_reposts=False,
+    )
+    (request,) = feed_reads(api)
+    assert request.url.path == "/2/users/12345/timelines/reverse_chronological"
+    assert request.url.params["max_results"] == "100"
+    assert request.url.params["since_id"] == "3990"
+    assert request.url.params["exclude"] == "replies"
+    assert request.url.params["expansions"] == "author_id,attachments.media_keys,referenced_posts"
+    repost, gone, own = page["posts"]
+    # The repost reads as the full post it reposts, with who reposted it and what it quotes.
+    assert repost["id"] == "4000" and repost["text"].startswith("Agents took prod down")
+    assert repost["author"]["username"] == "builder"
+    assert repost["reposted_by"] == {"id": "701", "username": "friend", "name": "Friend"}
+    assert repost["quoted"]["text"] == "The incident report."
+    # X didn't return the reposted post: the repost itself stays.
+    assert gone["id"] == "4003" and gone["reposted_by"] is None
+    assert own["id"] == "4004" and own["reposted_by"] is None
+    assert page["left_out_protected"] == 1 and page["next_token"] == CURSOR
+
+    await integrations.x.feed(PROJECT_ID, USER_ID, exclude_replies=True, exclude_reposts=True)
+    assert feed_reads(api)[-1].url.params["exclude"] == "replies,retweets"
+    await integrations.x.feed(PROJECT_ID, USER_ID)
+    assert "exclude" not in feed_reads(api)[-1].url.params
+    await integrations.close()
+
+
+@pytest.mark.parametrize(
+    ("arguments", "message"),
+    [
+        ({"max_results": 0}, "from 1 to 100"),
+        ({"since_id": "12ab"}, "since_id"),
+        ({"since_id": 4000}, "since_id"),
+        ({"exclude_replies": "yes"}, "true or false"),
+        ({"pagination_token": "../elsewhere"}, "pagination_token"),
+    ],
+)
+async def test_malformed_feed_arguments_fail_before_x_is_asked(arguments, message) -> None:
+    integrations, _, api = await service(BookmarksX())
+    await connect(integrations, api)
+    with pytest.raises(IntegrationInputError, match=message):
+        await integrations.x.feed(PROJECT_ID, USER_ID, **arguments)
+    assert feed_reads(api) == []
     await integrations.close()
 
 
@@ -289,14 +379,18 @@ def mcp(monkeypatch):
     )
     read = AsyncMock(return_value={"account": {"id": "1"}, "posts": [], "next_token": None})
     likes = AsyncMock(return_value={"account": {"id": "1"}, "posts": [], "next_token": None})
+    feed = AsyncMock(return_value={"account": {"id": "1"}, "posts": [], "next_token": None})
     runtime = SimpleNamespace(
-        database=db, integrations=SimpleNamespace(x=SimpleNamespace(bookmarks=read, likes=likes))
+        database=db,
+        integrations=SimpleNamespace(x=SimpleNamespace(bookmarks=read, likes=likes, feed=feed)),
     )
     settings = SimpleNamespace(
         switchboard_public_url="https://tin.test", clerk_frontend_api_url="https://clerk.test"
     )
     server, _ = create_mcp_app(settings=settings, auth=SimpleNamespace(), runtime=lambda: runtime)
-    return SimpleNamespace(project=project, token=token, server=server, read=read, likes=likes)
+    return SimpleNamespace(
+        project=project, token=token, server=server, read=read, likes=likes, feed=feed
+    )
 
 
 async def test_mcp_reads_a_page_for_a_member_and_refuses_an_outsider(mcp) -> None:
@@ -329,5 +423,32 @@ async def test_mcp_reads_likes_for_a_member_and_refuses_an_outsider(mcp) -> None
     )
     mcp.read.assert_not_awaited()
     mcp.likes.side_effect = IntegrationAuthorizationError(x_connection.allow_first("x.likes.read"))
-    with pytest.raises(ToolError, match="X hasn't allowed Tin to read likes yet"):
+    with pytest.raises(ToolError, match="X hasn't allowed Tin to read its likes yet"):
         await mcp.server.call_tool("read_x_likes", arguments)
+
+
+async def test_mcp_reads_the_feed_for_a_member_and_refuses_an_outsider(mcp) -> None:
+    arguments = {
+        "project_id": str(mcp.project.id),
+        "max_results": 100,
+        "since_id": "3990",
+        "exclude_replies": True,
+    }
+    with pytest.raises(ToolError, match="project not found"):
+        await mcp.server.call_tool("read_x_feed", arguments)
+    mcp.feed.assert_not_awaited()
+
+    mcp.token.subject = "member"
+    await mcp.server.call_tool("read_x_feed", arguments)
+    mcp.feed.assert_awaited_once_with(
+        mcp.project.id,
+        "member",
+        max_results=100,
+        pagination_token=None,
+        since_id="3990",
+        exclude_replies=True,
+        exclude_reposts=False,
+    )
+    mcp.feed.side_effect = IntegrationAuthorizationError(x_connection.not_yours("x.feed.read"))
+    with pytest.raises(ToolError, match="Only the member who connected X"):
+        await mcp.server.call_tool("read_x_feed", arguments)

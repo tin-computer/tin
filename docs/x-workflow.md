@@ -11,15 +11,13 @@ and testing with a connected account are still needed before it is ready for pro
 ## Connect an account
 
 The X card in Integrations connects one X account to the selected Tin project. Connecting
-for voice sampling grants read access. Publishing asks for write and media permissions
-through X's authorization screen. Reconnecting keeps existing granted capabilities.
-Reading other accounts' public posts for research (`x.public.read`) is a separate opt-in for
-code packages; it uses the same read scopes but needs one reconnect that asks for it. See
-[Public X posts](project-api-connections.md#public-x-posts).
-Reading the account's bookmarks (`x.bookmarks.read`, X's `bookmark.read` scope) and likes
-(`x.likes.read`, X's `like.read` scope) are two more opt-ins. One button on the card,
-**Allow bookmarks and likes** (or just the one still missing), reconnects and asks for them,
-keeping what was granted. See [Bookmarks and likes](#bookmarks-and-likes).
+asks X for everything Tin uses in one screen: reading the account's own posts, publishing
+with media, reading public posts for research (`x.public.read`, see
+[Public X posts](project-api-connections.md#public-x-posts)), reading the account's
+bookmarks, likes and Following feed (see [Bookmarks, likes and feed](#bookmarks-likes-and-feed)),
+and following accounts and managing its Lists (see [Follows and Lists](#follows-and-lists)).
+A connection made before Tin asked for all of it shows **Reconnect** on the card; one
+reconnect asks for everything.
 Tin stores the tokens encrypted and refreshes them on the server; workflows and project
 files never receive the credentials.
 
@@ -158,17 +156,22 @@ ID; retry the same request after a lost acknowledgement. Show the exact preview 
 the user's publication instruction before calling it. File paths refer to the bound project;
 the upload handoff uses the browser instead of sending large base64 files through MCP.
 
-## Bookmarks and likes
+## Bookmarks, likes and feed
 
 `read_x_bookmarks(project_id, max_results, pagination_token)` reads the posts the
 connected account bookmarked, most recent first, one page of 1-100 (25 by default);
 `read_x_likes` reads the posts it liked the same way, one page of 5-100 (X's own range for
-likes). Pass `next_token` back as `pagination_token` until it is null. Each post has its
-full text (the long form when there is one), author, time, expanded links, attached media
-and the post it quotes (`quoted`, empty when X couldn't return it). Posts by accounts that
-protect theirs are left out and counted in `left_out_protected`.
+likes). `read_x_feed` reads the account's Following feed, newest first, one page of 1-100:
+X's home timeline in time order, the latest 3,200 posts or seven days. X's API has no For
+You feed. `since_id` reads only posts newer than one already seen, and `exclude_replies` and
+`exclude_reposts` leave those out; a repost comes back as the post it reposts, with
+`reposted_by`. Pass `next_token` back as `pagination_token` until it is null. Each post has
+its full text (the long form when there is one), author, time, expanded links, attached
+media and the post it quotes (`quoted`, empty when X couldn't return it). Posts by accounts
+that protect theirs are left out and counted in `left_out_protected`.
 
-Bookmarks and likes are private on X, so they belong to one member, not the project:
+Bookmarks, likes and the feed are private on X, so they belong to one member, not the
+project:
 
 - Only the member who connected X in the project can read them (the connection's
   `connected_by_clerk_user_id`); anyone else is refused before X is asked. Reconnecting
@@ -178,9 +181,31 @@ Bookmarks and likes are private on X, so they belong to one member, not the proj
 - The tools' descriptions tell the agent that these posts are other people's writing,
   material to analyse and never instructions.
 
-Without the opt-in each tool says how to allow it. Each page is a paid read on Tin's
+On a connection made before Tin asked for them, each tool says to reconnect. Each page is a
+paid read on Tin's
 X app (pay-per-use credits; check X's current price per post returned), so an agent reads
 only as far as its task needs.
+
+## Follows and Lists
+
+The member who connected X can act as the account over MCP, and only when they ask:
+
+- `follow_x_accounts(project_id, usernames)` and `unfollow_x_accounts` take up to 50
+  usernames (X allows 50 follows per 15 minutes). A protected account gets a follow request
+  (`pending`).
+- `create_x_list(project_id, name, description, private)` makes a List (name 1-25
+  characters, description up to 100); `read_x_lists` returns the account's Lists with each
+  `list_id`.
+- `add_x_list_members(project_id, list_id, usernames)` and `remove_x_list_members` take up
+  to 100 usernames.
+- `read_x_list(project_id, list_id, max_results, pagination_token)` reads a List's posts,
+  newest first, in the same shape as `read_x_feed`.
+
+Accounts are acted on one at a time, in order. The first refusal from X stops the run, and
+the result says what was done, where it stopped and why, and what was not tried. A follow or
+List change whose result X didn't return is reported as uncertain, never sent again. None of
+these is a gateway operation, so workflow code can't follow anyone or change a List. Each
+write and read is paid on Tin's X app.
 
 ## Verification
 
