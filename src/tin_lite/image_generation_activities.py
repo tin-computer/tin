@@ -1,9 +1,10 @@
 """Temporal activities for `brand.image`: draw one image in the project's house style and keep it.
 
 generate_image starts the run; the run reads STYLE.json, sends one request to the kind's fal
-model through StudioService (receipts and usage as Studio voice keeps them), checks the ground
-and the shape, draws once more when a check fails, and keeps the image in the library. Only the
-run ID enters Temporal history; the prompt, references and bytes stay in Postgres and Files.
+model through StudioService (receipts and usage as Studio voice keeps them), checks the ground,
+the shape and stray text, draws once more when a check fails, and keeps the image in the
+library. Only the run ID enters Temporal history; the prompt, references and bytes stay in
+Postgres and Files.
 """
 
 from __future__ import annotations
@@ -26,6 +27,7 @@ from tin_lite.image_library import (
     kind_style,
     request_body,
 )
+from tin_lite.image_text_check import StrayTextChecker
 from tin_lite.project_media import validate_media
 from tin_lite.studio import StudioError
 
@@ -34,10 +36,19 @@ STEPS = 3
 
 
 class ImageGenerationActivities:
-    def __init__(self, *, database: Any, storage: Any, studio: Any, settings: Any = None) -> None:
+    def __init__(
+        self,
+        *,
+        database: Any,
+        storage: Any,
+        studio: Any,
+        settings: Any = None,
+        text_checker: Any = None,
+    ) -> None:
         self.db = database
         self.storage = storage
         self.studio = studio
+        self.text_checker = text_checker or StrayTextChecker(settings=settings)
         self.library = ImageLibrary(database=database, storage=storage, settings=settings)
 
     async def _progress(self, run_id: UUID, step: str, number: int, summary: str) -> None:
@@ -98,6 +109,7 @@ class ImageGenerationActivities:
             )
             drawn = None
             problems: list[str] = []
+            text_note: str | None = None
             for attempt in range(1, ATTEMPTS + 1):
                 drawn = await self.studio.image(
                     run_id=run.id, request_id=f"a{attempt}", endpoint=endpoint, body=body
@@ -118,6 +130,15 @@ class ImageGenerationActivities:
                         metadata=metadata, content=drawn.content, size=size, ground=ground
                     )
                 )
+                text_note = None
+                if not problems:
+                    # Only a drawing that passed the free checks is read for text.
+                    text = await self.text_checker.check(
+                        content=drawn.content, media_type=drawn.media_type, subject=subject
+                    )
+                    if text.problem:
+                        problems.append(text.problem)
+                    text_note = text.note
                 if not problems:
                     break
                 if attempt < ATTEMPTS:
@@ -150,7 +171,7 @@ class ImageGenerationActivities:
                     "width": metadata.get("width"),
                     "height": metadata.get("height"),
                     # Kept, not refused: the second drawing was paid for and may still serve.
-                    "checks": problems,
+                    "checks": problems + ([text_note] if text_note else []),
                 },
                 client_id="brand.image",
                 run_id=run.id,

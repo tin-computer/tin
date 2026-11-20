@@ -310,7 +310,7 @@ def image_problems(
 ) -> list[str]:
     """What a drawing gets wrong that Tin can check without a model: the ground and the shape.
 
-    Stray text and made-up signatures need a vision check, which is not built yet."""
+    Stray text, made-up signatures and watermarks need a vision model: image_text_check.py."""
     problems: list[str] = []
     if ground == "transparent" and not (
         metadata.get("media_type") == "image/png" and png_has_alpha(content)

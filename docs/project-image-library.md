@@ -70,8 +70,13 @@ Tin checks it with the diagram parser and saves it at once, with no run.
    activity replays the stored result and never buys the same drawing twice. An attempt left
    unresolved stops the run with "no repeat purchase".
 4. It checks the drawing: the ground must be transparent when asked, and the shape must be
-   within 6% of the size asked. A failed check draws once more. If the second drawing fails too,
-   Tin keeps it, because it was paid for, and writes the problems into the sidecar's `checks`.
+   within 6% of the size asked. A drawing that passes those is then read for stray text
+   (letters, numbers, captions, signatures, watermarks) by `claude-sonnet-5-5`; a vector icon is
+   read as source, and any `<text>` element fails it. A failed check draws once more. If the
+   second drawing fails too, Tin keeps it, because it was paid for, and writes the problems into
+   the sidecar's `checks`. Without `ANTHROPIC_API_KEY`, or when the vision call fails, the
+   drawing is kept with the note "text not checked" in `checks`
+   (`src/tin_lite/image_text_check.py`).
 5. It saves the image, sidecar, `INDEX.json` and the wiki line in one Files commit, then marks
    the run succeeded with the image as its artifact.
 

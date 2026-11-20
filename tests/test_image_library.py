@@ -40,6 +40,7 @@ from tin_lite.image_library import (
     search,
     slugify,
 )
+from tin_lite.image_text_check import StrayTextChecker, TextCheck
 from tin_lite.run_service import start_workflow_run
 from tin_lite.studio import StudioService
 from tin_lite.studio_billing import CARD, IMAGE_CARD, card_for, price
@@ -505,14 +506,30 @@ async def styled(f):
     )
 
 
-def activities(f, seen, drawings):
+class FakeTextChecker:
+    """Answers the stray-text check from a queue; an empty queue finds no text."""
+
+    def __init__(self, answers=None):
+        self.answers = list(answers or [])
+        self.seen: list[str] = []
+
+    async def check(self, *, content, media_type, subject):
+        self.seen.append(media_type)
+        return self.answers.pop(0) if self.answers else TextCheck()
+
+
+def activities(f, seen, drawings, text_checker=None):
     studio = StudioService(
         settings=f.settings,
         database=f.db,
         client=httpx.AsyncClient(transport=fal_transport(seen, drawings)),
     )
     return ImageGenerationActivities(
-        database=f.db, storage=f.storage, studio=studio, settings=f.settings
+        database=f.db,
+        storage=f.storage,
+        studio=studio,
+        settings=f.settings,
+        text_checker=text_checker or FakeTextChecker(),
     )
 
 
@@ -572,6 +589,80 @@ async def test_a_second_failed_check_keeps_the_paid_drawing_with_its_note(public
     sidecar = json.loads(f.storage.text("brand/illustrations/illustration/an-open-door.json"))
     assert sidecar["checks"] == ["the ground is not transparent"]
     assert (await f.db.get_run(run_id)).status.value == "succeeded"
+
+
+async def test_stray_text_draws_again_once(publication_db):
+    f = await fixture(publication_db)
+    await styled(f)
+    run_id = await drawing_run(f, subject="a paper boat")
+    seen: list[httpx.Request] = []
+    checker = FakeTextChecker([TextCheck(problem="the image has stray text: No text")])
+    await activities(f, seen, [png(), png()], checker).generate(str(run_id))
+    assert len([item for item in seen if item.url.host == "fal.run"]) == 2
+    assert checker.seen == ["image/png", "image/png"]
+    sidecar = json.loads(f.storage.text("brand/illustrations/illustration/a-paper-boat.json"))
+    assert sidecar["checks"] == []
+
+
+async def test_a_drawing_that_fails_the_free_checks_is_not_read_for_text(publication_db):
+    f = await fixture(publication_db)
+    await styled(f)
+    run_id = await drawing_run(f, subject="a kite")
+    seen: list[httpx.Request] = []
+    checker = FakeTextChecker([TextCheck(note="text not checked: the vision check failed")])
+    await activities(f, seen, [png(alpha=False), png()], checker).generate(str(run_id))
+    # Only the second drawing passed the ground check, so only it was read; its note is kept.
+    assert checker.seen == ["image/png"]
+    sidecar = json.loads(f.storage.text("brand/illustrations/illustration/a-kite.json"))
+    assert sidecar["checks"] == ["text not checked: the vision check failed"]
+
+
+class FakeAnthropic:
+    def __init__(self, reply=None, error=None):
+        self.reply, self.error, self.calls = reply, error, []
+        self.messages = self
+
+    async def create(self, **parameters):
+        self.calls.append(parameters)
+        if self.error:
+            raise self.error
+        return SimpleNamespace(content=[SimpleNamespace(type="text", text=self.reply)])
+
+
+async def test_the_stray_text_checker_reads_rasters_and_svg_source():
+    found = FakeAnthropic(json.dumps({"has_text": True, "text": "No text  present\nin image"}))
+    result = await StrayTextChecker(client=found).check(
+        content=png(), media_type="image/png", subject="a lamp"
+    )
+    assert result.problem == "the image has stray text: No text present in image"
+    block = found.calls[0]["messages"][0]["content"][0]
+    assert block["type"] == "image" and block["source"]["media_type"] == "image/png"
+    assert found.calls[0]["output_config"]["format"]["type"] == "json_schema"
+
+    clean = FakeAnthropic(json.dumps({"has_text": False, "text": ""}))
+    assert (
+        await StrayTextChecker(client=clean).check(
+            content=png(), media_type="image/png", subject="a lamp"
+        )
+        == TextCheck()
+    )
+
+    broken = FakeAnthropic(reply="not json")
+    assert (
+        await StrayTextChecker(client=broken).check(
+            content=png(), media_type="image/png", subject="a lamp"
+        )
+    ).note == "text not checked: the vision check failed"
+
+    unset = StrayTextChecker(settings=SimpleNamespace(anthropic_api_key=None))
+    assert (
+        await unset.check(content=png(), media_type="image/png", subject="a lamp")
+    ).note == "text not checked: no vision model is configured"
+
+    svg = b'<svg xmlns="http://www.w3.org/2000/svg"><text x="1">Hi</text></svg>'
+    assert (await unset.check(content=svg, media_type="image/svg+xml", subject="x")).problem
+    plain = b'<svg xmlns="http://www.w3.org/2000/svg"><circle r="4"/></svg>'
+    assert await unset.check(content=plain, media_type="image/svg+xml", subject="x") == TextCheck()
 
 
 async def test_an_unresolved_drawing_is_never_bought_again(publication_db):
