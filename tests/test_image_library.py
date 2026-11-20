@@ -218,15 +218,17 @@ def test_checks_prompts_and_request_shapes():
         references=[],
     )
     assert gpt["background"] == "transparent" and "image_urls" not in gpt
+    assert gpt["image_size"] == "square_hd"
     recraft = request_body(
-        endpoint="recraft/v4",
+        endpoint="recraft/v4/style/text-to-vector",
         prompt=prompt,
         size="portrait",
         ground="any",
         kind="icon",
         references=refs,
     )
-    assert recraft["style"] == "vector_illustration" and "image_urls" not in recraft
+    assert recraft["image_urls"] == refs and recraft["image_size"] == "portrait_4_3"
+    assert "style" not in recraft and "num_images" not in recraft
     seedream = request_body(
         endpoint="bytedance/seedream/v5.5/edit",
         prompt=prompt,
@@ -235,7 +237,7 @@ def test_checks_prompts_and_request_shapes():
         kind="photo",
         references=refs,
     )
-    assert seedream["image_size"] == {"width": 1536, "height": 1024}
+    assert seedream["image_size"] == "landscape_4_3" and seedream["background"] == "auto"
 
 
 def test_image_usage_has_its_own_card():
@@ -346,7 +348,7 @@ async def test_download_links_are_short_lived_and_member_bound(publication_db):
         subject="a brass key",
         tags=["access"],
         files={"png": png()},
-        details={"model": "recraft/v4"},
+        details={"model": "recraft/v4/style/text-to-vector"},
     )
     got = await f.library.get(f.project.id, "icon/a-brass-key", ACTOR)
     assert got["image"]["files"] == {"png": "brand/illustrations/icon/a-brass-key.png"}

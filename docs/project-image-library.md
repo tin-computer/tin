@@ -88,16 +88,20 @@ out, and the dashboard shows them only on request.
 ## Models
 
 `STYLE.json` names a model per kind. With none set, the server default in `DEFAULT_MODELS`
-applies. The defaults are placeholders until the bake-off picks winners:
+applies. The defaults follow the suggested picks from the Nov 19 bake-off on Databasin and
+ZeroTB; Emre's pick is still pending:
 
 | Kind | With references | Without |
 |---|---|---|
 | illustration | `google/nano-banana-2.1/edit` | `google/nano-banana-2.1` |
-| icon | `recraft/v4` | `recraft/v4` |
-| photo | `bytedance/seedream/v5.5/edit` | `bytedance/seedream/v5.5/text-to-image` |
+| icon | `openai/gpt-image-2.6/flare/edit` | `openai/gpt-image-2.6/flare/text-to-image` |
+| photo | `google/nano-banana-2.1/edit` | `google/nano-banana-2.1` |
 
 `set_image_style` accepts any fal endpoint from the four families Tin knows how to call:
 nano-banana, seedream, gpt-image and recraft. An empty model resets the kind to the default.
+Recraft takes its style endpoints (`recraft/v4/style/text-to-image`, `.../text-to-vector`) with
+the references attached directly. Sizes go to fal as its named presets (`square_hd`,
+`landscape_4_3`, `portrait_4_3`, `landscape_16_9`), the shape the bake-off calls used.
 
 ## Deploying
 

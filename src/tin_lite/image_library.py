@@ -68,20 +68,31 @@ SIZES = {
     "wide": (1536, 864),
 }
 ASPECTS = {"square": "1:1", "landscape": "3:2", "portrait": "2:3", "wide": "16:9"}
+# fal's named sizes for the seedream, gpt-image and recraft families (checked Nov 19).
+PRESETS = {
+    "square": "square_hd",
+    "landscape": "landscape_4_3",
+    "portrait": "portrait_4_3",
+    "wide": "landscape_16_9",
+}
 
 # The fal model for each kind when STYLE.json names none. `model` takes the style's reference
-# images; `model_text` draws from words alone when a kind has no references yet. These are the
-# bake-off candidates, not a decision: change one line here, or set `model` per project with
-# set_image_style, once the bake-off picks a winner.
+# images; `model_text` draws from words alone when a kind has no references yet. These follow
+# the suggested picks from the Nov 19 bake-off on Databasin and ZeroTB (illustrations and photos
+# Nano Banana 2.1, icons GPT Image 2.6). Emre's pick is pending: change one line here, or set
+# `model` per project with set_image_style.
 DEFAULT_MODELS: dict[str, dict[str, str]] = {
     "illustration": {
         "model": "google/nano-banana-2.1/edit",
         "model_text": "google/nano-banana-2.1",
     },
-    "icon": {"model": "recraft/v4", "model_text": "recraft/v4"},
+    "icon": {
+        "model": "openai/gpt-image-2.6/flare/edit",
+        "model_text": "openai/gpt-image-2.6/flare/text-to-image",
+    },
     "photo": {
-        "model": "bytedance/seedream/v5.5/edit",
-        "model_text": "bytedance/seedream/v5.5/text-to-image",
+        "model": "google/nano-banana-2.1/edit",
+        "model_text": "google/nano-banana-2.1",
     },
 }
 # Request shapes Tin knows how to send. A model whose endpoint names none of these is refused.
@@ -345,20 +356,22 @@ def request_body(
     references: list[str],
 ) -> dict[str, Any]:
     """The fal request for one drawing. Each family names its fields its own way."""
-    width, height = SIZES[size]
     family = model_family(endpoint)
     body: dict[str, Any] = {"prompt": prompt, "num_images": 1}
     if family == "nano-banana":
-        body.update(output_format="png", aspect_ratio=ASPECTS[size])
+        body.update(output_format="png", aspect_ratio=ASPECTS[size], resolution="1K")
         if references:
             body["image_urls"] = references
     elif family == "seedream":
-        body["image_size"] = {"width": width, "height": height}
+        body.update(
+            image_size=PRESETS[size],
+            background="transparent" if ground == "transparent" else "auto",
+        )
         if references:
             body["image_urls"] = references
     elif family == "gpt-image":
         body.update(
-            image_size=f"{width}x{height}" if size != "wide" else "1536x1024",
+            image_size=PRESETS[size],
             output_format="png",
             quality="high",
             background="transparent" if ground == "transparent" else "auto",
@@ -366,12 +379,12 @@ def request_body(
         if references:
             body["image_urls"] = references
     elif family == "recraft":
-        body["image_size"] = {"width": width, "height": height}
-        body["style"] = {
-            "icon": "vector_illustration",
-            "illustration": "digital_illustration",
-            "photo": "realistic_image",
-        }[kind]
+        # recraft/v4/style/text-to-image or text-to-vector: the style comes from the
+        # references attached directly (or a style_id); there is no named style field.
+        body.pop("num_images")
+        body["image_size"] = PRESETS[size]
+        if references:
+            body["image_urls"] = references
     else:  # pragma: no cover - check_model refuses unknown families first
         raise ImageLibraryError(f"Tin does not know how to call {endpoint}")
     return body
