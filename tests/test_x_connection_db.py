@@ -15,7 +15,11 @@ from test_integrations import USER_ID, settings
 from test_procedure_publication import publication_db as publication_db
 from test_x_connection import X
 
-from tin_lite.integrations import X_PROVIDER, IntegrationAuthorizationError, IntegrationService
+from tin_lite.integrations import (
+    X_CAPABILITIES,
+    X_PROVIDER,
+    IntegrationService,
+)
 
 
 async def authorize(integrations, wire, project_id, capabilities=None):
@@ -51,11 +55,11 @@ async def test_real_postgres_x_oauth_upgrade_rotation_and_disconnect(publication
         first = await authorize(integrations, wire, project.id)
         assert first.external_account_id == "12345"
         assert first.configuration["protected"] is False
-        assert first.configuration["granted_capabilities"] == ["x.posts.read"]
+        # Connecting asks for everything.
+        assert first.configuration["granted_capabilities"] == list(X_CAPABILITIES)
         assert b"access1" not in first.credential_ciphertext
         assert (await integrations.x.timeline(first, limit=10))["posts"][0]["id"] == "100"
-        with pytest.raises(IntegrationAuthorizationError):
-            await integrations.x.connection(project.id, "x.posts.publish")
+        assert await integrations.x.connection(project.id, "x.posts.publish")
 
         upgraded = await authorize(
             integrations,
@@ -64,11 +68,7 @@ async def test_real_postgres_x_oauth_upgrade_rotation_and_disconnect(publication
             capabilities=("x.posts.publish", "x.media.upload"),
         )
         assert upgraded.id == first.id
-        assert set(upgraded.configuration["granted_capabilities"]) == {
-            "x.posts.read",
-            "x.posts.publish",
-            "x.media.upload",
-        }
+        assert upgraded.configuration["granted_capabilities"] == list(X_CAPABILITIES)
         row = await db.pool.fetchrow(
             "SELECT provider_key, external_account_id, credential_ciphertext "
             "FROM integration_connections WHERE project_id=$1",

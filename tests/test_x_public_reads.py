@@ -711,6 +711,14 @@ async def test_gateway_reads_public_posts_with_receipts_replay_and_settled_refus
 
     try:
         await authorize()
+        # A connection made before connecting asked for everything: own posts only.
+        await f.db.pool.execute(
+            "UPDATE integration_connections SET configuration = jsonb_set("
+            "configuration, '{granted_capabilities}', '[\"x.posts.read\"]'::jsonb) "
+            "WHERE project_id=$1 AND provider_key=$2",
+            f.project.id,
+            X_PROVIDER,
+        )
         run, workflow, _, _, _ = await code.selected(run_id)
         body = definition()
         body["integration_requirements"] = [
