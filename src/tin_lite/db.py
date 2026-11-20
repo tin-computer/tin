@@ -7375,6 +7375,7 @@ class Database:
             "social.x_revise": ("x_revision_ready", "Your X revision is ready."),
             "social.x_draft": ("x_draft_ready", "Your X draft is ready."),
             "social.x_publish": ("x_post_published", "Your X post is published."),
+            "brand.image": ("image_saved", "Your image is saved in the library."),
             "social.linkedin_publish": (
                 "linkedin_post_published",
                 "Your LinkedIn post is published.",
@@ -7531,6 +7532,28 @@ class Database:
             artifact_ref=artifact_ref,
             summary=summary,
             workflow_key="social.x_publish",
+        )
+
+    async def complete_image_projection(
+        self,
+        conn: asyncpg.Connection,
+        *,
+        execution_key: str,
+        run_id: UUID,
+        canonical_commit_sha: str,
+        artifact_path: str,
+        artifact_ref: str,
+        summary: str,
+    ) -> None:
+        await self._complete_readonly_report_projection(
+            conn,
+            execution_key=execution_key,
+            run_id=run_id,
+            canonical_commit_sha=canonical_commit_sha,
+            artifact_path=artifact_path,
+            artifact_ref=artifact_ref,
+            summary=summary,
+            workflow_key="brand.image",
         )
 
     async def complete_linkedin_publish_projection(

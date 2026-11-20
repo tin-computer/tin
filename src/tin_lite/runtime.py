@@ -40,6 +40,7 @@ from tin_lite.e2b_runtime import E2BRuntime
 from tin_lite.failure_interceptor import FailureClassificationInterceptor
 from tin_lite.growth_onboarding_activities import GrowthOnboardingActivities
 from tin_lite.growth_plan_activities import GrowthPlanActivities
+from tin_lite.image_generation_activities import ImageGenerationActivities
 from tin_lite.integrations import IntegrationService
 from tin_lite.keyword_plan import POLICY as KEYWORD_POLICY
 from tin_lite.keyword_plan import ROUTE_KEY as KEYWORD_ROUTE_KEY
@@ -286,6 +287,10 @@ async def build_runtime(settings: Settings) -> RuntimeServices:
     x_publish_activities = XPublishActivities(
         database=database, storage=storage, integrations=integrations
     )
+    studio = StudioService(settings=settings, database=database)
+    image_activities = ImageGenerationActivities(
+        database=database, storage=storage, studio=studio, settings=settings
+    )
     linkedin_publish_activities = LinkedInPublishActivities(
         database=database, storage=storage, integrations=integrations
     )
@@ -414,6 +419,8 @@ async def build_runtime(settings: Settings) -> RuntimeServices:
         x_style_activities.failure,
         x_publish_activities.execute,
         x_publish_activities.failure,
+        image_activities.generate,
+        image_activities.failure,
         linkedin_publish_activities.execute,
         linkedin_publish_activities.failure,
         linkedin_listening_activities.start,
@@ -637,7 +644,7 @@ async def build_runtime(settings: Settings) -> RuntimeServices:
         integrations=integrations,
         project_files=project_files,
         output_resolution=OutputResolutionService(database=database, storage=storage),
-        studio=StudioService(settings=settings, database=database),
+        studio=studio,
         codex_api=CodexAPIRelay(database=database, api_key=settings.luna_api_key.get_secret_value())
         if settings.luna_api_key is not None
         else None,

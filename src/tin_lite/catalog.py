@@ -17,6 +17,7 @@ from tin_lite import (
     content_repository_delivery,
     growth_onboarding,
     growth_plan,
+    image_library,
     linkedin_engagers,
     linkedin_listening,
     linkedin_posts,
@@ -1422,6 +1423,53 @@ BUILTIN_WORKFLOWS = (
         system=LINKEDIN_SYSTEM,
         agent_only=True,
         input_schema=linkedin_posts.INPUT_SCHEMA,
+    ),
+    BuiltinWorkflow(
+        id=image_library.WORKFLOW_ID,
+        key=image_library.KEY,
+        title="Draw an image for the library",
+        description=(
+            "Draw one illustration, icon or photo in the project's house style and keep it in "
+            "the image library (brand/illustrations/). Start it with generate_image after "
+            "search_images finds nothing that fits."
+        ),
+        executor=image_library.KEY,
+        version_label="1.0.0",
+        presentation=WorkflowDiagram(
+            direction="TD",
+            nodes=(
+                DiagramNode(
+                    "style",
+                    "store",
+                    "House style",
+                    "STYLE.json: style text, references, model",
+                ),
+                DiagramNode("draw", "step", "Draw the image", "one fal call, one to three minutes"),
+                DiagramNode(
+                    "check",
+                    "step",
+                    "Check the ground and shape",
+                    "draws once more when a check fails",
+                ),
+                DiagramNode(
+                    "library",
+                    "store",
+                    "Image library in Files",
+                    "image, notes and INDEX.json in one commit",
+                ),
+                DiagramNode("receipt", "receipt", "Saved image", "discard within 48 hours"),
+            ),
+            edges=(
+                DiagramEdge("style", "draw"),
+                DiagramEdge("draw", "check"),
+                DiagramEdge("check", "library"),
+                DiagramEdge("library", "receipt"),
+            ),
+        ),
+        schedule_modes=("on_demand",),
+        system=CREATIVE_STUDIO_SYSTEM,
+        agent_only=True,
+        input_schema=image_library.INPUT_SCHEMA,
     ),
     BuiltinWorkflow(
         id=linkedin_slots.WORKFLOW_ID,

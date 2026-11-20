@@ -133,6 +133,7 @@ async def start_workflow_run(
     _linkedin_listen: bool = False,
     _linkedin_requests: bool = False,
     _x_feedback: bool = False,
+    _image_generation: bool = False,
 ) -> WorkflowRun:
     implementation = registered_workflow_implementations().get(workflow.executor)
     if implementation is None:
@@ -261,6 +262,18 @@ async def start_workflow_run(
             project_id=project_id, clerk_user_id=started_by_clerk_user_id
         ):
             raise LookupError("project not found")
+    if workflow.executor == "brand.image":
+        # generate_image is the only way in: it checks the subject, kind and style first.
+        if (
+            not _image_generation
+            or not (start_idempotency_key or "").startswith("image:")
+            or project_workflow_id
+        ):
+            raise WorkflowInputError("Draw an image with generate_image.")
+        if getattr(settings, "fal_key", None) is None:
+            raise WorkflowExecutorUnavailableError(
+                "Image generation is not configured. No drawing was started."
+            )
     if workflow.executor == "social.x_publish":
         from tin_lite.x_posts import approved_payload
 
@@ -724,6 +737,7 @@ async def start_workflow_run(
     )
     temporal_options = {}
     durable_dispatch = paid or workflow.executor in {
+        "brand.image",
         "social.x_publish",
         "social.x_revise",
         "social.linkedin_publish",

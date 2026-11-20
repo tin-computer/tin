@@ -1655,6 +1655,32 @@ class XPublishWorkflow:
             raise
 
 
+@workflow.defn(name="brand.image")
+class ImageGenerationWorkflow:
+    """Draw one image for the project's image library; no sandbox, no review."""
+
+    @workflow.run
+    async def run(self, run_id: str) -> None:
+        try:
+            # Up to two drawings, each a synchronous fal call of one to three minutes.
+            await workflow.execute_activity(
+                "image_generate",
+                run_id,
+                start_to_close_timeout=timedelta(minutes=15),
+                retry_policy=RetryPolicy(
+                    maximum_attempts=3, maximum_interval=timedelta(seconds=10)
+                ),
+            )
+        except BaseException as exc:
+            await workflow.execute_activity(
+                "image_failure",
+                {"run_id": run_id, **failure_fields(exc)},
+                start_to_close_timeout=timedelta(minutes=1),
+                retry_policy=RetryPolicy(maximum_attempts=3),
+            )
+            raise
+
+
 LINKEDIN_LISTEN_PATCH = "linkedin-listen-v1"
 
 
@@ -2100,6 +2126,7 @@ def registered_workflows() -> list[type]:
         XStyleWorkflow,
         XFeedbackWorkflow,
         XPublishWorkflow,
+        ImageGenerationWorkflow,
         LinkedInPublishWorkflow,
         LinkedInPostSlotsWorkflow,
         LinkedInListenWorkflow,
@@ -2144,6 +2171,7 @@ def registered_workflow_implementations() -> dict[str, type]:
         "social.x_style": XStyleWorkflow,
         "social.x_revise": XFeedbackWorkflow,
         "social.x_publish": XPublishWorkflow,
+        "brand.image": ImageGenerationWorkflow,
         "social.linkedin_publish": LinkedInPublishWorkflow,
         "social.linkedin_post_slots": LinkedInPostSlotsWorkflow,
         LINKEDIN_LISTEN_WORKFLOW_NAME: LinkedInListenWorkflow,

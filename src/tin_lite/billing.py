@@ -65,6 +65,8 @@ CONNECTED_ACCOUNT_EXECUTORS = {
     "social.linkedin_profile_viewers": "tin-funded-linkedin-profile-viewers-v1",
     # Tin pays the LinkedIn sandbox calls that send approved requests and read who accepted.
     "social.linkedin_requests": "tin-funded-linkedin-requests-v1",
+    # Tin pays fal for image-library drawings; each one keeps its usage receipt and cost.
+    "brand.image": "tin-funded-images-v1",
 }
 # Spending limits a new hosted project starts with, in nanodollars. Saved policies keep
 # their own limits: these apply only where a project has no policy yet.

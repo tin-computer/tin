@@ -56,7 +56,7 @@ from tin_lite.domain import (
     StaleSettingsRevisionError,
     TriggerClient,
 )
-from tin_lite.failures import run_failure_view
+from tin_lite.failures import public_error_text, run_failure_view
 from tin_lite.growth_onboarding import KEY as GROWTH_ONBOARDING_KEY
 from tin_lite.growth_onboarding_control import (
     ConnectionPick,
@@ -727,6 +727,14 @@ Decisions. Tin never makes or changes the film.
 Files you made on this machine (card images for a LinkedIn draft, a video, an SVG) go into
 project Files through prepare_file_upload(project_id, folder): send each file to its link with
 its curl command, then name the paths in the draft. commit_project_changes is for text you write.
+
+Images: each project has an image library under brand/illustrations/ (illustrations, icons,
+photos and diagrams in its house style). When a post, page or guide needs a visual, call
+search_images first with the object or action it shows, and reuse an image that fits. Only when
+nothing fits, call generate_image with a concrete subject (an object or an action, never an
+abstraction), then check_generation after a minute. Read get_image_style first; a kind with no
+style needs set_image_style before its first drawing. Saved images are kept by default;
+discard_image undoes one only when the founder or their team asks.
 
 Tool errors start with a code, then the reason: forbidden (sign in or scope; stop), not_found
 (wrong id or no access; stop), invalid (fix the input and retry), conflict (state moved; re-read
@@ -1716,6 +1724,327 @@ def create_mcp_app(
             ).link(project_id_value, folder, token.subject)
         except FileUploadError as error:
             raise ToolError(f"invalid: {error}") from None
+
+    def image_library() -> Any:
+        from tin_lite.image_library import ImageLibrary
+
+        return ImageLibrary(
+            database=runtime().database, storage=runtime().storage, settings=settings
+        )
+
+    def image_error(error: Exception) -> ToolError:
+        code = {404: "not_found", 409: "conflict"}.get(getattr(error, "status", 422), "invalid")
+        return ToolError(f"{code}: {error}")
+
+    @server.tool(annotations=ToolAnnotations(readOnlyHint=True))
+    async def search_images(
+        project_id: str,
+        query: str = "",
+        kind: str | None = None,
+        include_retired: bool = False,
+        limit: int = 20,
+    ) -> dict[str, Any]:
+        """Find saved images in the project's image library by subject, tag or name.
+
+        Search before you generate, and reuse an image that fits. Search with the object or
+        action you need ("brass key", "handshake"), not the post's topic. Leave query empty
+        for the newest images. kind is illustration, icon, photo or diagram. Retired images
+        are left out unless include_retired is true. Each result's id is what get_image and
+        discard_image take; its files are paths in project Files.
+        """
+        from tin_lite.image_library import ImageLibraryError
+
+        token = await caller()
+        project_id_value = _mcp_uuid(project_id, field="project_id")
+        await require_project(project_id_value, token, tool_name="search_images")
+        try:
+            return await image_library().search(
+                project_id_value,
+                query,
+                kind=kind,
+                include_retired=include_retired,
+                limit=limit,
+            )
+        except ImageLibraryError as error:
+            raise image_error(error) from None
+
+    @server.tool(annotations=ToolAnnotations(readOnlyHint=True))
+    async def get_image(project_id: str, image_id: str) -> dict[str, Any]:
+        """Read one image from the library: its subject, tags, kind, model, prompt, style
+        version, status and file paths, with a download link for each file.
+
+        Use the paths in drafts and pages, for example as a LinkedIn draft's images. Use a
+        link to fetch the bytes; links work for 15 minutes, so ask again for a fresh one.
+        `discard_until` says how long discard_image still removes the image outright.
+        """
+        from tin_lite.image_library import ImageLibraryError
+
+        token = await caller()
+        project_id_value = _mcp_uuid(project_id, field="project_id")
+        await require_project(project_id_value, token, tool_name="get_image")
+        try:
+            return await image_library().get(project_id_value, image_id, token.subject)
+        except ImageLibraryError as error:
+            raise image_error(error) from None
+
+    @server.tool(annotations=ToolAnnotations(destructiveHint=False, openWorldHint=True))
+    async def generate_image(
+        project_id: str,
+        subject: str,
+        kind: str,
+        size: str = "square",
+        ground: str | None = None,
+        tags: list[str] | None = None,
+        diagram_source: str | None = None,
+        request_id: str | None = None,
+    ) -> dict[str, Any]:
+        """Draw a new image in the project's house style and keep it in the image library.
+
+        Call search_images first and reuse an image that fits. Give a concrete subject: an
+        object or an action, like "a hand turning a brass key" or "two people shaking hands
+        over a laptop". Never give an abstraction like "trust" or "growth"; a model draws
+        those badly. kind is illustration, icon or photo. size is square, landscape,
+        portrait or wide. ground is transparent, light, dark or any; illustrations and icons
+        default to transparent. Add a few tags people would search for. The kind's style must
+        be set first: read get_image_style, and set it with set_image_style if it is empty.
+
+        A drawing takes one to three minutes, so this returns a job_id at once. Call
+        check_generation with it after a minute, then every 30 seconds. Tin saves the image
+        when it is done; discard_image undoes that within 48 hours. Reuse request_id when you
+        retry the same request, so Tin starts it once.
+
+        Diagrams work differently. Write the diagram yourself in Tin's diagram dialect and
+        pass it as diagram_source: a first line `graph TD`, nodes like a["Name"]:::step and
+        edges like a --> b. Tin checks it and saves it at once, and the dashboard draws it
+        with Tin's diagram renderer. No model is used, so the labels stay readable.
+        """
+        from tin_lite.image_library import (
+            DEFAULT_GROUND,
+            GROUNDS,
+            SIZES,
+            WORKFLOW_ID,
+            ImageLibraryError,
+            check_kind,
+            check_subject,
+            check_tags,
+            kind_style,
+        )
+
+        token = await caller()
+        assert token.subject is not None
+        project_id_value = _mcp_uuid(project_id, field="project_id")
+        await require_project(project_id_value, token, tool_name="generate_image")
+        library = image_library()
+        try:
+            check_kind(kind)
+            subject_value = check_subject(subject)
+            tag_values = check_tags(tags)
+            if kind == "diagram":
+                if not diagram_source:
+                    raise ImageLibraryError(
+                        "A diagram needs diagram_source: write it in Tin's diagram dialect."
+                    )
+                saved = await library.save_diagram(
+                    project_id_value,
+                    token.subject,
+                    subject=subject_value,
+                    source=diagram_source,
+                    tags=tag_values,
+                    client_id=token.client_id,
+                )
+                return {
+                    "status": "saved",
+                    "done": True,
+                    "image_id": saved["image"]["id"],
+                    "revision": saved["revision"],
+                    "image": saved["image"],
+                }
+            if diagram_source:
+                raise ImageLibraryError("diagram_source is only for kind diagram")
+            if size not in SIZES:
+                raise ImageLibraryError(f"size must be one of {', '.join(SIZES)}")
+            ground_value = ground or DEFAULT_GROUND[kind]
+            if ground_value not in GROUNDS:
+                raise ImageLibraryError(f"ground must be one of {', '.join(GROUNDS)}")
+            project = await library.project(project_id_value)
+            snapshot = await library.snapshot(project)
+            if not kind_style(snapshot.style, kind)["style"]:
+                raise ImageLibraryError(
+                    f"The {kind} style is not set yet. Read get_image_style, then set it with "
+                    "set_image_style before drawing."
+                )
+        except ImageLibraryError as error:
+            raise image_error(error) from None
+        request = _mcp_uuid(request_id, field="request_id") if request_id else uuid4()
+        workflow = await runtime().database.get_workflow(WORKFLOW_ID)
+        if workflow is None:
+            raise ToolError("invalid: image generation is not installed; sync the catalog")
+        try:
+            run = await start_workflow_run(
+                runtime=runtime(),
+                settings=settings,
+                workflow=workflow,
+                project_id=project_id_value,
+                started_by_clerk_user_id=token.subject,
+                start_idempotency_key=f"image:{request}",
+                input_payload={
+                    "subject": subject_value,
+                    "kind": kind,
+                    "size": size,
+                    "ground": ground_value,
+                    "tags": tag_values,
+                },
+                trigger_source="mcp",
+                started_by_oauth_client_id=token.client_id,
+                _image_generation=True,
+            )
+        except WorkflowExecutorUnavailableError as error:
+            raise ToolError(f"invalid: {error}") from None
+        except (WorkflowInputError, BillingError) as error:
+            raise ToolError(f"invalid: {public_error_text(error)}") from None
+        return {
+            "job_id": str(run.id),
+            "status": STATUS_LABELS.get(run.status.value, run.status.value),
+            "done": False,
+            "check_after_seconds": 60,
+            "next": "Call check_generation with this job_id in about a minute.",
+        }
+
+    @server.tool(annotations=ToolAnnotations(readOnlyHint=True))
+    async def check_generation(project_id: str, job_id: str) -> dict[str, Any]:
+        """See whether an image generate_image started is done, and collect it.
+
+        While it draws, `done` is false: call again in `check_again_in_seconds`. When it is
+        done, the image is already saved in the library and `image` holds it, as get_image
+        returns it. When it failed, `reason` says why and nothing was saved.
+        """
+        from tin_lite.image_library import KEY, ImageLibraryError
+
+        token = await caller()
+        project_id_value = _mcp_uuid(project_id, field="project_id")
+        run = await require_run(
+            _mcp_uuid(job_id, field="job_id"), token, tool_name="check_generation"
+        )
+        if run.project_id != project_id_value or run.executor != KEY:
+            raise ToolError("not_found: image job not found in this project")
+        status = run.status.value
+        view: dict[str, Any] = {
+            "job_id": str(run.id),
+            "status": STATUS_LABELS.get(status, status),
+            "subject": (run.input or {}).get("subject"),
+        }
+        if status in {"pending", "running"}:
+            return {
+                **view,
+                "done": False,
+                "progress": run.progress_summary,
+                "check_again_in_seconds": 30,
+            }
+        if status != "succeeded":
+            return {
+                **view,
+                "done": True,
+                "saved": False,
+                "reason": run.error_message or "The drawing stopped before it was saved.",
+                **run_failure_view(run),
+            }
+        receipt = await runtime().database.get_effect(f"{run.id}:image_save")
+        image_id = (receipt.result or {}).get("image_id") if receipt else None
+        if not image_id:
+            return {**view, "done": True, "saved": False, "reason": "No saved image was found."}
+        try:
+            image = await image_library().get(project_id_value, image_id, token.subject)
+        except ImageLibraryError as error:
+            if getattr(error, "status", 422) != 404:
+                raise image_error(error) from None
+            return {
+                **view,
+                "done": True,
+                "saved": False,
+                "image_id": image_id,
+                "reason": "The image was saved and later discarded.",
+            }
+        return {**view, "done": True, "saved": True, "image_id": image_id, **image}
+
+    @server.tool(annotations=ToolAnnotations(destructiveHint=True, idempotentHint=False))
+    async def discard_image(project_id: str, image_id: str) -> dict[str, Any]:
+        """Undo saving an image, only when the founder or their team asks for it.
+
+        Within 48 hours of its save, Tin removes the image and its notes from the library in a
+        new commit; Files history still holds them. After 48 hours the image stays and is
+        marked retired, and search leaves it out. A retired image cannot be discarded again.
+        """
+        from tin_lite.image_library import ImageLibraryError
+
+        token = await caller()
+        assert token.subject is not None
+        project_id_value = _mcp_uuid(project_id, field="project_id")
+        await require_project(project_id_value, token, tool_name="discard_image")
+        try:
+            return await image_library().discard(
+                project_id_value, token.subject, image_id, client_id=token.client_id
+            )
+        except ImageLibraryError as error:
+            raise image_error(error) from None
+
+    @server.tool(annotations=ToolAnnotations(readOnlyHint=True))
+    async def get_image_style(project_id: str) -> dict[str, Any]:
+        """Read the project's house style for each kind of image: the style text, the
+        reference image paths, the model and the style version.
+
+        A kind with an empty style cannot be drawn yet; set it with set_image_style.
+        `model_is_default` means the project uses Tin's default model for that kind.
+        """
+        from tin_lite.image_library import ImageLibraryError
+
+        token = await caller()
+        project_id_value = _mcp_uuid(project_id, field="project_id")
+        await require_project(project_id_value, token, tool_name="get_image_style")
+        try:
+            return await image_library().style(project_id_value)
+        except ImageLibraryError as error:
+            raise image_error(error) from None
+
+    @server.tool(annotations=ToolAnnotations(destructiveHint=False, idempotentHint=False))
+    async def set_image_style(
+        project_id: str,
+        kind: str,
+        style: str | None = None,
+        references: list[str] | None = None,
+        model: str | None = None,
+        model_text: str | None = None,
+    ) -> dict[str, Any]:
+        """Set or change the house style for one kind: illustration, icon or photo.
+
+        Use it once at setup, and again only when the client changes direction, not before
+        each image. `style` is the words every prompt carries: medium, line, palette, mood and
+        what to avoid. Base it on the client's own art when they have some. `references` are
+        paths of up to 20 example images in project Files; upload them to
+        brand/illustrations/reference/ with prepare_file_upload first. Tin sends the first four
+        with each drawing. `model` is the fal model that takes references; `model_text` draws
+        from words alone when there are none. Leave a field out to keep it, and pass an empty
+        model to go back to Tin's default. Each change bumps the kind's style version, so
+        older images keep the version they were drawn with.
+        """
+        from tin_lite.image_library import ImageLibraryError
+
+        token = await caller()
+        assert token.subject is not None
+        project_id_value = _mcp_uuid(project_id, field="project_id")
+        await require_project(project_id_value, token, tool_name="set_image_style")
+        try:
+            return await image_library().set_style(
+                project_id_value,
+                token.subject,
+                kind=kind,
+                style=style,
+                references=references,
+                model=model,
+                model_text=model_text,
+                client_id=token.client_id,
+            )
+        except ImageLibraryError as error:
+            raise image_error(error) from None
 
     @server.tool(annotations=ToolAnnotations(destructiveHint=False, idempotentHint=True))
     async def decide_film(

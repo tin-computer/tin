@@ -24,11 +24,12 @@ from tin_lite.db import Database
 from tin_lite.domain import STUDIO_PROVIDER, STUDIO_VOICE_CAPABILITY, StudioUsage
 from tin_lite.failures import billing_refusal
 from tin_lite.settings import Settings
-from tin_lite.studio_billing import CARD, billing_event
+from tin_lite.studio_billing import billing_event, card_for
 
 logger = logging.getLogger(__name__)
 
 STUDIO_VOICE_OPERATION = "studio_voice"
+STUDIO_IMAGE_OPERATION = "studio_image"
 # Gemini prebuilt voices exposed to the workflow input select; the first is the default.
 STUDIO_VOICES = ("Kore", "Puck", "Zephyr", "Charon", "Leda", "Fenrir", "Aoede")
 # fal's Gemini TTS content checker refuses ordinary product lines when the style asks for a
@@ -40,6 +41,10 @@ TTS_URL = "https://fal.run/fal-ai/gemini-3.1-flash-tts"
 STT_URL = "https://fal.run/fal-ai/whisper"
 _TIMEOUT = httpx.Timeout(240.0, connect=20.0)
 _MAX_AUDIO_BYTES = 4_000_000
+# Project Files keeps PNG and JPEG up to 5 MB and SVG text up to 1 MB.
+_MAX_IMAGE_BYTES = 5_000_000
+_MAX_SVG_BYTES = 1_000_000
+_IMAGE_TYPES = {"image/png", "image/jpeg", "image/svg+xml"}
 
 
 class StudioError(RuntimeError):
@@ -55,8 +60,20 @@ class StudioVoice:
     replayed: bool
 
 
+@dataclass(frozen=True)
+class StudioImage:
+    content: bytes
+    media_type: str
+    endpoint: str
+    replayed: bool
+
+
 def voice_execution_key(run_id: UUID, request_id: str) -> str:
     return f"{run_id}:studio-voice:{request_id}"
+
+
+def image_execution_key(run_id: UUID, request_id: str) -> str:
+    return f"{run_id}:studio-image:{request_id}"
 
 
 class StudioService:
@@ -191,6 +208,103 @@ class StudioService:
             audio=audio, media_type=media_type, words=words, characters=len(line), replayed=False
         )
 
+    async def image(
+        self, *, run_id: UUID, request_id: str, endpoint: str, body: dict[str, Any]
+    ) -> StudioImage:
+        """Draw one image with a fal model for a run, and return its bytes.
+
+        The same receipts as voice: one result receipt and one usage receipt per request, both
+        written before dispatch. A completed request replays its stored URL; an unresolved one
+        is never bought again. There is no quota: image runs are not capped."""
+        if not self.enabled:
+            raise StudioError("the image provider is not configured")
+        if not request_id.isalnum() or len(request_id) > 64:
+            raise StudioError("request_id must be alphanumeric and at most 64 characters")
+        execution_key = image_execution_key(run_id, request_id)
+        fingerprint = digest([endpoint, body])
+        async with self._db.effect_lock(execution_key, STUDIO_IMAGE_OPERATION) as (
+            conn,
+            existing,
+        ):
+            if existing and (existing.result or {}).get("request_digest") not in {
+                None,
+                fingerprint,
+            }:
+                raise StudioError("request_id was already used for a different image")
+            if existing is not None and existing.status == "completed" and existing.result:
+                content, media_type = await self._download_image(str(existing.result["url"]))
+                return StudioImage(
+                    content=content, media_type=media_type, endpoint=endpoint, replayed=True
+                )
+            if existing is None:
+                async with conn.transaction():
+                    await self._db.start_effect(
+                        conn, execution_key=execution_key, operation=STUDIO_IMAGE_OPERATION
+                    )
+                    await self._db.save_effect_progress(
+                        conn,
+                        execution_key=execution_key,
+                        result={"request_digest": fingerprint, "endpoint": endpoint},
+                    )
+            try:
+                payload = await self._paid_call(
+                    conn=conn,
+                    run_id=run_id,
+                    execution_key=execution_key,
+                    url=f"https://fal.run/{endpoint}",
+                    body=body,
+                    step="image",
+                )
+                images = payload.get("images") if isinstance(payload, dict) else None
+                first = images[0] if isinstance(images, list) and images else None
+                url = first.get("url") if isinstance(first, dict) else None
+                if not isinstance(url, str) or not url.startswith("https://"):
+                    raise StudioError("the image model returned no image")
+                content, media_type = await self._download_image(url)
+            except (StudioError, BillingError) as exc:
+                await self._db.fail_effect(
+                    conn, execution_key=execution_key, error_message=str(exc)
+                )
+                if isinstance(exc, BillingError):
+                    raise StudioError(billing_refusal(exc).message) from exc
+                raise
+            except Exception as exc:
+                await self._db.fail_effect(
+                    conn, execution_key=execution_key, error_message="image provider call failed"
+                )
+                raise StudioError("the image provider did not complete the request") from exc
+            await self._db.complete_effect(
+                conn,
+                execution_key=execution_key,
+                result={
+                    "request_digest": fingerprint,
+                    "endpoint": endpoint,
+                    "url": url,
+                    "media_type": media_type,
+                    "bytes": len(content),
+                },
+            )
+        return StudioImage(
+            content=content, media_type=media_type, endpoint=endpoint, replayed=False
+        )
+
+    async def _download_image(self, url: str) -> tuple[bytes, str]:
+        if not url.startswith("https://"):
+            raise StudioError("image URL is not https")
+        response = await self._client.get(url)
+        if response.status_code != 200:
+            raise StudioError("the drawn image could not be downloaded")
+        media_type = response.headers.get("content-type", "").split(";")[0].strip().lower()
+        data = response.content
+        if media_type not in _IMAGE_TYPES:
+            raise StudioError(f"the image model returned {media_type or 'an unknown type'}")
+        limit = _MAX_SVG_BYTES if media_type == "image/svg+xml" else _MAX_IMAGE_BYTES
+        if not data or len(data) > limit:
+            raise StudioError(
+                f"the drawn image is larger than project Files keeps ({limit // 1_000_000} MB)"
+            )
+        return data, media_type
+
     def _headers(self) -> dict[str, str]:
         assert self._settings.fal_key is not None
         return {"Authorization": f"Key {self._settings.fal_key.get_secret_value()}"}
@@ -232,7 +346,7 @@ class StudioService:
                         run_id=run_id,
                         operation_id=usage_key,
                         kind="tool",
-                        maximum=CARD["request_maximum_nanos"],
+                        maximum=card_for({"step": step})["request_maximum_nanos"],
                     )
                     break
                 except BillingError as exc:
@@ -256,13 +370,19 @@ class StudioService:
                 raise StudioError(f"{step} returned an oversized response")
             payload = _provider_json(response, step=step)
             # Keep only bounded output needed for recovery, not an echoed request.
-            payload = (
-                {"audio": payload.get("audio")}
-                if step == "synthesis"
-                else {
-                    "chunks": (payload.get("chunks") or [])[:400],
+            if step == "synthesis":
+                payload = {"audio": payload.get("audio")}
+            elif step == "image":
+                images = payload.get("images") if isinstance(payload, dict) else None
+                payload = {
+                    "images": [
+                        {key: item.get(key) for key in ("url", "content_type", "width", "height")}
+                        for item in (images if isinstance(images, list) else [])[:2]
+                        if isinstance(item, dict)
+                    ]
                 }
-            )
+            else:
+                payload = {"chunks": (payload.get("chunks") or [])[:400]}
         except StudioError as exc:
             await self._db.complete_effect(conn, execution_key=key, result={"error": str(exc)})
             await self._reconcile_observation(conn, usage_key, record)
@@ -316,10 +436,11 @@ class StudioService:
         if billing:
             from tin_lite.studio_billing import price
 
-            priced = price(CARD, record)
-            await billing.observe_operation(
-                conn, operation_id=key, nanos=priced[0], observation=priced[1]
-            )
+            priced = price(card_for(record), record)
+            if priced is not None:
+                await billing.observe_operation(
+                    conn, operation_id=key, nanos=priced[0], observation=priced[1]
+                )
 
     async def reconcile_usage(self):
         if not self.enabled:
@@ -447,6 +568,7 @@ __all__ = [
     "STUDIO_PROVIDER",
     "STUDIO_VOICE_CAPABILITY",
     "StudioError",
+    "StudioImage",
     "StudioService",
     "StudioVoice",
 ]

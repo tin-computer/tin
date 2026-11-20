@@ -337,6 +337,105 @@ class ProjectFileService:
                 operation="commit",
             )
 
+    async def commit_files(
+        self,
+        *,
+        project: Project,
+        actor_clerk_user_id: str,
+        client_id: str | None,
+        request_id: UUID,
+        expected_revision: str,
+        message: str,
+        changes: tuple[ProjectFileMutation, ...],
+    ) -> ProjectFileCommitResult:
+        """One commit that may hold images beside text. A PNG or JPEG upsert carries bytes
+        and is checked as a dashboard upload is. Every other change is checked as a text
+        commit is. Tin's own features use it to keep a file and its notes together."""
+        from tin_lite.project_media import MEDIA_TYPES, validate_media
+
+        if len(expected_revision) != 40:
+            raise ValueError("expected_revision must be a 40-character commit SHA")
+        normalized_message = " ".join(message.split()).strip()
+        if (
+            not normalized_message
+            or len(normalized_message.encode()) > MAX_PROJECT_FILE_MESSAGE_BYTES
+        ):
+            raise ValueError(f"message must contain 1-{MAX_PROJECT_FILE_MESSAGE_BYTES} UTF-8 bytes")
+        media = tuple(
+            item
+            for item in changes
+            if item.operation == "upsert" and isinstance(item.content, bytes)
+        )
+        text = tuple(item for item in changes if item not in media)
+        summaries: list[dict[str, Any]] = []
+        for item in media:
+            suffix = PurePosixPath(item.path).suffix.lower()
+            if MEDIA_TYPES.get(suffix) not in {"image/png", "image/jpeg"}:
+                raise ValueError(f"only PNG and JPEG files may carry bytes: {item.path}")
+            assert isinstance(item.content, bytes)
+            metadata = validate_media(item.path, item.content, MEDIA_TYPES[suffix])
+            summaries.append(
+                {"path": item.path, "sha256": hashlib.sha256(item.content).hexdigest(), **metadata}
+            )
+        normalized = normalize_project_file_mutations(text) if text else ()
+        touched = {path for item in normalized for path in (item.path, item.new_path) if path}
+        if len(media) + len(normalized) > MAX_PROJECT_FILE_CHANGES or any(
+            item.path in touched for item in media
+        ):
+            raise ValueError("a project path may appear in only one change")
+        await self._refuse_pending_proposal_edits(project, normalized)
+        fingerprint = project_file_request_fingerprint(
+            operation="commit",
+            expected_revision=expected_revision,
+            payload={"text": [item.__dict__ for item in normalized], "media": summaries},
+        )
+        async with self._database.project_file_change_lock(
+            project_id=project.id, request_id=request_id
+        ):
+            existing = await self._database.get_project_file_change(
+                project_id=project.id, request_id=request_id
+            )
+            replay = self._replay(existing, fingerprint=fingerprint)
+            if replay is not None:
+                return replay
+            await self._database.start_project_file_change(
+                project_id=project.id,
+                request_id=request_id,
+                actor_clerk_user_id=actor_clerk_user_id,
+                client_id=client_id,
+                operation="commit",
+                request_fingerprint=fingerprint,
+                expected_head_sha=expected_revision,
+            )
+            try:
+                revision, changed_paths = await self._storage.commit_project_changes(
+                    repo_id=project.state_repo_id,
+                    branch=project.canonical_branch,
+                    expected_head_sha=expected_revision,
+                    request_id=str(request_id),
+                    message=normalized_message,
+                    changes=(*media, *normalized),
+                )
+            except Exception as exc:
+                await self._fail(project_id=project.id, request_id=request_id, exc=exc)
+            await self._database.complete_project_file_change(
+                project_id=project.id,
+                request_id=request_id,
+                commit_sha=revision,
+                changed_paths=list(changed_paths),
+                actor_clerk_user_id=actor_clerk_user_id,
+                client_id=client_id,
+                message=normalized_message,
+                operation="commit",
+            )
+            return ProjectFileCommitResult(
+                project_id=project.id,
+                request_id=request_id,
+                revision=revision,
+                changed_paths=changed_paths,
+                operation="commit",
+            )
+
     async def _refuse_pending_proposal_edits(self, project: Project, changes) -> None:
         """A brand or style proposal waiting in Decisions changes only through its revision
         route, which validates it and records who revised it (capture_revisions.py)."""

@@ -108,6 +108,8 @@ TRUSTED_ACTIVITIES = frozenset(
         "character_failure",
         "character_project",
         "character_review",
+        "image_generate",
+        "image_failure",
         "check_email_campaign_reply",
         "publish_code_workflow",
         "review_code_workflow",
