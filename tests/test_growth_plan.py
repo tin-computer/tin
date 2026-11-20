@@ -1091,6 +1091,8 @@ def test_definition_pins_the_contract_and_the_assets_stay_consistent():
     hidden.add("content.plan_research")
     # A seed post starts from material the founder's agent supplies, so the plan can't schedule it.
     hidden.add("content.seed_post")
+    # generate_image draws library images; the plan never starts brand.image.
+    hidden.add("brand.image")
     assert titles == {
         key: title
         for key, title in (

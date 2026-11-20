@@ -525,6 +525,9 @@ class BuiltinWorkflow:
         if self.key in {linkedin_listening.LISTEN_KEY, linkedin_requests.KEY}:
             # Tin starts these: when it publishes a post, or when requests are approved.
             definition["public_discovery"] = False
+        if self.key == image_library.KEY:
+            # generate_image starts it; list_workflows and the starter plan never offer it.
+            definition["public_discovery"] = False
         if self.key == x_feedback.KEY:
             definition["public_discovery"] = False
             definition["x_feedback_contract"] = {
