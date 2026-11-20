@@ -2374,6 +2374,69 @@ class Database:
         assert configured is not None
         return configured
 
+    async def schedule_saved_copy(
+        self,
+        *,
+        project_workflow_id: UUID,
+        definition_commit_sha: str,
+        input_schema: dict[str, Any],
+        schedule: dict[str, Any],
+        expected_settings_revision: int,
+    ) -> ProjectWorkflow | None:
+        """Give an active saved copy without a schedule the current definition and `schedule`,
+        for a workflow that couldn't be scheduled when the copy was saved. Its inputs must still
+        fit the definition. A copy someone paused, scheduled or edited since it was read is
+        left as it is (None). The caller then syncs the calendar with Temporal."""
+
+        async with self.pool.acquire() as conn, conn.transaction():
+            row = await conn.fetchrow(
+                """
+                UPDATE project_workflows AS configured
+                SET definition_commit_sha = $2, schedule = $3::jsonb, skip_scheduled_for = NULL,
+                    status = 'provisioning', last_error = NULL,
+                    settings_revision = settings_revision + 1, updated_at = now()
+                FROM workflows
+                WHERE configured.id = $1 AND workflows.id = configured.workflow_id
+                  AND configured.status = 'active' AND configured.schedule IS NULL
+                  AND configured.settings_revision = $4 AND configured.input_schema = $5::jsonb
+                RETURNING configured.project_id, configured.name, configured.settings_revision,
+                          workflows.key AS workflow_key, workflows.title AS workflow_title
+                """,
+                project_workflow_id,
+                definition_commit_sha,
+                json.dumps(schedule),
+                expected_settings_revision,
+                json.dumps(input_schema),
+            )
+            if row is None:
+                return None
+            await conn.execute(
+                """
+                INSERT INTO activity_events (
+                    project_id, run_id, event_type, details, summary, audience, dedupe_key
+                )
+                VALUES ($1, NULL, 'workflow_settings_updated', $2::jsonb, $3, 'product', $4)
+                ON CONFLICT (dedupe_key) WHERE dedupe_key IS NOT NULL DO NOTHING
+                """,
+                row["project_id"],
+                json.dumps(
+                    {
+                        "kind": "runs",
+                        "workflow_key": row["workflow_key"],
+                        "workflow_title": row["workflow_title"],
+                        "project_workflow_id": str(project_workflow_id),
+                        "settings_revision": row["settings_revision"],
+                        "changed_fields": ["schedule"],
+                    }
+                ),
+                (
+                    f"{row['name']} now runs daily at {schedule['local_time']} "
+                    f"({schedule['timezone']}). Change or remove the schedule on the workflow."
+                )[:1000],
+                f"project-workflow:{project_workflow_id}:settings:{row['settings_revision']}",
+            )
+        return await self.get_project_workflow(project_workflow_id)
+
     async def project_workflow_synced(
         self,
         *,

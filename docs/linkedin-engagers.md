@@ -4,7 +4,7 @@
 and everyone who reacted to them. It keeps each person as a [People record](people-records.md),
 scores them against the project's ICP file, and lists them in project Files. People who fit and
 aren't connected get a [connection request](linkedin-requests.md) from the founder, sent a few
-each weekday.
+each weekday. It runs daily by default, or on demand; see [Schedule](#schedule).
 
 ## Who can run it
 
@@ -13,8 +13,33 @@ each weekday.
   engagement reads, and the native model service (`TIN_LITE_LUNA_API_KEY`).
 - **Member:** each member runs it with their own LinkedIn connection. Their saved session reads
   their own posts. That member needs cloud reading turned on and a live session from Tin for
-  Chrome, as collection does. Each member saves their own copy, once, and only they can change
-  it ([personal workflows](connection-collection.md#connect-once-then-run-from-tin)).
+  Chrome, as collection does. Each member saves their own copy, once; its daily schedule runs as
+  them, and only they can change it
+  ([personal workflows](connection-collection.md#connect-once-then-run-from-tin)).
+
+## Schedule
+
+- **One read a day per member.** Since 1.5.0 a saved copy can run daily. A new copy starts
+  daily at 13:00 in the project's time zone, after [profile viewers](linkedin-profile-viewers.md)
+  at 08:00, so a member's two reads don't start together. The member can pick another time or
+  on demand.
+- **Copies saved before 1.5.0** have no schedule and pin a definition that refuses one. An
+  operator schedules them once with `tin-lite schedule-linkedin-engagers` (a dry run;
+  `--apply` saves). For each active copy without a schedule it:
+  - moves the copy to the current definition, whose inputs must still match;
+  - saves a daily schedule as the member who saved it, at their own minute between 11:00 and
+    16:00 in the founder's time zone (`linkedin_engagers.daily_time`, from the project and the
+    member). Members' reads then reach the shared LinkedIn sandbox lane one at a time, not all
+    at once;
+  - gives Temporal the calendar, as a save does, and records the change in Activity.
+- It leaves alone a copy someone paused or already scheduled, one whose member left the
+  project, and one whose inputs changed, and lists each with its reason. Running it again
+  changes nothing.
+- **LinkedIn's limits.** A run reads only the member's own posts and their reactions, with
+  pauses between pages, and stops all reading at LinkedIn's first warning (see step 3 below).
+  A daily schedule skips a run while the previous one is still going. A run that can't read
+  (an expired session, cloud reading off) fails with what the member should do, and the next
+  day's run tries again.
 
 ## What a run does
 
@@ -95,4 +120,3 @@ usage is still recorded per call.
   [connection collection](connection-collection.md#engagement-reads).
 - **Teammates aren't left out automatically.** Tin doesn't know their LinkedIn profile IDs.
   Forgetting a person once keeps them out of every later run.
-- **Weekly schedules** come in a later issue.
