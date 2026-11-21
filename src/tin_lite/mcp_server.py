@@ -805,7 +805,7 @@ async def analytics_middleware(
         analytics.capture(
             "mcp_session_started",
             distinct_id=user_id,
-            person={"email": email},
+            person=analytics.person_properties(email),
             properties={
                 "clerk_user_id": user_id,
                 "oauth_client_id": token.client_id if token is not None else None,
@@ -1101,7 +1101,7 @@ def create_mcp_app(
             analytics.capture(
                 "tin_user_created",
                 distinct_id=token.subject,
-                person={"email": await emails.get(token.subject)},
+                person=analytics.person_properties(await emails.get(token.subject)),
                 properties={"clerk_user_id": token.subject, "via": "mcp"},
             )
             welcome_email.send_in_background(
