@@ -57,7 +57,7 @@ async def save_request(database, *, run_id, stage: str, inputs: dict) -> dict:
 
 
 class ReceiptLedger:
-    """Each paid DataForSEO request gets a receipt before dispatch and a reservation.
+    """Each paid DataForSEO or cloro request gets a receipt before dispatch and a reservation.
 
     A completed receipt is reused on retry. An attempt without an outcome is reported as
     unknown and never sent again; its unconfirmed observation stays with billing.
@@ -127,12 +127,17 @@ async def _with_heartbeats(operation, details: dict):
 class AIAnswersActivities:
     def __init__(self, *, database, settings, client=None, clock=None, sleep=None) -> None:
         self.db = database
-        login, password = (
+        login, password, cloro = (
             getattr(settings, "dataforseo_login", None),
             getattr(settings, "dataforseo_password", None),
+            getattr(settings, "cloro_api_key", None),
         )
         self.client = client or (
-            AIAnswersClient(login.get_secret_value(), password.get_secret_value())
+            AIAnswersClient(
+                login.get_secret_value(),
+                password.get_secret_value(),
+                cloro_api_key=cloro.get_secret_value() if cloro else None,
+            )
             if login and password
             else None
         )
