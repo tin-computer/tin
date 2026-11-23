@@ -42,24 +42,21 @@ each weekday.
      account, a refusal) stops all reading. The run keeps what it read and leads its summary
      with what to do.
    - Any other unreadable page skips that post and is counted.
-4. **Score.**
-   - People without a score under the current definition go to the model (`gpt-6-luna`,
-     route `linkedin.engagers.icp`) in batches of 25, with the ICP file. The model sees
-     names and headlines, and the five newest notes members wrote about a person, as data.
-   - A fit a member set is never scored again. A score older than the person's newest note is
-     scored again, with the note.
-   - Each answer sets `icp` and `icp_fit` with a reason, or "unknown" with a reason when the
-     headline is too thin.
-   - The score ranks whom the founder looks at first; it is not a decision to contact anyone.
-     A headline rarely states stage, size or needs, so what it leaves out is unknown, not a
-     mismatch. The instructions anchor the scale:
-     - 0.8 to 1: the profile's buyer role at its kind of company;
-     - 0.6 to 0.79: the buyer role at a company that may be its kind, the rest unknown;
-     - 0.3 to 0.59: a partial match, such as a role next to the buyer's;
-     - below 0.3: a mismatch the headline shows, and `none` when no profile does better.
-   - An answer outside the contract leaves the person unscored with a reason. A batch whose
-     call failed is left for a later run.
-   - At most 600 people are scored per run.
+4. **Rate.** The shared ICP rating (`people_rating`, prompt in `people_icp`):
+   - Everyone without a current rating goes to the model one person at a time, six at once:
+     Gemini 4 Neon (route `people.icp`) with Google Search grounding, and the ICP file. The
+     model reads the person's fields, what they did (reactions, profile views, website visits)
+     and the five newest notes members wrote, as data, and searches the web as far as the
+     rating needs.
+   - Each answer sets `icp` (the closest profile, or `none`), `icp_fit` (1 not a fit, 2 weak
+     fit, 3 good fit, 4 strong fit) and `intent` (hot, warm or cold), with a reason. Both are
+     null when there's no name or role to judge.
+   - A rating a member set is never replaced. A rating older than the person's newest note,
+     or than something new they did, is made again.
+   - An answer outside the contract is kept as unrated under the ICP definition, so it isn't
+     bought again; a call that didn't answer is left for a later run.
+   - At most 600 people per run, and no new ones after 15 minutes. Without `GEMINI_API_KEY`
+     the step rates nobody and the run still finishes.
 5. **Who accepted.** About once a day, one read of where the member stands with up to 20
    people whose [connection requests](linkedin-requests.md#who-accepted) wait for an answer.
    The summary says how many accepted. It doesn't run after LinkedIn objected.
@@ -77,7 +74,7 @@ each weekday.
   - It holds LinkedIn's answer only until those people are written; then it keeps counts.
   - A read that started but never answered is cleaned up and never bought again; that post
     counts as unread.
-- **Model calls.** Each batch's answer is kept in its own receipt before any value is
+- **Model calls.** Each person's answer is kept in its own receipt before any value is
   written, so a retry reuses it.
 - **Temporal history** holds post and thread URNs, publish times, page offsets and counts.
   Names, headlines and scores stay in Postgres.

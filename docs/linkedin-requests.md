@@ -16,7 +16,7 @@ from the starter to everyone who:
 
 - reacted to or commented on the starter's own posts, or viewed the starter's profile
   ([profile viewers](linkedin-profile-viewers.md)), as events from runs the starter began;
-- has an ICP fit of 0.6 or more, whoever set it;
+- has an ICP fit of 3 (good fit) or more, whoever set it;
 - isn't connected to the starter or already invited (the starter's own row in
   `record_relationships` is `none`);
 - the starter can ask (`pickable`, below) and never cancelled a request to.

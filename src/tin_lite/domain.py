@@ -35,6 +35,7 @@ LINKEDIN_ENGAGERS_WORKFLOW_NAME = "social.linkedin_engagers"
 LINKEDIN_PROFILE_VIEWERS_WORKFLOW_NAME = "social.linkedin_profile_viewers"
 LINKEDIN_CONNECTIONS_WORKFLOW_NAME = "social.linkedin_connections"
 LINKEDIN_REQUESTS_WORKFLOW_NAME = "social.linkedin_requests"
+RB2B_VISITOR_WORKFLOW_NAME = "people.rb2b_visitor"
 # A sending run's steps (send, wait, read who accepted): a runaway guard far above a batch
 # sent over days and read for three weeks.
 LINKEDIN_REQUESTS_STEPS = 1500

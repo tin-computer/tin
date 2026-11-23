@@ -132,6 +132,7 @@ async def start_workflow_run(
     _linkedin_publication: bool = False,
     _linkedin_listen: bool = False,
     _linkedin_requests: bool = False,
+    _rb2b: bool = False,
     _x_feedback: bool = False,
 ) -> WorkflowRun:
     implementation = registered_workflow_implementations().get(workflow.executor)
@@ -204,11 +205,9 @@ async def start_workflow_run(
         from tin_lite.private_workflows import require_private_execution
 
         require_private_execution(settings, workflow, project_id)
-    if workflow.executor in {"social.linkedin_engagers", "social.linkedin_profile_viewers"}:
-        if not getattr(settings, "luna_api_key", None):
-            raise WorkflowExecutorUnavailableError(
-                "Scoring people from LinkedIn requires the native model service."
-            )
+    if workflow.executor == "people.rb2b_visitor" and not _rb2b:
+        # RB2B starts it: each visitor posted to the project's webhook is one run.
+        raise WorkflowInputError("Tin reads a visitor when RB2B posts them to your webhook.")
     if workflow.executor == "social.linkedin_requests":
         if not _linkedin_requests:
             # A LinkedIn read that finds people who fit, or choosing people in People, starts it

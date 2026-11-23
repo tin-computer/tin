@@ -68,6 +68,7 @@ async def test_build_runtime_wires_services_without_unknown_activity_arguments(
         egress_allow_hosts=(),
         proxy_grant_dir=None,
         luna_api_key=None,
+        gemini_api_key=None,
         temporal_endpoint="temporal.example",
         temporal_namespace="tin-lite-dev",
         temporal_api_key=secret,

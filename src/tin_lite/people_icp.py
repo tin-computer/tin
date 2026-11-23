@@ -257,12 +257,18 @@ def unscored_values() -> list[Value]:
 
 
 async def unscored(
-    conn, project_id: UUID, definition: str, *, limit: int, skip: list[UUID] = ()
+    conn,
+    project_id: UUID,
+    definition: str,
+    *,
+    limit: int,
+    skip: list[UUID] = (),
+    only: UUID | None = None,
 ) -> list[dict]:
     """People who did something worth rating and have no current rating, leaving out those
     this run already tried, oldest first. A rating is current under the ICP definition and
     newer than the person's notes and what they did; a rating a member set is never
-    replaced."""
+    replaced. `only` limits it to one person."""
 
     rows = await conn.fetch(
         """SELECT r.id,
@@ -295,6 +301,7 @@ async def unscored(
                                   WHERE e.record_id = r.id AND e.kind = ANY($6::text[])),
                                  '-infinity'))
              AND NOT (r.id = ANY($4::uuid[]))
+             AND ($9::uuid IS NULL OR r.id = $9)
            ORDER BY r.created_at, r.id
            LIMIT $3""",
         project_id,
@@ -305,6 +312,7 @@ async def unscored(
         list(SIGNALS),
         list(TEXT_FIELDS),
         EVENTS_READ,
+        only,
     )
     people = []
     for row in rows:

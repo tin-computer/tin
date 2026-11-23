@@ -7145,6 +7145,10 @@ function renderConnectRequest(requested) {
 
 function bindIntegrationCardControls() {
   if (state.project) window.TinRequests.bindSending(document, requestsContext());
+  const rb2bProject = currentProjectContext().projectId;
+  if (window.TinRB2B && rb2bProject) {
+    window.TinRB2B.bind(document, { api, projectId: rb2bProject, rerender: renderIntegrations });
+  }
   document.querySelectorAll("[data-integration-expand]").forEach((button) => {
     button.addEventListener("click", () => toggleIntegration(button.dataset.integrationExpand));
   });
@@ -7192,7 +7196,18 @@ function renderIntegrations() {
   if (requested.length) return renderConnectRequest(requested);
   if (state.projectAccess === "locked") return renderLockPage();
   const search = state.integrationSearch.trim().toLowerCase();
-  const catalog = [...withLinkedInCard(state.integrations), CUSTOM_API_TEMPLATE];
+  const rb2bProject = currentProjectContext().projectId;
+  if (window.TinRB2B && rb2bProject) {
+    window.TinRB2B.forProject(rb2bProject);
+    window.TinRB2B.load(api, rb2bProject, () => {
+      if (state.view === "integrations" && currentProjectContext().projectId === rb2bProject) renderIntegrations();
+    });
+  }
+  const catalog = [
+    ...withLinkedInCard(state.integrations),
+    ...(window.TinRB2B ? [window.TinRB2B.entry()] : []),
+    CUSTOM_API_TEMPLATE,
+  ];
   const visible = catalog.filter((integration) => {
     const matchesSearch = !search || [
       integration.name,
@@ -7257,6 +7272,7 @@ const MONOCHROME_LOGOS = new Set(["infra.github", "infra.github_user", "social.x
 function renderIntegrationCard(integration) {
   if (integration.merged) return renderLinkedInCard(integration);
   if (integration.key === ANALYTICS_KEY) return renderAnalyticsCard(integration);
+  if (integration.key === window.TinRB2B?.KEY) return window.TinRB2B.card(state.expandedIntegration === integration.key);
   const expanded = state.expandedIntegration === integration.key;
   const connected = Boolean(integration.connection_id);
   const selected = integrationSelection(integration);

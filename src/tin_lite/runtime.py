@@ -68,6 +68,7 @@ from tin_lite.paid_ads_launch_activities import PaidAdsLaunchActivities
 from tin_lite.paid_ads_monitor_activities import PaidAdsMonitorActivities
 from tin_lite.payment_recovery_activities import PaymentRecoveryActivities
 from tin_lite.project_files import ProjectFileService
+from tin_lite.rb2b_activities import RB2BActivities
 from tin_lite.scan import ScanReporter
 from tin_lite.settings import Settings
 from tin_lite.site_health import SITE_HEALTH_MODEL_ROUTE, SiteHealthImprover
@@ -406,6 +407,9 @@ async def build_runtime(settings: Settings) -> RuntimeServices:
         cloud=LinkedInCloud(database, settings),
         cipher=integrations._cipher,
     )
+    rb2b_activities = RB2BActivities(
+        database=database, storage=storage, router=model_router, integrations=integrations
+    )
     code = CodeActivities(common=activity_instance, model_router=model_router)
     activities = [
         collection.prepare,
@@ -476,6 +480,11 @@ async def build_runtime(settings: Settings) -> RuntimeServices:
         requests_activities.check,
         requests_activities.finish,
         requests_activities.failure,
+        rb2b_activities.record,
+        rb2b_activities.enrich,
+        rb2b_activities.rate,
+        rb2b_activities.publish,
+        rb2b_activities.failure,
         plan_activities.prepare,
         plan_activities.write,
         plan_activities.publish,

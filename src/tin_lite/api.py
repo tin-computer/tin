@@ -489,6 +489,7 @@ ASSET_VERSION = hashlib.sha256(
             "linkedin-requests.css",
             "linkedin-requests.js",
             "pierre-trees.js",
+            "rb2b.js",
             "system-week.js",
             "theme.js",
             "tin-favicon.svg",

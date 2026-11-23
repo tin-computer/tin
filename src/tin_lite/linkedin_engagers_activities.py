@@ -8,8 +8,6 @@ offsets and counts.
 
 from __future__ import annotations
 
-import asyncio
-import hashlib
 import json
 import logging
 from datetime import UTC, datetime
@@ -21,7 +19,7 @@ from temporalio.exceptions import ApplicationError
 
 from tin_lite import linkedin_engagers as engagers
 from tin_lite import linkedin_requests as requests
-from tin_lite import people_icp
+from tin_lite import people_icp, people_rating
 from tin_lite import people_records as records
 from tin_lite.connection_collection import (
     PROVIDER,
@@ -40,14 +38,6 @@ from tin_lite.integrations import (
 from tin_lite.linkedin_cloud import ENGAGEMENT_OPERATION
 from tin_lite.linkedin_engagement import PostsResult, ReactionsResult
 from tin_lite.linkedin_invitations import RelationshipsResult
-from tin_lite.model_providers import (
-    MessageRole,
-    ModelMessage,
-    ModelOutputTruncated,
-    ModelProviderError,
-    WebSearchRequest,
-)
-from tin_lite.model_usage import model_usage_scope
 from tin_lite.organic_audit_publication import publish_artifacts
 from tin_lite.workflow_inputs import WorkflowInputError
 
@@ -82,12 +72,6 @@ SAYS = {
 def _heartbeat(detail) -> None:
     if activity.in_activity():
         activity.heartbeat(detail)
-
-
-async def _beat(detail, every: float = 30) -> None:
-    while True:
-        _heartbeat(detail)
-        await asyncio.sleep(every)
 
 
 def refusal(code: str) -> Exception:
@@ -451,52 +435,6 @@ class LinkedInEngagersActivities:
         if definition.get("model_route") not in served:
             raise ApplicationError("Worker does not serve this scoring model.", non_retryable=True)
 
-    async def _rate(self, run, person, *, text: str, profiles: list[str], definition: str):
-        """The model's answer for one person, kept in a receipt before any value is written.
-
-        A person whose earlier call can't be confirmed isn't bought again; it returns None and
-        they are left for a later run.
-        """
-
-        digest = hashlib.sha256(f"{definition}:{person['id']}".encode()).hexdigest()[:24]
-        key = f"{run.id}:{self.prefix}:rate:{digest}"
-        async with self.db.effect_lock(key, self.key) as (conn, saved):
-            if saved and saved.status == "completed":
-                return (saved.result or {}).get("output")
-            if saved:
-                return None
-            await self.db.start_effect(conn, execution_key=key, operation=self.key)
-            output = None
-            try:
-                with model_usage_scope(
-                    run_id=run.id, step=f"linkedin_{self.prefix}:icp:{digest}", conn=conn
-                ):
-                    async with asyncio.timeout(people_icp.MODEL_SECONDS + 15):
-                        result = await self.router.generate(
-                            people_icp.ROUTE.key,
-                            WebSearchRequest(
-                                system=people_icp.instructions(profiles),
-                                messages=(
-                                    ModelMessage(
-                                        role=MessageRole.USER,
-                                        content=people_icp.person_input(text, person),
-                                    ),
-                                ),
-                                output_schema=people_icp.schema(profiles),
-                                output_schema_name="icp_rating",
-                                max_output_tokens=people_icp.MAX_OUTPUT_TOKENS,
-                                reasoning_effort=people_icp.REASONING,
-                                web_search_calls=people_icp.SEARCHES,
-                            ),
-                            timeout_seconds=people_icp.MODEL_SECONDS,
-                        )
-                output = result.parsed
-            except (ModelProviderError, ModelOutputTruncated, TimeoutError) as error:
-                # A check on model output never fails the run that paid for it.
-                logger.warning("ICP rating failed for run %s: %s", run.id, type(error))
-            await self.db.complete_effect(conn, execution_key=key, result={"output": output})
-            return output
-
     @activity.defn(name="linkedin_engagers_score")
     async def score(self, run_id: str) -> None:
         await self._score(run_id)
@@ -506,62 +444,24 @@ class LinkedInEngagersActivities:
         icp = (await self.db.get_effect(f"{run.id}:{self.prefix}:icp")).result or {}
         if not icp.get("profiles"):
             return
-        if self.router is None or people_icp.ROUTE.provider not in self.router.configured_providers:
+        if not people_rating.available(self.router):
             # Without the rating model people stay unrated; the next run with it rates them.
             logger.warning("ICP rating skipped for run %s: its model isn't configured", run.id)
             return
         await self._route_pinned(run)
         project = await self.db.get_project(run.project_id)
-        raw = await self.storage.read_canonical_artifact_if_exists(
-            repo_id=project.state_repo_id, commit_sha=icp["revision"], path=icp["path"]
-        )
-        text = (raw or b"")[: people_icp.ICP_BYTES].decode("utf-8", "replace")
-        # Ratings made before this scale have an older definition; the new one replaces them.
-        definition = icp["definition"].rsplit(":v", 1)[0] + f":v{people_icp.SCORER}"
         await self._progress(run.id, "score", *self.score_step, "Rating people against your ICP")
-        tried: list[UUID] = []
-        stop = asyncio.get_running_loop().time() + people_icp.SCORE_SECONDS
-
-        async def rate(person):
-            output = await self._rate(
-                run, person, text=text, profiles=icp["profiles"], definition=definition
-            )
-            values = people_icp.values(output, icp["profiles"]) if output is not None else None
-            # An answer that came but can't be used is kept as such under this definition, so
-            # it isn't bought again; a call that didn't answer leaves them for a later run.
-            current = output is not None
-            async with self.db.pool.acquire() as conn:
-                try:
-                    await records.set_values(
-                        conn,
-                        run.project_id,
-                        person["id"],
-                        values or people_icp.unscored_values(),
-                        set_by_kind="run",
-                        set_by=str(run.id),
-                        definition=definition if current else "",
-                        refresh=current,
-                    )
-                except records.RecordError as error:
-                    # The founder forgot this person while the model rated them.
-                    if error.code != "record_gone":
-                        raise
-
-        while len(tried) < people_icp.MAX_SCORED and asyncio.get_running_loop().time() < stop:
-            async with self.db.pool.acquire() as conn:
-                batch = await people_icp.unscored(
-                    conn, run.project_id, definition, limit=people_icp.PARALLEL, skip=tried
-                )
-            if not batch:
-                break
-            tried += [person["id"] for person in batch]
-            # A rating that searches can take minutes; the heartbeat says the activity lives.
-            beating = asyncio.create_task(_beat({"scored": len(tried)}))
-            try:
-                await asyncio.gather(*(rate(person) for person in batch))
-            finally:
-                beating.cancel()
-            _heartbeat({"scored": len(tried)})
+        await people_rating.rate_unrated(
+            self.db,
+            self.router,
+            run,
+            text=await people_rating.icp_text(self.storage, project, icp),
+            profiles=icp["profiles"],
+            definition=people_rating.definition_for(icp),
+            operation=self.key,
+            step=f"linkedin_{self.prefix}",
+            heartbeat=_heartbeat,
+        )
 
     @activity.defn(name="linkedin_engagers_publish")
     async def publish(self, control: dict) -> None:

@@ -67,11 +67,13 @@ your own accounts before use; ordinary contributor tests need no production cred
   candidate cloud runtime and fenced local backup.
 - [People records](people-records.md): one lasting record per person, identifiers, values with
   lineage, the event timeline and forgetting.
+- [RB2B visitors](rb2b-webhook.md): each project's own RB2B webhook, and the run that keeps a
+  visitor in People, reads their visit in PostHog and rates them against the ICP.
 - [Connection requests](linkedin-requests.md): LinkedIn requests to the people who fit and the
   people a member chooses, sent one at a time from the member's session; the member's LinkedIn
   reads then read who accepted.
 - [People who engaged with your LinkedIn posts](linkedin-engagers.md): the founder's posts,
-  who reacted, ICP scores and the list in Files.
+  who reacted, their ICP ratings and the list in Files.
 - [People who viewed your LinkedIn profile](linkedin-profile-viewers.md): the profile-views
   list read daily, each viewer in People, scored, and asked to connect when they fit.
 - [Export your LinkedIn connections](linkedin-connections.md): first-degree connections with

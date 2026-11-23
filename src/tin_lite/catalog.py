@@ -30,6 +30,7 @@ from tin_lite import (
     paid_ads_monitor,
     payment_recovery,
     people_icp,
+    rb2b,
     style_capture,
     technical_fix,
     website_change,
@@ -1811,6 +1812,64 @@ BUILTIN_WORKFLOWS = (
                 capabilities=(connection_collection.CAPABILITY,),
             ),
         ),
+    ),
+    BuiltinWorkflow(
+        id=rb2b.WORKFLOW_ID,
+        key=rb2b.KEY,
+        title="Read a visitor RB2B identified",
+        description=(
+            "When RB2B names a visitor to your site, keep them in People, read their visit in "
+            "your PostHog (pages, time, how they arrived, earlier visits and a replay), rate "
+            "their fit and intent against strategy/ICP.md with a web search, and list the "
+            "latest visitors in people/rb2b-visitors.md. Tin starts it for each visitor RB2B "
+            "posts to your project's webhook, set up under Integrations."
+        ),
+        executor=rb2b.KEY,
+        version_label="1.0.0",
+        presentation=WorkflowDiagram(
+            direction="TD",
+            nodes=(
+                DiagramNode(
+                    "hook",
+                    "surface",
+                    "RB2B posts a visitor",
+                    "to your project's own webhook address",
+                ),
+                DiagramNode("people", "store", "People", "name, headline, company, location"),
+                DiagramNode("wait", "wait", "Wait ten minutes", "until PostHog has the visit"),
+                DiagramNode(
+                    "visit",
+                    "surface",
+                    "Read the visit in PostHog",
+                    "pages, time, how they arrived, earlier visits",
+                ),
+                DiagramNode(
+                    "rate",
+                    "step",
+                    "Rate fit and intent",
+                    "against your ICP, with a web search",
+                ),
+                DiagramNode(
+                    "files",
+                    "receipt",
+                    "The latest visitors, in Files",
+                    "people/rb2b-visitors.md",
+                ),
+            ),
+            edges=(
+                DiagramEdge("hook", "people", "signal"),
+                DiagramEdge("people", "wait"),
+                DiagramEdge("wait", "visit"),
+                DiagramEdge("visit", "rate"),
+                DiagramEdge("rate", "files"),
+                DiagramEdge("people", "files", label="company only, or forgotten"),
+            ),
+        ),
+        schedule_modes=("on_demand",),
+        system=PRODUCT_QA_SYSTEM,
+        agent_only=True,
+        input_schema=rb2b.INPUT_SCHEMA,
+        model_route=people_icp.ROUTE,
     ),
     BuiltinWorkflow(
         id=linkedin_requests.WORKFLOW_ID,
