@@ -51,6 +51,7 @@ test("development host access is limited to Tin APIs, Tin pages, and LinkedIn", 
     new Set([
       "https://api.tin.computer/*",
       "https://app.tin.computer/*",
+      "https://app.staging.tin.computer/*",
       "https://api.staging.tin.computer/*",
       "https://tin.computer/*",
       "https://www.tin.computer/*",
