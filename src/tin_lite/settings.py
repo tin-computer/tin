@@ -70,6 +70,9 @@ class Settings(BaseSettings):
     # The project whose Slack connection posts RB2B visitors to Tin's managed clients' shared
     # channels (Tin's own workspace). Unset, nothing is posted.
     rb2b_slack_project_id: UUID | None = Field(default=None, alias="TIN_LITE_RB2B_SLACK_PROJECT_ID")
+    # Delegate (dlgt.io): the people-search services an RB2B company-only visit hires to find
+    # someone to contact there. Unset, those visits are judged but nobody is looked up.
+    delegate_api_key: SecretStr | None = Field(default=None, alias="DELEGATE_API_KEY")
     openrouter_api_key: SecretStr | None = Field(default=None, alias="OPENROUTER_API_KEY")
     billing_enabled: bool = Field(default=False, alias="TIN_LITE_BILLING_ENABLED")
     # Browser sign-ups see a locked dashboard until their coding agent sets up the first

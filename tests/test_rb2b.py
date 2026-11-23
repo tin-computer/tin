@@ -288,7 +288,9 @@ async def test_a_project_gets_its_own_address_and_rb2b_always_hears_200(collecti
         assert (await http.post(path)).status_code == 404
 
 
-async def test_each_payload_is_kept_once_and_only_people_start_a_run(collection_db, monkeypatch):
+async def test_each_payload_is_kept_once_and_people_and_companies_start_a_run(
+    collection_db, monkeypatch
+):
     f = await rb2b_fixture(collection_db)
     async with client(f, monkeypatch) as http:
         hook = (await set_up(http, f)).removeprefix("https://tin.test")
@@ -303,8 +305,9 @@ async def test_each_payload_is_kept_once_and_only_people_start_a_run(collection_
         await http.post(hook, json=payload(**test))
         visits = await f.db.pool.fetch("SELECT kind, run_id FROM rb2b_visits ORDER BY received_at")
         assert [v["kind"] for v in visits] == ["person", "company", "test"]
-        assert visits[0]["run_id"] is not None and visits[1]["run_id"] is None
-        assert len(http.started) == 1
+        assert visits[0]["run_id"] is not None and visits[1]["run_id"] is not None
+        assert visits[2]["run_id"] is None
+        assert len(http.started) == 2
         assert http.started[0]["start_idempotency_key"].startswith("rb2b:")
         assert http.started[0]["_rb2b"] is True and http.started[0]["trigger_source"] == "api"
         # The input is what a real start accepts: Tin binds the project.

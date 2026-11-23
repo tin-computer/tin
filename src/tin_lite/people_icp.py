@@ -18,6 +18,7 @@ import hashlib
 import json
 import re
 from typing import Any
+from urllib.parse import urlsplit
 from uuid import UUID
 
 from tin_lite import people_records as records
@@ -90,8 +91,19 @@ TEXT_FIELDS = (
     "web_source",
 )
 UNSCORED = "Tin couldn't rate this person"
+# A rating's reason: at most three short sentences. People keeps a value's reason up to
+# people_records.REASON_LIMIT (500) characters and cut longer ones mid-sentence; this bound
+# leaves room under it.
+REASON_CHARS = 360
+REASON_RULE = (
+    f"at most three short sentences, under {REASON_CHARS} characters: the deciding evidence "
+    "first, then what you couldn't confirm in a few words; no hedging"
+)
 # Visitor-identification services whose names stay out of what the model reads and writes.
 IDENTIFIER_NAMES = re.compile(r"\bRB2B\b", re.IGNORECASE)
+# A URL in what the model reads. Visitors control pages' query strings and referrers, and the
+# model searches the web: only a URL's host and path reach it (`plain_urls`).
+URL = re.compile(r"https?://[^\s\"'<>\\]+", re.IGNORECASE)
 
 
 # The ICP file.
@@ -182,7 +194,7 @@ def instructions(profiles: list[str]) -> str:
         "company is. Skip searching when what you have already settles it. Never contact "
         "anyone or sign in anywhere. Don't guess: say what you couldn't confirm.\n\n"
         "Return:\n"
-        "- reason: one or two sentences a founder can check, naming what's unconfirmed;\n"
+        f"- reason: {REASON_RULE};\n"
         '- icp: the profile they come closest to, exactly as listed, or "none";\n'
         "- fit: 1 to 4, or null;\n"
         '- intent: "hot", "warm" or "cold", or null;\n'
@@ -198,13 +210,41 @@ def schema(profiles: list[str]) -> dict:
         "additionalProperties": False,
         "required": ["reason", "icp", "fit", "intent", "sources"],
         "properties": {
-            "reason": {"type": "string"},
+            "reason": {"type": "string", "maxLength": REASON_CHARS},
             "icp": {"type": "string", "enum": [*profiles, "none"]},
             "fit": {"anyOf": [{"type": "integer", "enum": list(RATINGS)}, {"type": "null"}]},
             "intent": {"anyOf": [{"type": "string", "enum": list(INTENTS)}, {"type": "null"}]},
             "sources": {"type": "array", "items": {"type": "string"}},
         },
     }
+
+
+def bare_url(url: str, *, host_only: bool = False) -> str:
+    """A URL as the model reads it: scheme, host and path, never a query string, fragment or
+    user name; with `host_only`, the host alone."""
+
+    try:
+        parts = urlsplit(url.strip())
+        host = (parts.hostname or "").lower()
+    except ValueError:
+        return ""
+    if parts.scheme.lower() not in {"http", "https"} or not host:
+        return ""
+    return host if host_only else f"{parts.scheme.lower()}://{host}{parts.path}"
+
+
+def plain_urls(text: str) -> str:
+    """Every URL in text cut to its host and path."""
+
+    return URL.sub(lambda match: bare_url(match[0]) or "[link]", text)
+
+
+def model_text(value: Any) -> str:
+    """What a search-enabled model reads: JSON with the identification service unnamed and
+    every URL cut to its host and path."""
+
+    sent = json.dumps(value, ensure_ascii=False)
+    return plain_urls(IDENTIFIER_NAMES.sub("the identification service", sent))
 
 
 def person_input(icp_text: str, person: dict) -> str:
@@ -227,9 +267,8 @@ def person_input(icp_text: str, person: dict) -> str:
         ]
     if person.get("notes"):
         item["team_notes"] = [note[:NOTE_CHARS] for note in person["notes"]]
-    sent = json.dumps({"icp_file": icp_text, "person": item}, ensure_ascii=False)
     # The reason is read by clients: the service that identified the visitor goes unnamed.
-    return IDENTIFIER_NAMES.sub("the identification service", sent)
+    return model_text({"icp_file": icp_text, "person": item})
 
 
 def values(output: Any, profiles: list[str]) -> list[Value] | None:

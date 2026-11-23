@@ -542,11 +542,22 @@ def report(people: list[dict[str, Any]], *, now: datetime) -> str:
     return "\n".join(lines).rstrip() + "\n"
 
 
-def summary(person: dict[str, Any] | None, outcome: str) -> str:
+def summary(person: dict[str, Any] | None, outcome: str, company: dict | None = None) -> str:
     """The run's one line: who visited and how they rate, or why there's no one to rate."""
 
     if outcome == "company":
-        return "RB2B named only the visitor's company; Tin keeps it for later."
+        from tin_lite.people_icp import RATINGS
+
+        name = (company or {}).get("name") or "the visitor's company"
+        if not (company or {}).get("judged"):
+            return f"RB2B named only {name}; Tin didn't judge it."[:500]
+        fit = company.get("fit")
+        rated = f"{fit} · {RATINGS[fit]}" if fit in RATINGS else "can't tell"
+        if not company.get("worth"):
+            return f"RB2B named only {name}: not worth chasing ({rated})."[:500]
+        people = len(company.get("people") or [])
+        found = f"{people} {'person' if people == 1 else 'people'} to contact there"
+        return f"RB2B named only {name}: worth chasing ({rated}); {found}."[:500]
     if outcome == "forgotten":
         return "RB2B named someone you asked Tin to forget, so Tin left them out."
     if outcome == "no_profile":

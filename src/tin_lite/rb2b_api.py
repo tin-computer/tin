@@ -58,7 +58,8 @@ class Hooks:
             return {"set_up": False}
         token = self._cipher.decrypt(bytes(hook["token_ciphertext"]), context=f"rb2b:{project_id}")
         counts = await self.db.pool.fetchrow(
-            """SELECT count(*) FILTER (WHERE kind = 'person' AND run_id IS NULL) AS waiting,
+            """SELECT count(*) FILTER (WHERE kind IN ('person', 'company') AND run_id IS NULL)
+                          AS waiting,
                       count(*) FILTER (WHERE kind = 'person') AS people,
                       count(*) FILTER (WHERE kind = 'company') AS companies,
                       (SELECT start_error FROM rb2b_visits w WHERE w.project_id = $1
@@ -141,10 +142,10 @@ class Hooks:
             project_id,
             kind == "test",
         )
-        if kind != "person":
+        if kind not in ("person", "company"):
             return
         waiting = await self.db.pool.fetch(
-            """SELECT id FROM rb2b_visits WHERE project_id = $1 AND kind = 'person'
+            """SELECT id FROM rb2b_visits WHERE project_id = $1 AND kind IN ('person', 'company')
                  AND run_id IS NULL AND id <> $2 AND received_at > now() - interval '7 days'
                ORDER BY received_at LIMIT $3""",
             project_id,

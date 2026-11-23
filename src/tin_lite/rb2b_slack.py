@@ -19,6 +19,7 @@ failed; it never fails the run.
 from __future__ import annotations
 
 import asyncio
+import json
 import logging
 import re
 from dataclasses import dataclass
@@ -37,6 +38,8 @@ from tin_lite.integrations import (
 logger = logging.getLogger(__name__)
 # A good or strong fit gets a message of their own; the rest wait for the digest.
 POSTED = {4: ("🟢", "Strong fit"), 3: ("🟡", "Good fit")}
+RATED = {**POSTED, 2: ("🟠", "Weak fit"), 1: ("⚪", "Not a fit")}
+RATED = {fit: f"{emoji} {label}" for fit, (emoji, label) in RATED.items()}
 INTENT = {"hot": "🔥 hot", "warm": "🌤 warm", "cold": "🧊 cold"}
 DIGEST_AT = time(18, 0)
 DIGEST_LISTED = 15
@@ -128,6 +131,48 @@ def _visit_line(visit: dict | None) -> str | None:
     return f"🧭 {_escape(summary)}" if summary else None
 
 
+def _verdict(fit: int, intent_key: str) -> str:
+    emoji, label = POSTED[fit]
+    intent = INTENT.get(intent_key)
+    verdict = f"{emoji} *{label}*" + (f"  ·  {intent}" if intent else "")
+    return verdict + f"   →   *{next_step(fit, intent_key)}*"
+
+
+def _message(
+    *,
+    text: str,
+    verdict: str,
+    who: str,
+    account: str | None,
+    reason: str | None,
+    warm: str | None,
+    small: list[str],
+    extra: list[dict],
+    buttons: list[dict],
+    project_name: str,
+) -> dict:
+    """The one layout of a person's or a company's message. The verdict, who, why and how to
+    reach them read at full size; the account, the visit and its caveats in Slack's smaller
+    context text; then any extra sections, the buttons and the footer."""
+
+    blocks: list[dict] = [_section(verdict), _section(who)]
+    if account:
+        blocks.append(_context(account))
+    if reason:
+        blocks.append(_section(f"💬  {_escape(reason)}"))
+    if warm:
+        # A warm path is the most useful line after the reason, so it reads at full size.
+        blocks.append(_section(_escape(warm)))
+    if small:
+        blocks.append(_context("\n".join(small)))
+    blocks += extra
+    blocks += [
+        {"type": "actions", "elements": buttons},
+        _context(f"{_escape(project_name)} · Tin"),
+    ]
+    return {"text": _cut(text, 300), "blocks": blocks}
+
+
 def visitor_message(
     person: dict,
     visit: dict | None,
@@ -136,54 +181,87 @@ def visitor_message(
     project_name: str,
     warm: str | None = None,
 ) -> dict | None:
-    """The Block Kit message for one visitor, or None when they aren't a good or strong fit."""
+    """The Block Kit message for one visitor, or None when they aren't a good or strong fit.
+    `warm` is an optional line on how the team can reach them."""
 
     fit = _fit(person)
     if fit not in POSTED:
         return None
-    emoji, label = POSTED[fit]
-    intent_key = _field(person, "intent") or ""
-    intent = INTENT.get(intent_key)
-    verdict = f"{emoji} *{label}*" + (f"  ·  {intent}" if intent else "")
-    verdict += f"   →   *{next_step(fit, intent_key)}*"
-    # Who and why read at full size; the account and the visit in Slack's smaller context text.
-    blocks: list[dict] = [
-        {"type": "section", "text": {"type": "mrkdwn", "text": _cut(verdict, TEXT)}},
-        {"type": "section", "text": {"type": "mrkdwn", "text": _cut(_who(person), TEXT)}},
-    ]
-    if account := _account(person):
-        blocks.append(_context(account))
-    if reason := _field(person, "icp_fit", "reason"):
-        blocks.append(
-            {
-                "type": "section",
-                "text": {"type": "mrkdwn", "text": _cut(f"💬  {_escape(reason)}", TEXT)},
-            }
-        )
-    if warm:
-        # A warm path is the most useful line after the reason, so it reads at full size.
-        blocks.append(
-            {"type": "section", "text": {"type": "mrkdwn", "text": _cut(_escape(warm), TEXT)}}
-        )
     small = []
     if visit_line := _visit_line(visit):
         small.append(visit_line)
     if UNMATCHED.search((visit or {}).get("summary") or ""):
         small.append("⚠️ PostHog didn't confirm the visit, so who it was is unchecked")
-    if small:
-        blocks.append(_context("\n".join(small)))
     buttons = []
     if profile := _profile(person):
         buttons.append(_button("LinkedIn", profile, "linkedin"))
     if replay := _replay(visit):
         buttons.append(_button("▶ Replay", replay, "replay"))
     buttons.append({**_button("Open in Tin", people_url, "tin"), "style": "primary"})
-    blocks += [
-        {"type": "actions", "elements": buttons},
-        _context(f"{_escape(project_name)} · Tin"),
-    ]
     name = _field(person, "name") or "A visitor"
-    return {"text": _cut(f"{label}: {name}", 300), "blocks": blocks}
+    return _message(
+        text=f"{POSTED[fit][1]}: {name}",
+        verdict=_verdict(fit, _field(person, "intent") or ""),
+        who=_who(person),
+        account=_account(person),
+        reason=_field(person, "icp_fit", "reason"),
+        warm=warm,
+        small=small,
+        extra=[],
+        buttons=buttons,
+        project_name=project_name,
+    )
+
+
+def company_message(
+    company: dict,
+    people: list[dict],
+    *,
+    people_url: str,
+    project_name: str,
+    warm: str | None = None,
+) -> dict | None:
+    """The Block Kit message for a visit RB2B matched only to a company, or None unless the
+    model judged it worth chasing and a good or strong fit. `people` are those Tin found there,
+    as People holds them, each in a section of their own, their name linked to their profile;
+    `warm` is an optional line on how the team can reach them."""
+
+    fit = company.get("fit")
+    if not company.get("worth") or fit not in POSTED or company.get("repeat_of"):
+        return None
+    name = company.get("name") or "A company"
+    size = company.get("employees")
+    account = [
+        company.get("site"),
+        company.get("industry"),
+        f"{size} employees" if size else None,
+        company.get("location"),
+    ]
+    account = [_escape(bit) for bit in account if bit]
+    small = []
+    if page := company.get("page"):
+        came = f" · {company['came_from']}" if company.get("came_from") else ""
+        small.append(f"🧭 Visited {_escape(page)}{_escape(came)}")
+    small.append("⚠️ Matched to the company, not to a person: who visited is unknown")
+    extra = [] if people else [_section("Tin found nobody there to contact yet.")]
+    for person in people:
+        # Their name links to their checked LinkedIn profile, as in a person's message.
+        line = _who(person)
+        if (rated := _fit(person)) in RATED:
+            line += f"  ·  {RATED[rated]}"
+        extra.append(_section(line))
+    return _message(
+        text=f"{POSTED[fit][1]}: {name}",
+        verdict=_verdict(fit, company.get("intent") or ""),
+        who=f"🏢 *{_escape(name)}*",
+        account="  ·  ".join(account) if account else None,
+        reason=company.get("reason"),
+        warm=warm,
+        small=small,
+        extra=extra,
+        buttons=[{**_button("Open in Tin", people_url, "tin"), "style": "primary"}],
+        project_name=project_name,
+    )
 
 
 def next_step(fit: int, intent: str) -> str:
@@ -194,6 +272,10 @@ def next_step(fit: int, intent: str) -> str:
             intent, "worth a message"
         )
     return "reach out this week" if intent == "hot" else "worth a message"
+
+
+def _section(text: str) -> dict:
+    return {"type": "section", "text": {"type": "mrkdwn", "text": _cut(text, TEXT)}}
 
 
 def _context(text: str) -> dict:
@@ -209,15 +291,18 @@ def _button(text: str, url: str, action: str) -> dict:
     }
 
 
-def digest_message(people: list[dict], *, people_url: str, project_name: str) -> dict | None:
-    """The day's other visitors in one message, grouped by how they rated, or None for none."""
+def digest_message(
+    people: list[dict], *, people_url: str, project_name: str, companies: list[dict] = ()
+) -> dict | None:
+    """The day's other visitors in one message, grouped by how they rated, with the companies
+    a visit was matched to that didn't get their own message; None for none."""
 
-    if not people:
+    if not people and not companies:
         return None
     groups = {2: [], 1: [], None: []}
     for person in people:
         groups.get(_fit(person), groups[None]).append(person)
-    count = len(people)
+    count = len(people) + len(companies)
     said = f"{count} more visitor{'s' if count != 1 else ''} today"
     head = f"🌙 *{said}*"
     lines = []
@@ -229,6 +314,11 @@ def digest_message(people: list[dict], *, people_url: str, project_name: str) ->
         more = len(listed) - len(shown)
         tail = f", and {more} more" if more > 0 else ""
         lines.append(f"{label} ({len(listed)}): " + "; ".join(shown) + tail)
+    if companies:
+        shown = [_company_short(company) for company in companies[:DIGEST_LISTED]]
+        more = len(companies) - len(shown)
+        tail = f", and {more} more" if more > 0 else ""
+        lines.append(f"🏢 Companies only ({len(companies)}): " + "; ".join(shown) + tail)
     blocks = [
         {"type": "section", "text": {"type": "mrkdwn", "text": head}},
         {"type": "section", "text": {"type": "mrkdwn", "text": _cut("\n".join(lines), TEXT)}},
@@ -239,6 +329,22 @@ def digest_message(people: list[dict], *, people_url: str, project_name: str) ->
         },
     ]
     return {"text": said, "blocks": blocks}
+
+
+def _company_short(company: dict) -> str:
+    """A company in the digest: its name and the model's verdict."""
+
+    name = _escape(company.get("name") or "A company")
+    fit = company.get("fit")
+    if company.get("repeat_of"):
+        said = "visited again"
+    elif company.get("fit") is None and company.get("worth") is None:
+        said = "not rated"
+    elif not company.get("worth"):
+        said = "not worth chasing"
+    else:
+        said = RATED.get(fit, "can't tell").split(" ", 1)[-1].lower()
+    return _cut(f"{name}, {said}", 120)
 
 
 def _short(person: dict) -> str:
@@ -347,6 +453,31 @@ async def digest_people(conn, project_id: UUID, start: datetime, end: datetime) 
     return people
 
 
+async def digest_companies(conn, project_id: UUID, start: datetime, end: datetime) -> list[dict]:
+    """Company-only visits received in [start, end) that didn't get their own message."""
+
+    rows = await conn.fetch(
+        """SELECT company, payload FROM rb2b_visits
+           WHERE project_id = $1 AND kind = 'company' AND received_at >= $2 AND received_at < $3
+           ORDER BY received_at""",
+        project_id,
+        start,
+        end,
+    )
+    found = []
+    for row in rows:
+        company = row["company"]
+        company = json.loads(company) if isinstance(company, str) else dict(company or {})
+        if company.get("worth") and company.get("fit") in POSTED and not company.get("repeat_of"):
+            continue  # it had its own message
+        if not company.get("name"):
+            payload = row["payload"]
+            payload = json.loads(payload) if isinstance(payload, str) else dict(payload or {})
+            company["name"] = payload.get("Company Name")
+        found.append(company)
+    return found
+
+
 async def post_digests(runtime: Any, settings: Any, *, now: datetime | None = None) -> int:
     """Post every digest that is due. Returns how many were posted."""
 
@@ -380,8 +511,10 @@ async def post_digests(runtime: Any, settings: Any, *, now: datetime | None = No
         place = await destination(db, settings, hook["project_id"])
         async with db.pool.acquire() as conn:
             people = await digest_people(conn, hook["project_id"], start, end)
+            companies = await digest_companies(conn, hook["project_id"], start, end)
         body = digest_message(
             people,
+            companies=companies,
             people_url=f"{dashboard_url(settings)}/people?project={hook['project_id']}",
             project_name=hook["name"],
         )
