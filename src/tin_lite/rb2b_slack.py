@@ -137,38 +137,57 @@ def visitor_message(
     if fit not in POSTED:
         return None
     emoji, label = POSTED[fit]
-    intent = INTENT.get(_field(person, "intent") or "")
+    intent_key = _field(person, "intent") or ""
+    intent = INTENT.get(intent_key)
     verdict = f"{emoji} *{label}*" + (f"  ·  {intent}" if intent else "")
-    lines = [_who(person)]
+    verdict += f"   →   *{next_step(fit, intent_key)}*"
+    # Who and why read at full size; the account and the visit in Slack's smaller context text.
+    blocks: list[dict] = [
+        {"type": "section", "text": {"type": "mrkdwn", "text": _cut(verdict, TEXT)}},
+        {"type": "section", "text": {"type": "mrkdwn", "text": _cut(_who(person), TEXT)}},
+    ]
     if account := _account(person):
-        lines.append(account)
-    reason = _field(person, "icp_fit", "reason")
-    if reason:
-        lines.append(f"💬 {_escape(reason)}")
+        blocks.append(_context(account))
+    if reason := _field(person, "icp_fit", "reason"):
+        blocks.append(
+            {
+                "type": "section",
+                "text": {"type": "mrkdwn", "text": _cut(f"💬  {_escape(reason)}", TEXT)},
+            }
+        )
+    small = []
     if visit_line := _visit_line(visit):
-        lines.append(visit_line)
+        small.append(visit_line)
     if UNMATCHED.search((visit or {}).get("summary") or ""):
-        lines.append("⚠️ PostHog didn't confirm the visit, so RB2B's match is unchecked")
+        small.append("⚠️ PostHog didn't confirm the visit, so RB2B's match is unchecked")
+    if small:
+        blocks.append(_context("\n".join(small)))
     buttons = []
     if profile := _profile(person):
         buttons.append(_button("LinkedIn", profile, "linkedin"))
     if replay := _replay(visit):
         buttons.append(_button("▶ Replay", replay, "replay"))
-    buttons.append(_button("Open in Tin", people_url, "tin"))
-    blocks = [
-        {
-            "type": "section",
-            "text": {"type": "mrkdwn", "text": _cut(verdict, TEXT)},
-        },
-        {"type": "section", "text": {"type": "mrkdwn", "text": _cut("\n".join(lines), TEXT)}},
+    buttons.append({**_button("Open in Tin", people_url, "tin"), "style": "primary"})
+    blocks += [
         {"type": "actions", "elements": buttons},
-        {
-            "type": "context",
-            "elements": [{"type": "mrkdwn", "text": f"{_escape(project_name)} · RB2B · Tin"}],
-        },
+        _context(f"{_escape(project_name)} · RB2B · Tin"),
     ]
     name = _field(person, "name") or "A visitor"
     return {"text": _cut(f"{label}: {name}", 300), "blocks": blocks}
+
+
+def next_step(fit: int, intent: str) -> str:
+    """What to do, from fit and intent: a strong fit showing interest now is today's."""
+
+    if fit == 4:
+        return {"hot": "reach out today", "warm": "reach out this week"}.get(
+            intent, "worth a message"
+        )
+    return "reach out this week" if intent == "hot" else "worth a message"
+
+
+def _context(text: str) -> dict:
+    return {"type": "context", "elements": [{"type": "mrkdwn", "text": _cut(text, TEXT)}]}
 
 
 def _button(text: str, url: str, action: str) -> dict:

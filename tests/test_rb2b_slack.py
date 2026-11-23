@@ -52,6 +52,16 @@ def text_of(body):
     )
 
 
+def small_of(body):
+    """The account and visit lines, in Slack's smaller context text."""
+    return "\n".join(
+        element["text"]
+        for block in body["blocks"]
+        if block["type"] == "context"
+        for element in block["elements"]
+    )
+
+
 def buttons(body):
     actions = next(block for block in body["blocks"] if block["type"] == "actions")
     return [element["text"]["text"] for element in actions["elements"]]
@@ -69,13 +79,13 @@ def test_a_strong_fit_reads_verdict_who_account_why_and_visit():
     body = rb2b_slack.visitor_message(
         person(4, intent="hot"), VISIT, people_url="https://tin.test/p", project_name="Acme"
     )
-    text = text_of(body)
-    assert text.startswith("🟢 *Strong fit*  ·  🔥 hot")
+    text, small = text_of(body), small_of(body)
+    assert text.startswith("🟢 *Strong fit*  ·  🔥 hot   →   *reach out today*")
     assert "*<https://www.linkedin.com/in/jane|Jane Doe>*  ·  CFO at Acme" in text
-    assert "🏢 Acme  ·  acme.test  ·  Austin, Texas" in text
-    assert "💬 Fits." in text
-    assert "🧭 Ad: Google Ads, keyword “snowflake pricing” · read /vs/snowflake/" in text
-    assert "identified by RB2B" not in text and "⚠️" not in text
+    assert "💬  Fits." in text
+    assert "🏢 Acme  ·  acme.test  ·  Austin, Texas" in small
+    assert "🧭 Ad: Google Ads, keyword “snowflake pricing” · read /vs/snowflake/" in small
+    assert "identified by RB2B" not in text + small and "⚠️" not in text + small
     assert buttons(body) == ["LinkedIn", "▶ Replay", "Open in Tin"]
     assert body["text"] == "Strong fit: Jane Doe"
 
@@ -86,9 +96,24 @@ def test_a_good_fit_without_a_replay_or_a_confirmed_visit_says_so():
         person(3, intent="cold"), visit, people_url="https://tin.test/p", project_name="Acme"
     )
     text = text_of(body)
-    assert text.startswith("🟡 *Good fit*  ·  🧊 cold")
-    assert "⚠️ PostHog didn't confirm the visit" in text
+    assert text.startswith("🟡 *Good fit*  ·  🧊 cold   →   *worth a message*")
+    assert "⚠️ PostHog didn't confirm the visit" in small_of(body)
     assert buttons(body) == ["LinkedIn", "Open in Tin"]
+
+
+@pytest.mark.parametrize(
+    ("fit", "intent", "step"),
+    [
+        (4, "hot", "reach out today"),
+        (4, "warm", "reach out this week"),
+        (4, "cold", "worth a message"),
+        (3, "hot", "reach out this week"),
+        (3, "warm", "worth a message"),
+        (3, "", "worth a message"),
+    ],
+)
+def test_the_next_step_follows_fit_and_intent(fit, intent, step):
+    assert rb2b_slack.next_step(fit, intent) == step
 
 
 def test_only_checked_links_become_buttons():
