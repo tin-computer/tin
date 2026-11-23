@@ -26,7 +26,7 @@
   // said whether RB2B is set up, and not where it isn't available (no credential key).
   function entry() {
     const view = ui.view;
-    if (!view || view.unavailable) return null;
+    if (!view || view.unavailable || typeof view.set_up !== "boolean") return null;
     return {
       key: KEY,
       name: "RB2B",
