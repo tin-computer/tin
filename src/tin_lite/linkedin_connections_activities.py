@@ -8,6 +8,7 @@ never silently bought again. Temporal sees read numbers and counts.
 
 from __future__ import annotations
 
+import asyncio
 from datetime import UTC, datetime
 
 from temporalio import activity
@@ -34,6 +35,9 @@ STEPS = 3
 FALLBACK = "Tin couldn't finish reading your LinkedIn connections. Try again later."
 # What a read hands Temporal: counts, never the people.
 RETURNED = ("outcome", "reason", "people", "new", "unnamed", "pages", "more", "read", "found")
+# A profile read waits up to three minutes on the sandbox; the activity heartbeats meanwhile,
+# well inside the workflow's two-minute heartbeat timeout.
+BEAT_SECONDS = 30
 
 
 def _returned(result: dict) -> dict:
@@ -44,6 +48,21 @@ class LinkedInConnectionsActivities(LinkedInEngagersActivities):
     key = export.KEY
     prefix = "connections"
     fallback = FALLBACK
+
+    async def _read_beating(self, run, key: str, packet: dict, model):
+        """A receipted sandbox read that heartbeats while it waits, so a paced read longer than
+        the heartbeat timeout isn't cancelled and then refused as interrupted."""
+
+        async def beat():
+            while True:
+                await asyncio.sleep(BEAT_SECONDS)
+                _heartbeat({"waiting": packet["kind"]})
+
+        beating = asyncio.create_task(beat())
+        try:
+            return await self._read(run, key, packet, model)
+        finally:
+            beating.cancel()
 
     @activity.defn(name="linkedin_connections_prepare")
     async def connections_prepare(self, run_id: str) -> None:
@@ -68,7 +87,7 @@ class LinkedInConnectionsActivities(LinkedInEngagersActivities):
             start = ((previous.result or {}) if previous else {}).get("next")
             if start is None:
                 return _returned({"outcome": "read", "people": 0, "new": 0, "more": False})
-        parsed, reason = await self._read(
+        parsed, reason = await self._read_beating(
             run,
             key,
             {"kind": "linkedin_connections", "start": start, "pages": PAGES_PER_READ},
@@ -129,7 +148,7 @@ class LinkedInConnectionsActivities(LinkedInEngagersActivities):
             await self._progress(
                 run.id, "positions", 1, STEPS, "Reading your connections' current positions"
             )
-        parsed, reason = await self._read(
+        parsed, reason = await self._read_beating(
             run, key, {"kind": "linkedin_positions", "members": members}, PositionsResult
         )
         if reason == "done":

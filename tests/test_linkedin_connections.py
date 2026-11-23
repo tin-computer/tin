@@ -7,6 +7,7 @@ founder's saved session is a real one from the collection fixtures; the sandbox 
 
 from __future__ import annotations
 
+import asyncio
 import csv
 import io
 import json
@@ -669,3 +670,32 @@ def test_the_workflow_reads_as_many_times_as_the_module_says():
     assert LinkedInConnectionsWorkflow.list_reads == export.LIST_READS
     assert LinkedInConnectionsWorkflow.position_reads == export.POSITION_READS
     assert export.MAX_CONNECTIONS == 8000 and export.POSITIONS_PER_RUN == 100
+
+
+async def test_a_long_sandbox_read_heartbeats_while_it_waits(collection_db, monkeypatch):
+    """A paced read of 20 profiles takes minutes; the activity heartbeats meanwhile, so
+    Temporal never cancels it as stuck (a real run lost its first profile read that way)."""
+
+    import tin_lite.linkedin_connections_activities as acts
+
+    beats = []
+    monkeypatch.setattr(acts, "BEAT_SECONDS", 0.01)
+    monkeypatch.setattr(acts, "_heartbeat", beats.append)
+    f = await fixture(collection_db)
+    cloud = sample()
+    slow = cloud.engagement
+
+    async def engagement(*args, **kwargs):
+        await asyncio.sleep(0.1)
+        return await slow(*args, **kwargs)
+
+    cloud.engagement = engagement
+    w = work(f, cloud)
+    run_id = await export_run(f)
+    await w.connections_prepare(run_id)
+    await w.connections_read({"run_id": run_id, "read": 0})
+    waited = len(beats)
+    assert waited >= 3 and {"waiting": "linkedin_connections"} in beats
+    read = await w.connections_positions({"run_id": run_id, "read": 0})
+    assert read["outcome"] == "read" and read["read"] == 2
+    assert {"waiting": "linkedin_positions"} in beats[waited:]
