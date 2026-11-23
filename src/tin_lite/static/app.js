@@ -7205,7 +7205,7 @@ function renderIntegrations() {
   }
   const catalog = [
     ...withLinkedInCard(state.integrations),
-    ...(window.TinRB2B ? [window.TinRB2B.entry()] : []),
+    ...[window.TinRB2B?.entry()].filter(Boolean),
     CUSTOM_API_TEMPLATE,
   ];
   const visible = catalog.filter((integration) => {

@@ -22,9 +22,11 @@
     return ["waiting for RB2B", "paste the address into RB2B"];
   }
 
-  // The card as an entry in the Integrations list, so search and filters see it.
+  // The card as an entry in the Integrations list, so search and filters see it: only once Tin
+  // said whether RB2B is set up, and not where it isn't available (no credential key).
   function entry() {
     const view = ui.view;
+    if (!view || view.unavailable) return null;
     return {
       key: KEY,
       name: "RB2B",

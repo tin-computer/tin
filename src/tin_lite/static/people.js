@@ -603,7 +603,7 @@ window.TinPeople = (() => {
 
   function menu(key, options, note = "") {
     if (view.menu !== key) return "";
-    return `<div class="tin-select-menu person-menu" role="listbox" aria-label="${key === "icp" ? "ICP" : "Customer"}">
+    return `<div class="tin-select-menu person-menu" role="listbox" aria-label="${{icp: "ICP", fit: "ICP fit"}[key] || "Customer"}">
       ${options.map((option) => `<button class="tin-select-option ${option.selected ? "is-selected" : ""}" type="button" role="option" aria-selected="${Boolean(option.selected)}" data-choose="${escape(option.value)}"><span>${escape(option.label)}</span>${option.tag ? `<code>${escape(option.tag)}</code>` : '<span class="tin-select-marker" aria-hidden="true"></span>'}</button>`).join("")}
       ${note ? `<p>${escape(note)}</p>` : ""}
     </div>`;
