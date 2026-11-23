@@ -730,6 +730,7 @@ window.TinPeople = (() => {
     if (touch.kind === "viewed") return `viewed ${who}`;
     if (touch.kind === "invited") return `invited by ${who}`;
     if (touch.kind === "accepted") return `connected with ${who}`;
+    if (touch.kind === "connected") return `connected to ${who}`;
     return touch.kind;
   }
 
@@ -747,6 +748,8 @@ window.TinPeople = (() => {
     if (event.kind === "invited") return who && who !== "you" ? `${who[0].toUpperCase()}${who.slice(1)} sent a connection request` : "Connection request sent";
     if (event.kind === "accepted") return who && who !== "you" ? `Accepted ${possessive(who)} connection request` : "Accepted your connection request";
     if (event.kind === "withdrawn") return "Connection request withdrawn";
+    // A connection read from the member's own LinkedIn list, dated when they connected.
+    if (event.kind === "connected") return who && who !== "you" ? `Connected with ${who} on LinkedIn` : "Connected with you on LinkedIn";
     if (event.kind === "visited") return event.summary ? `Visited: ${event.summary}` : "Visited the site";
     return event.kind;
   }

@@ -37,6 +37,8 @@ COLLECTION_ACTIVITIES = frozenset(
         "linkedin_engagers_reactions",
         "linkedin_viewers_read",
         "linkedin_viewers_ids",
+        "linkedin_connections_read",
+        "linkedin_connections_positions",
         # A connection request and the reads of who accepted use the same sandbox.
         "linkedin_engagers_accepted",
         "linkedin_viewers_accepted",
@@ -81,6 +83,9 @@ TRUSTED_ACTIVITIES = frozenset(
         "linkedin_viewers_score",
         "linkedin_viewers_publish",
         "linkedin_viewers_failure",
+        "linkedin_connections_prepare",
+        "linkedin_connections_publish",
+        "linkedin_connections_failure",
         "linkedin_requests_prepare",
         "linkedin_requests_next",
         "linkedin_requests_finish",

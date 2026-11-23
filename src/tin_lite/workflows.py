@@ -24,6 +24,7 @@ from tin_lite.domain import (
     CODEX_PROCEDURE_EXECUTOR,
     CREATIVE_CHARACTER_WORKFLOW_NAME,
     EMAIL_CAMPAIGN_WORKFLOW_NAME,
+    LINKEDIN_CONNECTIONS_WORKFLOW_NAME,
     LINKEDIN_ENGAGERS_WORKFLOW_NAME,
     LINKEDIN_LISTEN_CHECKPOINTS,
     LINKEDIN_LISTEN_READ_ATTEMPTS,
@@ -1910,6 +1911,76 @@ class LinkedInProfileViewersWorkflow:
             raise
 
 
+@workflow.defn(name=LINKEDIN_CONNECTIONS_WORKFLOW_NAME)
+class LinkedInConnectionsWorkflow:
+    """Read the founder's own LinkedIn connections, newest first, ten pages at a time to the
+    end of the list; then read the current company and position of up to a hundred of them,
+    never-read first; and write the list. History holds read numbers and counts; names,
+    positions and where the next read starts stay in Postgres."""
+
+    # Reads per run (linkedin_connections_export.LIST_READS and POSITION_READS).
+    list_reads = 20
+    position_reads = 5
+
+    @workflow.run
+    async def run(self, run_id: str) -> None:
+        async def call(name, argument=run_id, *, minutes=5):
+            return await workflow.execute_activity(
+                name,
+                argument,
+                start_to_close_timeout=timedelta(minutes=minutes),
+                heartbeat_timeout=timedelta(minutes=2) if minutes > 5 else None,
+                retry_policy=RetryPolicy(
+                    initial_interval=timedelta(seconds=30),
+                    maximum_attempts=3,
+                    non_retryable_error_types=[
+                        "IntegrationAuthorizationError",
+                        "WorkflowInputError",
+                        "BillingError",
+                    ],
+                ),
+            )
+
+        try:
+            await call("linkedin_connections_prepare")
+            notes = {"people": 0, "new": 0, "unnamed": 0, "positions": 0, "placed": 0}
+            for index in range(self.list_reads):
+                read = await call(
+                    "linkedin_connections_read", {"run_id": run_id, "read": index}, minutes=8
+                )
+                notes["people"] += read["people"] or 0
+                notes["new"] += read["new"] or 0
+                notes["unnamed"] += read["unnamed"] or 0
+                if read["outcome"] == "stopped":
+                    notes["stopped"] = read["reason"]
+                    break
+                if read["outcome"] != "read":
+                    notes["unread"] = read["reason"]
+                    break
+                if not read["more"]:
+                    break
+            else:
+                notes["capped"] = True
+            if not notes.get("stopped"):
+                for index in range(self.position_reads):
+                    read = await call(
+                        "linkedin_connections_positions",
+                        {"run_id": run_id, "read": index},
+                        minutes=8,
+                    )
+                    notes["positions"] += read["read"] or 0
+                    notes["placed"] += read["found"] or 0
+                    if read["outcome"] == "stopped":
+                        notes["stopped"] = read["reason"]
+                        break
+                    if read["outcome"] != "read" or not read["more"]:
+                        break
+            await call("linkedin_connections_publish", {"run_id": run_id, "notes": notes})
+        except BaseException as exc:
+            await call("linkedin_connections_failure", failure_input(run_id, exc))
+            raise
+
+
 @workflow.defn(name=LINKEDIN_REQUESTS_WORKFLOW_NAME)
 class LinkedInRequestsWorkflow:
     """Send a member's queued connection requests one at a time, and finish once nothing is
@@ -2106,6 +2177,7 @@ def registered_workflows() -> list[type]:
         LinkedInResultsWorkflow,
         LinkedInEngagersWorkflow,
         LinkedInProfileViewersWorkflow,
+        LinkedInConnectionsWorkflow,
         LinkedInRequestsWorkflow,
         OrganicTrafficSystemWorkflow,
         GrowthOnboardingWorkflow,
@@ -2150,6 +2222,7 @@ def registered_workflow_implementations() -> dict[str, type]:
         LINKEDIN_RESULTS_WORKFLOW_NAME: LinkedInResultsWorkflow,
         LINKEDIN_ENGAGERS_WORKFLOW_NAME: LinkedInEngagersWorkflow,
         LINKEDIN_PROFILE_VIEWERS_WORKFLOW_NAME: LinkedInProfileViewersWorkflow,
+        LINKEDIN_CONNECTIONS_WORKFLOW_NAME: LinkedInConnectionsWorkflow,
         LINKEDIN_REQUESTS_WORKFLOW_NAME: LinkedInRequestsWorkflow,
         "organic.traffic_system": OrganicTrafficSystemWorkflow,
         "growth.onboarding": GrowthOnboardingWorkflow,
