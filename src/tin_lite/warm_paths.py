@@ -76,9 +76,19 @@ async def known(conn, project_id: UUID, record_id: UUID, company: str | None) ->
         record_id,
     )
     found.connected = [row["member"] for row in rows]
+    found.at_company = await at_company(conn, project_id, company, besides=record_id)
+    return found
+
+
+async def at_company(
+    conn, project_id: UUID, company: str | None, *, besides: UUID | None = None
+) -> list[dict[str, Any]]:
+    """The members' first-degree connections whose current company is this one, most recently
+    read first; `besides` leaves the visitor themself out."""
+
     wanted = company_key(company)
     if not wanted:
-        return found
+        return []
     rows = await conn.fetch(
         """SELECT r.id, rel.member, c.value_text AS company,
                   (SELECT value_text FROM record_values
@@ -88,18 +98,20 @@ async def known(conn, project_id: UUID, record_id: UUID, company: str | None) ->
            FROM record_relationships rel
            JOIN records r ON r.project_id = rel.project_id AND r.id = rel.record_id
            JOIN record_values c ON c.record_id = r.id AND c.field = 'company'
-           WHERE rel.project_id = $1 AND rel.state = 'connected' AND r.id <> $2
+           WHERE rel.project_id = $1 AND rel.state = 'connected'
+             AND r.id IS DISTINCT FROM $2
              AND r.merged_into IS NULL AND c.value_text IS NOT NULL
            ORDER BY c.set_at DESC""",
         project_id,
-        record_id,
+        besides,
     )
     seen: set[UUID] = set()
+    people: list[dict[str, Any]] = []
     for row in rows:
         if row["id"] in seen or not row["name"] or company_key(row["company"]) != wanted:
             continue
         seen.add(row["id"])
-        found.at_company.append(
+        people.append(
             {
                 "record_id": str(row["id"]),
                 "member": row["member"],
@@ -107,7 +119,7 @@ async def known(conn, project_id: UUID, record_id: UUID, company: str | None) ->
                 "position": row["position"] or "",
             }
         )
-    return found
+    return people
 
 
 def _slug(url: str | None) -> str:

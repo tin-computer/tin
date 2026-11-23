@@ -844,3 +844,26 @@ async def test_two_orders_at_once_count_each_others_reservation(collection_db, m
     assert sorted(price for _, price in results) == [0.0, 0.008]
     # The order that went through settled from its $0.05 reservation to its $0.008 quote.
     assert await work._spent_today(runs[0]) == 0.008
+
+
+async def test_a_company_message_says_who_on_the_team_knows_someone_there(
+    collection_db, monkeypatch
+):
+    from test_warm_paths import Bodies, Profiles, connection, posted
+
+    f = await rb2b_fixture(collection_db)
+    run_id = await company_run(f, monkeypatch)
+    await connection(f, name="Mira Chen", company="Acme Software, Inc.", position="Treasury")
+    await connection(f, name="Bo Park", company="Globex")
+    slack = Bodies(f.db)
+    work = work_for(f, CompanyRouter(), FakeDelegate(), slack)
+    work.profiles = Profiles()
+
+    async def own(conn, project_id):
+        return OWN
+
+    monkeypatch.setattr(rb2b_company, "own_hosts", own)
+    await through(work, run_id)
+    text = posted(slack)
+    assert "🤝 Ege knows Mira Chen (Treasury) at Acme Software" in text
+    assert "Bo Park" not in text

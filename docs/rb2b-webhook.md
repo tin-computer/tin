@@ -189,6 +189,9 @@ the closest path as one line, and nothing when there's none:
    without case, accents, punctuation or legal suffixes.
    `🤝 Ege knows Mira Chen (Treasury) + 1 more at Valley Bank`.
 
+A company-only visit gets the third line too, with the company RB2B named: who on the team
+knows someone there, from the same connections. It's read when the message is written.
+
 Members are named by their Tin first name; without one, the line says "Your team". The result
 stays in the step's receipt; Temporal carries the run ID only. Tiers 1 and 3 need a member to
 have run `social.linkedin_connections`; tier 2 needs cloud reading on a member's LinkedIn card.
