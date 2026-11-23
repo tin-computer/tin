@@ -61,7 +61,8 @@ class CodeModelError(ValueError):
         super().__init__(message or ERRORS[code])
 
 
-def registered_routes():
+def registered_routes(providers=None):
+    """Code routes for the configured providers; a route without one would stop the router."""
     return tuple(
         ModelRoute(
             key=f"workflow.code:{provider}:{model}",
@@ -70,6 +71,7 @@ def registered_routes():
             capabilities=frozenset({ModelCapability.TEXT, ModelCapability.JSON_SCHEMA}),
         )
         for provider, model in sorted(MODEL_TARGETS)
+        if providers is None or ProviderName(provider) in providers
     )
 
 

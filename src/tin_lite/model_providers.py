@@ -35,6 +35,8 @@ class ModelCapability(StrEnum):
     TEXT = "text"
     JSON_SCHEMA = "json_schema"
     REASONING_EFFORT = "reasoning_effort"
+    # The provider runs web searches inside the one call and answers from what it read.
+    WEB_SEARCH = "web_search"
 
 
 class MessageRole(StrEnum):
@@ -98,6 +100,19 @@ class ModelRequest:
 
 
 @dataclass(frozen=True)
+class WebSearchRequest(ModelRequest):
+    """A request whose model may search the web inside the one call. Its own type, so every
+    other request (and its fingerprint) stays exactly what it was."""
+
+    # The most searches the model may run: a runaway guard, like max_output_tokens. The model
+    # decides whether and what to search.
+    web_search_calls: int = 10
+
+    def required_capabilities(self) -> frozenset[ModelCapability]:
+        return super().required_capabilities() | {ModelCapability.WEB_SEARCH}
+
+
+@dataclass(frozen=True)
 class ModelUsage:
     input_tokens: int | None = None
     output_tokens: int | None = None
@@ -105,6 +120,8 @@ class ModelUsage:
     cached_input_tokens: int | None = None
     reasoning_tokens: int | None = None
     cache_write_input_tokens: int | None = None
+    # Searches the provider ran inside the call; None when it didn't say.
+    web_search_calls: int | None = None
 
 
 @dataclass(frozen=True)
@@ -241,7 +258,7 @@ _COMMON_CAPABILITIES = frozenset(
 
 class OpenAIModelProvider:
     name = ProviderName.OPENAI
-    capabilities = _COMMON_CAPABILITIES
+    capabilities = _COMMON_CAPABILITIES | {ModelCapability.WEB_SEARCH}
 
     def __init__(
         self,
@@ -287,6 +304,11 @@ class OpenAIModelProvider:
                     "strict": True,
                 }
             }
+        if isinstance(request, WebSearchRequest):
+            # Hosted search: the model searches and opens pages inside this one response.
+            parameters["tools"] = [{"type": "web_search"}]
+            parameters["max_tool_calls"] = request.web_search_calls
+            parameters["include"] = ["web_search_call.action.sources"]
         try:
             client = (
                 self._client
@@ -320,11 +342,35 @@ class OpenAIModelProvider:
                     getattr(input_details, "cache_write_tokens", None)
                 ),
                 reasoning_tokens=_optional_int(getattr(output_details, "reasoning_tokens", None)),
+                web_search_calls=(
+                    _search_calls(response) if isinstance(request, WebSearchRequest) else None
+                ),
             ),
         )
 
     async def close(self) -> None:
         await self._client.close()
+
+
+def _search_calls(response: Any) -> int | None:
+    """The searches a Responses answer ran: its web_search_call items that searched."""
+
+    output = getattr(response, "output", None)
+    if not isinstance(output, list):
+        return None
+    count = 0
+    for item in output:
+        kind = item.get("type") if isinstance(item, dict) else getattr(item, "type", None)
+        if kind != "web_search_call":
+            continue
+        action = item.get("action") if isinstance(item, dict) else getattr(item, "action", None)
+        action_type = (
+            action.get("type") if isinstance(action, dict) else getattr(action, "type", None)
+        )
+        # Opening a page or finding text in one isn't a search; an unlabeled call counts.
+        if action_type in (None, "search"):
+            count += 1
+    return count
 
 
 class AnthropicModelProvider:
@@ -417,7 +463,7 @@ class AnthropicModelProvider:
 
 class GeminiModelProvider:
     name = ProviderName.GEMINI
-    capabilities = _COMMON_CAPABILITIES
+    capabilities = _COMMON_CAPABILITIES | {ModelCapability.WEB_SEARCH}
 
     def __init__(self, *, api_key: str, client: Any | None = None) -> None:
         self._client = client or genai.Client(
@@ -431,7 +477,12 @@ class GeminiModelProvider:
         self, *, model: str, request: ModelRequest, timeout_seconds: float | None = None
     ) -> ModelResult:
         _validate_request(request)
-        config: dict[str, Any] = {"max_output_tokens": request.max_output_tokens}
+        # Standard tier, asked for explicitly: the response does not report its tier, and the
+        # rate card prices this tier only (flex and priority are other prices).
+        config: dict[str, Any] = {
+            "max_output_tokens": request.max_output_tokens,
+            "service_tier": google_types.ServiceTier.STANDARD,
+        }
         if timeout_seconds is not None:
             config["http_options"] = google_types.HttpOptions(timeout=int(timeout_seconds * 1000))
         if request.system is not None:
@@ -447,6 +498,10 @@ class GeminiModelProvider:
                     "response_json_schema": request.output_schema,
                 }
             )
+        if isinstance(request, WebSearchRequest):
+            # Grounding with Google Search: the model searches inside this one response. Gemini
+            # takes no cap on searches, so web_search_calls is a guard it can't be held to.
+            config["tools"] = [google_types.Tool(google_search=google_types.GoogleSearch())]
         contents = [
             google_types.Content(
                 role="model" if message.role is MessageRole.ASSISTANT else "user",
@@ -472,17 +527,15 @@ class GeminiModelProvider:
             model=str(getattr(response, "model_version", None) or model),
             text=text,
             request_id=_optional_string(getattr(response, "response_id", None)),
+            service_tier="standard",
             request=request,
             stop_reason=_stop_label(finish),
             capped=finish == "MAX_TOKENS",
-            usage=ModelUsage(
-                input_tokens=_optional_int(getattr(usage, "prompt_token_count", None)),
-                output_tokens=_optional_int(getattr(usage, "candidates_token_count", None)),
-                total_tokens=_optional_int(getattr(usage, "total_token_count", None)),
-                cached_input_tokens=_optional_int(
-                    getattr(usage, "cached_content_token_count", None)
+            usage=_gemini_usage(
+                usage,
+                searches=(
+                    _gemini_searches(candidates) if isinstance(request, WebSearchRequest) else None
                 ),
-                reasoning_tokens=_optional_int(getattr(usage, "thoughts_token_count", None)),
             ),
         )
 
@@ -658,6 +711,10 @@ def _validate_request(request: ModelRequest) -> None:
         raise ValueError("model request temperature must be between 0 and 2")
     if request.output_schema is not None:
         jsonschema.Draft202012Validator.check_schema(request.output_schema)
+    if isinstance(request, WebSearchRequest) and (
+        type(request.web_search_calls) is not int or request.web_search_calls < 1
+    ):
+        raise ValueError("model request web_search_calls must be a positive integer")
 
 
 def _result(
@@ -749,6 +806,47 @@ def _optional_int(value: object) -> int | None:
 
 def _optional_string(value: object) -> str | None:
     return value if isinstance(value, str) and value else None
+
+
+def _gemini_searches(candidates: list) -> int | None:
+    """The searches a grounded Gemini answer ran: its grounding metadata's queries."""
+
+    if not candidates:
+        return None
+    metadata = getattr(candidates[0], "grounding_metadata", None)
+    if metadata is None:
+        return 0
+    return len(getattr(metadata, "web_search_queries", None) or [])
+
+
+def _gemini_usage(usage: object, *, searches: int | None = None) -> ModelUsage:
+    """Gemini's usage in the shape the other adapters report.
+
+    Gemini bills thinking as output but counts it apart from candidates_token_count, so
+    output is candidates plus thoughts, as OpenAI's output_tokens already includes reasoning.
+    Its JSON leaves out zero counts, so a missing cached, thoughts or candidates count is zero
+    once the prompt count is present. Caching is implicit: there are no cache writes to price.
+    Without a prompt count the counts stay as reported, which leaves the call unpriced.
+    """
+    prompt = _optional_int(getattr(usage, "prompt_token_count", None))
+    total = _optional_int(getattr(usage, "total_token_count", None))
+    if prompt is None:
+        return ModelUsage(total_tokens=total, web_search_calls=searches)
+    # What searches put in front of the model is input too.
+    prompt += _optional_int(getattr(usage, "tool_use_prompt_token_count", None)) or 0
+    candidates, thoughts, cached = (
+        _optional_int(getattr(usage, name, None)) or 0
+        for name in ("candidates_token_count", "thoughts_token_count", "cached_content_token_count")
+    )
+    return ModelUsage(
+        input_tokens=prompt,
+        output_tokens=candidates + thoughts,
+        total_tokens=total,
+        cached_input_tokens=cached,
+        reasoning_tokens=thoughts,
+        cache_write_input_tokens=0,
+        web_search_calls=searches,
+    )
 
 
 def _sum_optional_ints(*values: object) -> int | None:

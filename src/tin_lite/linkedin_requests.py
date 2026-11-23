@@ -32,6 +32,7 @@ from uuid import NAMESPACE_URL, UUID, uuid4, uuid5
 from zoneinfo import ZoneInfo
 
 from tin_lite import people_records as records
+from tin_lite.people_icp import FIT_SHOWN
 from tin_lite.schedules import supported_timezone
 
 KEY = "social.linkedin_requests"
@@ -46,7 +47,7 @@ INPUT_SCHEMA = {
     "required": ["project_id", "batch_id"],
 }
 CONSENT_VERSION = 1
-FIT = 0.6
+FIT = FIT_SHOWN
 # People a member can choose at once in People or over MCP: a runaway guard well above a
 # prospect list. The caps set the pace; chosen requests wait in the line until they go.
 MAX_PICKED = 1000

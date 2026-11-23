@@ -7007,10 +7007,13 @@ class Database:
             "DELETE FROM records WHERE project_id = $1",
             "DELETE FROM record_fields WHERE project_id = $1",
             "DELETE FROM record_suppressions WHERE project_id = $1",
+            # RB2B's posts (visitors' names and companies) and the project's webhook token.
+            "DELETE FROM rb2b_visits WHERE project_id = $1",
+            "DELETE FROM rb2b_hooks WHERE project_id = $1",
             "DELETE FROM effect_receipts WHERE operation IN "
             "('social.linkedin_listen', 'social.linkedin_results', 'social.linkedin_engagers', "
             "'social.linkedin_profile_viewers', 'social.linkedin_connections', "
-            "'social.linkedin_requests', "
+            "'social.linkedin_requests', 'people.rb2b_visitor', "
             "'linkedin_engagement_v1', 'linkedin_request_v1') AND "
             "split_part(execution_key, ':', 1) IN (SELECT id::text FROM workflow_runs "
             "WHERE project_id = $1)",
@@ -7400,6 +7403,7 @@ class Database:
                 "linkedin_requests_ready",
                 "Tin finished sending your connection requests.",
             ),
+            "people.rb2b_visitor": ("rb2b_visitor_ready", "Tin read a visitor RB2B identified."),
             "social.linkedin_results": (
                 "linkedin_results_ready",
                 "Today's LinkedIn results are in.",

@@ -56,7 +56,10 @@ the next run fills the field.
 The built-in fields are:
 - `name`, `headline` (text);
 - `icp` (which named profile in the ICP file, or `none`);
-- `icp_fit` (a number from 0 to 1);
+- `icp_fit` (1 not a fit, 2 weak fit, 3 good fit, 4 strong fit; migration 086 turned the earlier
+  0 to 1 scores into these by their bands) and `intent` (`hot`, `warm` or `cold`: how much
+  interest they show now), both from the shared ICP rating (`people_rating`), each with its
+  reason;
 - `customer` (`yes` or `no`), which only members set;
 - `web_tier` (`lead`, `new_user` or `user`: what they were on the site when visitor journeys last
   read them, with where they stopped as the reason) and `web_summary` (that run's one-line
@@ -80,10 +83,10 @@ member who started the run.
 `record_notes` holds what members write about a person: up to 2,000 characters each, with the
 author and when. Only the author edits or deletes a note. A merge moves notes to the survivor.
 
-The engagers run sends a person's five newest notes with their name and headline when it scores
-them, and the instructions weigh a note above the headline. A note newer than a run's score
-makes that score stale: the view marks it, and `unscored` picks the person up again. A fit a
-member set is never sent to the model.
+The ICP rating sends a person's five newest notes with their fields and what they did, and the
+instructions weigh a note above everything else. A note newer than a rating, or something new
+the person did, makes the rating stale: the view marks it, and `unscored` picks the person up
+again. A fit a member set is never sent to the model.
 
 ## Events
 
@@ -113,7 +116,7 @@ tools share `people_service.People`.
     "reacted to Mira", "viewed you", "invited by Mira", "connected with you". LinkedIn gives no
     time for a reaction, so a reaction counts on the post's date; a profile view counts on the
     day LinkedIn's "3d ago" gives.
-  - The segments are all people, ICP fit (0.6 or more) and not connected yet, plus Invited
+  - The segments are all people, ICP fit (3 or more) and not connected yet, plus Invited
     once a [connection request](linkedin-requests.md) went out. The LinkedIn column reads
     "Queued" for the viewer's request waiting to go out and "Invited oct 16" for one Tin sent.
   - With the viewer's own LinkedIn reading on the project, a tick lane before the name lets
@@ -124,12 +127,13 @@ tools share `people_service.People`.
     [connection requests](linkedin-requests.md)). When nobody on the list has a box, a line in
     the footer beside the count says why (REQ-A4): "Everyone on this list is already connected
     to you or invited". Neither moves the grid.
-- **Score hover:** the reason, the score, the ICP and when it was set.
+- **Score hover:** the reason, the rating ("4 · Strong fit"), the ICP and when it was set. The
+  grid shows the intent after the fit.
   - A score computed under an earlier `strategy/ICP.md`, or by an earlier version of the
     scoring, reads "old": the view compares each value's `definition` with the current one
-    (`linkedin_engagers.read_icp`), and the next engagers run rescores it. So does a score
+    (`people_icp.read_icp`), and the next run that rates people rates it again. So does a score
     older than the person's newest note.
-  - A member's fit reads "you" (or "team") beside the number, and the hover gives Tin's score
+  - A member's fit reads "you" (or "team") beside the number, and the hover gives Tin's rating
     it replaced.
 - **Person panel:** `GET …/people/{person_id}` adds the timeline. The address keeps the person
   (`?person=`), so a reload opens them again.
@@ -143,11 +147,11 @@ tools share `people_service.People`.
     (Clerk), read when the view is built; without one, "a teammate". The service turns member
     IDs into `who` ("you", a first name or "a teammate") before anything leaves Tin.
 - **Correcting a person:** `PATCH …/people/{person_id}`.
-  - `{"fit": {"icp": "<profile>"}}` picks an ICP from the ICP file and sets the fit to 1;
-    `{"fit": {"icp": null}}` is not a fit (0); `{"fit": null}` uses Tin's score again.
+  - `{"fit": {"rating": 3}}` sets the fit (1 to 4); Tin's profile and intent stay.
+    `{"fit": null}` uses Tin's rating again.
   - `{"customer": true}` marks a customer. The panel says Tin leaves customers out of
     invitations and reach lists, which the sending phase must honour.
-  - In the panel, the ICP and Customer values open a menu.
+  - In the panel, the ICP fit and Customer values open a menu.
 - **Notes:** `POST …/people/{person_id}/notes`, `PATCH` and `DELETE …/notes/{note_id}` for the
   author. The panel lists them between Fields and Timeline under a box to add one; ⌘/Ctrl+Enter
   saves.
@@ -167,7 +171,7 @@ it. Any project
 member can read, correct, annotate and forget the project's people; other users get 404.
 
 MCP gives a member's coding agent the same: `list_people` (segments, a search over notes),
-`get_person`, `update_person` (an ICP, not a fit, Tin's score again, customer),
+`get_person`, `update_person` (a fit of 1 to 4, Tin's rating again, customer),
 `add_person_note`, `delete_person_note` (the caller's own) and `forget_person`, which needs the
 person's exact name.
 

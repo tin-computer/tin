@@ -12,10 +12,10 @@ from tin_lite import (
     content_plan,
     content_plan_editorial,
     growth_plan,
-    linkedin_engagers,
     paid_ads,
     paid_ads_launch,
     payment_recovery,
+    people_icp,
     style_capture,
     x_feedback,
 )
@@ -68,6 +68,7 @@ from tin_lite.paid_ads_launch_activities import PaidAdsLaunchActivities
 from tin_lite.paid_ads_monitor_activities import PaidAdsMonitorActivities
 from tin_lite.payment_recovery_activities import PaymentRecoveryActivities
 from tin_lite.project_files import ProjectFileService
+from tin_lite.rb2b_activities import RB2BActivities
 from tin_lite.scan import ScanReporter
 from tin_lite.settings import Settings
 from tin_lite.site_health import SITE_HEALTH_MODEL_ROUTE, SiteHealthImprover
@@ -146,7 +147,6 @@ async def build_runtime(settings: Settings) -> RuntimeServices:
             CHARACTER_MODEL_ROUTE,
             style_capture.ROUTE,
             x_feedback.ROUTE,
-            linkedin_engagers.ROUTE,
             *growth_plan.ROUTES,
             *paid_ads.ROUTES,
             *paid_ads_launch.ROUTES,
@@ -175,8 +175,21 @@ async def build_runtime(settings: Settings) -> RuntimeServices:
     )
     from tin_lite.code_models import registered_routes as code_model_routes
 
-    if settings.luna_api_key is not None:
-        model_routes += code_model_routes()
+    # Each code route is registered only when its provider has a key: a Gemini route without
+    # GEMINI_API_KEY then fails its run as model_unavailable instead of stopping the router.
+    code_providers = {
+        provider
+        for provider, key in (
+            (ProviderName.OPENAI, settings.luna_api_key),
+            (ProviderName.GEMINI, settings.gemini_api_key),
+        )
+        if key is not None
+    }
+    model_routes += code_model_routes(code_providers)
+    # Rating People runs on its own route, registered only when its provider has a key; without
+    # one, runs leave people unrated rather than stop the router.
+    if people_icp.ROUTE.provider in code_providers:
+        model_routes += (people_icp.ROUTE,)
     model_router = configured_model_router(
         settings, routes=model_routes, recorder=ModelUsageRecorder(database)
     )
@@ -360,7 +373,8 @@ async def build_runtime(settings: Settings) -> RuntimeServices:
         settings=settings,
         cloud=LinkedInCloud(database, settings),
         cipher=integrations._cipher,
-        router=model_router if settings.luna_api_key is not None else None,
+        # The ICP rating's provider may be unconfigured; then the rating step rates nobody.
+        router=model_router,
         integrations=integrations,
         temporal=temporal,
     )
@@ -370,7 +384,8 @@ async def build_runtime(settings: Settings) -> RuntimeServices:
         settings=settings,
         cloud=LinkedInCloud(database, settings),
         cipher=integrations._cipher,
-        router=model_router if settings.luna_api_key is not None else None,
+        # The ICP rating's provider may be unconfigured; then the rating step rates nobody.
+        router=model_router,
         integrations=integrations,
         temporal=temporal,
     )
@@ -391,6 +406,9 @@ async def build_runtime(settings: Settings) -> RuntimeServices:
         settings=settings,
         cloud=LinkedInCloud(database, settings),
         cipher=integrations._cipher,
+    )
+    rb2b_activities = RB2BActivities(
+        database=database, storage=storage, router=model_router, integrations=integrations
     )
     code = CodeActivities(common=activity_instance, model_router=model_router)
     activities = [
@@ -462,6 +480,11 @@ async def build_runtime(settings: Settings) -> RuntimeServices:
         requests_activities.check,
         requests_activities.finish,
         requests_activities.failure,
+        rb2b_activities.record,
+        rb2b_activities.enrich,
+        rb2b_activities.rate,
+        rb2b_activities.publish,
+        rb2b_activities.failure,
         plan_activities.prepare,
         plan_activities.write,
         plan_activities.publish,

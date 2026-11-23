@@ -2,7 +2,7 @@
 
 `social.linkedin_profile_viewers` reads who viewed the member's LinkedIn profile, newest first,
 with their saved session. It keeps each named viewer as a [People record](people-records.md)
-and scores them against the project's ICP file with the [engagers](linkedin-engagers.md) scorer.
+and rates them against the project's ICP file with the shared [ICP rating](linkedin-engagers.md).
 Viewers who fit and aren't connected get a
 [connection request](linkedin-requests.md) from the member, sent a few each weekday. The list
 goes to project Files. It runs daily by default (08:00 in the founder's time zone), or on
@@ -73,11 +73,11 @@ The same as engagers:
    A read LinkedIn objects to (a challenge, a limit, a signed-out session, a changed account, a
    refusal) stops reading and keeps what was read. On the first read, it fails the run with what
    to do.
-4. **Score:** the engagers scorer and route (`linkedin.engagers.icp`), under the same ICP
-   definition. Anyone with a reaction, a comment or a view is scored once, whichever workflow
-   found them.
+4. **Rate:** the shared ICP rating (route `people.icp`), under the same ICP definition.
+   Anyone with a reaction, a comment, a view or a website visit is rated once, whichever
+   workflow found them, and again when they do something new.
 5. **Look up profile IDs** (`linkedin_profile_ids`): sending a request needs a profile ID.
-   - Who: viewers who fit (0.6 or more), aren't connected, aren't customers and are known only
+   - Who: viewers who fit (3 or more), aren't connected, aren't customers and are known only
      by their slug.
    - How: up to 20 per run, one read each of LinkedIn's profile for that slug, paced like the
      other reads.
@@ -125,7 +125,7 @@ so.
   - It then keeps counts, plus LinkedIn's request for the next page, which the next read takes
     from there.
   - A read that started but never answered is cleaned up and never bought again.
-- **Model calls.** Scoring batches have their own receipts, as for engagers.
+- **Model calls.** Each rating has its own receipt, as for engagers.
 - **Temporal history** holds read numbers and counts. Names, headlines, scores and the
   next-page request stay in Postgres.
 - **Project deletion** removes the records and these receipts.

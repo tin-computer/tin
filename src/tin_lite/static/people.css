@@ -183,6 +183,11 @@
   font: 11px/14px var(--mono);
 }
 
+/* Intent reads after the fit, quieter: "3 hot". */
+.people-table td.is-fit small.people-intent {
+  margin: 0 0 0 6px;
+}
+
 .people-table td.is-touch {
   font: 12.5px/16px var(--mono);
 }

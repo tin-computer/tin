@@ -20,14 +20,14 @@ USER = Depends(require_user)
 class Fit(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
-    # A profile from the ICP file, or null for not a fit.
-    icp: str | None = Field(default=None, max_length=200)
+    # A member's fit: 1 not a fit to 4 strong fit.
+    rating: int = Field(ge=1, le=4)
 
 
 class PersonChange(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
-    # A member's fit, or null to use Tin's score again.
+    # A member's rating, or null to use Tin's score again.
     fit: Fit | None = None
     customer: bool | None = None
 

@@ -8,8 +8,6 @@ offsets and counts.
 
 from __future__ import annotations
 
-import asyncio
-import hashlib
 import json
 import logging
 from datetime import UTC, datetime
@@ -21,6 +19,7 @@ from temporalio.exceptions import ApplicationError
 
 from tin_lite import linkedin_engagers as engagers
 from tin_lite import linkedin_requests as requests
+from tin_lite import people_icp, people_rating
 from tin_lite import people_records as records
 from tin_lite.connection_collection import (
     PROVIDER,
@@ -39,23 +38,12 @@ from tin_lite.integrations import (
 from tin_lite.linkedin_cloud import ENGAGEMENT_OPERATION
 from tin_lite.linkedin_engagement import PostsResult, ReactionsResult
 from tin_lite.linkedin_invitations import RelationshipsResult
-from tin_lite.model_providers import (
-    MessageRole,
-    ModelMessage,
-    ModelOutputTruncated,
-    ModelProviderError,
-    ModelRequest,
-)
-from tin_lite.model_usage import model_usage_scope
 from tin_lite.organic_audit_publication import publish_artifacts
-from tin_lite.people_records import Value
 from tin_lite.workflow_inputs import WorkflowInputError
 
 logger = logging.getLogger(__name__)
 
 KEY = engagers.KEY
-MODEL_SECONDS = 120
-UNSCORED = "Tin couldn't score this person this time; the next run tries again."
 FALLBACK = "Tin couldn't finish reading who engaged with your LinkedIn posts. Try again later."
 # Reasons that end every read in the run: the account needs its owner, or LinkedIn objected.
 STOPS = frozenset(
@@ -277,7 +265,7 @@ class LinkedInEngagersActivities:
             if not (receipt and receipt.status == "completed"):
                 await self.db.start_effect(conn, execution_key=key, operation=self.key)
                 await self.db.complete_effect(
-                    conn, execution_key=key, result=await engagers.read_icp(self.storage, project)
+                    conn, execution_key=key, result=await people_icp.read_icp(self.storage, project)
                 )
             await records.ensure_fields(conn, run.project_id)
 
@@ -435,60 +423,17 @@ class LinkedInEngagersActivities:
                 path=f"workflows/{self.key}.json",
             )
         )
-        route = engagers.ROUTE
-        if definition.get("model_route") != {
-            "key": route.key,
-            "provider": route.provider.value,
-            "model": route.model,
-            "capabilities": sorted(c.value for c in route.capabilities),
-        }:
+        served = [
+            {
+                "key": route.key,
+                "provider": route.provider.value,
+                "model": route.model,
+                "capabilities": sorted(c.value for c in route.capabilities),
+            }
+            for route in (people_icp.ROUTE, engagers.LEGACY_ROUTE)
+        ]
+        if definition.get("model_route") not in served:
             raise ApplicationError("Worker does not serve this scoring model.", non_retryable=True)
-
-    async def _score_batch(self, run, batch, *, text: str, profiles: list[str], definition: str):
-        """The model's answer for one batch, kept in a receipt before any value is written.
-
-        A batch whose earlier call can't be confirmed isn't bought again; it returns None and
-        those people are left for a later run.
-        """
-
-        digest = hashlib.sha256(
-            (definition + ":" + ",".join(sorted(str(p["id"]) for p in batch))).encode()
-        ).hexdigest()[:24]
-        key = f"{run.id}:{self.prefix}:score:{digest}"
-        async with self.db.effect_lock(key, self.key) as (conn, saved):
-            if saved and saved.status == "completed":
-                return (saved.result or {}).get("output")
-            if saved:
-                return None
-            await self.db.start_effect(conn, execution_key=key, operation=self.key)
-            output = None
-            try:
-                with model_usage_scope(
-                    run_id=run.id, step=f"linkedin_{self.prefix}:icp:{digest}", conn=conn
-                ):
-                    async with asyncio.timeout(MODEL_SECONDS + 15):
-                        result = await self.router.generate(
-                            engagers.ROUTE.key,
-                            ModelRequest(
-                                system=engagers.score_instructions(profiles),
-                                messages=(
-                                    ModelMessage(
-                                        role=MessageRole.USER,
-                                        content=engagers.score_input(text, batch),
-                                    ),
-                                ),
-                                output_schema=engagers.score_schema(profiles),
-                                output_schema_name="icp_scores",
-                                max_output_tokens=engagers.MAX_OUTPUT_TOKENS,
-                            ),
-                            timeout_seconds=MODEL_SECONDS,
-                        )
-                output = result.parsed
-            except (ModelProviderError, ModelOutputTruncated, TimeoutError) as error:
-                # A check on model output never fails the run that paid for it.
-                logger.warning("ICP scoring batch failed for run %s: %s", run.id, type(error))
-            await self.db.complete_effect(conn, execution_key=key, result={"output": output})
-            return output
 
     @activity.defn(name="linkedin_engagers_score")
     async def score(self, run_id: str) -> None:
@@ -499,60 +444,24 @@ class LinkedInEngagersActivities:
         icp = (await self.db.get_effect(f"{run.id}:{self.prefix}:icp")).result or {}
         if not icp.get("profiles"):
             return
-        if self.router is None:
-            raise IntegrationUpstreamError("Tin's scoring model isn't available right now.")
+        if not people_rating.available(self.router):
+            # Without the rating model people stay unrated; the next run with it rates them.
+            logger.warning("ICP rating skipped for run %s: its model isn't configured", run.id)
+            return
         await self._route_pinned(run)
         project = await self.db.get_project(run.project_id)
-        raw = await self.storage.read_canonical_artifact_if_exists(
-            repo_id=project.state_repo_id, commit_sha=icp["revision"], path=icp["path"]
+        await self._progress(run.id, "score", *self.score_step, "Rating people against your ICP")
+        await people_rating.rate_unrated(
+            self.db,
+            self.router,
+            run,
+            text=await people_rating.icp_text(self.storage, project, icp),
+            profiles=icp["profiles"],
+            definition=people_rating.definition_for(icp),
+            operation=self.key,
+            step=f"linkedin_{self.prefix}",
+            heartbeat=_heartbeat,
         )
-        text = (raw or b"")[: engagers.ICP_BYTES].decode("utf-8", "replace")
-        await self._progress(run.id, "score", *self.score_step, "Scoring people against your ICP")
-        tried: list[UUID] = []
-        while len(tried) < engagers.MAX_SCORED:
-            async with self.db.pool.acquire() as conn:
-                batch = await engagers.unscored(
-                    conn,
-                    run.project_id,
-                    icp["definition"],
-                    limit=engagers.SCORE_BATCH,
-                    skip=tried,
-                )
-            if not batch:
-                break
-            tried += [person["id"] for person in batch]
-            output = await self._score_batch(
-                run, batch, text=text, profiles=icp["profiles"], definition=icp["definition"]
-            )
-            if output is None:
-                # Left without this definition, so a later run scores them.
-                unscored = [Value("icp", None, UNSCORED), Value("icp_fit", None, UNSCORED)]
-                written = [(person, unscored, "") for person in batch]
-            else:
-                written = [
-                    (person, values, icp["definition"])
-                    for person, values in zip(
-                        batch, engagers.scores(output, batch, icp["profiles"]), strict=True
-                    )
-                ]
-            async with self.db.pool.acquire() as conn:
-                for person, values, definition in written:
-                    try:
-                        await records.set_values(
-                            conn,
-                            run.project_id,
-                            person["id"],
-                            values,
-                            set_by_kind="run",
-                            set_by=str(run.id),
-                            definition=definition,
-                            refresh=bool(definition),
-                        )
-                    except records.RecordError as error:
-                        # The founder forgot this person while the model scored them.
-                        if error.code != "record_gone":
-                            raise
-            _heartbeat({"scored": len(tried)})
 
     @activity.defn(name="linkedin_engagers_publish")
     async def publish(self, control: dict) -> None:

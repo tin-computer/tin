@@ -30,7 +30,7 @@ from test_linkedin_engagers import (
 )
 from test_linkedin_per_member import TEAMMATE, add_teammate
 
-from tin_lite import linkedin_engagers as engagers
+from tin_lite import people_icp
 from tin_lite import people_records as records
 from tin_lite.auth import AuthContext, require_user
 from tin_lite.people_api import router
@@ -65,7 +65,8 @@ async def test_the_list_shows_each_value_with_who_set_it_and_the_last_touch(coll
     item = await ran(f, [person(1, degree="1st"), person(2, headline="Designer")])
     async with client(f) as http:
         listed = (await http.get(f"/api/projects/{f.project.id}/people")).json()
-    assert listed["truncated"] is False and listed["fit_shown"] == 0.6
+    assert listed["truncated"] is False and listed["fit_shown"] == 3
+    assert listed["ratings"]["4"] == "Strong fit"
     people = by_name(listed)
     assert set(people) == {"Person 1", "Person 2"}
     one = people["Person 1"]
@@ -73,7 +74,7 @@ async def test_the_list_shows_each_value_with_who_set_it_and_the_last_touch(coll
     assert one["profile_url"] == f"https://www.linkedin.com/in/{member(1)}"
     fields = one["fields"]
     assert fields["icp"]["value"] == "Software founders"
-    assert fields["icp_fit"]["value"] == 0.9
+    assert fields["icp_fit"]["value"] == 4
     assert fields["icp_fit"]["reason"].startswith("Headline says")
     assert fields["icp_fit"]["by"] == "engagers" and fields["icp_fit"]["stale"] is False
     assert fields["icp_fit"]["definition"] == "strategy/ICP.md"
@@ -99,7 +100,7 @@ async def test_a_change_in_how_tin_scores_marks_scores_old_until_a_run_rescores_
     collection_db, monkeypatch
 ):
     f = await fixture(collection_db)
-    monkeypatch.setattr(engagers, "SCORER", engagers.SCORER - 1)
+    monkeypatch.setattr(people_icp, "SCORER", people_icp.SCORER - 1)
     await ran(f, [person(1), person(2, headline="Designer")])
     monkeypatch.undo()
     path = f"/api/projects/{f.project.id}/people"
@@ -114,11 +115,10 @@ async def test_a_change_in_how_tin_scores_marks_scores_old_until_a_run_rescores_
     item = post(1, 3)
     cloud = Cloud([item], {item["thread_urn"]: [person(1), person(2, headline="Designer")]})
     await run_through(work(f, cloud, router), await engagers_run(f))
-    assert len(router.requests) == 1
-    assert len(json.loads(router.requests[0].messages[0].content)["people"]) == 2
+    assert len(router.requests) == 2
     kept = await records.people(f.db.pool, f.project.id)
     assert {p["fields"]["icp_fit"]["definition"].rsplit(":", 1)[1] for p in kept} == {
-        f"v{engagers.SCORER}"
+        f"v{people_icp.SCORER}"
     }
     async with client(f) as http:
         people = by_name((await http.get(path)).json())
@@ -219,7 +219,7 @@ async def test_a_person_forgotten_while_scored_is_skipped(collection_db):
     )
     left = await records.people(f.db.pool, f.project.id)
     assert [p["fields"]["name"]["text"] for p in left] == ["Person 1"]
-    assert left[0]["fields"]["icp_fit"]["number"] == 0.9
+    assert left[0]["fields"]["icp_fit"]["number"] == 4
     status = await f.db.pool.fetchval("SELECT status FROM workflow_runs WHERE id=$1", UUID(run_id))
     assert status == "succeeded"
 
@@ -240,7 +240,7 @@ def structured(result):
     return result[1] if isinstance(result, tuple) else result.structured_content
 
 
-async def test_a_member_picks_the_fit_and_can_give_tins_score_back(collection_db):
+async def test_a_member_rates_someone_and_can_give_tins_score_back(collection_db):
     f = await fixture(collection_db)
     await ran(f, [person(1, headline="Designer")])
     path = f"/api/projects/{f.project.id}/people"
@@ -248,21 +248,22 @@ async def test_a_member_picks_the_fit_and_can_give_tins_score_back(collection_db
         someone = (await http.get(path)).json()
         assert someone["profiles"] == ["Software founders", "Service agencies"]
         one = someone["people"][0]["id"]
-        assert someone["people"][0]["fields"]["icp_fit"]["value"] == 0.1
+        assert someone["people"][0]["fields"]["icp_fit"]["value"] == 1
 
-        picked = await http.patch(f"{path}/{one}", json={"fit": {"icp": "Software founders"}})
+        picked = await http.patch(f"{path}/{one}", json={"fit": {"rating": 4}})
         assert picked.status_code == 200, picked.text
         fields = picked.json()["fields"]
-        assert fields["icp"]["value"] == "Software founders" and fields["icp"]["by"] == "you"
-        assert fields["icp_fit"]["value"] == 1.0 and fields["icp_fit"]["stale"] is False
+        # A member sets the rating; the profile stays Tin's.
+        assert fields["icp"]["value"] == "none" and fields["icp"]["by"] == "engagers"
+        assert fields["icp_fit"]["value"] == 4 and fields["icp_fit"]["by"] == "you"
+        assert fields["icp_fit"]["stale"] is False
         # Tin's score stays, so "Use Tin's score" can bring it back.
-        assert fields["icp_fit"]["previous"] == {"value": 0.1, "reason": "Headline says Designer"}
+        assert fields["icp_fit"]["previous"] == {"value": 1, "reason": "Headline says Designer"}
 
+        for bad in ({"rating": 5}, {"rating": 0}, {"icp": "Software founders"}):
+            assert (await http.patch(f"{path}/{one}", json={"fit": bad})).status_code == 422
         assert (
-            await http.patch(f"{path}/{one}", json={"fit": {"icp": "Agencies"}})
-        ).status_code == 422
-        assert (
-            await http.patch(f"{path}/{one}", json={"fit": {"icp": "x"}, "y": 1})
+            await http.patch(f"{path}/{one}", json={"fit": {"rating": 2}, "y": 1})
         ).status_code == 422
 
     # A run never scores a member's pick again, so it never pays for it.
@@ -275,15 +276,11 @@ async def test_a_member_picks_the_fit_and_can_give_tins_score_back(collection_db
     assert router.requests == []
     async with client(f) as http:
         fields = (await http.get(f"{path}/{one}")).json()["fields"]
-        assert fields["icp_fit"]["value"] == 1.0 and fields["icp_fit"]["by"] == "you"
+        assert fields["icp_fit"]["value"] == 4 and fields["icp_fit"]["by"] == "you"
 
         restored = (await http.patch(f"{path}/{one}", json={"fit": None})).json()["fields"]
         assert restored["icp"]["value"] == "none" and restored["icp"]["by"] == "engagers"
-        assert restored["icp_fit"]["value"] == 0.1 and restored["icp_fit"]["previous"] is None
-
-        not_a_fit = (await http.patch(f"{path}/{one}", json={"fit": {"icp": None}})).json()
-        assert not_a_fit["fields"]["icp"]["value"] == "none"
-        assert not_a_fit["fields"]["icp_fit"]["value"] == 0.0
+        assert restored["icp_fit"]["value"] == 1 and restored["icp_fit"]["previous"] is None
 
         customer = (await http.patch(f"{path}/{one}", json={"customer": True})).json()
         assert customer["fields"]["customer"]["value"] == "yes"
@@ -321,8 +318,8 @@ async def test_a_note_marks_the_score_old_and_the_next_run_reads_it(collection_d
     await run_through(
         work(f, Cloud([item], {item["thread_urn"]: [person(1)]}), router), await engagers_run(f)
     )
-    sent = json.loads(router.requests[0].messages[0].content)["people"]
-    assert sent[0]["notes"] == [note]
+    sent = json.loads(router.requests[0].messages[0].content)["person"]
+    assert sent["team_notes"] == [note]
     async with client(f) as http:
         fields = (await http.get(f"{path}/{one}")).json()["fields"]
         assert fields["icp_fit"]["stale"] is False
@@ -374,12 +371,13 @@ async def test_mcp_reads_and_corrects_people_like_a_member(collection_db, monkey
             {
                 "project_id": project,
                 "person_id": designer,
-                "icp": "Service agencies",
+                "rating": 3,
                 "customer": True,
             },
         )
     )
-    assert changed["fields"]["icp"]["value"] == "Service agencies"
+    assert changed["fields"]["icp_fit"]["value"] == 3
+    assert changed["fields"]["icp_fit"]["by"] == "you"
     assert changed["fields"]["customer"]["value"] == "yes"
     noted = structured(
         await server.call_tool(
@@ -401,7 +399,7 @@ async def test_mcp_reads_and_corrects_people_like_a_member(collection_db, monkey
     with pytest.raises(ToolError, match="invalid"):
         await server.call_tool(
             "update_person",
-            {"project_id": project, "person_id": designer, "icp": "x", "not_a_fit": True},
+            {"project_id": project, "person_id": designer, "rating": 2, "use_tin_score": True},
         )
     forgotten = structured(
         await server.call_tool(

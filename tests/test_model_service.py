@@ -51,7 +51,7 @@ ROUTE = ModelRoute(
     key="test-explicit-route",
     provider=ProviderName.OPENROUTER,
     model="vendor/test-model",
-    capabilities=frozenset(ModelCapability),
+    capabilities=frozenset(ModelCapability) - {ModelCapability.WEB_SEARCH},
 )
 
 
@@ -118,6 +118,7 @@ async def test_openrouter_wire_contract_and_server_only_key():
             "cached_input_tokens": 3,
             "reasoning_tokens": 4,
             "cache_write_input_tokens": 2,
+            "web_search_calls": None,
         }
     finally:
         await provider.close()

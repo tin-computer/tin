@@ -17,6 +17,7 @@ from tin_lite.billing_recovery import billing_reconciliation_loop
 from tin_lite.mcp_oauth import install_shell_probe_hint
 from tin_lite.mcp_oauth import router as mcp_oauth_router
 from tin_lite.mcp_server import create_mcp_app
+from tin_lite.rb2b_api import router as rb2b_router
 from tin_lite.run_tools import create_run_tools_app
 from tin_lite.runtime import build_runtime
 from tin_lite.settings import Settings, get_settings
@@ -137,6 +138,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     if resolved_settings.billing_enabled:
         app.include_router(billing_router)
     app.include_router(sms_router)
+    app.include_router(rb2b_router)
     app.mount("/internal/run-tools", run_tools_app)
     # Exact routes retain the original path and the SDK's auth/CORS middleware.
     # They must precede the existing root mount, without intercepting /mcp/consent.

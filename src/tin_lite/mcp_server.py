@@ -1288,6 +1288,7 @@ def create_mcp_app(
             "came_from_detail": (fields.get("web_source") or {}).get("reason") or None,
             "icp": value("icp"),
             "icp_fit": value("icp_fit"),
+            "intent": value("intent"),
             "fit_set_by": fit.get("by"),
             "fit_reason": fit.get("reason"),
             "fit_stale": fit.get("stale", False),
@@ -1303,15 +1304,17 @@ def create_mcp_app(
     async def list_people(
         project_id: str, segment: str = "all", query: str | None = None, limit: int = 100
     ) -> dict[str, Any]:
-        """List a project's people, best ICP fit first: who they are, their ICP and fit with
-        who set it and why, whether they are a customer, and their newest note.
+        """List a project's people, best ICP fit first: who they are, the ICP profile they come
+        closest to, their fit (1 not a fit to 4 strong fit, named in `ratings`) and intent (hot,
+        warm or cold) with who set them and why, whether they are a customer, and their newest
+        note.
 
-        segment: "all", "icp_fit" (fit at or above fit_shown), "not_connected" (not
+        segment: "all", "icp_fit" (rated fit_shown or more), "not_connected" (not
         connected on LinkedIn), "on_the_site" (named by a visitor journeys run, with their
         email, tier and last visit) or "from_ads" (their last visit came from an ad click).
         came_from is how the last visit arrived (ad, organic, ai, social, referral, direct).
         query matches name, headline, email, last visit, ICP and notes. `profiles` are the ICP
-        file's profiles, the values update_person accepts.
+        file's profiles.
         """
         parsed, viewer, people = await people_service(project_id, "list_people")
         if segment not in {"all", "icp_fit", "not_connected", "on_the_site", "from_ads"}:
@@ -1353,6 +1356,7 @@ def create_mcp_app(
             "people": rows[:limit],
             "total": len(rows),
             "fit_shown": listed["fit_shown"],
+            "ratings": listed["ratings"],
             "profiles": listed["profiles"],
             "links": {"people": f"{dashboard_url(settings)}/people?project={parsed}"},
         }
@@ -1371,31 +1375,27 @@ def create_mcp_app(
     async def update_person(
         project_id: str,
         person_id: str,
-        icp: str | None = None,
-        not_a_fit: bool = False,
+        rating: int | None = None,
         use_tin_score: bool = False,
         customer: bool | None = None,
     ) -> dict[str, Any]:
         """Correct one person the way a member does in People, only as the founder asked.
 
-        Give at most one of: icp, a profile exactly as list_people's `profiles` (the person
-        fits it); not_a_fit=true (they fit no profile); use_tin_score=true (drop the member's
-        pick and use Tin's own score again). No run replaces a member's pick. customer marks
-        them a customer (true) or not (false).
+        Give at most one of: rating, a fit of 1 to 4 as list_people's `ratings` name them (1 not
+        a fit, 4 strong fit); use_tin_score=true (drop the member's rating and use Tin's own).
+        No run replaces a member's rating. customer marks them a customer (true) or not
+        (false).
         """
         parsed, viewer, people = await people_service(project_id, "update_person")
-        chosen = [icp is not None, not_a_fit, use_tin_score]
-        if sum(chosen) > 1:
-            raise ToolError("invalid: give one of icp, not_a_fit or use_tin_score")
-        if not any(chosen) and customer is None:
+        if rating is not None and use_tin_score:
+            raise ToolError("invalid: give one of rating or use_tin_score")
+        if rating is None and not use_tin_score and customer is None:
             raise ToolError("invalid: nothing to change")
         from tin_lite.people_service import UNCHANGED
 
         fit: Any = UNCHANGED
-        if icp is not None:
-            fit = {"icp": icp}
-        elif not_a_fit:
-            fit = {"icp": None}
+        if rating is not None:
+            fit = {"rating": rating}
         elif use_tin_score:
             fit = None
         person = await people_result(

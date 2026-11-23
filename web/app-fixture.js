@@ -59,13 +59,13 @@ export function syntheticPeople() {
     request: null,
   });
   return [
-    person("p-maya", "Maya Lindqvist", "Founder, payroll for remote teams", "ICP 1: founders who need growth done", 0.84, "connected"),
-    person("p-daniel", "Daniel Okafor", "Co-founder, Fieldline", "ICP 2: technical founders running their own marketing", 0.78, "none", {notes: [
+    person("p-maya", "Maya Lindqvist", "Founder, payroll for remote teams", "ICP 1: founders who need growth done", 4, "connected"),
+    person("p-daniel", "Daniel Okafor", "Co-founder, Fieldline", "ICP 2: technical founders running their own marketing", 3, "none", {notes: [
       {id: "n-daniel-2", body: "Interned with us in 2024 before founding Fieldline.\nA friend of the team.", by: "you", mine: true, at: "2026-10-15T10:00:00Z", edited: false},
       {id: "n-daniel-1", body: "Met at a founder dinner in Berlin.", by: "a teammate", who: "Mira", mine: false, at: "2026-10-14T10:00:00Z", edited: false},
     ], touch: {kind: "invited", at: "2026-10-16T08:00:00Z", who: "Mira"}}),
-    person("p-sofia", "Sofia Marchetti", "Founder & CEO, Patchbay", "ICP 1: founders who need growth done", 0.66, "connected", {stale: true}),
-    person("p-lea", "Lea Fischer", "Head of Marketing, Quanta Labs", "none", 0.15, "none"),
+    person("p-sofia", "Sofia Marchetti", "Founder & CEO, Patchbay", "ICP 1: founders who need growth done", 3, "connected", {stale: true}),
+    person("p-lea", "Lea Fischer", "Head of Marketing, Quanta Labs", "none", 1, "none"),
     person("p-hannah", "Hannah Kim", "Building something new", null, null, "none", {reason: "Tin couldn't score this person this time; the next run tries again.", touch: {kind: "viewed", at: "2026-10-17T08:00:00Z", who: "Mira"}}),
   ];
 }
@@ -201,13 +201,11 @@ export async function serveApp({decisionCount = 4, people = syntheticPeople(), e
             if (previous) fields[key] = {...fields[key], value: previous.value, reason: previous.reason, by: "engagers", stale: false, stale_reason: null, previous: null};
           }
         } else {
-          const picked = change.fit.icp;
-          if (picked !== null && !profiles.includes(picked)) return refuse(422, "Pick one of the profiles in strategy/ICP.md.");
-          for (const [key, value] of [["icp", picked ?? "none"], ["icp_fit", picked === null ? 0 : 1]]) {
-            const before = fields[key];
-            const previous = before?.by === "engagers" ? {value: before.value, reason: before.reason} : before?.previous || null;
-            fields[key] = {value, reason: "", by: "you", at: stamp, stale: false, stale_reason: null, definition: "", previous};
-          }
+          const rating = change.fit.rating;
+          if (![1, 2, 3, 4].includes(rating)) return refuse(422, "Pick a fit from 1 to 4.");
+          const before = fields.icp_fit;
+          const previous = before?.by === "engagers" ? {value: before.value, reason: before.reason} : before?.previous || null;
+          fields.icp_fit = {value: rating, reason: "", by: "you", at: stamp, stale: false, stale_reason: null, definition: "", previous};
         }
       }
       if ("customer" in change) fields.customer = {value: change.customer ? "yes" : "no", reason: "", by: "you", at: stamp, stale: false, stale_reason: null, definition: "", previous: null};
@@ -282,7 +280,7 @@ export async function serveApp({decisionCount = 4, people = syntheticPeople(), e
     }
     if (request.method !== "GET") {response.statusCode = 204; return response.end();}
     if (/^\/api\/projects\/[^/]+\/integrations$/.test(url.pathname)) return send(integrations);
-    if (/^\/api\/projects\/[^/]+\/people$/.test(url.pathname)) return send({people: people.map(listed), truncated: false, fit_shown: 0.6, profiles, icp_path: "strategy/ICP.md"});
+    if (/^\/api\/projects\/[^/]+\/people$/.test(url.pathname)) return send({people: people.map(listed), truncated: false, fit_shown: 3, ratings: {"1": "Not a fit", "2": "Weak fit", "3": "Good fit", "4": "Strong fit"}, profiles, icp_path: "strategy/ICP.md"});
     if (personPath) {
       const found = people.find(item => item.id === personPath[1]);
       if (!found) {response.statusCode = 404; return send({detail: "This person is no longer in this project."});}

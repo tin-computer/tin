@@ -25,6 +25,7 @@ from tin_lite.model_providers import (
     OpenAIModelProvider,
     ProviderName,
     ReasoningEffort,
+    WebSearchRequest,
     configured_model_router,
     model_failure_reason,
 )
@@ -90,6 +91,47 @@ async def test_openai_adapter_uses_responses_and_validates_json_schema() -> None
 
 
 @pytest.mark.asyncio
+async def test_openai_adapter_searches_the_web_only_when_asked() -> None:
+    class Responses:
+        parameters = None
+
+        async def create(self, **parameters):
+            self.parameters = parameters
+            return SimpleNamespace(
+                output_text='{"answer":"found"}',
+                output=[
+                    {"type": "web_search_call", "action": {"type": "search", "query": "a"}},
+                    {"type": "web_search_call", "action": {"type": "open_page"}},
+                    SimpleNamespace(type="web_search_call", action=SimpleNamespace(type="search")),
+                    {"type": "message"},
+                ],
+                usage=None,
+            )
+
+    client = _Closable()
+    client.responses = Responses()
+    provider = OpenAIModelProvider(api_key="test", client=client)  # noqa: S106
+    plain = _request(structured=True)
+    searching = WebSearchRequest(**vars(plain), web_search_calls=7)
+    assert ModelCapability.WEB_SEARCH in searching.required_capabilities()
+    assert ModelCapability.WEB_SEARCH not in plain.required_capabilities()
+
+    result = await provider.generate(model="gpt-test", request=searching)
+    assert client.responses.parameters["tools"] == [{"type": "web_search"}]
+    assert client.responses.parameters["max_tool_calls"] == 7
+    # Opening a page isn't a search.
+    assert result.usage.web_search_calls == 2 and result.parsed == {"answer": "found"}
+
+    result = await provider.generate(model="gpt-test", request=plain)
+    assert "tools" not in client.responses.parameters
+    assert result.usage.web_search_calls is None
+    with pytest.raises(ValueError, match="web_search_calls"):
+        await provider.generate(
+            model="gpt-test", request=WebSearchRequest(**vars(plain), web_search_calls=0)
+        )
+
+
+@pytest.mark.asyncio
 async def test_anthropic_adapter_preserves_native_messages_contract() -> None:
     class Messages:
         parameters = None
@@ -130,6 +172,52 @@ async def test_anthropic_adapter_preserves_native_messages_contract() -> None:
 
 
 @pytest.mark.asyncio
+async def test_gemini_adapter_grounds_in_google_search_only_when_asked() -> None:
+    class Models:
+        parameters = None
+
+        async def generate_content(self, **parameters):
+            self.parameters = parameters
+            return SimpleNamespace(
+                text='{"answer":"found"}',
+                candidates=[
+                    SimpleNamespace(
+                        finish_reason="STOP",
+                        grounding_metadata=SimpleNamespace(web_search_queries=["a", "b", "c"]),
+                    )
+                ],
+                usage_metadata=SimpleNamespace(
+                    prompt_token_count=7,
+                    tool_use_prompt_token_count=5,
+                    candidates_token_count=3,
+                    total_token_count=16,
+                ),
+            )
+
+    class AsyncClient:
+        models = Models()
+
+        async def aclose(self):
+            pass
+
+    client = SimpleNamespace(aio=AsyncClient())
+    provider = GeminiModelProvider(api_key="test", client=client)  # noqa: S106
+    plain = _request(structured=True)
+
+    result = await provider.generate(
+        model="gemini-test", request=WebSearchRequest(**vars(plain), web_search_calls=7)
+    )
+    tools = client.aio.models.parameters["config"].tools
+    assert len(tools) == 1 and tools[0].google_search is not None
+    # The searches, and what they put in front of the model, which is billed as input.
+    assert result.usage.web_search_calls == 3 and result.usage.input_tokens == 12
+
+    result = await provider.generate(model="gemini-test", request=plain)
+    assert not client.aio.models.parameters["config"].tools
+    assert result.usage.web_search_calls is None
+
+
+@pytest.mark.asyncio
 async def test_gemini_adapter_uses_async_official_client() -> None:
     class Models:
         parameters = None
@@ -163,10 +251,35 @@ async def test_gemini_adapter_uses_async_official_client() -> None:
 
     assert result.provider is ProviderName.GEMINI
     assert result.parsed == {"answer": "gemini"}
-    assert result.usage.reasoning_tokens == 1
+    # Thinking is billed as output, so output counts it as OpenAI's output_tokens does.
+    assert result.usage == ModelUsage(
+        input_tokens=7,
+        output_tokens=4,
+        total_tokens=11,
+        cached_input_tokens=1,
+        reasoning_tokens=1,
+        cache_write_input_tokens=0,
+    )
+    assert result.service_tier == "standard"
     config = client.aio.models.parameters["config"]
+    assert config.service_tier.value == "standard"
     assert config.thinking_config.thinking_level.value == "HIGH"
     assert config.response_mime_type == "application/json"
+
+
+def test_gemini_usage_reads_omitted_counts_as_zero_and_no_counts_as_unknown() -> None:
+    from tin_lite.model_providers import _gemini_usage
+
+    # Gemini's JSON leaves out zero counts: no cache hit, no thinking.
+    usage = _gemini_usage(
+        SimpleNamespace(prompt_token_count=9, candidates_token_count=2, total_token_count=11)
+    )
+    assert (usage.input_tokens, usage.output_tokens, usage.total_tokens) == (9, 2, 11)
+    assert (usage.cached_input_tokens, usage.reasoning_tokens) == (0, 0)
+    assert usage.cache_write_input_tokens == 0
+    # A response with no prompt count stays unpriced rather than free.
+    assert _gemini_usage(None) == ModelUsage()
+    assert _gemini_usage(SimpleNamespace(total_token_count=13)) == ModelUsage(total_tokens=13)
 
 
 @pytest.mark.asyncio
@@ -205,6 +318,11 @@ async def test_router_uses_only_explicit_route_and_capabilities() -> None:
         await router.generate("gpt-guessed", _request())
     with pytest.raises(ModelCapabilityError, match="json_schema"):
         await router.generate("weekly-summary", _request(structured=True))
+    with pytest.raises(ModelCapabilityError, match="web_search"):
+        await router.generate(
+            "weekly-summary",
+            WebSearchRequest(messages=(ModelMessage(MessageRole.USER, "Look it up."),)),
+        )
 
 
 @pytest.mark.asyncio

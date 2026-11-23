@@ -62,10 +62,11 @@ attempt can recover its checkpoint but cannot purchase the model work again.
 
 ### Prices and ceilings
 
-`service_pricing.py` pins `tin-native-supplier-2026-11-04-v2` in each new budget.
+`service_pricing.py` pins `tin-native-supplier-2026-11-23-v3` in each new budget.
 It prices OpenAI GPT-6 Luna, GPT-6 Sol, GPT-6.1 Sol and GPT-6 Astra, standard tier, at the
-list prices checked on 2026-11-04. Native routes use Luna and GPT-6 Sol; code packages may also
-name GPT-6.1 Sol and Astra.
+list prices checked on 2026-11-04, and Gemini 4 Neon, Gemini's Standard tier, at the list price
+checked on 2026-11-23 (under `other_providers`). Native routes use Luna and GPT-6 Sol; code
+packages may also name GPT-6.1 Sol, Astra and Neon. Runs pinned to the v2 card price OpenAI only.
 The card distinguishes uncached input, cached reads, cache writes, output, long
 context and web search. Pricing sources:
 

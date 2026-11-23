@@ -29,6 +29,8 @@ from tin_lite import (
     paid_ads_launch,
     paid_ads_monitor,
     payment_recovery,
+    people_icp,
+    rb2b,
     style_capture,
     technical_fix,
     website_change,
@@ -1573,13 +1575,13 @@ BUILTIN_WORKFLOWS = (
         title="People who engaged with your LinkedIn posts",
         description=(
             "Read your own LinkedIn posts from the last 90 days and everyone who reacted to "
-            "them, keep each person in People with whether you're already connected, score "
-            "them against strategy/ICP.md, and list them best fit first in "
+            "them, keep each person in People with whether you're already connected, rate "
+            "them 1 to 5 against strategy/ICP.md, and list them best fit first in "
             "people/linkedin-engagers.csv. People who fit and aren't connected get a connection "
             "request from you, a few each weekday. Reads with your saved LinkedIn session."
         ),
         executor=linkedin_engagers.KEY,
-        version_label="1.4.0",
+        version_label="1.5.0",
         presentation=WorkflowDiagram(
             direction="TD",
             nodes=(
@@ -1610,8 +1612,8 @@ BUILTIN_WORKFLOWS = (
                 DiagramNode(
                     "score",
                     "step",
-                    "Score against your ICP",
-                    "from headline and your notes, with a reason",
+                    "Rate against your ICP, 1 to 5",
+                    "from what Tin knows, your notes and a web search",
                 ),
                 DiagramNode(
                     "accepted",
@@ -1646,7 +1648,7 @@ BUILTIN_WORKFLOWS = (
         schedule_modes=("on_demand",),
         system=LINKEDIN_SYSTEM,
         input_schema=linkedin_engagers.INPUT_SCHEMA,
-        model_route=linkedin_engagers.ROUTE,
+        model_route=people_icp.ROUTE,
         integration_requirements=(
             IntegrationRequirement(
                 provider_key=connection_collection.PROVIDER,
@@ -1660,13 +1662,13 @@ BUILTIN_WORKFLOWS = (
         title="People who viewed your LinkedIn profile",
         description=(
             "Read who viewed your LinkedIn profile, newest first, keep each person in People "
-            "with whether you're already connected, score them against strategy/ICP.md, and "
-            "list them best fit first in people/linkedin-profile-viewers.csv. People who fit "
+            "with whether you're already connected, rate them 1 to 5 against strategy/ICP.md, "
+            "and list them best fit first in people/linkedin-profile-viewers.csv. People who fit "
             "and aren't connected get a connection request from you, a few each weekday. Reads "
             "with your saved LinkedIn session."
         ),
         executor=linkedin_profile_viewers.KEY,
-        version_label="1.2.0",
+        version_label="1.3.0",
         presentation=WorkflowDiagram(
             direction="TD",
             nodes=(
@@ -1691,8 +1693,8 @@ BUILTIN_WORKFLOWS = (
                 DiagramNode(
                     "score",
                     "step",
-                    "Score against your ICP",
-                    "from headline and your notes, with a reason",
+                    "Rate against your ICP, 1 to 5",
+                    "from what Tin knows, your notes and a web search",
                 ),
                 DiagramNode(
                     "ids",
@@ -1734,7 +1736,7 @@ BUILTIN_WORKFLOWS = (
         default_schedule={"cadence": "daily", "local_time": "08:00"},
         system=LINKEDIN_SYSTEM,
         input_schema=linkedin_profile_viewers.INPUT_SCHEMA,
-        model_route=linkedin_engagers.ROUTE,
+        model_route=people_icp.ROUTE,
         integration_requirements=(
             IntegrationRequirement(
                 provider_key=connection_collection.PROVIDER,
@@ -1810,6 +1812,64 @@ BUILTIN_WORKFLOWS = (
                 capabilities=(connection_collection.CAPABILITY,),
             ),
         ),
+    ),
+    BuiltinWorkflow(
+        id=rb2b.WORKFLOW_ID,
+        key=rb2b.KEY,
+        title="Read a visitor RB2B identified",
+        description=(
+            "When RB2B names a visitor to your site, keep them in People, read their visit in "
+            "your PostHog (pages, time, how they arrived, earlier visits and a replay), rate "
+            "their fit and intent against strategy/ICP.md with a web search, and list the "
+            "latest visitors in people/rb2b-visitors.md. Tin starts it for each visitor RB2B "
+            "posts to your project's webhook, set up under Integrations."
+        ),
+        executor=rb2b.KEY,
+        version_label="1.0.0",
+        presentation=WorkflowDiagram(
+            direction="TD",
+            nodes=(
+                DiagramNode(
+                    "hook",
+                    "surface",
+                    "RB2B posts a visitor",
+                    "to your project's own webhook address",
+                ),
+                DiagramNode("people", "store", "People", "name, headline, company, location"),
+                DiagramNode("wait", "wait", "Wait ten minutes", "until PostHog has the visit"),
+                DiagramNode(
+                    "visit",
+                    "surface",
+                    "Read the visit in PostHog",
+                    "pages, time, how they arrived, earlier visits",
+                ),
+                DiagramNode(
+                    "rate",
+                    "step",
+                    "Rate fit and intent",
+                    "against your ICP, with a web search",
+                ),
+                DiagramNode(
+                    "files",
+                    "receipt",
+                    "The latest visitors, in Files",
+                    "people/rb2b-visitors.md",
+                ),
+            ),
+            edges=(
+                DiagramEdge("hook", "people", "signal"),
+                DiagramEdge("people", "wait"),
+                DiagramEdge("wait", "visit"),
+                DiagramEdge("visit", "rate"),
+                DiagramEdge("rate", "files"),
+                DiagramEdge("people", "files", label="company only, or forgotten"),
+            ),
+        ),
+        schedule_modes=("on_demand",),
+        system=PRODUCT_QA_SYSTEM,
+        agent_only=True,
+        input_schema=rb2b.INPUT_SCHEMA,
+        model_route=people_icp.ROUTE,
     ),
     BuiltinWorkflow(
         id=linkedin_requests.WORKFLOW_ID,

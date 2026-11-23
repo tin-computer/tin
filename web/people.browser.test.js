@@ -66,14 +66,14 @@ test("the grid lists people best fit first, by segment, with the reason behind a
     assert.deepEqual(await names(), ["Maya Lindqvist", "Daniel Okafor", "Sofia Marchetti", "Lea Fischer", "Hannah Kim"]);
     assert.deepEqual(await page.locator(".people-sections .workflow-section").allTextContents(), ["All people 5", "ICP fit 3", "Not connected yet 3"]);
     // A score made under an older ICP file reads "old"; a person not scored shows a dash.
-    assert.equal(await page.locator('td[data-fit="p-sofia"]').textContent(), "old0.66");
+    assert.equal(await page.locator('td[data-fit="p-sofia"]').textContent(), "old3");
     assert.equal(await page.locator('td[data-fit="p-hannah"]').textContent(), "—");
     assert.equal(await page.locator(".people-pager code").textContent(), "1–5 of 5");
 
     await page.locator('td[data-fit="p-sofia"]').hover();
     const hover = page.locator(".people-hover.is-visible");
     await hover.waitFor();
-    assert.match(await hover.innerText(), /no marketing lead[\s\S]*0\.66 · ICP 1 · oct 15[\s\S]*Scored before strategy\/ICP\.md or Tin’s scoring changed\. The next run rescores it\./);
+    assert.match(await hover.innerText(), /no marketing lead[\s\S]*3 · Good fit · ICP 1 · oct 15[\s\S]*Rated before strategy\/ICP\.md or Tin’s rating changed\. The next run rates again\./);
 
     await page.getByRole("tab", {name: "Not connected yet 3"}).click();
     assert.deepEqual(await names(), ["Daniel Okafor", "Lea Fischer", "Hannah Kim"]);
@@ -142,7 +142,7 @@ test("a person opens beside a narrower grid, and the address keeps them", {timeo
     assert.equal(await page.locator(".people-table th.is-headline").isVisible(), false);
     assert.equal(await page.locator(".people-table th.is-touch").isVisible(), false);
     assert.equal(new URL(page.url()).searchParams.get("person"), "p-maya");
-    assert.match(await panel.locator(".person-section").first().innerText(), /Fields\s*4[\s\S]*ICP fit\s*0\.84\s*engagers · oct 15[\s\S]*Customer\s*No/);
+    assert.match(await panel.locator(".person-section").first().innerText(), /Fields\s*4[\s\S]*ICP fit\s*4 · Strong fit\s*engagers · oct 15[\s\S]*Customer\s*No/);
     await panel.getByText("Reacted to your post with Insightful").waitFor();
     assert.equal(await panel.getByText("Viewed your profile").count(), 1);
     // The timeline names the teammate too (TEAM-C).
@@ -240,7 +240,7 @@ test("on a phone the grid scrolls inside the page and the person fills the scree
   }
 });
 
-test("a member picks the ICP from a menu, and can give Tin's score back", {timeout: 120000}, async () => {
+test("a member rates someone from a menu, and can give Tin's score back", {timeout: 120000}, async () => {
   const {server, base} = await serveApp({engagers: true});
   const browser = await chromium.launch({headless: true});
   try {
@@ -251,29 +251,29 @@ test("a member picks the ICP from a menu, and can give Tin's score back", {timeo
     assert.equal(await page.locator('tr[data-person="p-maya"] td.is-icp').getAttribute("title"), "ICP 1: founders who need growth done");
     await page.getByRole("row", {name: "Lea Fischer"}).click();
     const panel = page.locator("#person-panel");
-    await panel.getByRole("button", {name: "None"}).click();
-    const menu = panel.getByRole("listbox", {name: "ICP"});
+    await panel.getByRole("button", {name: "1 · Not a fit"}).click();
+    const menu = panel.getByRole("listbox", {name: "ICP fit"});
     assert.deepEqual(await menu.getByRole("option").allInnerTexts(), [
-      "ICP 1: founders who need growth done", "ICP 2: technical founders running their own marketing", "Not a fit\nTin 0.15",
+      "4 · Strong fit", "3 · Good fit", "2 · Weak fit", "1 · Not a fit\nTin",
     ]);
-    assert.match(await menu.innerText(), /Your pick replaces Tin’s score, and later runs keep it\./);
+    assert.match(await menu.innerText(), /Your rating replaces Tin’s, and later runs keep it\./);
     // Escape closes the menu, not the person.
     await page.keyboard.press("Escape");
     assert.equal(await menu.count(), 0);
     assert.equal(await panel.count(), 1);
 
-    await panel.getByRole("button", {name: "None"}).click();
-    await menu.getByRole("option", {name: "ICP 2: technical founders running their own marketing"}).click();
-    await panel.getByText("Set by you. Tin scored 0.15: Runs a small B2B team with no marketing lead.").waitFor();
-    assert.match(await panel.locator(".person-field").nth(1).innerText(), /ICP fit\s*1\.00\s*you · /);
+    await panel.getByRole("button", {name: "1 · Not a fit"}).click();
+    await menu.getByRole("option", {name: "3 · Good fit"}).click();
+    await panel.getByText("Set by you. Tin rated 1 · Not a fit: Runs a small B2B team with no marketing lead.").waitFor();
+    assert.match(await panel.locator(".person-field").nth(1).innerText(), /ICP fit\s*3 · Good fit\s*you · /);
     // The grid shows who set it, and the person now counts as a fit.
-    assert.equal(await page.locator('td[data-fit="p-lea"]').textContent(), "you1.00");
+    assert.equal(await page.locator('td[data-fit="p-lea"]').textContent(), "you3");
     assert.equal(await page.getByRole("tab", {name: /^ICP fit/}).textContent(), "ICP fit 4");
 
     await panel.getByRole("button", {name: "Use Tin’s score"}).click();
-    await page.locator('td[data-fit="p-lea"]', {hasText: "0.15"}).waitFor();
-    // Back to Tin's score; the fixture dates it by the edit, so the day depends on the clock.
-    assert.match(await panel.locator(".person-field").nth(1).innerText(), /ICP fit\s*0\.15\s*engagers · [a-z]{3} \d{1,2}/);
+    await page.locator('td[data-fit="p-lea"]', {hasText: /^1$/}).waitFor();
+    // Back to Tin's rating; the fixture dates it by the edit, so the day depends on the clock.
+    assert.match(await panel.locator(".person-field").nth(1).innerText(), /ICP fit\s*1 · Not a fit\s*engagers · [a-z]{3} \d{1,2}/);
     assert.equal(await page.getByRole("tab", {name: /^ICP fit/}).textContent(), "ICP fit 3");
     assert.deepEqual(errors, []);
     await context.close();
@@ -335,7 +335,7 @@ test("notes show in the grid and the panel, and a new one makes the score old", 
     assert.match(await panel.locator(".person-notes h3").innerText(), /Notes\s*1/);
     assert.equal(await box.inputValue(), "");
     // The score Tin made before the note is old until the next run reads it.
-    assert.match(await panel.locator(".person-field").nth(1).innerText(), /old 0\.84[\s\S]*Your note came after this score\. The next run reads it and rescores\./);
+    assert.match(await panel.locator(".person-field").nth(1).innerText(), /old · 4 · Strong fit[\s\S]*Your note came after this rating\. The next run reads it and rates again\./);
     assert.equal(await page.locator('td[data-note="p-maya"]').innerText(), "Customer since September; renews in March.");
 
     await panel.getByRole("button", {name: "Edit"}).click();

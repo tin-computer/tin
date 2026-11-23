@@ -42,6 +42,7 @@ from tin_lite.domain import (
     PREREQUISITE_WAIT_MINUTES,
     PROJECT_MEMORY_WORKFLOW_NAME,
     PROJECT_TASK_WORKFLOW_NAME,
+    RB2B_VISITOR_WORKFLOW_NAME,
     SCAN_REPORT_WORKFLOW_NAME,
     SITE_HEALTH_WORKFLOW_NAME,
     VISIBILITY_AUDIT_WORKFLOW_NAME,
@@ -2038,6 +2039,44 @@ class LinkedInRequestsWorkflow:
             raise
 
 
+@workflow.defn(name=RB2B_VISITOR_WORKFLOW_NAME)
+class RB2BVisitorWorkflow:
+    """One visitor RB2B posted: keep them in People, wait until PostHog has the visit, read it,
+    rate them against the ICP file and update the list. History holds the run ID, the visit's
+    outcome and the wait; the payload and the person stay in Postgres."""
+
+    @workflow.run
+    async def run(self, run_id: str) -> None:
+        async def call(name, argument=run_id, *, minutes=5):
+            return await workflow.execute_activity(
+                name,
+                argument,
+                start_to_close_timeout=timedelta(minutes=minutes),
+                heartbeat_timeout=timedelta(minutes=2) if minutes > 5 else None,
+                retry_policy=RetryPolicy(
+                    initial_interval=timedelta(seconds=30),
+                    maximum_attempts=3,
+                    non_retryable_error_types=[
+                        "IntegrationAuthorizationError",
+                        "WorkflowInputError",
+                        "BillingError",
+                    ],
+                ),
+            )
+
+        try:
+            kept = await call("rb2b_record")
+            if kept["outcome"] == "person":
+                if kept["wait"]:
+                    await workflow.sleep(timedelta(seconds=kept["wait"]))
+                await call("rb2b_enrich", minutes=8)
+                await call("rb2b_rate", minutes=20)
+            await call("rb2b_publish", {"run_id": run_id, "outcome": kept["outcome"]})
+        except BaseException as exc:
+            await call("rb2b_failure", failure_input(run_id, exc))
+            raise
+
+
 @workflow.defn(name="growth.onboarding_plan")
 class GrowthOnboardingPlanWorkflow:
     """Read, write, save. Only the run identifier enters history; activities hold every result."""
@@ -2179,6 +2218,7 @@ def registered_workflows() -> list[type]:
         LinkedInProfileViewersWorkflow,
         LinkedInConnectionsWorkflow,
         LinkedInRequestsWorkflow,
+        RB2BVisitorWorkflow,
         OrganicTrafficSystemWorkflow,
         GrowthOnboardingWorkflow,
         GrowthOnboardingPlanWorkflow,
@@ -2224,6 +2264,7 @@ def registered_workflow_implementations() -> dict[str, type]:
         LINKEDIN_PROFILE_VIEWERS_WORKFLOW_NAME: LinkedInProfileViewersWorkflow,
         LINKEDIN_CONNECTIONS_WORKFLOW_NAME: LinkedInConnectionsWorkflow,
         LINKEDIN_REQUESTS_WORKFLOW_NAME: LinkedInRequestsWorkflow,
+        RB2B_VISITOR_WORKFLOW_NAME: RB2BVisitorWorkflow,
         "organic.traffic_system": OrganicTrafficSystemWorkflow,
         "growth.onboarding": GrowthOnboardingWorkflow,
         "growth.onboarding_plan": GrowthOnboardingPlanWorkflow,
