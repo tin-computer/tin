@@ -16,17 +16,18 @@ from uuid import UUID
 from temporalio import activity
 from temporalio.exceptions import ApplicationError
 
-from tin_lite import people_icp, people_rating, rb2b
+from tin_lite import people_icp, people_rating, rb2b, rb2b_slack
 from tin_lite import people_records as records
 from tin_lite.failures import failure_projection, split_failure_input
 from tin_lite.integrations import POSTHOG_PROVIDER
 from tin_lite.organic_audit_publication import publish_artifacts
+from tin_lite.product_urls import dashboard_url
 
 logger = logging.getLogger(__name__)
 
 KEY = rb2b.KEY
 FALLBACK = "Tin couldn't finish reading this visitor. The next visitor RB2B posts tries again."
-STEPS = 4
+STEPS = 5
 
 
 def _heartbeat(detail) -> None:
@@ -35,9 +36,9 @@ def _heartbeat(detail) -> None:
 
 
 class RB2BActivities:
-    def __init__(self, *, database, storage, router, integrations):
+    def __init__(self, *, database, storage, router, integrations, settings=None):
         self.db, self.storage, self.router = database, storage, router
-        self.integrations = integrations
+        self.integrations, self.settings = integrations, settings
 
     async def _active(self, run_id, *, conn=None):
         run = await self.db.get_run(UUID(str(run_id)), conn=conn)
@@ -263,12 +264,55 @@ class RB2BActivities:
             heartbeat=_heartbeat,
         )
 
+    @activity.defn(name="rb2b_notify")
+    async def notify(self, run_id: str) -> None:
+        """A good or strong fit's own message in the project's Slack channel; the rest wait
+        for the evening digest. Recorded before Slack is called, so a retry never posts twice."""
+
+        run = await self._active(run_id)
+        record_id = await self._record_id(run)
+        if record_id is None:
+            return
+        place = await rb2b_slack.destination(self.db, run.project_id)
+        if place is None:
+            return
+        async with self.db.pool.acquire() as conn:
+            found = await records.people(conn, run.project_id, only=record_id)
+            visit = await conn.fetchval(
+                """SELECT detail FROM record_events
+                   WHERE project_id = $1 AND kind = 'visited' AND run_id = $2
+                   ORDER BY recorded_at DESC LIMIT 1""",
+                run.project_id,
+                run.id,
+            )
+        if not found:
+            return
+        project = await self.db.get_project(run.project_id)
+        base = dashboard_url(self.settings) if self.settings is not None else ""
+        body = rb2b_slack.visitor_message(
+            found[0],
+            json.loads(visit) if isinstance(visit, str) else visit,
+            people_url=f"{base}/people?project={run.project_id}&person={found[0]['id']}",
+            project_name=project.name,
+        )
+        if body is None:
+            return
+        await self._progress(run, "notify", 4, "Posting the visitor in Slack")
+        await rb2b_slack.send(
+            self.db,
+            self.integrations.slack,
+            project_id=run.project_id,
+            key=f"visitor:{run.id}",
+            place=place,
+            body=body,
+        )
+
     @activity.defn(name="rb2b_publish")
     async def publish(self, control: dict) -> None:
         """The latest visitors in people/rb2b-visitors.md, and the run's one line."""
 
         run = await self._active(control["run_id"])
-        await self._progress(run, "publish", 4, "Updating the list of visitors")
+        await self._progress(run, "publish", 5, "Updating the list of visitors")
         project = await self.db.get_project(run.project_id)
         record_id = await self._record_id(run)
         key = f"{run.id}:rb2b:files"

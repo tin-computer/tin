@@ -57,13 +57,35 @@ card; the project's next visitor tries the waiting ones again, up to three, from
    doesn't answer, the event says so; the visit is kept either way.
 4. **Rate** (`rb2b_rate`): the shared ICP rating for this person only (fit 1 to 4, intent hot,
    warm or cold), with web search. Skipped without an ICP file or `GEMINI_API_KEY`.
-5. **Publish** (`rb2b_publish`): `people/rb2b-visitors.md`, the 100 latest visitors with their
+5. **Post** (`rb2b_notify`): a visitor rated 4 or 3 gets a message of their own in the
+   project's Slack channel (see [Slack](#slack)). Others wait for the digest.
+6. **Publish** (`rb2b_publish`): `people/rb2b-visitors.md`, the 100 latest visitors with their
    ratings, replaced each run; the run's line is the visitor and their rating ("Jane Doe,
    Founder at Acme: 4 · Strong fit, warm.").
 
 Temporal history holds the run ID, the visit's outcome and the wait. The payload, the person
 and the visit stay in Postgres. Project deletion removes the hook, the visits and the run's
 receipts.
+
+## Slack
+
+The posts are for Tin's clients: an operator sets, per project, the channel and the project
+whose Slack connection posts there (`rb2b_hooks.slack_channel_id`, `slack_channel_name`,
+`slack_project_id`), for a client Tin's own workspace and the channel it shares with them.
+`rb2b_slack.destination` is the one place that reads it; no channel, nothing posts.
+
+- **A good or strong fit, at once.** 🟢 strong fit or 🟡 good fit with the intent (🔥 hot,
+  🌤 warm, 🧊 cold); who they are, linked to LinkedIn, with their headline; the company,
+  its website and where the visit came from; the rating's reason; the visit as PostHog read
+  it; a ⚠️ line when PostHog didn't confirm the visit; buttons for LinkedIn, the replay
+  (when there is one) and the person in Tin.
+- **Everyone else, at 18:00 in the project's time zone.** One digest of the visitors since the
+  previous one who rated weak, not a fit, or weren't rated, grouped, with a button to People.
+  A day with nobody posts nothing. A small loop in the app (`rb2b_slack.digest_loop`) checks
+  every five minutes; a digest is keyed by its local date, so it goes once.
+- **Once only.** Every message is recorded as `sending` in `rb2b_slack_posts`, and committed,
+  before Slack is called. A refused post is recorded as failed and the run goes on; a row left
+  `sending` may be in the channel, so it becomes `unknown` and is never sent again.
 
 ## Billing
 
@@ -73,6 +95,5 @@ per call.
 
 ## Next
 
-A conditional Slack post at the end of the run (who visited, how they rate) when the rating
-clears a project's bar, in a format still to settle; and a workflow that finds someone to
-contact at a company-only visit.
+Setting the channel from the RB2B card once posts are offered beyond Tin's clients, and a
+workflow that finds someone to contact at a company-only visit.

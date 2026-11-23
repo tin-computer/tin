@@ -2071,6 +2071,8 @@ class RB2BVisitorWorkflow:
                     await workflow.sleep(timedelta(seconds=kept["wait"]))
                 await call("rb2b_enrich", minutes=8)
                 await call("rb2b_rate", minutes=20)
+                if workflow.patched("rb2b-notify-v1"):
+                    await call("rb2b_notify")
             await call("rb2b_publish", {"run_id": run_id, "outcome": kept["outcome"]})
         except BaseException as exc:
             await call("rb2b_failure", failure_input(run_id, exc))
