@@ -204,7 +204,7 @@ class People:
         fit: Any = UNCHANGED,
         customer: bool | None = None,
     ) -> dict[str, Any]:
-        """Correct a person. `fit` is {"rating": 1 to 5}, or None to use Tin's score again;
+        """Correct a person. `fit` is {"rating": 1 to 4}, or None to use Tin's score again;
         `customer` marks them a customer or not."""
 
         project = await self._project(project_id, viewer)
@@ -213,10 +213,10 @@ class People:
         if isinstance(fit, dict):
             rating = fit.get("rating")
             if type(rating) is not int or rating not in people_icp.RATINGS:
-                raise PeopleError(422, "Pick a rating from 1 to 5.")
+                raise PeopleError(422, "Pick a fit from 1 to 4.")
             values.append(records.Value("icp_fit", rating))
         elif fit is not None and fit is not UNCHANGED:
-            raise PeopleError(422, "Pick a rating from 1 to 5, or Tin's score.")
+            raise PeopleError(422, "Pick a fit from 1 to 4, or Tin's score.")
         if customer is not None:
             values.append(records.Value("customer", "yes" if customer else "no"))
         try:

@@ -1,8 +1,8 @@
--- ICP fit moves from a score between 0 and 1 to a rating from 1 to 5 (people_icp): 1 no fit,
--- 2 low fit, 3 worth contacting, 4 contact this week, 5 contact now. Existing values convert by
--- the old score's bands; none becomes 5, which the old score never judged. Tin's own values keep
--- their old definition, so they read as stale and the next run rates them again; a member's
--- value, and the run value it replaced, convert the same way and stay.
+-- ICP fit moves from a score between 0 and 1 to four levels (people_icp): 1 not a fit, 2 weak
+-- fit, 3 good fit, 4 strong fit. Existing values convert by the old score's bands. Tin's own
+-- values keep their old definition, so they read as stale and the next run rates them again (with
+-- intent, which is new); a member's value, and the run value it replaced, convert the same way
+-- and stay.
 UPDATE record_values
 SET value_number = CASE
         WHEN value_number < 0.3 THEN 1

@@ -463,7 +463,7 @@ class AnthropicModelProvider:
 
 class GeminiModelProvider:
     name = ProviderName.GEMINI
-    capabilities = _COMMON_CAPABILITIES
+    capabilities = _COMMON_CAPABILITIES | {ModelCapability.WEB_SEARCH}
 
     def __init__(self, *, api_key: str, client: Any | None = None) -> None:
         self._client = client or genai.Client(
@@ -498,6 +498,10 @@ class GeminiModelProvider:
                     "response_json_schema": request.output_schema,
                 }
             )
+        if isinstance(request, WebSearchRequest):
+            # Grounding with Google Search: the model searches inside this one response. Gemini
+            # takes no cap on searches, so web_search_calls is a guard it can't be held to.
+            config["tools"] = [google_types.Tool(google_search=google_types.GoogleSearch())]
         contents = [
             google_types.Content(
                 role="model" if message.role is MessageRole.ASSISTANT else "user",
@@ -527,7 +531,12 @@ class GeminiModelProvider:
             request=request,
             stop_reason=_stop_label(finish),
             capped=finish == "MAX_TOKENS",
-            usage=_gemini_usage(usage),
+            usage=_gemini_usage(
+                usage,
+                searches=(
+                    _gemini_searches(candidates) if isinstance(request, WebSearchRequest) else None
+                ),
+            ),
         )
 
     async def close(self) -> None:
@@ -799,7 +808,18 @@ def _optional_string(value: object) -> str | None:
     return value if isinstance(value, str) and value else None
 
 
-def _gemini_usage(usage: object) -> ModelUsage:
+def _gemini_searches(candidates: list) -> int | None:
+    """The searches a grounded Gemini answer ran: its grounding metadata's queries."""
+
+    if not candidates:
+        return None
+    metadata = getattr(candidates[0], "grounding_metadata", None)
+    if metadata is None:
+        return 0
+    return len(getattr(metadata, "web_search_queries", None) or [])
+
+
+def _gemini_usage(usage: object, *, searches: int | None = None) -> ModelUsage:
     """Gemini's usage in the shape the other adapters report.
 
     Gemini bills thinking as output but counts it apart from candidates_token_count, so
@@ -811,7 +831,9 @@ def _gemini_usage(usage: object) -> ModelUsage:
     prompt = _optional_int(getattr(usage, "prompt_token_count", None))
     total = _optional_int(getattr(usage, "total_token_count", None))
     if prompt is None:
-        return ModelUsage(total_tokens=total)
+        return ModelUsage(total_tokens=total, web_search_calls=searches)
+    # What searches put in front of the model is input too.
+    prompt += _optional_int(getattr(usage, "tool_use_prompt_token_count", None)) or 0
     candidates, thoughts, cached = (
         _optional_int(getattr(usage, name, None)) or 0
         for name in ("candidates_token_count", "thoughts_token_count", "cached_content_token_count")
@@ -823,6 +845,7 @@ def _gemini_usage(usage: object) -> ModelUsage:
         cached_input_tokens=cached,
         reasoning_tokens=thoughts,
         cache_write_input_tokens=0,
+        web_search_calls=searches,
     )
 
 

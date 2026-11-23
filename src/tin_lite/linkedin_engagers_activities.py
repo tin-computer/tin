@@ -506,8 +506,10 @@ class LinkedInEngagersActivities:
         icp = (await self.db.get_effect(f"{run.id}:{self.prefix}:icp")).result or {}
         if not icp.get("profiles"):
             return
-        if self.router is None:
-            raise IntegrationUpstreamError("Tin's scoring model isn't available right now.")
+        if self.router is None or people_icp.ROUTE.provider not in self.router.configured_providers:
+            # Without the rating model people stay unrated; the next run with it rates them.
+            logger.warning("ICP rating skipped for run %s: its model isn't configured", run.id)
+            return
         await self._route_pinned(run)
         project = await self.db.get_project(run.project_id)
         raw = await self.storage.read_canonical_artifact_if_exists(

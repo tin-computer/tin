@@ -397,7 +397,7 @@ def sdk_router(f, *, invalid=False, uncertain=False, calls=None, outputs=None):
     )
     router = ModelRouter(
         providers={ProviderName.OPENAI: OpenAIModelProvider(api_key="fixture", client=client)},  # noqa: S106
-        routes=registered_routes(),
+        routes=registered_routes({ProviderName.OPENAI}),
         recorder=ModelUsageRecorder(f.db),
     )
     return router, calls
@@ -967,7 +967,7 @@ async def test_live_model_client_recovers_after_worker_restart(
         )
         router = ModelRouter(
             providers={ProviderName.OPENAI: OpenAIModelProvider(api_key=key, client=client)},
-            routes=registered_routes(),
+            routes=registered_routes({ProviderName.OPENAI}),
             recorder=ModelUsageRecorder(f.db),
         )
     else:

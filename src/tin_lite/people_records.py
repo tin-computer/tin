@@ -35,11 +35,13 @@ EVENT_KINDS = (
     "connected",
 )
 # What a person did that shows interest in a member: reacting to or commenting on their posts,
-# viewing their profile. Tin scores and proposes people with any of these.
+# viewing their profile. Tin proposes connection requests to people with any of these.
 SIGNALS = ("reacted", "commented", "viewed")
 RELATIONSHIPS = ("connected", "pending", "none")
 # What a person was on the project's site or product when a run last read them.
 WEB_TIERS = ("lead", "new_user", "user")
+# How much interest a person shows now, as the ICP rating judged it from what they did.
+INTENTS = ("hot", "warm", "cold")
 # How their last visit arrived: an ad click, a search engine, an AI assistant, a social site,
 # another site, or no referrer. The value's reason names it ("Google Ads, keyword …").
 WEB_SOURCES = ("ad", "organic", "ai", "social", "referral", "direct")
@@ -53,6 +55,7 @@ FIELDS: dict[str, tuple[str, str, tuple[str, ...] | None]] = {
     "linkedin_relationship": ("choice", "On LinkedIn", RELATIONSHIPS),
     "icp": ("text", "ICP", None),
     "icp_fit": ("number", "ICP fit", None),
+    "intent": ("choice", "Intent", INTENTS),
     "customer": ("choice", "Customer", ("yes", "no")),
     "web_tier": ("choice", "On the site", WEB_TIERS),
     "web_summary": ("text", "Last visit", None),
@@ -691,9 +694,9 @@ WRITERS = {
     "product.visitor_journeys": "visitors",
 }
 # LinkedIn shows each member their own relationship, from `record_relationships`.
-VIEW_FIELDS = ("icp", "icp_fit", "customer", "web_tier", "web_summary", "web_source")
+VIEW_FIELDS = ("icp", "icp_fit", "intent", "customer", "web_tier", "web_summary", "web_source")
 # Values computed under a definition, such as the ICP file, go stale when it changes.
-DEFINED_FIELDS = ("icp", "icp_fit")
+DEFINED_FIELDS = ("icp", "icp_fit", "intent")
 POST = re.compile(r"urn:li:(?:activity|ugcPost|share):[0-9]{1,30}")
 REPLAY = re.compile(r"https://(?:us|eu)\.posthog\.com/project/\d{1,12}/replay/[0-9A-Za-z-]{8,80}")
 

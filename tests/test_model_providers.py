@@ -172,6 +172,52 @@ async def test_anthropic_adapter_preserves_native_messages_contract() -> None:
 
 
 @pytest.mark.asyncio
+async def test_gemini_adapter_grounds_in_google_search_only_when_asked() -> None:
+    class Models:
+        parameters = None
+
+        async def generate_content(self, **parameters):
+            self.parameters = parameters
+            return SimpleNamespace(
+                text='{"answer":"found"}',
+                candidates=[
+                    SimpleNamespace(
+                        finish_reason="STOP",
+                        grounding_metadata=SimpleNamespace(web_search_queries=["a", "b", "c"]),
+                    )
+                ],
+                usage_metadata=SimpleNamespace(
+                    prompt_token_count=7,
+                    tool_use_prompt_token_count=5,
+                    candidates_token_count=3,
+                    total_token_count=16,
+                ),
+            )
+
+    class AsyncClient:
+        models = Models()
+
+        async def aclose(self):
+            pass
+
+    client = SimpleNamespace(aio=AsyncClient())
+    provider = GeminiModelProvider(api_key="test", client=client)  # noqa: S106
+    plain = _request(structured=True)
+
+    result = await provider.generate(
+        model="gemini-test", request=WebSearchRequest(**vars(plain), web_search_calls=7)
+    )
+    tools = client.aio.models.parameters["config"].tools
+    assert len(tools) == 1 and tools[0].google_search is not None
+    # The searches, and what they put in front of the model, which is billed as input.
+    assert result.usage.web_search_calls == 3 and result.usage.input_tokens == 12
+
+    result = await provider.generate(model="gemini-test", request=plain)
+    assert not client.aio.models.parameters["config"].tools
+    assert result.usage.web_search_calls is None
+
+
+@pytest.mark.asyncio
 async def test_gemini_adapter_uses_async_official_client() -> None:
     class Models:
         parameters = None

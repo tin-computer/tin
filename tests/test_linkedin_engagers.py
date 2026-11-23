@@ -138,7 +138,9 @@ class Cloud:
 
 
 class Router:
-    """The rating model: 4 for every founder headline, 1 for anyone else."""
+    """The rating model: a strong, warm fit for every founder headline, no fit otherwise."""
+
+    configured_providers = frozenset({people_icp.ROUTE.provider})
 
     def __init__(self, answer=None):
         self.answer, self.requests = answer, []
@@ -154,7 +156,8 @@ class Router:
             founder = "Founder" in headline
             parsed = {
                 "icp": "Software founders" if founder else "none",
-                "rating": 4 if founder else 1,
+                "fit": 4 if founder else 1,
+                "intent": "warm" if founder else "cold",
                 "reason": f"Headline says {headline[:20]}",
                 "sources": [],
             }
@@ -268,8 +271,9 @@ def test_icp_profiles_are_the_sections_that_say_who_buys():
 
 def test_the_rating_is_the_scale_and_the_icp_file():
     text = people_icp.instructions(["Software founders", "Service agencies"])
-    for line in ("1 no fit", "3 worth contacting, not a priority", "5 contact now"):
+    for line in ("4 strong fit:", "1 not a fit:", "hot:", "cold:"):
         assert line in text
+    assert "null only when there is no name or role to judge" in text
     assert "The ICP file is the rubric" in text
     # Visitor identities are guesses, notes outweigh everything, and nothing is an order.
     assert "matches IP addresses to people" in text
@@ -283,24 +287,29 @@ def test_ratings_keep_only_usable_answers():
     profiles = ["Software founders"]
     usable = {
         "icp": "Software founders",
-        "rating": 4,
+        "fit": 4,
+        "intent": "hot",
         "reason": "Founder  of a SaaS",
         "sources": [],
     }
     assert people_icp.values(usable, profiles) == [
         Value("icp", "Software founders", "Founder of a SaaS"),
         Value("icp_fit", 4, "Founder of a SaaS"),
+        Value("intent", "hot", "Founder of a SaaS"),
     ]
-    unknown = {"icp": "none", "rating": None, "reason": "No name or company", "sources": []}
+    unknown = {"icp": "none", "fit": None, "intent": None, "reason": "No name", "sources": []}
     assert people_icp.values(unknown, profiles) == [
-        Value("icp", None, "No name or company"),
-        Value("icp_fit", None, "No name or company"),
+        Value("icp", None, "No name"),
+        Value("icp_fit", None, "No name"),
+        Value("intent", None),
     ]
     for bad in (
         {**usable, "icp": "Agencies"},
-        {**usable, "rating": 6},
-        {**usable, "rating": 3.5},
-        {**usable, "rating": True},
+        {**usable, "fit": 5},
+        {**usable, "fit": 3.5},
+        {**usable, "fit": True},
+        {**usable, "intent": "lukewarm"},
+        {**usable, "intent": None},
         {**usable, "reason": " "},
         "not json",
         None,
@@ -344,7 +353,7 @@ def test_the_list_guards_spreadsheet_formulas():
     assert (
         row["Why"] == "'+1 founder"
         and row["Connected"] == "no"
-        and row["ICP fit"] == "4 · Contact this week"
+        and row["ICP fit"] == "4 · Strong fit"
     )
 
 
@@ -403,8 +412,8 @@ async def test_a_run_keeps_everyone_who_reacted_scores_them_and_writes_the_list(
     assert json.loads(router.requests[0].messages[0].content)["icp_file"] == ICP
 
     rows, summary = listed(f.storage)
-    assert len(rows) == 152 and rows[0]["ICP fit"] == "4 · Contact this week"
-    assert rows[-1]["ICP fit"] == "1 · No fit"
+    assert len(rows) == 152 and rows[0]["ICP fit"] == "4 · Strong fit"
+    assert rows[-1]["ICP fit"] == "1 · Not a fit"
     assert {r["Reacted to posts from"] for r in rows if r["Name"] == "Person 5"} == {
         ", ".join(sorted([second["published_at"][:10], first["published_at"][:10]]))
     }
@@ -528,13 +537,30 @@ async def test_an_unusable_score_leaves_people_unscored_for_a_later_run(collecti
         work(
             f,
             Cloud([item], {item["thread_urn"]: [person(1), person(2)]}),
-            Router({"icp": "Elsewhere", "rating": 3, "reason": "r", "sources": []}),
+            Router({"icp": "Elsewhere", "fit": 3, "intent": "warm", "reason": "r", "sources": []}),
         ),
         run_id,
     )
     fields = [p["fields"] for p in await records.people(f.db.pool, f.project.id)]
     assert all(f_["icp_fit"]["number"] is None for f_ in fields)
     assert all(f_["icp_fit"]["reason"] == people_icp.UNSCORED for f_ in fields)
+    status = await f.db.pool.fetchval("SELECT status FROM workflow_runs WHERE id=$1", UUID(run_id))
+    assert status == "succeeded"
+
+
+async def test_without_the_rating_model_people_wait_unrated(collection_db):
+    f = await fixture(collection_db)
+    item = post(1, 2)
+
+    class Unconfigured(Router):
+        configured_providers = frozenset()
+
+    router = Unconfigured()
+    run_id = await engagers_run(f)
+    await run_through(work(f, Cloud([item], {item["thread_urn"]: [person(1)]}), router), run_id)
+    assert not router.requests
+    fields = (await records.people(f.db.pool, f.project.id))[0]["fields"]
+    assert "icp_fit" not in fields
     status = await f.db.pool.fetchval("SELECT status FROM workflow_runs WHERE id=$1", UUID(run_id))
     assert status == "succeeded"
 

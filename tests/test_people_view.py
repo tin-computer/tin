@@ -66,7 +66,7 @@ async def test_the_list_shows_each_value_with_who_set_it_and_the_last_touch(coll
     async with client(f) as http:
         listed = (await http.get(f"/api/projects/{f.project.id}/people")).json()
     assert listed["truncated"] is False and listed["fit_shown"] == 3
-    assert listed["ratings"]["5"] == "Contact now"
+    assert listed["ratings"]["4"] == "Strong fit"
     people = by_name(listed)
     assert set(people) == {"Person 1", "Person 2"}
     one = people["Person 1"]
@@ -260,7 +260,7 @@ async def test_a_member_rates_someone_and_can_give_tins_score_back(collection_db
         # Tin's score stays, so "Use Tin's score" can bring it back.
         assert fields["icp_fit"]["previous"] == {"value": 1, "reason": "Headline says Designer"}
 
-        for bad in ({"rating": 6}, {"rating": 0}, {"icp": "Software founders"}):
+        for bad in ({"rating": 5}, {"rating": 0}, {"icp": "Software founders"}):
             assert (await http.patch(f"{path}/{one}", json={"fit": bad})).status_code == 422
         assert (
             await http.patch(f"{path}/{one}", json={"fit": {"rating": 2}, "y": 1})

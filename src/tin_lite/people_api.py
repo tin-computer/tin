@@ -20,8 +20,8 @@ USER = Depends(require_user)
 class Fit(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
-    # A member's rating: 1 no fit to 5 contact now.
-    rating: int = Field(ge=1, le=5)
+    # A member's fit: 1 not a fit to 4 strong fit.
+    rating: int = Field(ge=1, le=4)
 
 
 class PersonChange(BaseModel):

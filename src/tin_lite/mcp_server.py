@@ -1288,6 +1288,7 @@ def create_mcp_app(
             "came_from_detail": (fields.get("web_source") or {}).get("reason") or None,
             "icp": value("icp"),
             "icp_fit": value("icp_fit"),
+            "intent": value("intent"),
             "fit_set_by": fit.get("by"),
             "fit_reason": fit.get("reason"),
             "fit_stale": fit.get("stale", False),
@@ -1303,9 +1304,10 @@ def create_mcp_app(
     async def list_people(
         project_id: str, segment: str = "all", query: str | None = None, limit: int = 100
     ) -> dict[str, Any]:
-        """List a project's people, best ICP rating first: who they are, the ICP profile they
-        come closest to, their rating (1 no fit to 5 contact now, named in `ratings`) with who
-        set it and why, whether they are a customer, and their newest note.
+        """List a project's people, best ICP fit first: who they are, the ICP profile they come
+        closest to, their fit (1 not a fit to 4 strong fit, named in `ratings`) and intent (hot,
+        warm or cold) with who set them and why, whether they are a customer, and their newest
+        note.
 
         segment: "all", "icp_fit" (rated fit_shown or more), "not_connected" (not
         connected on LinkedIn), "on_the_site" (named by a visitor journeys run, with their
@@ -1379,8 +1381,8 @@ def create_mcp_app(
     ) -> dict[str, Any]:
         """Correct one person the way a member does in People, only as the founder asked.
 
-        Give at most one of: rating, 1 to 5 as list_people's `ratings` name them (1 no fit,
-        5 contact now); use_tin_score=true (drop the member's rating and use Tin's own again).
+        Give at most one of: rating, a fit of 1 to 4 as list_people's `ratings` name them (1 not
+        a fit, 4 strong fit); use_tin_score=true (drop the member's rating and use Tin's own).
         No run replaces a member's rating. customer marks them a customer (true) or not
         (false).
         """

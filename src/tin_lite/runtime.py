@@ -146,7 +146,6 @@ async def build_runtime(settings: Settings) -> RuntimeServices:
             CHARACTER_MODEL_ROUTE,
             style_capture.ROUTE,
             x_feedback.ROUTE,
-            people_icp.ROUTE,
             *growth_plan.ROUTES,
             *paid_ads.ROUTES,
             *paid_ads_launch.ROUTES,
@@ -186,6 +185,10 @@ async def build_runtime(settings: Settings) -> RuntimeServices:
         if key is not None
     }
     model_routes += code_model_routes(code_providers)
+    # Rating People runs on its own route, registered only when its provider has a key; without
+    # one, runs leave people unrated rather than stop the router.
+    if people_icp.ROUTE.provider in code_providers:
+        model_routes += (people_icp.ROUTE,)
     model_router = configured_model_router(
         settings, routes=model_routes, recorder=ModelUsageRecorder(database)
     )
@@ -369,7 +372,8 @@ async def build_runtime(settings: Settings) -> RuntimeServices:
         settings=settings,
         cloud=LinkedInCloud(database, settings),
         cipher=integrations._cipher,
-        router=model_router if settings.luna_api_key is not None else None,
+        # The ICP rating's provider may be unconfigured; then the rating step rates nobody.
+        router=model_router,
         integrations=integrations,
         temporal=temporal,
     )
@@ -379,7 +383,8 @@ async def build_runtime(settings: Settings) -> RuntimeServices:
         settings=settings,
         cloud=LinkedInCloud(database, settings),
         cipher=integrations._cipher,
-        router=model_router if settings.luna_api_key is not None else None,
+        # The ICP rating's provider may be unconfigured; then the rating step rates nobody.
+        router=model_router,
         integrations=integrations,
         temporal=temporal,
     )

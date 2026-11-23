@@ -38,7 +38,7 @@ window.TinPeople = (() => {
     source: (a, b) => sourceRank(b) - sourceRank(a),
   };
   const NOT_A_FIT = "none";
-  const RATING_VALUES = [5, 4, 3, 2, 1];
+  const RATING_VALUES = [4, 3, 2, 1];
   // "4 · Contact this week", with the label the server sends for each rating.
   const ratingText = (rating) => {
     const label = view?.ratings?.[String(rating)];
@@ -415,6 +415,7 @@ window.TinPeople = (() => {
     const customer = field(person, "customer")?.value === "yes";
     const icpLabel = icpText(icp?.value);
     const fitValue = typeof fit?.value === "number" ? fit.value : null;
+    const intent = field(person, "intent")?.value;
     const memberSet = fit && memberValue(fit);
     const fitClass = fitValue === null || fit.stale ? "is-muted" : fitValue >= view.fitShown ? "" : "is-secondary";
     const mark = fit?.stale && fitValue !== null ? "old" : memberSet ? setMark(fit) : "";
@@ -428,7 +429,7 @@ window.TinPeople = (() => {
       ${box}<td class="is-name"><span class="people-name"><span>${escape(person.name || "Unnamed")}</span>${customer ? "<small>customer</small>" : ""}</span></td>
       <td class="is-headline"><span>${escape(person.headline || field(person, "web_summary")?.value || "")}</span></td>
       <td class="is-icp ${icpLabel.muted ? "is-muted" : ""}" title="${escape(icpLabel.muted ? "" : icpLabel.text)}"><span class="is-short">${escape(icpLabel.short)}</span><span class="is-full">${escape(icpLabel.text)}</span></td>
-      <td class="is-fit ${fitClass}" ${fit ? `data-fit="${escape(person.id)}"` : ""}>${mark ? `<small>${mark}</small>` : ""}<span>${fitValue === null ? "—" : escape(fitValue)}</span></td>
+      <td class="is-fit ${fitClass}" ${fit ? `data-fit="${escape(person.id)}"` : ""}>${mark ? `<small>${mark}</small>` : ""}<span>${fitValue === null ? "—" : escape(fitValue)}</span>${intent ? `<small class="people-intent">${escape(intent)}</small>` : ""}</td>
       <td class="is-notes" ${note ? `data-note="${escape(person.id)}"` : ""}><span>${note ? escape(note.body.split("\n")[0]) : ""}</span></td>
       ${sources ? `<td class="is-source ${source ? "" : "is-muted"}" title="${escape(sourceText(source))}"><span>${source ? `<strong>${escape(WEB_SOURCE[source.value] || source.value)}</strong>${sourcePlace(source) ? ` · ${escape(sourcePlace(source))}` : ""}` : "—"}</span></td>` : ""}
       <td class="is-linkedin">${linkedinCell(person, relationship)}</td>
@@ -646,6 +647,8 @@ window.TinPeople = (() => {
         [menu("fit", options, "Your rating replaces Tin’s, and later runs keep it."), lines.length ? `<div class="person-field-notes">${lines.join("")}</div>` : ""].join(""),
         "fit",
       ));
+      const intent = field(person, "intent");
+      if (intent?.value) rows.push(fieldRow("Intent", `<strong>${escape(intent.value)}</strong>`, lineage(intent)));
     }
     // A request of the viewer's waiting to go out says when, and can be cancelled (REQ-C2).
     const queued = person.request === "queued";
