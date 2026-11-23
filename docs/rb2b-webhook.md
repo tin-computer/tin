@@ -32,8 +32,9 @@ for a token nobody has and a body that isn't JSON too: RB2B disconnects an addre
 else. It keeps the payload in `rb2b_visits`, once per profile, time and page, as one of:
 
 - `person`: starts the visitor's run (start key `rb2b:<visit>`, as the `api` trigger).
-- `company`: RB2B named only the company (no first name, a /company/ LinkedIn page). Kept for
-  the workflow that will find someone there; nothing runs yet.
+- `company`: RB2B named only the company (no first name, a /company/ LinkedIn page). Starts the
+  same run, which judges the company and looks for people there (see
+  [A company-only visit](#a-company-only-visit)).
 - `test`: RB2B's "RB2B Test Payload"; only the card's line changes.
 
 A run that can't start (credits, a member who left) keeps its reason on the visit and on the
@@ -63,9 +64,68 @@ card; the project's next visitor tries the waiting ones again, up to three, from
    ratings, replaced each run; the run's line is the visitor and their rating ("Jane Doe,
    Founder at Acme: 4 · Strong fit, warm.").
 
+A company-only visit takes its own steps after **Record**; see below.
+
 Temporal history holds the run ID, the visit's outcome and the wait. The payload, the person
 and the visit stay in Postgres. Project deletion removes the hook, the visits and the run's
 receipts.
+
+## A company-only visit
+
+RB2B often matches a visit's network to an organisation and to nobody in it. The same run then
+(`rb2b_company.py`, `rb2b_company_activities.py`, behind the `rb2b-company-v1` patch):
+
+1. **Judge** (`rb2b_company_judge`): the ICP model (`people.icp`, Gemini 4 Neon, web search
+   on) reads the ICP file, what RB2B said (name, website, industry, size, revenue, the page and
+   referrer) and the people People already holds at that company, with their rating and
+   whether the team marked them a customer. It decides whether the company is worth chasing,
+   rates it on the person scales (fit 1 to 4, intent) and names the job titles to look for.
+   The model searches the web and the visit is the visitor's to write, so it reads the page
+   only as a path of at most 120 characters on the project's own site (the product address of
+   its Start here plan; elsewhere, none), where the visit came from only as a channel label
+   ("Organic search: Google", "Referral: another site"), and every URL in what it reads cut to
+   host and path. The prompt calls all of it untrusted data.
+   Code skips nothing: an internet provider's or hosting network, a company too small, an
+   existing customer are the model's call, and its reason says which. A company judged in the
+   last seven days (same website) keeps that verdict and its people: nothing is judged,
+   bought or posted again. Without an ICP file or `GEMINI_API_KEY` it isn't judged.
+2. **Find** (`rb2b_company_find`, only when worth chasing): through
+   [Delegate](https://dlgt.io) with Tin's `DELEGATE_API_KEY`:
+   - QuickEnrich's contact finder by the company's domain and the model's titles (free);
+   - when that lists nobody with a LinkedIn profile, one ContactOut people search (three
+     people at most, $0.10 each);
+   - with more than three candidates, the model picks up to three to contact (no web search);
+   - an Apify LinkedIn profile read of those (under a cent each) keeps only people whose current
+     position is at the company. A read that doesn't answer keeps them unchecked.
+
+   Every LinkedIn URL comes from a data service, never from the model. Each order has a receipt
+   whose key is also Delegate's idempotency key, so an order repeated after a crash is the same
+   order; a refused quote buys nothing and Delegate refunds a failed job. The people kept go
+   into People (source `rb2b`) with a `visited` event (`source: rb2b_company`) saying the visit
+   was matched to their company, not to them.
+3. **Rate** (`rb2b_company_rate`): each person by the shared ICP rating.
+4. **Post** (`rb2b_company_notify`): a company worth chasing rated 4 or 3 gets its own Slack
+   message (below); the rest go in the digest.
+
+Runaway guards, since Tin funds all of it and a leaked webhook address must not run up its
+bill:
+
+- at most 200 company runs per project a day (`rb2b_api.COMPANY_RUNS_PER_DAY`), counted by
+  when each visit claimed its run (`claimed_at`); the count and the claim happen in one
+  transaction under a per-project lock. A company visit over it is kept, marked `no_start` and
+  never started, not even by the retry of waiting visits;
+- at most $5 of Delegate orders per project a day (`rb2b_company.DELEGATE_USD_PER_DAY`, summed
+  from the order receipts of the last 24 hours). Each order first reserves its cap in its
+  receipt, in one transaction under a second per-project lock, so runs at once count each
+  other's reservations; the receipt then settles to the quoted price (nothing when refused or
+  refunded). A company that would pass it is still judged and posted; its run's line says the
+  people search was skipped for today's limit;
+- no backfill: migration 089 marks every company visit received before it `no_start`.
+
+The verdict, the people kept, how many the services listed, how many had left and what
+Delegate charged are on the visit (`rb2b_visits.company`, migration 089). The run's line says
+the verdict ("RB2B named only Acme: worth chasing (4 · Strong fit); 2 people to contact
+there."). Without `DELEGATE_API_KEY` a company is still judged and posted, with nobody found.
 
 ## Slack
 
@@ -88,8 +148,16 @@ person in Tin built from the app's address and IDs.
   its website and where the visit came from; the rating's reason; the visit as PostHog read
   it; a ⚠️ line when PostHog didn't confirm the visit; buttons for LinkedIn, the replay
   (when there is one) and the person in Tin.
+- **A company worth chasing, at once.** The same layout as a person's (one builder,
+  `rb2b_slack._message`): the fit and intent with the next step, the company's name, its
+  website, industry, size and location in small text, the model's reason, the warm line when
+  there is one, the page visited and a ⚠️ line saying who visited is unknown in small text, then
+  each person found (their name linked to their LinkedIn profile, headline and fit) and a
+  button to People.
 - **Everyone else, at 18:00 in the project's time zone.** One digest of the visitors since the
-  previous one who rated weak, not a fit, or weren't rated, grouped, with a button to People.
+  previous one who rated weak, not a fit, or weren't rated, grouped, and the companies without
+  a message of their own (not worth chasing, weak, not judged, visited again), with a button to
+  People.
   A day with nobody posts nothing. A small loop in the app (`rb2b_slack.digest_loop`) checks
   every five minutes; a digest is keyed by its local date, so it goes once.
 - **Once only.** Every message is recorded as `sending` in `rb2b_slack_posts`, and committed,
@@ -128,10 +196,11 @@ have run `social.linkedin_connections`; tier 2 needs cloud reading on a member's
 ## Billing
 
 Tin funds it (`tin-funded-rb2b-visitors-v1`), as it does the LinkedIn reads' rating: the
-PostHog reads and the rating call cost the founder nothing, and the usage is still recorded
-per call.
+PostHog reads, the model calls and Delegate's orders cost the founder nothing. Model usage is
+still recorded per call; Delegate's charge is on the visit and in each order's receipt. A
+company worth chasing costs about $0.10 to $0.15 in model calls and up to $0.35 at Delegate
+(nothing when the free finder finds people).
 
 ## Next
 
-Setting the channel from the RB2B card once posts are offered beyond Tin's clients, and a
-workflow that finds someone to contact at a company-only visit.
+Setting the channel from the RB2B card once posts are offered beyond Tin's clients.

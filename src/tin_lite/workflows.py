@@ -2042,8 +2042,10 @@ class LinkedInRequestsWorkflow:
 @workflow.defn(name=RB2B_VISITOR_WORKFLOW_NAME)
 class RB2BVisitorWorkflow:
     """One visitor RB2B posted: keep them in People, wait until PostHog has the visit, read it,
-    rate them against the ICP file and update the list. History holds the run ID, the visit's
-    outcome and the wait; the payload and the person stay in Postgres."""
+    rate them against the ICP file and update the list. A visit RB2B matched only to a company
+    is judged, and people to contact there are found and rated (rb2b_company). History holds
+    the run ID, the visit's outcome and the wait; the payload and the person stay in
+    Postgres."""
 
     @workflow.run
     async def run(self, run_id: str) -> None:
@@ -2075,6 +2077,13 @@ class RB2BVisitorWorkflow:
                     await call("rb2b_warm", minutes=4)
                 if workflow.patched("rb2b-notify-v1"):
                     await call("rb2b_notify")
+            elif kept["outcome"] == "company" and workflow.patched("rb2b-company-v1"):
+                # Only a company: is it worth chasing, and who to contact there.
+                judged = await call("rb2b_company_judge", minutes=8)
+                if judged["worth"]:
+                    await call("rb2b_company_find", minutes=20)
+                    await call("rb2b_company_rate", minutes=20)
+                await call("rb2b_company_notify")
             await call("rb2b_publish", {"run_id": run_id, "outcome": kept["outcome"]})
         except BaseException as exc:
             await call("rb2b_failure", failure_input(run_id, exc))

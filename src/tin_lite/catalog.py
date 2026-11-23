@@ -1823,12 +1823,15 @@ BUILTIN_WORKFLOWS = (
             "their fit and intent against strategy/ICP.md with a web search, look for a warm "
             "path through your team's LinkedIn connections, post a good or "
             "strong fit to the project's Slack channel when one is set (the rest go in an "
-            "evening digest), and list the latest visitors in people/rb2b-visitors.md. Tin "
-            "starts it for each visitor RB2B posts to your project's webhook, set up under "
-            "Integrations."
+            "evening digest), and list the latest visitors in people/rb2b-visitors.md. When "
+            "RB2B names only a company, judge with a web search whether it's worth chasing; if "
+            "it is, find up to three people to contact there through Delegate, check each "
+            "still works there, keep and rate them in People, and post a good or strong "
+            "company with them. Tin starts it for each visit RB2B posts to your project's "
+            "webhook, set up under Integrations."
         ),
         executor=rb2b.KEY,
-        version_label="1.2.0",
+        version_label="1.3.0",
         presentation=WorkflowDiagram(
             direction="TD",
             nodes=(
@@ -1839,12 +1842,23 @@ BUILTIN_WORKFLOWS = (
                     "to your project's own webhook address",
                 ),
                 DiagramNode("people", "store", "People", "name, headline, company, location"),
-                DiagramNode("wait", "wait", "Wait ten minutes", "until PostHog has the visit"),
+                DiagramNode(
+                    "judge",
+                    "step",
+                    "Judge the company",
+                    "worth chasing? fit and intent, web search",
+                ),
+                DiagramNode(
+                    "find",
+                    "surface",
+                    "Find people to contact",
+                    "Delegate's finder, then a profile check",
+                ),
                 DiagramNode(
                     "visit",
                     "surface",
                     "Read the visit in PostHog",
-                    "pages, time, how they arrived, earlier visits",
+                    "ten minutes on: pages, time, how they came",
                 ),
                 DiagramNode(
                     "rate",
@@ -1853,16 +1867,10 @@ BUILTIN_WORKFLOWS = (
                     "against your ICP, with a web search",
                 ),
                 DiagramNode(
-                    "warm",
-                    "step",
-                    "Look for a warm path",
-                    "your team's LinkedIn, 2nd degree for good fits",
-                ),
-                DiagramNode(
                     "slack",
                     "surface",
                     "Post good fits in Slack",
-                    "the rest wait for the 18:00 digest",
+                    "with a person's warm path, the rest at 18:00",
                 ),
                 DiagramNode(
                     "files",
@@ -1872,14 +1880,16 @@ BUILTIN_WORKFLOWS = (
                 ),
             ),
             edges=(
-                DiagramEdge("hook", "people", "signal"),
-                DiagramEdge("people", "wait"),
-                DiagramEdge("wait", "visit"),
+                DiagramEdge("hook", "people", "signal", label="a person"),
+                DiagramEdge("hook", "judge", "signal", label="company only"),
+                DiagramEdge("people", "visit"),
                 DiagramEdge("visit", "rate"),
-                DiagramEdge("rate", "warm"),
-                DiagramEdge("warm", "slack"),
+                DiagramEdge("judge", "find", label="worth chasing"),
+                DiagramEdge("find", "rate", label="up to three, kept in People"),
+                DiagramEdge("judge", "slack", label="not worth chasing: the digest"),
+                DiagramEdge("rate", "slack"),
                 DiagramEdge("slack", "files"),
-                DiagramEdge("people", "files", label="company only, or forgotten"),
+                DiagramEdge("people", "files", label="forgotten"),
             ),
         ),
         schedule_modes=("on_demand",),

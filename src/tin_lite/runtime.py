@@ -69,7 +69,6 @@ from tin_lite.paid_ads_launch_activities import PaidAdsLaunchActivities
 from tin_lite.paid_ads_monitor_activities import PaidAdsMonitorActivities
 from tin_lite.payment_recovery_activities import PaymentRecoveryActivities
 from tin_lite.project_files import ProjectFileService
-from tin_lite.rb2b_activities import RB2BActivities
 from tin_lite.scan import ScanReporter
 from tin_lite.settings import Settings
 from tin_lite.site_health import SITE_HEALTH_MODEL_ROUTE, SiteHealthImprover
@@ -408,7 +407,13 @@ async def build_runtime(settings: Settings) -> RuntimeServices:
         cloud=LinkedInCloud(database, settings),
         cipher=integrations._cipher,
     )
-    rb2b_activities = RB2BActivities(
+    from tin_lite.delegate import Delegate
+    from tin_lite.rb2b_company_activities import RB2BCompanyActivities
+
+    delegate_key = getattr(settings, "delegate_api_key", None)
+    delegate_key = delegate_key.get_secret_value() if delegate_key else ""
+    # One class serves every RB2B step: a person's, and a company-only visit's.
+    rb2b_activities = RB2BCompanyActivities(
         database=database,
         storage=storage,
         router=model_router,
@@ -417,6 +422,7 @@ async def build_runtime(settings: Settings) -> RuntimeServices:
         cloud=LinkedInCloud(database, settings),
         cipher=integrations._cipher,
         profiles=_member_profiles(settings),
+        delegate=Delegate(delegate_key) if delegate_key else None,
     )
     code = CodeActivities(common=activity_instance, model_router=model_router)
     activities = [
@@ -495,6 +501,10 @@ async def build_runtime(settings: Settings) -> RuntimeServices:
         rb2b_activities.notify,
         rb2b_activities.publish,
         rb2b_activities.failure,
+        rb2b_activities.judge,
+        rb2b_activities.find,
+        rb2b_activities.rate_people,
+        rb2b_activities.notify_company,
         plan_activities.prepare,
         plan_activities.write,
         plan_activities.publish,

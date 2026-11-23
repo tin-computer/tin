@@ -502,7 +502,24 @@ class RB2BActivities:
                 if record_id is not None:
                     found = await records.people(conn, run.project_id, only=record_id)
                     person = found[0] if found else None
-                summary = rb2b.summary(person, control["outcome"])
+                company = None
+                if control["outcome"] == "company":
+                    company = await conn.fetchval(
+                        "SELECT company FROM rb2b_visits WHERE id = $1",
+                        UUID(str(run.input["visit_id"])),
+                    )
+                    company = json.loads(company) if isinstance(company, str) else company
+                summary = rb2b.summary(person, control["outcome"], company)
+                saved = (receipt.result or {}) if receipt else {}
+                listed = saved.get("list")
+                if not isinstance(listed, str):
+                    # Kept before publishing, so a retry publishes exactly what it meant to.
+                    listed = rb2b.report(
+                        await visitors(conn, run.project_id), now=datetime.now(UTC)
+                    )
+                    await self.db.save_effect_progress(
+                        conn, execution_key=key, result={**saved, "list": listed}
+                    )
                 async with self.db.project_state_lock(conn, project.id):
 
                     async def save_intent(value):
@@ -511,15 +528,23 @@ class RB2BActivities:
                     async def validate_active():
                         await self._active(run.id, conn=conn)
 
-                    revision = await publish_artifacts(
+                    # A list the head already holds (a company-only visit, the same minute's
+                    # list, or this run's own earlier attempt that landed) needs no commit.
+                    repo = await self.storage.get_repo(project.state_repo_id)
+                    head = await self.storage.head_sha(repo, project.canonical_branch)
+                    current = (
+                        await self.storage.read_canonical_artifact_if_exists(
+                            repo_id=project.state_repo_id, commit_sha=head, path=rb2b.LIST_PATH
+                        )
+                        if head
+                        else None
+                    )
+                    revision = head if current == listed.encode() else None
+                    revision = revision or await publish_artifacts(
                         storage=self.storage,
                         repo_id=project.state_repo_id,
                         branch=project.canonical_branch,
-                        documents={
-                            rb2b.LIST_PATH: rb2b.report(
-                                await visitors(conn, run.project_id), now=datetime.now(UTC)
-                            ).encode()
-                        },
+                        documents={rb2b.LIST_PATH: listed.encode()},
                         paths=rb2b.PATHS,
                         limits=rb2b.LIMITS,
                         message=f"{KEY} {run.id} [{key}]",
