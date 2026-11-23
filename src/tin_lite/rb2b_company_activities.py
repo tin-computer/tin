@@ -81,6 +81,25 @@ class RB2BCompanyActivities(RB2BActivities):
             json.dumps(values),
         )
 
+    async def _spent_today(self, run, *, conn=None) -> float:
+        """What this project's company runs of the last day ordered at Delegate, from their
+        receipts: placed orders count at their quoted price until Delegate refunds them."""
+
+        return float(
+            await (conn or self.db.pool).fetchval(
+                """SELECT COALESCE(sum((e.result->>'price_usd')::numeric), 0)
+                   FROM workflow_runs r JOIN effect_receipts e ON e.execution_key IN (
+                       r.id::text || ':rb2b:company:finder',
+                       r.id::text || ':rb2b:company:search',
+                       r.id::text || ':rb2b:company:profiles')
+                   WHERE r.project_id = $1 AND r.executor = $2
+                     AND r.created_at > now() - interval '1 day'
+                     AND e.result ? 'price_usd'""",
+                run.project_id,
+                KEY,
+            )
+        )
+
     async def _ask(self, run, step: str, request: ModelRequest):
         """One model call under its receipt: its parsed answer, or None when it can't be used
         or an earlier call's answer never came."""
@@ -124,6 +143,16 @@ class RB2BCompanyActivities(RB2BActivities):
             if saved is None:
                 await self.db.start_effect(conn, execution_key=key, operation=KEY)
             if not placed.get("conversation_id"):
+                if await self._spent_today(run, conn=conn) + max_usd > (
+                    rb2b_company.DELEGATE_USD_PER_DAY
+                ):
+                    # The project's daily guard on Delegate spend: nothing is ordered.
+                    await self.db.complete_effect(
+                        conn,
+                        execution_key=key,
+                        result={"kept": None, "price_usd": 0, "error": "daily_limit"},
+                    )
+                    return None, 0.0
                 try:
                     # The receipt's key is the order's idempotency key: placing it again after
                     # a crash returns the same order.
@@ -249,8 +278,16 @@ class RB2BCompanyActivities(RB2BActivities):
             return {"people": len(company["people"])}
         await self._progress(run, "find", 3, "Looking for people to contact there")
         name, site = company.get("name") or "", company.get("site")
-        if self.delegate is None or not site or not company.get("titles") or not name:
-            why = "no people search" if self.delegate is None else "no website or titles"
+        why = None
+        if self.delegate is None:
+            why = "no people search"
+        elif not site or not company.get("titles") or not name:
+            why = "no website or titles"
+        elif await self._spent_today(run) + rb2b_company.MOST_PER_COMPANY > (
+            rb2b_company.DELEGATE_USD_PER_DAY
+        ):
+            why = "daily_limit"
+        if why:
             await self._keep(run, {"people": [], "found": 0, "spent_usd": 0, "not_looked": why})
             return {"people": 0}
         titles = company["titles"]

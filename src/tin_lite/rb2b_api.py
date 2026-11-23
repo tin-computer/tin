@@ -30,6 +30,9 @@ USER = Depends(require_user)
 START_SECONDS = 8
 # Visitors whose run couldn't start, tried again with the next visitor: a few at a time.
 RETRY_WAITING = 3
+# Company-only visits started per project in a day: a runaway guard well above real traffic,
+# since each is Tin-funded model and data work. Over it, a visit is kept and never started.
+COMPANY_RUNS_PER_DAY = 200
 GONE = "The member who set up RB2B has left the project. Set it up again to keep reading visitors."
 
 
@@ -58,8 +61,8 @@ class Hooks:
             return {"set_up": False}
         token = self._cipher.decrypt(bytes(hook["token_ciphertext"]), context=f"rb2b:{project_id}")
         counts = await self.db.pool.fetchrow(
-            """SELECT count(*) FILTER (WHERE kind IN ('person', 'company') AND run_id IS NULL)
-                          AS waiting,
+            """SELECT count(*) FILTER (WHERE kind IN ('person', 'company') AND run_id IS NULL
+                                         AND NOT no_start) AS waiting,
                       count(*) FILTER (WHERE kind = 'person') AS people,
                       count(*) FILTER (WHERE kind = 'company') AS companies,
                       (SELECT start_error FROM rb2b_visits w WHERE w.project_id = $1
@@ -146,15 +149,35 @@ class Hooks:
             return
         waiting = await self.db.pool.fetch(
             """SELECT id FROM rb2b_visits WHERE project_id = $1 AND kind IN ('person', 'company')
-                 AND run_id IS NULL AND id <> $2 AND received_at > now() - interval '7 days'
+                 AND run_id IS NULL AND NOT no_start AND id <> $2
+                 AND received_at > now() - interval '7 days'
                ORDER BY received_at LIMIT $3""",
             project_id,
             visit_id,
             RETRY_WAITING,
         )
         for waiting_id in [visit_id, *(row["id"] for row in waiting)]:
-            if waiting_id is not None:
+            if waiting_id is not None and await self._may_start(project_id, waiting_id):
                 await self.start(project_id, waiting_id, hook["created_by"])
+
+    async def _may_start(self, project_id: UUID, visit_id: UUID) -> bool:
+        """A company visit starts only under the project's daily limit; over it, it is kept and
+        marked never to start."""
+
+        if await self.db.pool.fetchval(
+            "SELECT kind <> 'company' FROM rb2b_visits WHERE id = $1", visit_id
+        ):
+            return True
+        started = await self.db.pool.fetchval(
+            """SELECT count(*) FROM rb2b_visits
+               WHERE project_id = $1 AND kind = 'company' AND run_id IS NOT NULL
+                 AND received_at > now() - interval '1 day'""",
+            project_id,
+        )
+        if started < COMPANY_RUNS_PER_DAY:
+            return True
+        await self.db.pool.execute("UPDATE rb2b_visits SET no_start = true WHERE id = $1", visit_id)
+        return False
 
     async def start(self, project_id: UUID, visit_id: UUID, member: str) -> None:
         from tin_lite.failures import public_error_text

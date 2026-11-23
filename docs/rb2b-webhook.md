@@ -107,6 +107,17 @@ RB2B often matches a visit's network to an organisation and to nobody in it. The
 4. **Post** (`rb2b_company_notify`): a company worth chasing rated 4 or 3 gets its own Slack
    message (below); the rest go in the digest.
 
+Runaway guards, since Tin funds all of it and a leaked webhook address must not run up its
+bill:
+
+- at most 200 company runs per project a day (`rb2b_api.COMPANY_RUNS_PER_DAY`); a company
+  visit over it is kept, marked `no_start` and never started, not even by the retry of waiting
+  visits;
+- at most $5 of Delegate orders per project a day (`rb2b_company.DELEGATE_USD_PER_DAY`, summed
+  from the order receipts of the last 24 hours). A company that would pass it is still judged
+  and posted; its run's line says the people search was skipped for today's limit;
+- no backfill: migration 089 marks every company visit received before it `no_start`.
+
 The verdict, the people kept, how many the services listed, how many had left and what
 Delegate charged are on the visit (`rb2b_visits.company`, migration 089). The run's line says
 the verdict ("RB2B named only Acme: worth chasing (4 · Strong fit); 2 people to contact
@@ -133,11 +144,12 @@ person in Tin built from the app's address and IDs.
   its website and where the visit came from; the rating's reason; the visit as PostHog read
   it; a ⚠️ line when PostHog didn't confirm the visit; buttons for LinkedIn, the replay
   (when there is one) and the person in Tin.
-- **A company worth chasing, at once.** The company's fit and intent, the next step, its
-  name, website, industry and size, the model's reason, the people found (linked to LinkedIn,
-  with their headline and fit), the page visited and a ⚠️ line saying who visited is unknown,
-  and a button to People. `company_message` takes an optional `warm` line for how the team can
-  reach them.
+- **A company worth chasing, at once.** The same layout as a person's (one builder,
+  `rb2b_slack._message`): the fit and intent with the next step, the company's name, its
+  website, industry, size and location in small text, the model's reason, the warm line when
+  there is one, the page visited and a ⚠️ line saying who visited is unknown in small text, then
+  each person found (their name linked to their LinkedIn profile, headline and fit) and a
+  button to People.
 - **Everyone else, at 18:00 in the project's time zone.** One digest of the visitors since the
   previous one who rated weak, not a fit, or weren't rated, grouped, and the companies without
   a message of their own (not worth chasing, weak, not judged, visited again), with a button to

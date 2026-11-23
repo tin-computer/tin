@@ -557,6 +557,8 @@ def summary(person: dict[str, Any] | None, outcome: str, company: dict | None = 
             return f"RB2B named only {name}: not worth chasing ({rated})."[:500]
         people = len(company.get("people") or [])
         found = f"{people} {'person' if people == 1 else 'people'} to contact there"
+        if company.get("not_looked") == "daily_limit":
+            found = "the people search was skipped for today's limit"
         return f"RB2B named only {name}: worth chasing ({rated}); {found}."[:500]
     if outcome == "forgotten":
         return "RB2B named someone you asked Tin to forget, so Tin left them out."

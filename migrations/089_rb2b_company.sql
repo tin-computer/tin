@@ -2,3 +2,9 @@
 -- intent, reason, the titles to look for), the People records of whom Tin found there, and
 -- what Delegate charged to find them. Null until the run judges the company.
 ALTER TABLE rb2b_visits ADD COLUMN IF NOT EXISTS company jsonb;
+
+-- A visit Tin keeps but never starts a run for: one over a project's daily limit of company
+-- runs, and every company visit received before company visits started runs (no backfill of
+-- Tin-funded work nobody asked for).
+ALTER TABLE rb2b_visits ADD COLUMN IF NOT EXISTS no_start boolean NOT NULL DEFAULT false;
+UPDATE rb2b_visits SET no_start = true WHERE kind = 'company' AND run_id IS NULL;

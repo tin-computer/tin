@@ -697,3 +697,83 @@ def test_a_company_message_has_the_layout_of_a_persons():
         "actions",
         "context",  # footer
     ]
+
+
+# Runaway guards: Tin funds this work, and a leaked webhook address must not run up its bill.
+
+
+async def test_a_day_over_the_delegate_guard_judges_but_buys_nothing(collection_db, monkeypatch):
+    f = await rb2b_fixture(collection_db)
+    first = await company_run(f, monkeypatch)
+    router, delegate, slack = CompanyRouter(), FakeDelegate(), Slack(f.db)
+    await through(work_for(f, router, delegate, slack), first)
+    assert len(delegate.orders) == 2  # $0.008 ordered today
+    # The next company would pass the day's guard: judged, posted, nobody looked up.
+    monkeypatch.setattr(rb2b_company, "DELEGATE_USD_PER_DAY", rb2b_company.MOST_PER_COMPANY + 0.005)
+    other = {"Website": "other.test", "Company Name": "Other", "Captured URL": "https://o.test/"}
+    second = await company_run(f, monkeypatch, **other)
+    _, judged = await through(work_for(f, router, delegate, slack), second)
+    assert judged == {"worth": True} and len(delegate.orders) == 2
+    company = await f.db.pool.fetchval(
+        "SELECT company FROM rb2b_visits WHERE run_id = $1", UUID(second)
+    )
+    company = json.loads(company) if isinstance(company, str) else company
+    assert company["not_looked"] == "daily_limit" and company["fit"] == 4
+    summary = await f.db.pool.fetchval(
+        "SELECT result_summary FROM workflow_runs WHERE id=$1", UUID(second)
+    )
+    assert summary.endswith("the people search was skipped for today's limit.")
+
+
+async def test_company_visits_over_the_days_limit_are_kept_and_never_started(
+    collection_db, monkeypatch
+):
+    from tin_lite import rb2b_api
+
+    monkeypatch.setattr(rb2b_api, "COMPANY_RUNS_PER_DAY", 1)
+    f = await rb2b_fixture(collection_db)
+    async with client(f, monkeypatch) as http:
+        hook = (await set_up(http, f)).removeprefix("https://tin.test")
+        for page in ("a", "b", "c"):
+            await http.post(
+                hook, json=company_payload(**{"Captured URL": f"https://x.test/{page}"})
+            )
+        # A person still starts, and the companies over the limit aren't retried with them.
+        await http.post(hook, json=payload())
+        started = len(http.started)
+    rows = await f.db.pool.fetch(
+        "SELECT kind, run_id, no_start FROM rb2b_visits ORDER BY received_at"
+    )
+    assert [(r["kind"], r["run_id"] is not None, r["no_start"]) for r in rows] == [
+        ("company", True, False),
+        ("company", False, True),
+        ("company", False, True),
+        ("person", True, False),
+    ]
+    assert started == 2
+
+
+async def test_company_visits_from_before_the_deploy_never_start(collection_db, monkeypatch):
+    from pathlib import Path
+
+    f = await rb2b_fixture(collection_db)
+    async with client(f, monkeypatch) as http:
+        hook = (await set_up(http, f)).removeprefix("https://tin.test")
+    # A company visit kept before company visits started runs.
+    await f.db.pool.execute(
+        """INSERT INTO rb2b_visits (id, project_id, dedupe_key, kind, payload)
+           VALUES ($1, $2, $4, 'company', $3::jsonb)""",
+        uuid4(),
+        f.project.id,
+        json.dumps(company_payload()),
+        "0" * 64,
+    )
+    migration = Path(__file__).parents[1] / "migrations" / "089_rb2b_company.sql"
+    await f.db.pool.execute(migration.read_text())
+    async with client(f, monkeypatch) as http:
+        await http.post(hook, json=payload())
+        assert len(http.started) == 1  # the person, never the old company visit
+    old = await f.db.pool.fetchrow(
+        "SELECT run_id, no_start FROM rb2b_visits WHERE dedupe_key=$1", "0" * 64
+    )
+    assert old["run_id"] is None and old["no_start"] is True

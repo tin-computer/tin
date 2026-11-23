@@ -47,6 +47,11 @@ SEARCH_PAGE = 3
 SEARCH_MAX_USD = 0.40
 PROFILES = "apify-linkedin-profile"
 PROFILES_MAX_USD = 0.05
+# The most one company can cost at Delegate, and what a project's company runs may order in a
+# day: a runaway guard (a leaked webhook address must not run up Tin's bill), far above a
+# normal day. Over it, the company is judged but nobody is looked up until the next day.
+MOST_PER_COMPANY = FINDER_MAX_USD + SEARCH_MAX_USD + PROFILES_MAX_USD
+DELEGATE_USD_PER_DAY = 5.0
 # How long one Delegate job may take before Tin stops waiting (a profile read takes a minute or
 # two; one that times out is refunded).
 JOB_SECONDS = 6 * 60
