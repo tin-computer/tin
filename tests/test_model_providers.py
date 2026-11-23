@@ -205,10 +205,35 @@ async def test_gemini_adapter_uses_async_official_client() -> None:
 
     assert result.provider is ProviderName.GEMINI
     assert result.parsed == {"answer": "gemini"}
-    assert result.usage.reasoning_tokens == 1
+    # Thinking is billed as output, so output counts it as OpenAI's output_tokens does.
+    assert result.usage == ModelUsage(
+        input_tokens=7,
+        output_tokens=4,
+        total_tokens=11,
+        cached_input_tokens=1,
+        reasoning_tokens=1,
+        cache_write_input_tokens=0,
+    )
+    assert result.service_tier == "standard"
     config = client.aio.models.parameters["config"]
+    assert config.service_tier.value == "standard"
     assert config.thinking_config.thinking_level.value == "HIGH"
     assert config.response_mime_type == "application/json"
+
+
+def test_gemini_usage_reads_omitted_counts_as_zero_and_no_counts_as_unknown() -> None:
+    from tin_lite.model_providers import _gemini_usage
+
+    # Gemini's JSON leaves out zero counts: no cache hit, no thinking.
+    usage = _gemini_usage(
+        SimpleNamespace(prompt_token_count=9, candidates_token_count=2, total_token_count=11)
+    )
+    assert (usage.input_tokens, usage.output_tokens, usage.total_tokens) == (9, 2, 11)
+    assert (usage.cached_input_tokens, usage.reasoning_tokens) == (0, 0)
+    assert usage.cache_write_input_tokens == 0
+    # A response with no prompt count stays unpriced rather than free.
+    assert _gemini_usage(None) == ModelUsage()
+    assert _gemini_usage(SimpleNamespace(total_token_count=13)) == ModelUsage(total_tokens=13)
 
 
 @pytest.mark.asyncio

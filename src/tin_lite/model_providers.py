@@ -477,7 +477,12 @@ class GeminiModelProvider:
         self, *, model: str, request: ModelRequest, timeout_seconds: float | None = None
     ) -> ModelResult:
         _validate_request(request)
-        config: dict[str, Any] = {"max_output_tokens": request.max_output_tokens}
+        # Standard tier, asked for explicitly: the response does not report its tier, and the
+        # rate card prices this tier only (flex and priority are other prices).
+        config: dict[str, Any] = {
+            "max_output_tokens": request.max_output_tokens,
+            "service_tier": google_types.ServiceTier.STANDARD,
+        }
         if timeout_seconds is not None:
             config["http_options"] = google_types.HttpOptions(timeout=int(timeout_seconds * 1000))
         if request.system is not None:
@@ -518,18 +523,11 @@ class GeminiModelProvider:
             model=str(getattr(response, "model_version", None) or model),
             text=text,
             request_id=_optional_string(getattr(response, "response_id", None)),
+            service_tier="standard",
             request=request,
             stop_reason=_stop_label(finish),
             capped=finish == "MAX_TOKENS",
-            usage=ModelUsage(
-                input_tokens=_optional_int(getattr(usage, "prompt_token_count", None)),
-                output_tokens=_optional_int(getattr(usage, "candidates_token_count", None)),
-                total_tokens=_optional_int(getattr(usage, "total_token_count", None)),
-                cached_input_tokens=_optional_int(
-                    getattr(usage, "cached_content_token_count", None)
-                ),
-                reasoning_tokens=_optional_int(getattr(usage, "thoughts_token_count", None)),
-            ),
+            usage=_gemini_usage(usage),
         )
 
     async def close(self) -> None:
@@ -799,6 +797,33 @@ def _optional_int(value: object) -> int | None:
 
 def _optional_string(value: object) -> str | None:
     return value if isinstance(value, str) and value else None
+
+
+def _gemini_usage(usage: object) -> ModelUsage:
+    """Gemini's usage in the shape the other adapters report.
+
+    Gemini bills thinking as output but counts it apart from candidates_token_count, so
+    output is candidates plus thoughts, as OpenAI's output_tokens already includes reasoning.
+    Its JSON leaves out zero counts, so a missing cached, thoughts or candidates count is zero
+    once the prompt count is present. Caching is implicit: there are no cache writes to price.
+    Without a prompt count the counts stay as reported, which leaves the call unpriced.
+    """
+    prompt = _optional_int(getattr(usage, "prompt_token_count", None))
+    total = _optional_int(getattr(usage, "total_token_count", None))
+    if prompt is None:
+        return ModelUsage(total_tokens=total)
+    candidates, thoughts, cached = (
+        _optional_int(getattr(usage, name, None)) or 0
+        for name in ("candidates_token_count", "thoughts_token_count", "cached_content_token_count")
+    )
+    return ModelUsage(
+        input_tokens=prompt,
+        output_tokens=candidates + thoughts,
+        total_tokens=total,
+        cached_input_tokens=cached,
+        reasoning_tokens=thoughts,
+        cache_write_input_tokens=0,
+    )
 
 
 def _sum_optional_ints(*values: object) -> int | None:

@@ -14,8 +14,10 @@ from tin_lite.billing_contracts import NANOS_PER_DOLLAR, BillingError, digest, t
 # pins this card in its terms, so a price change is a new card id and earlier runs keep theirs.
 # gpt-6-sol stays for runs and native routes that name it; gpt-6.1-sol is the same price with a
 # cheaper cached read. Cache writes are the 30-minute write price.
+# v3 adds `other_providers`: each one a provider's own source, tier, long-context threshold
+# and models, read by provider_card(). Cards pinned before v3 price OpenAI only.
 CARD = {
-    "id": "tin-native-supplier-2026-11-04-v2",
+    "id": "tin-native-supplier-2026-11-23-v3",
     "source": "https://developers.openai.com/api/docs/pricing",
     "provider": "openai",
     "service_tier": "default",
@@ -55,6 +57,26 @@ CARD = {
                 "cached_input": 2000,
                 "cache_write": 25_000,
                 "output": 75_000,
+            },
+        },
+    },
+    # Gemini's Standard-tier list prices, checked against the pricing page on 2026-11-23. Neon
+    # has one price across its 1M context and implicit caching only, so there are no cache
+    # writes and no long-context band. Output includes thinking tokens.
+    "other_providers": {
+        "gemini": {
+            "source": "https://ai.google.dev/gemini-api/docs/pricing",
+            "service_tier": "standard",
+            "long_context_above_input_tokens": None,
+            "models": {
+                "gemini-4-neon": {
+                    "standard": {
+                        "input": 3000,
+                        "cached_input": 150,
+                        "cache_write": 3000,
+                        "output": 15_000,
+                    },
+                },
             },
         },
     },
@@ -282,11 +304,25 @@ def service_terms(definition, *, inputs=None):
     }
 
 
+def provider_card(card, provider):
+    """The pinned prices for one provider: the card's own, or one of its other providers."""
+    if not card:
+        return None
+    if provider == card["provider"]:
+        return card
+    return (card.get("other_providers") or {}).get(provider)
+
+
 def model_card(terms, provider, model):
-    card = terms.get("service_pricing")
-    if not card or provider != card["provider"] or model not in card["models"]:
+    card = provider_card(terms.get("service_pricing"), provider)
+    if card is None or model not in card["models"]:
         raise BillingError("unpriced_model", "This model has no pinned workflow price.")
     return card, card["models"][model]
+
+
+def context_band(card, input_tokens):
+    threshold = card["long_context_above_input_tokens"]
+    return "long_context" if threshold is not None and input_tokens > threshold else "standard"
 
 
 def model_maximum(terms, *, provider, model, input_tokens, output_tokens, searches=0):
@@ -302,12 +338,11 @@ def model_maximum(terms, *, provider, model, input_tokens, output_tokens, search
             },
         )
     card, rates = model_card(terms, provider, model)
-    band = "long_context" if input_tokens > card["long_context_above_input_tokens"] else "standard"
-    rate = rates[band]
+    rate = rates[context_band(card, input_tokens)]
     return (
         input_tokens * max(rate["input"], rate["cache_write"])
         + output_tokens * rate["output"]
-        + searches * card["web_search_call_nanos"]
+        + searches * terms["service_pricing"]["web_search_call_nanos"]
     )
 
 
@@ -332,11 +367,13 @@ def price_receipt(terms, kind, record):
                 },
             )
         )
-    if kind != "native_model" or record.get("service_tier") != card["service_tier"]:
+    if kind != "native_model":
         return None
     try:
-        _, rates = model_card(terms, record.get("provider"), record.get("model"))
+        prices, rates = model_card(terms, record.get("provider"), record.get("model"))
     except BillingError:
+        return None
+    if record.get("service_tier") != prices["service_tier"]:
         return None
     usage = record.get("usage")
     if not isinstance(usage, dict):
@@ -364,7 +401,7 @@ def price_receipt(terms, kind, record):
         or total != inputs + outputs
     ):
         return None
-    band = "long_context" if inputs > card["long_context_above_input_tokens"] else "standard"
+    band = context_band(prices, inputs)
     amount = token_charge({"native_model": rates[band]}, "native_model", usage)
     if amount is None:
         return None

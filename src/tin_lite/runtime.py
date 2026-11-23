@@ -175,8 +175,17 @@ async def build_runtime(settings: Settings) -> RuntimeServices:
     )
     from tin_lite.code_models import registered_routes as code_model_routes
 
-    if settings.luna_api_key is not None:
-        model_routes += code_model_routes()
+    # Each code route is registered only when its provider has a key: a Gemini route without
+    # GEMINI_API_KEY then fails its run as model_unavailable instead of stopping the router.
+    code_providers = {
+        provider
+        for provider, key in (
+            (ProviderName.OPENAI, settings.luna_api_key),
+            (ProviderName.GEMINI, settings.gemini_api_key),
+        )
+        if key is not None
+    }
+    model_routes += code_model_routes(code_providers)
     model_router = configured_model_router(
         settings, routes=model_routes, recorder=ModelUsageRecorder(database)
     )

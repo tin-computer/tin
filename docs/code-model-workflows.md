@@ -51,10 +51,13 @@ logical call across execution attempts. Repeating an identical completed request
 saved result. A different request needs a distinct step and another declared call allowance.
 
 Current supported routes are explicitly `openai/gpt-6-luna`, `openai/gpt-6.1-sol`,
-`openai/gpt-6-astra` and the older `openai/gpt-6-sol`, through the existing OpenAI adapter and
-pinned supplier price card. Prefer `gpt-6.1-sol` to `gpt-6-sol` in new packages: the same price,
-with a cheaper cached read. Astra costs five times Sol. Other providers/models and custom
-URLs fail validation; a configured credential alone does not admit an unpriced route.
+`openai/gpt-6-astra` and the older `openai/gpt-6-sol` through the OpenAI adapter, and
+`gemini/gemini-4-neon` through the Gemini adapter, all at the pinned supplier price card. Prefer
+`gpt-6.1-sol` to `gpt-6-sol` in new packages: the same price, with a cheaper cached read. Astra
+costs five times Sol. Neon costs 1.5 times Sol for input and output, with no long-context
+surcharge. A Gemini route is registered only where `GEMINI_API_KEY` is set; elsewhere its calls
+fail as `model_unavailable`. Other providers/models and custom URLs fail validation; a
+configured credential alone does not admit an unpriced route.
 
 Bounds: at most four route aliases, 1–16 calls per route and 32 total; 1,024–256,000 serialized
 input bytes per call (instructions, data, schema and envelope included); 64–32,000 output tokens;

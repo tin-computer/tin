@@ -24,6 +24,7 @@ MODEL_TARGETS = frozenset(
         ("openai", "gpt-6-sol"),
         ("openai", "gpt-6.1-sol"),
         ("openai", "gpt-6-astra"),
+        ("gemini", "gemini-4-neon"),
     }
 )
 ROUTE_KEYS = ("provider", "model", "max_calls", "max_input_bytes", "max_output_tokens")

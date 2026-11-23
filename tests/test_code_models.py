@@ -131,11 +131,13 @@ def test_model_route_errors_say_whether_the_shape_or_the_model_is_wrong():
     with pytest.raises(
         ValueError,
         match="unsupported or unpriced model; supported provider/model pairs: "
-        "openai/gpt-6-astra, openai/gpt-6-luna, openai/gpt-6-sol, openai/gpt-6.1-sol",
+        "gemini/gemini-4-neon, openai/gpt-6-astra, openai/gpt-6-luna, openai/gpt-6-sol, "
+        "openai/gpt-6.1-sol",
     ):
         validate_code_definition(unknown)
     guide = authoring_guide(settings=SimpleNamespace(), project_id=uuid4())
     assert guide["code_contract"]["models"]["routes"] == [
+        {"provider": "gemini", "model": "gemini-4-neon"},
         {"provider": "openai", "model": "gpt-6-astra"},
         {"provider": "openai", "model": "gpt-6-luna"},
         {"provider": "openai", "model": "gpt-6-sol"},
@@ -252,7 +254,9 @@ def test_card_prices_every_supported_route_at_the_openai_list_price():
     from tin_lite.service_pricing import CARD
     from tin_lite.workflow_code import MODEL_TARGETS
 
-    assert {model for _, model in MODEL_TARGETS} <= set(CARD["models"])
+    assert {model for provider, model in MODEL_TARGETS if provider == "openai"} <= set(
+        CARD["models"]
+    )
     # USD per million tokens: input, cached input, 30-minute cache write, output (2026-11-04).
     per_million = {
         model: tuple(
@@ -272,6 +276,79 @@ def test_card_prices_every_supported_route_at_the_openai_list_price():
         "cache_write": 25_000,
         "output": 75_000,
     }
+
+
+def test_card_prices_gemini_neon_at_the_gemini_list_price():
+    from tin_lite.service_pricing import CARD, model_card
+    from tin_lite.workflow_code import MODEL_TARGETS
+
+    terms = {"service_pricing": CARD}
+    for provider, model in MODEL_TARGETS:
+        model_card(terms, provider, model)  # every allowed route has a pinned price
+    gemini, neon = model_card(terms, "gemini", "gemini-4-neon")
+    # USD per million tokens (2026-11-23): one price across the 1M context, implicit caching.
+    assert {k: v / 1000 for k, v in neon["standard"].items()} == {
+        "input": 3,
+        "cached_input": 0.15,
+        "cache_write": 3,
+        "output": 15,
+    }
+    assert set(neon) == {"standard"} and gemini["long_context_above_input_tokens"] is None
+    assert gemini["service_tier"] == "standard"
+
+
+def test_gemini_receipt_is_priced_at_neon_rates_and_older_cards_refuse_it():
+    from tin_lite.billing_contracts import BillingError
+    from tin_lite.service_pricing import CARD, model_maximum, price_receipt
+
+    terms = {"service_pricing": deepcopy(CARD)}
+    # The usage a live Neon call reported, as the adapter records it (output includes thinking).
+    usage = {
+        "input_tokens": 1225,
+        "output_tokens": 184,
+        "total_tokens": 1409,
+        "cached_input_tokens": 1000,
+        "reasoning_tokens": 157,
+        "cache_write_input_tokens": 0,
+        "web_search_calls": 0,
+    }
+    record = {
+        "outcome": "response_received",
+        "provider": "gemini",
+        "model": "gemini-4-neon",
+        "service_tier": "standard",
+        "usage": usage,
+    }
+    amount, receipt = price_receipt(terms, "native_model", record)
+    assert amount == 225 * 3000 + 1000 * 150 + 184 * 15_000
+    assert receipt["context_band"] == "standard" and receipt["provider"] == "gemini"
+    # Far past any OpenAI long-context threshold, Neon keeps its one price.
+    assert model_maximum(
+        terms, provider="gemini", model="gemini-4-neon", input_tokens=900_000, output_tokens=10
+    ) == (900_000 * 3000 + 10 * 15_000)
+    # Another tier is another price; the card does not guess it.
+    assert price_receipt(terms, "native_model", {**record, "service_tier": "flex"}) is None
+    # A run pinned to the OpenAI-only card keeps it: Gemini stays unpriced there.
+    older = deepcopy(CARD)
+    older.pop("other_providers")
+    with pytest.raises(BillingError):
+        model_maximum(
+            {"service_pricing": older},
+            provider="gemini",
+            model="gemini-4-neon",
+            input_tokens=1,
+            output_tokens=1,
+        )
+    assert price_receipt({"service_pricing": older}, "native_model", record) is None
+
+
+def test_gemini_routes_register_only_with_their_provider():
+    from tin_lite.code_models import registered_routes
+
+    openai_only = registered_routes({ProviderName.OPENAI})
+    assert openai_only and all(r.provider is ProviderName.OPENAI for r in openai_only)
+    both = registered_routes({ProviderName.OPENAI, ProviderName.GEMINI})
+    assert "workflow.code:gemini:gemini-4-neon" in {r.key for r in both}
 
 
 def sdk_router(f, *, invalid=False, uncertain=False, calls=None, outputs=None):
