@@ -398,19 +398,28 @@ class RB2BActivities:
             return second
 
     async def _session_for_search(self, run) -> tuple[str, dict, dict] | None:
-        """The run starter's own LinkedIn session, as for every other LinkedIn read; never a
-        teammate's. None when they haven't connected LinkedIn with cloud reading on."""
+        """A project member's LinkedIn session to search with: the run starter's first, then any
+        other member with cloud reading on. Every member's network serves the project's warm
+        paths by default; managed clients are told so when Tin sets them up."""
 
-        member = run.started_by_clerk_user_id
-        if not member:
-            return None
-        try:
-            session, actor = await saved_session(
-                self.db, self.settings, self.cipher, run.project_id, member
-            )
-        except (IntegrationAuthorizationError, IntegrationUpstreamError):
-            return None
-        return member, session, actor
+        members = await self.db.pool.fetch(
+            """SELECT connected_by_clerk_user_id AS member FROM integration_connections
+               WHERE project_id = $1 AND provider_key = $2 AND status = 'connected'
+                 AND connected_by_clerk_user_id IS NOT NULL
+               ORDER BY (connected_by_clerk_user_id = $3) DESC, updated_at DESC""",
+            run.project_id,
+            warm_paths.PROVIDER,
+            run.started_by_clerk_user_id,
+        )
+        for row in members:
+            try:
+                session, actor = await saved_session(
+                    self.db, self.settings, self.cipher, run.project_id, row["member"]
+                )
+            except (IntegrationAuthorizationError, IntegrationUpstreamError):
+                continue
+            return row["member"], session, actor
+        return None
 
     async def _warm_line(self, run, company_fallback: str | None) -> str | None:
         saved = await self.db.get_effect(f"{run.id}:rb2b:warm")

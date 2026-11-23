@@ -109,8 +109,10 @@ the closest path as one line, and nothing when there's none:
    session in the existing search sandbox (`kind: search`, document transport). The visitor's
    card is the one with their profile, or the one namesake whose headline names their company;
    its "X, Y & N other mutual connections" gives `🤝 2nd degree via Mira Chen + 11 others`.
-   Only the run starter's session is used (the member who set up the webhook), as for every
-   other LinkedIn read; never a teammate's. The
+   The run starter's session (the member who set up the webhook) is tried first, then any
+   other member of the project with cloud reading on: every member's network serves the
+   project's warm paths by default, unlike Tin's other LinkedIn reads, which use only their
+   starter's. Managed clients are told this when Tin sets them up. It never crosses projects. The
    read is receipted before the sandbox starts and never bought twice; one that can't run
    leaves the message without the line. Searches are capped at
    `warm_paths.SEARCHES_PER_DAY` per project per day as a runaway guard.

@@ -246,3 +246,29 @@ async def test_a_search_that_cant_run_leaves_the_message_without_a_path(collecti
     slack = Bodies(f.db)
     await run_through(f, work(f, slack, cloud=cloud), run_id)
     assert len(slack.bodies) == 1 and "🤝" not in posted(slack)
+
+
+async def test_any_member_with_linkedin_can_search_starting_with_the_runs_starter(
+    collection_db, monkeypatch
+):
+    f = await rb2b_fixture(collection_db)
+    run_id = await visitor_run(f, monkeypatch)
+    run = await f.db.get_run(__import__("uuid").UUID(run_id))
+    tried = []
+
+    async def fetch(*args):
+        return [{"member": "teammate-no-session"}, {"member": "teammate"}]
+
+    async def saved(db, settings, cipher, project_id, member):
+        tried.append(member)
+        if member != "teammate":
+            from tin_lite.integrations import IntegrationAuthorizationError
+
+            raise IntegrationAuthorizationError("not connected")
+        return {"cookies": []}, {"key": "a"}
+
+    monkeypatch.setattr("tin_lite.rb2b_activities.saved_session", saved)
+    steps = work(f, Bodies(f.db), cloud=Cloud())
+    steps.db = SimpleNamespace(pool=SimpleNamespace(fetch=fetch))
+    found = await steps._session_for_search(run)
+    assert found[0] == "teammate" and tried == ["teammate-no-session", "teammate"]
