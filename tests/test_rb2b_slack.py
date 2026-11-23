@@ -293,3 +293,20 @@ async def test_a_post_left_sending_becomes_unknown(collection_db):
     )
     await rb2b_slack.recover(f.db)
     assert await f.db.pool.fetchval("SELECT status FROM rb2b_slack_posts") == "unknown"
+
+
+def test_the_rating_never_reads_the_identification_services_name():
+    from tin_lite import people_icp
+
+    sent = people_icp.person_input(
+        "# ICP",
+        {
+            "fields": {"headline": "CTO at Acme (From RB2B)"},
+            "events": [
+                {"kind": "visited", "at": "", "detail": {"summary": "x · identified by rb2b"}}
+            ],
+            "notes": [],
+        },
+    )
+    assert "rb2b" not in sent.lower() and "the identification service" in sent
+    assert "Don't name that service" in people_icp.instructions(["A"])

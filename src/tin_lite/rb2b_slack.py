@@ -159,7 +159,7 @@ def visitor_message(
     if visit_line := _visit_line(visit):
         small.append(visit_line)
     if UNMATCHED.search((visit or {}).get("summary") or ""):
-        small.append("⚠️ PostHog didn't confirm the visit, so RB2B's match is unchecked")
+        small.append("⚠️ PostHog didn't confirm the visit, so who it was is unchecked")
     if small:
         blocks.append(_context("\n".join(small)))
     buttons = []
@@ -170,7 +170,7 @@ def visitor_message(
     buttons.append({**_button("Open in Tin", people_url, "tin"), "style": "primary"})
     blocks += [
         {"type": "actions", "elements": buttons},
-        _context(f"{_escape(project_name)} · RB2B · Tin"),
+        _context(f"{_escape(project_name)} · Tin"),
     ]
     name = _field(person, "name") or "A visitor"
     return {"text": _cut(f"{label}: {name}", 300), "blocks": blocks}
@@ -225,7 +225,7 @@ def digest_message(people: list[dict], *, people_url: str, project_name: str) ->
         {"type": "actions", "elements": [_button("See them in Tin", people_url, "people")]},
         {
             "type": "context",
-            "elements": [{"type": "mrkdwn", "text": f"{_escape(project_name)} · RB2B · Tin"}],
+            "elements": [{"type": "mrkdwn", "text": f"{_escape(project_name)} · Tin"}],
         },
     ]
     return {"text": said, "blocks": blocks}
