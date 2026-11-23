@@ -106,6 +106,10 @@ _REF_CONFLICTS = {"conflict", "precondition_failed", "409", "412"}
 _REF_INVALID = {"invalid", "400", "422"}
 
 
+# How many files one comparison reads from code.storage at once.
+DOCUMENT_READS_AT_ONCE = 8
+
+
 class ProjectStateChangedError(RuntimeError):
     """The canonical head is no longer the revision a member change was made against."""
 
@@ -187,6 +191,9 @@ class CodeStorage:
         # Callers and stored references always use the unprefixed ID.
         self._repo_prefix = repo_prefix
         self._client = GitStorage({"name": organization, "key": private_key})
+        # The workflow registry exists from the first publication on; boot publishes every
+        # built-in through it, so it is looked up once per process, not once per workflow.
+        self._registries: dict[str, Repo] = {}
 
     def _upstream_id(self, repo_id: str) -> str:
         return f"{self._repo_prefix}{repo_id}"
@@ -1338,10 +1345,13 @@ class CodeStorage:
         """Publish one immutable workflow definition and its pinned resources atomically."""
         if not files:
             raise ValueError("at least one workflow registry file is required")
-        repo = await self.ensure_repo(
-            repo_id,
-            initial_readme="# Workflow registry\n\nManaged by the Tin Lite switchboard.\n",
-        )
+        repo = self._registries.get(repo_id)
+        if repo is None:
+            repo = await self.ensure_repo(
+                repo_id,
+                initial_readme="# Workflow registry\n\nManaged by the Tin Lite switchboard.\n",
+            )
+            self._registries[repo_id] = repo
         if known_commit_sha and await self._documents_equal(
             repo, ref=known_commit_sha, documents=files
         ):
@@ -1694,10 +1704,17 @@ class CodeStorage:
             raise
 
     async def _documents_equal(self, repo: Repo, *, ref: str, documents: dict[str, bytes]) -> bool:
-        for path, expected in documents.items():
-            if not await self._file_equals(repo, ref=ref, path=path, expected=expected):
-                return False
-        return True
+        # Reads only, a few at a time: a workflow's files are compared together, not in turn.
+        gate = asyncio.Semaphore(DOCUMENT_READS_AT_ONCE)
+
+        async def equal(path: str, expected: bytes) -> bool:
+            async with gate:
+                return await self._file_equals(repo, ref=ref, path=path, expected=expected)
+
+        results = await asyncio.gather(
+            *(equal(path, expected) for path, expected in documents.items())
+        )
+        return all(results)
 
     def _generate_token(
         self,

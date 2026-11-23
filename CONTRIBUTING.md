@@ -91,8 +91,9 @@ npm run test:workflow-review-browser
 Changes to generated diagram or comparison assets also need `npm run check:diagrams` or
 `npm run check:comparison`. Commit the corresponding generated assets when their sources
 change. CI runs the broader browser and backend suites; start locally with tests focused on
-your change. `npm run test:browser` runs the whole browser suite CI runs in one concurrent
-pass. CI skips it for pull requests that change only `workflow_packages/`.
+your change. `npm run test:browser` runs the whole browser suite CI runs: `test:web`, the web pages'
+tests (`TEST_SHARD=2/3` runs one third of the files, as CI's parallel jobs do), then
+`test:extension`. CI skips it for pull requests that change only `workflow_packages/`.
 
 Ordinary tests use fixtures and mocked provider responses. Live provider, E2B and integration
 acceptance tests are separate opt-in checks: inspect their prerequisites, use authorized test

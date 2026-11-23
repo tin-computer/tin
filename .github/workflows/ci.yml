@@ -67,11 +67,17 @@ jobs:
       - run: uv run pytest -n auto
       - run: uv run lint-imports
 
+  # The browser tests in parallel: the web tests in three shards (node --test-shard splits the
+  # files), and the extension's suites on their own.
   browser:
     needs: changes
     if: needs.changes.outputs.browser == 'true'
     runs-on: ubuntu-latest
     timeout-minutes: 15
+    strategy:
+      fail-fast: false
+      matrix:
+        part: ["1/3", "2/3", "3/3", "extension"]
     steps:
       - uses: actions/checkout@v7.0.1
         with:
@@ -95,7 +101,12 @@ jobs:
       - run: npx playwright install --with-deps chromium
       # The film kit's sketches and takes encode with ffmpeg.
       - run: sudo apt-get install -y --no-install-recommends ffmpeg
-      - run: npm run test:browser
+      - if: matrix.part != 'extension'
+        run: npm run test:web
+        env:
+          TEST_SHARD: ${{ matrix.part }}
+      - if: matrix.part == 'extension'
+        run: npm run test:extension
 
   # The required status check; a skipped browser job counts as passed.
   verify:
