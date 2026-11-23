@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from datetime import UTC, datetime
 from types import SimpleNamespace
+from uuid import UUID
 from zoneinfo import ZoneInfo
 
 import pytest
@@ -41,7 +42,7 @@ def person(fit, *, intent="warm", profile="https://www.linkedin.com/in/jane", re
 VISIT = {
     "summary": "Ad: Google Ads, keyword “snowflake pricing” · read /vs/snowflake/ (1 page, 40s)"
     " · identified by RB2B",
-    "replay_url": "https://us.posthog.com/project/1/replay/s1",
+    "replay_url": "https://us.posthog.com/project/1/replay/01a1f827-fa14-795a",
 }
 
 
@@ -90,6 +91,19 @@ def test_a_good_fit_without_a_replay_or_a_confirmed_visit_says_so():
     assert buttons(body) == ["LinkedIn", "Open in Tin"]
 
 
+def test_only_checked_links_become_buttons():
+    forged = {"summary": VISIT["summary"], "replay_url": "https://evil.example/"}
+    body = rb2b_slack.visitor_message(
+        person(4, profile="https://evil.example/in/jane"),
+        forged,
+        people_url="https://tin.test/p",
+        project_name="Acme",
+    )
+    assert buttons(body) == ["Open in Tin"]
+    assert "evil.example" not in str(body["blocks"])
+    assert "*Jane Doe*" in text_of(body)
+
+
 def test_the_digest_groups_the_rest_and_says_nothing_for_nobody():
     assert rb2b_slack.digest_message([], people_url="u", project_name="Acme") is None
     people = [person(2), person(1), person(1), person(None)]
@@ -134,21 +148,30 @@ async def visitor_run(f, monkeypatch, *, headline_title="Founder", seen=SEEN):
         hook = (await set_up(http, f)).removeprefix("https://tin.test")
         await http.post(hook, json=payload(Title=headline_title, **{"Seen At": seen.isoformat()}))
     await f.db.pool.execute(
-        """UPDATE rb2b_hooks SET slack_project_id = project_id, slack_channel_id = 'C0CLIENT',
-               slack_channel_name = 'tin-acme'"""
+        "UPDATE rb2b_hooks SET slack_channel_id = 'C0CLIENT', slack_channel_name = 'tin-acme'"
     )
     return str(
         await f.db.pool.fetchval("SELECT run_id FROM rb2b_visits ORDER BY received_at DESC LIMIT 1")
     )
 
 
-async def through(f, run_id, slack):
+# Tin's own project, whose Slack connection posts to the clients' shared channels.
+POSTER = UUID("bb1b682a-0000-4000-8000-000000000000")
+
+
+def settings(poster=POSTER):
+    return SimpleNamespace(
+        app_url="https://app.tin.test", switchboard_public_url="x", rb2b_slack_project_id=poster
+    )
+
+
+async def through(f, run_id, slack, *, poster=POSTER):
     work = RB2BActivities(
         database=f.db,
         storage=f.storage,
         router=Router(),
         integrations=SimpleNamespace(slack=slack),
-        settings=SimpleNamespace(app_url="https://app.tin.test", switchboard_public_url="x"),
+        settings=settings(poster),
     )
     kept = await work.record(run_id)
     await work.enrich(run_id)
@@ -162,8 +185,9 @@ async def test_a_strong_fit_is_posted_once_to_the_clients_channel(collection_db,
     run_id = await visitor_run(f, monkeypatch)
     slack = Slack(f.db)
     work, _ = await through(f, run_id, slack)
+    # Through Tin's own Slack connection, not the client project's.
     assert slack.posts == [
-        {"project": f.project.id, "channel": "C0CLIENT", "text": "Strong fit: Jane Doe"}
+        {"project": POSTER, "channel": "C0CLIENT", "text": "Strong fit: Jane Doe"}
     ]
     # A retried step never posts twice.
     await work.notify(run_id)
@@ -182,19 +206,19 @@ async def test_a_visitor_who_isnt_a_fit_waits_for_the_digest(collection_db, monk
     assert person["fields"]["icp_fit"]["number"] == 1
 
     runtime = SimpleNamespace(database=f.db, integrations=SimpleNamespace(slack=slack))
-    settings = SimpleNamespace(app_url="https://app.tin.test", switchboard_public_url="x")
+    configured = settings()
     # Before 18:00 in the project's zone (UTC here), nothing; after it, one digest, once.
     before = datetime(2026, 11, 20, 17, 0, tzinfo=UTC)
-    assert await rb2b_slack.post_digests(runtime, settings, now=before) == 0
+    assert await rb2b_slack.post_digests(runtime, configured, now=before) == 0
     after = datetime(2026, 11, 20, 19, 0, tzinfo=UTC)
-    assert await rb2b_slack.post_digests(runtime, settings, now=after) == 1
+    assert await rb2b_slack.post_digests(runtime, configured, now=after) == 1
     assert slack.posts[0]["text"] == "1 more visitor today, none worth a message"
-    assert await rb2b_slack.post_digests(runtime, settings, now=after) == 0
+    assert await rb2b_slack.post_digests(runtime, configured, now=after) == 0
     assert len(slack.posts) == 1
     # The next day has nobody new: nothing is posted.
     assert (
         await rb2b_slack.post_digests(
-            runtime, settings, now=datetime(2026, 11, 21, 19, 0, tzinfo=UTC)
+            runtime, configured, now=datetime(2026, 11, 21, 19, 0, tzinfo=UTC)
         )
         == 0
     )
@@ -219,6 +243,17 @@ async def test_a_post_that_doesnt_go_through_is_recorded_and_never_sent_again(
     # The run carries on; a retried step doesn't post again.
     await work.notify(run_id)
     assert len(slack.posts) == 1
+
+
+async def test_nothing_posts_without_tins_slack_project_or_a_channel(collection_db, monkeypatch):
+    f = await rb2b_fixture(collection_db)
+    run_id = await visitor_run(f, monkeypatch)
+    slack = Slack(f.db)
+    await through(f, run_id, slack, poster=None)
+    assert slack.posts == []
+    assert await rb2b_slack.destination(f.db, settings(), f.project.id) is not None
+    await f.db.pool.execute("UPDATE rb2b_hooks SET slack_channel_id = NULL")
+    assert await rb2b_slack.destination(f.db, settings(), f.project.id) is None
 
 
 async def test_a_post_left_sending_becomes_unknown(collection_db):

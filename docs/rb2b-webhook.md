@@ -69,10 +69,19 @@ receipts.
 
 ## Slack
 
-The posts are for Tin's clients: an operator sets, per project, the channel and the project
-whose Slack connection posts there (`rb2b_hooks.slack_channel_id`, `slack_channel_name`,
-`slack_project_id`), for a client Tin's own workspace and the channel it shares with them.
-`rb2b_slack.destination` is the one place that reads it; no channel, nothing posts.
+Operator-configured, for Tin's managed clients. The posts go to the channel Tin shares with the
+client in Tin's own Slack workspace, through Tin's own Slack connection: the one of the project
+`TIN_LITE_RB2B_SLACK_PROJECT_ID` names (Tin Computer in production). An operator sets each
+client project's channel:
+
+    tin-lite rb2b-channel <project_id> <channel_id> --name tin-databasin-notifications
+    tin-lite rb2b-channel <project_id> none
+
+Tin's bot has to be in a private channel to post there. Founders don't see or set any of this;
+the RB2B card shows nothing about Slack. `rb2b_slack.destination` is the one place that reads
+it; with the setting unset or no channel, nothing posts. Links in a message are only a LinkedIn
+profile rebuilt from the person's identifiers, a PostHog replay of People's own shape, and the
+person in Tin built from the app's address and IDs.
 
 - **A good or strong fit, at once.** 🟢 strong fit or 🟡 good fit with the intent (🔥 hot,
   🌤 warm, 🧊 cold); who they are, linked to LinkedIn, with their headline; the company,

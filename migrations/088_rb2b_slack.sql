@@ -1,8 +1,7 @@
--- Where a project's RB2B visitors are posted in Slack (rb2b_slack.py). An operator sets it per
--- project for now: the channel, and the project whose Slack connection posts there (for a
--- client, Tin's own workspace and its shared channel with them). No channel, nothing posts.
+-- Where a managed client's RB2B visitors are posted in Slack (rb2b_slack.py): the channel Tin
+-- shares with them in Tin's own workspace, set by an operator (`tin-lite rb2b-channel`). The
+-- posting connection is Tin's, named by TIN_LITE_RB2B_SLACK_PROJECT_ID. No channel, no posts.
 ALTER TABLE rb2b_hooks
-    ADD COLUMN slack_project_id uuid REFERENCES projects(id) ON DELETE SET NULL,
     ADD COLUMN slack_channel_id text CHECK (slack_channel_id ~ '^[A-Z0-9]{1,32}$'),
     ADD COLUMN slack_channel_name text NOT NULL DEFAULT ''
         CHECK (length(slack_channel_name) <= 100);

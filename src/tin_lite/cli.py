@@ -193,6 +193,38 @@ async def _import_ai_visibility(project_id: UUID, path: Path) -> None:
     print(f"{action} the week of {report.week_start} for project {project_id}: {answers} answers")
 
 
+async def _rb2b_channel(project_id: UUID, channel: str, name: str) -> None:
+    """Operator-only: the Slack channel a managed client's RB2B visitors are posted to, in
+    Tin's own workspace, or `none` to stop posting them."""
+    import re
+
+    channel = channel.strip()
+    clear = channel.lower() == "none"
+    if not clear and not re.fullmatch(r"[A-Z0-9]{1,32}", channel):
+        raise SystemExit(f"{channel} is not a Slack channel ID (like C0CH02TLTQ8), or none")
+    settings = get_settings()
+    database = Database(settings.runtime_dsn)
+    await database.connect()
+    try:
+        updated = await database.pool.fetchval(
+            """UPDATE rb2b_hooks SET slack_channel_id = $2, slack_channel_name = $3
+               WHERE project_id = $1 RETURNING project_id""",
+            project_id,
+            None if clear else channel,
+            "" if clear else name.strip().removeprefix("#")[:100],
+        )
+    finally:
+        await database.close()
+    if updated is None:
+        raise SystemExit(f"project {project_id} has no RB2B address; set it up on Integrations")
+    if clear:
+        print(f"RB2B visitors of project {project_id} are no longer posted to Slack")
+        return
+    print(f"RB2B visitors of project {project_id} post to {name or channel}")
+    if settings.rb2b_slack_project_id is None:
+        print("TIN_LITE_RB2B_SLACK_PROJECT_ID is unset here, so nothing posts until it is set")
+
+
 async def _rollouts(run_id: UUID, *, out: Path | None, trace: bool, max_output_chars: int) -> None:
     """Operator-only read path for captured Codex rollouts; never a product surface."""
     settings = get_settings()
@@ -356,6 +388,13 @@ def main() -> None:
     )
     visibility.add_argument("--project-id", required=True, type=UUID)
     visibility.add_argument("--file", required=True, type=Path, help="the week's report JSON")
+    rb2b_channel = commands.add_parser(
+        "rb2b-channel",
+        help="post a managed client's RB2B visitors to a channel in Tin's Slack (or none)",
+    )
+    rb2b_channel.add_argument("project_id", type=UUID)
+    rb2b_channel.add_argument("channel", help="the Slack channel ID, or none to stop posting")
+    rb2b_channel.add_argument("--name", default="", help="the channel's name, for reading")
     rollouts = commands.add_parser(
         "rollouts", help="list, export, or print the Codex rollouts captured for a run"
     )
@@ -392,6 +431,8 @@ def main() -> None:
         )
     elif args.command == "import-ai-visibility":
         asyncio.run(_import_ai_visibility(args.project_id, args.file))
+    elif args.command == "rb2b-channel":
+        asyncio.run(_rb2b_channel(args.project_id, args.channel, args.name))
     elif args.command == "rollouts":
         asyncio.run(
             _rollouts(

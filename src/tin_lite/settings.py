@@ -67,6 +67,9 @@ class Settings(BaseSettings):
     anthropic_api_key: SecretStr | None = Field(default=None, alias="ANTHROPIC_API_KEY")
     anthropic_workspace_id: str | None = Field(default=None, alias="ANTHROPIC_WORKSPACE_ID")
     gemini_api_key: SecretStr | None = Field(default=None, alias="GEMINI_API_KEY")
+    # The project whose Slack connection posts RB2B visitors to Tin's managed clients' shared
+    # channels (Tin's own workspace). Unset, nothing is posted.
+    rb2b_slack_project_id: UUID | None = Field(default=None, alias="TIN_LITE_RB2B_SLACK_PROJECT_ID")
     openrouter_api_key: SecretStr | None = Field(default=None, alias="OPENROUTER_API_KEY")
     billing_enabled: bool = Field(default=False, alias="TIN_LITE_BILLING_ENABLED")
     # Browser sign-ups see a locked dashboard until their coding agent sets up the first

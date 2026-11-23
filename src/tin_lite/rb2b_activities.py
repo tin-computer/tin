@@ -273,7 +273,7 @@ class RB2BActivities:
         record_id = await self._record_id(run)
         if record_id is None:
             return
-        place = await rb2b_slack.destination(self.db, run.project_id)
+        place = await rb2b_slack.destination(self.db, self.settings, run.project_id)
         if place is None:
             return
         async with self.db.pool.acquire() as conn:

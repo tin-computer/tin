@@ -5,9 +5,10 @@ rated them (`rb2b_notify`). Everyone else of the day (weak fits, people who aren
 people Tin couldn't rate) goes in one digest at 18:00 in the project's time zone, covering the
 day since the previous digest. A day with nobody to list posts nothing.
 
-Where they go is one lookup (`destination`): the channel an operator set on the project's
-RB2B hook, posted through the Slack connection of the project the operator named, for a client
-Tin's own workspace and the channel it shares with them.
+These posts are for Tin's managed clients. Where they go is one lookup (`destination`): the
+channel Tin shares with the client in Tin's own Slack workspace, which an operator sets on the
+project's RB2B hook (`tin-lite rb2b-channel`), posted through Tin's own Slack connection, the
+one of the project TIN_LITE_RB2B_SLACK_PROJECT_ID names. Either unset, nothing posts.
 
 Slack documents no idempotency key for chat.postMessage, so each message is recorded as
 `sending`, and committed, before Slack is called (`rb2b_slack_posts`). A row left `sending` may
@@ -42,6 +43,9 @@ DIGEST_LISTED = 15
 LOOP_SECONDS = 300
 TEXT = 2900
 UNMATCHED = re.compile(r"no matching visit in PostHog|none clearly theirs|PostHog didn't answer")
+# Links in a message are only ever these: a LinkedIn profile People rebuilt from the person's
+# identifiers, and a PostHog replay of People's own shape. Anything else gets no button.
+LINKEDIN = re.compile(r"https://www\.linkedin\.com/in/[A-Za-z0-9._~%-]{1,200}")
 
 
 @dataclass(frozen=True)
@@ -52,17 +56,20 @@ class Destination:
     channel_name: str
 
 
-async def destination(db, project_id: UUID) -> Destination | None:
-    """Where this project's visitors are posted, or None when nobody set a channel."""
+async def destination(db, settings, project_id: UUID) -> Destination | None:
+    """Where this project's visitors are posted, or None when this deployment posts no RB2B
+    visitors or no operator set the project's channel."""
 
+    poster = getattr(settings, "rb2b_slack_project_id", None)
+    if poster is None:
+        return None
     row = await db.pool.fetchrow(
-        """SELECT slack_project_id, slack_channel_id, slack_channel_name FROM rb2b_hooks
-           WHERE project_id = $1""",
+        "SELECT slack_channel_id, slack_channel_name FROM rb2b_hooks WHERE project_id = $1",
         project_id,
     )
-    if row is None or not row["slack_channel_id"] or row["slack_project_id"] is None:
+    if row is None or not row["slack_channel_id"]:
         return None
-    return Destination(row["slack_project_id"], row["slack_channel_id"], row["slack_channel_name"])
+    return Destination(poster, row["slack_channel_id"], row["slack_channel_name"])
 
 
 # The messages.
@@ -85,9 +92,19 @@ def _fit(person: dict) -> int | None:
     return int(number) if number is not None else None
 
 
+def _profile(person: dict) -> str:
+    url = person.get("profile_url") or ""
+    return url if LINKEDIN.fullmatch(url) else ""
+
+
+def _replay(visit: dict | None) -> str:
+    url = (visit or {}).get("replay_url")
+    return url if isinstance(url, str) and records.REPLAY.fullmatch(url) else ""
+
+
 def _who(person: dict) -> str:
     name = _escape(_field(person, "name") or "Someone")
-    link = person.get("profile_url")
+    link = _profile(person)
     who = f"*<{link}|{name}>*" if link else f"*{name}*"
     headline = _field(person, "headline")
     return f"{who}  ·  {_escape(headline)}" if headline else who
@@ -133,10 +150,10 @@ def visitor_message(
     if UNMATCHED.search((visit or {}).get("summary") or ""):
         lines.append("⚠️ PostHog didn't confirm the visit, so RB2B's match is unchecked")
     buttons = []
-    if person.get("profile_url"):
-        buttons.append(_button("LinkedIn", person["profile_url"], "linkedin"))
-    if (visit or {}).get("replay_url"):
-        buttons.append(_button("▶ Replay", visit["replay_url"], "replay"))
+    if profile := _profile(person):
+        buttons.append(_button("LinkedIn", profile, "linkedin"))
+    if replay := _replay(visit):
+        buttons.append(_button("▶ Replay", replay, "replay"))
     buttons.append(_button("Open in Tin", people_url, "tin"))
     blocks = [
         {
@@ -312,7 +329,7 @@ async def post_digests(runtime: Any, settings: Any, *, now: datetime | None = No
     hooks = await db.pool.fetch(
         """SELECT h.project_id, p.name, p.timezone FROM rb2b_hooks h
            JOIN projects p ON p.id = h.project_id
-           WHERE h.slack_channel_id IS NOT NULL AND h.slack_project_id IS NOT NULL"""
+           WHERE h.slack_channel_id IS NOT NULL"""
     )
     posted = 0
     for hook in hooks:
@@ -331,7 +348,7 @@ async def post_digests(runtime: Any, settings: Any, *, now: datetime | None = No
             key,
         ):
             continue
-        place = await destination(db, hook["project_id"])
+        place = await destination(db, settings, hook["project_id"])
         async with db.pool.acquire() as conn:
             people = await digest_people(conn, hook["project_id"], start, end)
         body = digest_message(
