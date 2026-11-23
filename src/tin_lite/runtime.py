@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import logging
 from dataclasses import dataclass
 from datetime import timedelta
 from pathlib import Path
@@ -413,6 +414,9 @@ async def build_runtime(settings: Settings) -> RuntimeServices:
         router=model_router,
         integrations=integrations,
         settings=settings,
+        cloud=LinkedInCloud(database, settings),
+        cipher=integrations._cipher,
+        profiles=_member_profiles(settings),
     )
     code = CodeActivities(common=activity_instance, model_router=model_router)
     activities = [
@@ -487,6 +491,7 @@ async def build_runtime(settings: Settings) -> RuntimeServices:
         rb2b_activities.record,
         rb2b_activities.enrich,
         rb2b_activities.rate,
+        rb2b_activities.warm,
         rb2b_activities.notify,
         rb2b_activities.publish,
         rb2b_activities.failure,
@@ -687,3 +692,17 @@ async def build_runtime(settings: Settings) -> RuntimeServices:
         if settings.luna_api_key is not None
         else None,
     )
+
+
+def _member_profiles(settings):
+    """Clerk, for members' first names in Slack lines; None when the worker has no Clerk key."""
+
+    try:
+        if not settings.clerk_secret_key.get_secret_value():
+            return None
+        from tin_lite.auth import ClerkAuth
+
+        return ClerkAuth(settings)
+    except Exception:  # noqa: BLE001
+        logging.getLogger(__name__).info("Members' names aren't available to visitor messages.")
+        return None

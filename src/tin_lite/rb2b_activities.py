@@ -16,18 +16,27 @@ from uuid import UUID
 from temporalio import activity
 from temporalio.exceptions import ApplicationError
 
-from tin_lite import people_icp, people_rating, rb2b, rb2b_slack
+from tin_lite import people_icp, people_rating, rb2b, rb2b_slack, warm_paths
 from tin_lite import people_records as records
+from tin_lite.connection_collection import CollectionError
 from tin_lite.failures import failure_projection, split_failure_input
-from tin_lite.integrations import POSTHOG_PROVIDER
+from tin_lite.integrations import (
+    POSTHOG_PROVIDER,
+    IntegrationAuthorizationError,
+    IntegrationUpstreamError,
+)
+from tin_lite.linkedin_engagers_activities import saved_session
 from tin_lite.organic_audit_publication import publish_artifacts
+from tin_lite.people_service import first_names
 from tin_lite.product_urls import dashboard_url
 
 logger = logging.getLogger(__name__)
 
 KEY = rb2b.KEY
 FALLBACK = "Tin couldn't finish reading this visitor. The next visitor RB2B posts tries again."
-STEPS = 5
+STEPS = 6
+# The receipt of a warm path's one LinkedIn search, counted per project per day.
+WARM_SEARCH = "rb2b_warm_search_v1"
 
 
 def _heartbeat(detail) -> None:
@@ -36,9 +45,23 @@ def _heartbeat(detail) -> None:
 
 
 class RB2BActivities:
-    def __init__(self, *, database, storage, router, integrations, settings=None):
+    def __init__(
+        self,
+        *,
+        database,
+        storage,
+        router,
+        integrations,
+        settings=None,
+        cloud=None,
+        cipher=None,
+        profiles=None,
+    ):
         self.db, self.storage, self.router = database, storage, router
         self.integrations, self.settings = integrations, settings
+        # The LinkedIn search sandbox and session cipher for a warm path's second-degree read,
+        # and Clerk for members' first names; each optional, and the step degrades without it.
+        self.cloud, self.cipher, self.profiles = cloud, cipher, profiles
 
     async def _active(self, run_id, *, conn=None):
         run = await self.db.get_run(UUID(str(run_id)), conn=conn)
@@ -264,6 +287,156 @@ class RB2BActivities:
             heartbeat=_heartbeat,
         )
 
+    @activity.defn(name="rb2b_warm")
+    async def warm(self, run_id: str) -> None:
+        """Who on the team knows the visitor, or someone at their company (free, from People),
+        and for a good or strong fit with no direct connection, one search of a member's
+        second-degree network for the visitor. Kept in the step's receipt for the message."""
+
+        run = await self._active(run_id)
+        record_id = await self._record_id(run)
+        if record_id is None:
+            return
+        key = f"{run.id}:rb2b:warm"
+        if (saved := await self.db.get_effect(key)) and saved.status == "completed":
+            return
+        async with self.db.pool.acquire() as conn:
+            found = await records.people(conn, run.project_id, only=record_id)
+            if not found:
+                return
+            person = found[0]
+            company = _text(person, "company")
+            known = await warm_paths.known(conn, run.project_id, record_id, company)
+        second = None
+        if not known.connected and rb2b_slack._fit(person) in rb2b_slack.POSTED:
+            await self._progress(run, "warm", 4, "Looking for a warm path in your network")
+            second = await self._second_degree(run, person, company)
+        async with self.db.effect_lock(key, KEY) as (conn, receipt):
+            if receipt and receipt.status == "completed":
+                return
+            if receipt is None:
+                await self.db.start_effect(conn, execution_key=key, operation=KEY)
+            await self.db.complete_effect(
+                conn,
+                execution_key=key,
+                result={"known": known.as_dict(), "second": second, "company": company},
+            )
+
+    async def _second_degree(self, run, person: dict, company: str | None) -> dict | None:
+        """The visitor's card in a member's second-degree network, or None: no member can
+        read, the day's searches are used, or the visitor isn't second degree."""
+
+        name = _text(person, "name")
+        if not name or self.cloud is None or self.cipher is None:
+            return None
+        key = f"rb2b:warm:{run.project_id}:{run.id}"
+        receipt = await self.db.get_effect(key)
+        if receipt is None:
+            used = await self.db.pool.fetchval(
+                """SELECT count(*) FROM effect_receipts
+                   WHERE operation = $1 AND execution_key LIKE $2
+                     AND created_at > now() - interval '1 day'""",
+                WARM_SEARCH,
+                f"rb2b:warm:{run.project_id}:%",
+            )
+            if used >= warm_paths.SEARCHES_PER_DAY:
+                logger.info("A project used its warm-path searches for the day.")
+                return None
+        found = await self._session_for_search(run)
+        if found is None:
+            return None
+        member, session, actor = found
+        async with self.db.effect_lock(key, WARM_SEARCH) as (conn, receipt):
+            if receipt is not None:
+                saved = receipt.result or {}
+                # Started and never answered: don't search again.
+                if receipt.status != "completed":
+                    if saved.get("sandbox_id"):
+                        await self.cloud.cleanup(saved["sandbox_id"])
+                    return None
+                return saved.get("second")
+            await self.db.start_effect(conn, execution_key=key, operation=WARM_SEARCH)
+            second = None
+            try:
+                answer = await self.cloud.engagement(
+                    conn,
+                    execution_key=key,
+                    run_id=run.id,
+                    session=session,
+                    packet={
+                        "kind": "search",
+                        "source": {"actor": actor, "location": ""},
+                        "keywords": name,
+                        "page": 1,
+                        "document": True,
+                    },
+                    seconds=warm_paths.SEARCH_SECONDS,
+                )
+                card = warm_paths.lead_in(
+                    answer.get("people") or [],
+                    profile_url=person.get("profile_url"),
+                    member=(person.get("identifiers") or {}).get("linkedin_member"),
+                    name=name,
+                    company=company,
+                )
+                if card is not None:
+                    second = {
+                        "member": member,
+                        "mutual_count": int(card.get("mutual_count") or 0),
+                        "mutual_names": list(card.get("mutual_names") or [])[:3],
+                    }
+            except CollectionError as error:
+                # A search that can't run leaves the message without the line, not the run.
+                logger.info("A warm-path search didn't run: %s", error.code)
+                await self.db.complete_effect(
+                    conn, execution_key=key, result={"outcome": "error", "reason": error.code}
+                )
+                return None
+            await self.db.complete_effect(
+                conn, execution_key=key, result={"outcome": "read", "second": second}
+            )
+            return second
+
+    async def _session_for_search(self, run) -> tuple[str, dict, dict] | None:
+        """A member of the project whose LinkedIn session Tin may read with, starter first."""
+
+        members = await self.db.pool.fetch(
+            """SELECT connected_by_clerk_user_id AS member FROM integration_connections
+               WHERE project_id = $1 AND provider_key = $2 AND status = 'connected'
+                 AND connected_by_clerk_user_id IS NOT NULL
+               ORDER BY (connected_by_clerk_user_id = $3) DESC, updated_at DESC""",
+            run.project_id,
+            warm_paths.PROVIDER,
+            run.started_by_clerk_user_id,
+        )
+        for row in members:
+            try:
+                session, actor = await saved_session(
+                    self.db, self.settings, self.cipher, run.project_id, row["member"]
+                )
+            except (IntegrationAuthorizationError, IntegrationUpstreamError):
+                continue
+            return row["member"], session, actor
+        return None
+
+    async def _warm_line(self, run, company_fallback: str | None) -> str | None:
+        saved = await self.db.get_effect(f"{run.id}:rb2b:warm")
+        if not saved or saved.status != "completed":
+            return None
+        result = saved.result or {}
+        known, second = result.get("known") or {}, result.get("second")
+        members = set(known.get("connected") or [])
+        members |= {p["member"] for p in known.get("at_company") or []}
+        if second:
+            members.add(second["member"])
+        names = await first_names(self.profiles, members)
+        return warm_paths.line(
+            known=known,
+            second=second,
+            names=names,
+            company=result.get("company") or company_fallback,
+        )
+
     @activity.defn(name="rb2b_notify")
     async def notify(self, run_id: str) -> None:
         """A good or strong fit's own message in the project's Slack channel; the rest wait
@@ -294,10 +467,11 @@ class RB2BActivities:
             json.loads(visit) if isinstance(visit, str) else visit,
             people_url=f"{base}/people?project={run.project_id}&person={found[0]['id']}",
             project_name=project.name,
+            warm=await self._warm_line(run, _text(found[0], "company")),
         )
         if body is None:
             return
-        await self._progress(run, "notify", 4, "Posting the visitor in Slack")
+        await self._progress(run, "notify", 5, "Posting the visitor in Slack")
         await rb2b_slack.send(
             self.db,
             self.integrations.slack,
@@ -312,7 +486,7 @@ class RB2BActivities:
         """The latest visitors in people/rb2b-visitors.md, and the run's one line."""
 
         run = await self._active(control["run_id"])
-        await self._progress(run, "publish", 5, "Updating the list of visitors")
+        await self._progress(run, "publish", 6, "Updating the list of visitors")
         project = await self.db.get_project(run.project_id)
         record_id = await self._record_id(run)
         key = f"{run.id}:rb2b:files"
@@ -409,3 +583,10 @@ async def visitors(conn, project_id: UUID) -> list[dict]:
         if found:
             people.append(found[0])
     return people
+
+
+def _text(person: dict, name: str) -> str | None:
+    value = (person.get("fields") or {}).get(name)
+    if isinstance(value, dict):
+        value = value.get("text")
+    return value if isinstance(value, str) and value.strip() else None
