@@ -4,9 +4,9 @@ Each read starts with the same /me check the other readers make, then:
 - the connections list, `GET /voyager/api/relationships/dash/connections`, newest first,
   `PAGE_SIZE` at a time, the request LinkedIn's own My Network page makes. Each connection has
   when it was made and the person: profile ID, public slug, first and last name, headline;
-- for the profiles Tin is asked about, `GET /voyager/api/identity/dash/profiles` with the same
-  top card a profile page loads: the person's current positions (company and title) and where
-  they are.
+- for the profiles Tin is asked about, `GET /voyager/api/identity/dash/profiles` with the full
+  profile a profile page loads: the person's positions (company, title, dates), headline and
+  where they are. The top card has the current company but no title or location.
 
 A list it can't recognise is refused as `unsupported_contract` rather than guessed at. A
 profile that shows no current position is reported as such, not filled in.
@@ -28,13 +28,15 @@ from pydantic import Field, field_validator
 
 from tin_lite.connection_collection import ClosedModel, CollectionError
 from tin_lite.linkedin_engagement import GAP_SECONDS, MEMBER_ID, _headers, _me, _sleep
-from tin_lite.linkedin_invitations import TOP_CARD
 from tin_lite.linkedin_session import _get
 
 ORIGIN = "https://www.linkedin.com"
 REFERER = f"{ORIGIN}/mynetwork/invite-connect/connections/"
 PATH = "/voyager/api/relationships/dash/connections"
 DECORATION = "com.linkedin.voyager.dash.deco.web.mynetwork.ConnectionListWithProfile-16"
+# The full profile a profile page loads. The top card names the current company but not the
+# title or the location, so positions are read from this one.
+FULL_PROFILE = "com.linkedin.voyager.dash.deco.identity.profile.FullProfileWithEntities-93"
 PAGE_SIZE = 40
 # Pages per read: 400 connections, with pauses, inside the sandbox's five minutes.
 PAGES_PER_READ = 10
@@ -321,7 +323,7 @@ async def read_positions(
             client,
             session,
             "/voyager/api/identity/dash/profiles",
-            {"q": "memberIdentity", "memberIdentity": member, "decorationId": TOP_CARD},
+            {"q": "memberIdentity", "memberIdentity": member, "decorationId": FULL_PROFILE},
             request_headers=_headers(
                 session, page="d_flagship3_profile_view_base", referer=f"{ORIGIN}/in/{member}/"
             ),

@@ -172,6 +172,7 @@ def responder(pages: dict[int, dict], seen: list, profiles: dict[str, dict] | No
             return httpx.Response(200, json=me())
         assert req.method == "GET"
         if req.url.path == "/voyager/api/identity/dash/profiles":
+            assert req.url.params["decorationId"] == reader.FULL_PROFILE
             return httpx.Response(200, json=profiles[req.url.params["memberIdentity"]])
         assert req.url.path == reader.PATH
         assert req.url.params["decorationId"] == reader.DECORATION

@@ -24,8 +24,9 @@ The same as [profile viewers](linkedin-profile-viewers.md), without the model se
   the request LinkedIn's My Network page makes. Each connection has `createdAt` (when they
   connected) and the person's profile: profile ID, public slug, first and last name, headline.
   A connection listed without a profile (a closed or hidden account) is counted, not recorded.
-- **A profile:** `GET /voyager/api/identity/dash/profiles` with the same top card the other
-  readers use. The current position is the most recent position with no end date: its
+- **A profile:** `GET /voyager/api/identity/dash/profiles` with `FullProfileWithEntities-93`,
+  about 90 KB. The top card the other readers use names the current company but has no title
+  or location (checked on a real account, 23 November). The current position is the most recent position with no end date: its
   company (`companyName`, or the linked company's name) and title. The location is the
   profile's geo name.
 
