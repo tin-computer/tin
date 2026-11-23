@@ -307,6 +307,15 @@ async def test_each_payload_is_kept_once_and_only_people_start_a_run(collection_
         assert len(http.started) == 1
         assert http.started[0]["start_idempotency_key"].startswith("rb2b:")
         assert http.started[0]["_rb2b"] is True and http.started[0]["trigger_source"] == "api"
+        # The input is what a real start accepts: Tin binds the project.
+        from tin_lite.workflow_inputs import normalize_workflow_inputs
+
+        normalized = normalize_workflow_inputs(
+            schema=rb2b.INPUT_SCHEMA,
+            project_id=f.project.id,
+            inputs=http.started[0]["input_payload"],
+        )
+        assert set(normalized) == {"visit_id"}
         status = (await http.get(f"/api/projects/{f.project.id}/rb2b")).json()
         assert status["people"] == 1 and status["companies"] == 1 and status["waiting"] == 0
         assert status["last_test_at"] and status["last_received_at"]

@@ -174,7 +174,8 @@ class Hooks:
                     project_id=project_id,
                     started_by_clerk_user_id=member,
                     start_idempotency_key=f"rb2b:{visit_id}",
-                    input_payload={"project_id": str(project_id), "visit_id": str(visit_id)},
+                    # Tin binds the project itself; the input names only the visit.
+                    input_payload={"visit_id": str(visit_id)},
                     trigger_source="api",
                     _rb2b=True,
                 )
