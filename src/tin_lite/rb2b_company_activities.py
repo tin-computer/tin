@@ -18,7 +18,7 @@ from uuid import UUID
 
 from temporalio import activity
 
-from tin_lite import people_icp, people_rating, rb2b, rb2b_company, rb2b_slack
+from tin_lite import people_icp, people_rating, rb2b, rb2b_company, rb2b_slack, warm_paths
 from tin_lite import people_records as records
 from tin_lite.delegate import DelegateError
 from tin_lite.model_providers import (
@@ -30,6 +30,7 @@ from tin_lite.model_providers import (
     WebSearchRequest,
 )
 from tin_lite.model_usage import model_usage_scope
+from tin_lite.people_service import first_names
 from tin_lite.product_urls import dashboard_url
 from tin_lite.rb2b_activities import KEY, RB2BActivities, _heartbeat, _payload
 
@@ -477,6 +478,18 @@ class RB2BCompanyActivities(RB2BActivities):
             )
         )
 
+    async def _company_warm(self, run, company: dict) -> str | None:
+        """Who on the team knows someone at the company, from their LinkedIn connections in
+        People; free, read when the message is written."""
+
+        name = company.get("name")
+        async with self.db.pool.acquire() as conn:
+            people = await warm_paths.at_company(conn, run.project_id, name)
+        if not people:
+            return None
+        names = await first_names(self.profiles, {person["member"] for person in people})
+        return warm_paths.line(known={"at_company": people}, second=None, names=names, company=name)
+
     @activity.defn(name="rb2b_company_notify")
     async def notify_company(self, run_id: str) -> None:
         """A good or strong company worth chasing gets its own Slack message, with the people
@@ -500,6 +513,7 @@ class RB2BCompanyActivities(RB2BActivities):
             people,
             people_url=f"{base}/people?project={run.project_id}",
             project_name=project.name,
+            warm=await self._company_warm(run, company),
         )
         if body is None:
             return
