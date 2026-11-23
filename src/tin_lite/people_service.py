@@ -1,6 +1,6 @@
 """What project members read and change about a project's people, for HTTP and MCP alike.
 
-Members read people, correct an ICP pick, mark a customer, write notes and forget a person.
+Members read people, correct a rating, mark a customer, write notes and forget a person.
 Tin's own workflows write the rest (#435). Anyone outside the project gets "project not found".
 """
 
@@ -13,16 +13,16 @@ from datetime import UTC, datetime
 from typing import Any
 from uuid import UUID
 
-from tin_lite import linkedin_engagers as engagers
 from tin_lite import linkedin_requests as requests
+from tin_lite import people_icp
 from tin_lite import people_records as records
 
 logger = logging.getLogger(__name__)
 LIMIT = 5000
 GONE = "This person is no longer in this project."
-# Fields a member's fit replaces, and what "Use Tin's score" gives back.
+# Fields a member's rating replaces, and what "Use Tin's score" gives back. Earlier members
+# picked a profile too, so giving Tin's score back restores both.
 FIT_FIELDS = ("icp", "icp_fit")
-NOT_A_FIT = "none"
 UNCHANGED = object()
 
 SAYS = {
@@ -145,7 +145,7 @@ class People:
 
     async def _icp(self, project) -> dict:
         try:
-            return await engagers.read_icp(self.storage, project)
+            return await people_icp.read_icp(self.storage, project)
         except Exception as error:  # noqa: BLE001
             # Without the ICP file nothing is marked stale; the people and scores still show.
             logger.warning("People couldn't read the ICP of %s: %s", project.id, type(error))
@@ -167,8 +167,9 @@ class People:
         return {
             "people": people[:LIMIT],
             "truncated": len(people) > LIMIT,
-            "fit_shown": engagers.FIT_SHOWN,
-            # The profiles a member can pick for someone, from the ICP file.
+            "fit_shown": people_icp.FIT_SHOWN,
+            "ratings": {str(n): label for n, label in people_icp.RATINGS.items()},
+            # The ICP file's profiles, which Tin names for each person it rates.
             "profiles": icp.get("profiles", []),
             "icp_path": icp.get("path"),
         }
@@ -203,24 +204,19 @@ class People:
         fit: Any = UNCHANGED,
         customer: bool | None = None,
     ) -> dict[str, Any]:
-        """Correct a person. `fit` is {"icp": a profile from the ICP file, or None for not a
-        fit}, or None to use Tin's score again; `customer` marks them a customer or not."""
+        """Correct a person. `fit` is {"rating": 1 to 5}, or None to use Tin's score again;
+        `customer` marks them a customer or not."""
 
         project = await self._project(project_id, viewer)
         icp = await self._icp(project)
         values: list[records.Value] = []
         if isinstance(fit, dict):
-            picked = fit.get("icp")
-            if picked is None or picked == NOT_A_FIT:
-                values += [records.Value("icp", NOT_A_FIT), records.Value("icp_fit", 0.0)]
-            elif not icp.get("profiles"):
-                raise PeopleError(422, "This project's ICP file names no profiles yet.")
-            elif picked not in icp["profiles"]:
-                raise PeopleError(422, f"Pick one of the profiles in {icp['path']}.")
-            else:
-                values += [records.Value("icp", picked), records.Value("icp_fit", 1.0)]
+            rating = fit.get("rating")
+            if type(rating) is not int or rating not in people_icp.RATINGS:
+                raise PeopleError(422, "Pick a rating from 1 to 5.")
+            values.append(records.Value("icp_fit", rating))
         elif fit is not None and fit is not UNCHANGED:
-            raise PeopleError(422, "Pick a profile, not a fit, or Tin's score.")
+            raise PeopleError(422, "Pick a rating from 1 to 5, or Tin's score.")
         if customer is not None:
             values.append(records.Value("customer", "yes" if customer else "no"))
         try:

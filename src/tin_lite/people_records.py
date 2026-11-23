@@ -298,6 +298,12 @@ def _typed(spec: tuple[str, tuple[str, ...] | None], value) -> tuple[str | None,
     return text or None, None
 
 
+def _whole(number):
+    """A rating reads as 4, not 4.0; a number that isn't whole stays as it is."""
+
+    return int(number) if isinstance(number, float) and number.is_integer() else number
+
+
 async def set_values(
     conn,
     project_id: UUID,
@@ -765,7 +771,7 @@ def _fields(
                 stale = "note"
         previous = value.get("previous") if member else None
         shown[key] = {
-            "value": value["number"] if key == "icp_fit" else value["text"],
+            "value": _whole(value["number"]) if key == "icp_fit" else value["text"],
             "reason": value["reason"],
             "by": by,
             "at": value["set_at"],
@@ -775,7 +781,7 @@ def _fields(
             # The run's value a member's value replaced: what "Use Tin's score" brings back.
             "previous": (
                 {
-                    "value": previous["number"] if key == "icp_fit" else previous["text"],
+                    "value": _whole(previous["number"]) if key == "icp_fit" else previous["text"],
                     "reason": previous["reason"] or "",
                 }
                 if previous

@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import json
+from pathlib import Path
 from uuid import UUID, uuid4
 
 import pytest
@@ -352,3 +354,55 @@ async def test_deleting_the_project_purges_its_people(publication_db):
         "fields": 0,
         "hashes": 0,
     }
+
+
+async def test_old_fit_scores_become_ratings_and_go_stale(publication_db):
+    """Migration 086: 0 to 1 scores become 1 to 4 by their bands, a member's value and the run
+    value it replaced convert too, and Tin's values keep the definition they had."""
+
+    project_id = await project(publication_db)
+    sql = (Path(__file__).parents[1] / "migrations" / "086_icp_rating_scale.sql").read_text()
+    async with publication_db.pool.acquire() as conn:
+        scored = {}
+        for score in (0.1, 0.3, 0.59, 0.6, 0.8, 1.0):
+            person = await records.upsert_person(
+                conn, project_id, {"email": f"p{score}@example.com"}, source="test"
+            )
+            await records.set_values(
+                conn,
+                project_id,
+                person,
+                [Value("icp_fit", score, "old")],
+                set_by_kind="run",
+                set_by=RUN,
+                definition="strategy/ICP.md@abc:v2",
+            )
+            scored[score] = person
+        # A member's pick replaced Tin's 0.1.
+        await records.set_values(
+            conn,
+            project_id,
+            scored[0.1],
+            [Value("icp_fit", 1.0)],
+            set_by_kind="member",
+            set_by="u1",
+        )
+        await conn.execute(sql)
+        rows = {
+            row["record_id"]: row
+            for row in await conn.fetch(
+                "SELECT record_id, value_number, previous, definition FROM record_values "
+                "WHERE project_id = $1 AND field = 'icp_fit'",
+                project_id,
+            )
+        }
+    assert {score: rows[person]["value_number"] for score, person in scored.items()} == {
+        0.1: 4,
+        0.3: 2,
+        0.59: 2,
+        0.6: 3,
+        0.8: 4,
+        1.0: 4,
+    }
+    assert json.loads(rows[scored[0.1]]["previous"])["number"] == 1
+    assert rows[scored[0.6]]["definition"] == "strategy/ICP.md@abc:v2"

@@ -38,6 +38,12 @@ window.TinPeople = (() => {
     source: (a, b) => sourceRank(b) - sourceRank(a),
   };
   const NOT_A_FIT = "none";
+  const RATING_VALUES = [5, 4, 3, 2, 1];
+  // "4 · Contact this week", with the label the server sends for each rating.
+  const ratingText = (rating) => {
+    const label = view?.ratings?.[String(rating)];
+    return label ? `${rating} · ${label}` : String(rating);
+  };
   const ARROW = '<svg aria-hidden="true" viewBox="0 0 8 10"><path d="M4 1v8M1.2 6.2 4 9l2.8-2.8" /></svg>';
   const OUT = '<svg aria-hidden="true" viewBox="0 0 10 10"><path d="M3 2h5v5M8 2 2.5 7.5" /></svg>';
   const CLOSE = '<svg aria-hidden="true" viewBox="0 0 14 14"><path d="M3 3l8 8M11 3l-8 8" /></svg>';
@@ -115,9 +121,9 @@ window.TinPeople = (() => {
       const newest = person?.notes?.[0] || person?.note;
       const author = newest?.who || newest?.by;
       const whose = newest?.by === "a teammate" ? `${author[0].toUpperCase()}${author.slice(1)}’s note` : "Your note";
-      return `${whose} came after this score. The next run reads it and rescores.`;
+      return `${whose} came after this rating. The next run reads it and rates again.`;
     }
-    return `Scored before ${value.definition || "the ICP file"} or Tin’s scoring changed. The next run rescores it.`;
+    return `Rated before ${value.definition || "the ICP file"} or Tin’s rating changed. The next run rates again.`;
   }
 
   // A member's pick, with the score of Tin's it replaced.
@@ -125,7 +131,7 @@ window.TinPeople = (() => {
     const who = value.by === "you" ? "Set by you." : "Set by a teammate.";
     const previous = value.previous;
     if (!previous || typeof previous.value !== "number") return who;
-    return `${who} Tin scored ${previous.value.toFixed(2)}${previous.reason ? `: ${previous.reason}` : "."}`;
+    return `${who} Tin rated ${ratingText(previous.value)}${previous.reason ? `: ${previous.reason}` : "."}`;
   }
 
   function mount(main, options) {
@@ -133,7 +139,7 @@ window.TinPeople = (() => {
     if (fresh) {
       close();
       view = {
-        ...options, people: null, error: null, fitShown: 0.6, profiles: [], segment: "all", query: "",
+        ...options, people: null, error: null, fitShown: 3, ratings: {}, profiles: [], segment: "all", query: "",
         sort: { key: "fit", descending: true }, page: 0, picked: new Set(), queueing: false,
         openId: new URLSearchParams(window.location.search).get("person"),
         person: null, personError: null, confirming: false, forgetting: false, forgetError: null,
@@ -165,6 +171,7 @@ window.TinPeople = (() => {
       const open = new Set(listed.people.filter((person) => person.requestable).map((person) => person.id));
       current.picked = new Set([...current.picked].filter((id) => open.has(id)));
       current.fitShown = listed.fit_shown;
+      current.ratings = listed.ratings || {};
       current.profiles = listed.profiles || [];
       current.error = null;
     } catch (error) {
@@ -421,7 +428,7 @@ window.TinPeople = (() => {
       ${box}<td class="is-name"><span class="people-name"><span>${escape(person.name || "Unnamed")}</span>${customer ? "<small>customer</small>" : ""}</span></td>
       <td class="is-headline"><span>${escape(person.headline || field(person, "web_summary")?.value || "")}</span></td>
       <td class="is-icp ${icpLabel.muted ? "is-muted" : ""}" title="${escape(icpLabel.muted ? "" : icpLabel.text)}"><span class="is-short">${escape(icpLabel.short)}</span><span class="is-full">${escape(icpLabel.text)}</span></td>
-      <td class="is-fit ${fitClass}" ${fit ? `data-fit="${escape(person.id)}"` : ""}>${mark ? `<small>${mark}</small>` : ""}<span>${fitValue === null ? "—" : fitValue.toFixed(2)}</span></td>
+      <td class="is-fit ${fitClass}" ${fit ? `data-fit="${escape(person.id)}"` : ""}>${mark ? `<small>${mark}</small>` : ""}<span>${fitValue === null ? "—" : escape(fitValue)}</span></td>
       <td class="is-notes" ${note ? `data-note="${escape(person.id)}"` : ""}><span>${note ? escape(note.body.split("\n")[0]) : ""}</span></td>
       ${sources ? `<td class="is-source ${source ? "" : "is-muted"}" title="${escape(sourceText(source))}"><span>${source ? `<strong>${escape(WEB_SOURCE[source.value] || source.value)}</strong>${sourcePlace(source) ? ` · ${escape(sourcePlace(source))}` : ""}` : "—"}</span></td>` : ""}
       <td class="is-linkedin">${linkedinCell(person, relationship)}</td>
@@ -497,7 +504,7 @@ window.TinPeople = (() => {
     const fit = person && field(person, "icp_fit");
     if (!fit) return "";
     const icp = field(person, "icp");
-    const line = [typeof fit.value === "number" ? fit.value.toFixed(2) : "", icpShort(icp?.value), day(fit.at)].filter(Boolean).join(" · ");
+    const line = [typeof fit.value === "number" ? ratingText(fit.value) : "", icpShort(icp?.value), day(fit.at)].filter(Boolean).join(" · ");
     const reason = memberValue(fit) ? setNote(fit) : fit.reason;
     return `${reason ? `<p>${escape(reason)}</p>` : ""}<code>${escape(line)}</code>${fit.stale ? `<small>${escape(staleNote(fit, person))}</small>` : ""}`;
   }
@@ -608,32 +615,37 @@ window.TinPeople = (() => {
     const relationship = field(person, "linkedin_relationship");
     const customer = field(person, "customer");
     const memberFit = fit && memberValue(fit);
-    const profiles = view.profiles || [];
-    if (icp || profiles.length) {
-      const label = icpText(icp?.value);
-      // Tin's own pick is tagged with its score; a member's pick is the selected one.
-      const tinScore = !memberFit && fit && typeof fit.value === "number" ? `Tin ${fit.value.toFixed(2)}` : "";
-      const options = [...profiles, NOT_A_FIT].map((value) => ({
-        value,
-        label: value === NOT_A_FIT ? "Not a fit" : value,
-        tag: !memberFit && icp?.value === value ? tinScore : "",
-        selected: memberFit && icp?.value === value,
-      }));
-      const value = profiles.length ? pick("icp", label.text, label.muted) : `<strong class="${label.muted ? "is-muted" : ""}">${escape(label.text)}</strong>`;
-      rows.push(fieldRow("ICP", value, lineage(icp), menu("icp", options, "Your pick replaces Tin’s score, and later runs keep it."), "icp"));
+    if (icp) {
+      const label = icpText(icp.value);
+      rows.push(fieldRow("ICP", `<strong class="${label.muted ? "is-muted" : ""}">${escape(label.text)}</strong>`, lineage(icp)));
     }
-    if (fit) {
-      const number = typeof fit.value === "number" ? fit.value.toFixed(2) : "—";
-      const value = `<strong class="is-mono ${fit.stale || fit.value === null ? "is-muted" : ""}">${fit.stale && fit.value !== null ? "<small>old</small> " : ""}${number}</strong>`;
+    {
+      const rating = fit && typeof fit.value === "number" ? fit.value : null;
+      const label = rating === null ? "—" : ratingText(rating);
+      // Tin's own rating is tagged; a member's rating is the selected one.
+      const options = RATING_VALUES.map((value) => ({
+        value: String(value),
+        label: ratingText(value),
+        tag: !memberFit && rating === value ? "Tin" : "",
+        selected: memberFit && rating === value,
+      }));
+      const muted = !fit || fit.stale || rating === null;
+      const value = pick("fit", `${fit?.stale && rating !== null ? "old · " : ""}${label}`, muted);
       const lines = [];
       if (memberFit) {
         lines.push(`<p>${escape(setNote(fit))}</p>`);
         lines.push(`<button class="person-field-action" type="button" data-use-tin-score ${view.saving ? "disabled" : ""}>Use Tin’s score</button>`);
-      } else {
+      } else if (fit) {
         if (fit.reason) lines.push(`<p>${escape(fit.reason)}</p>`);
         if (fit.stale) lines.push(`<p class="is-quiet">${escape(staleNote(fit, person))}</p>`);
       }
-      rows.push(fieldRow("ICP fit", value, lineage(fit), lines.length ? `<div class="person-field-notes">${lines.join("")}</div>` : ""));
+      rows.push(fieldRow(
+        "ICP fit",
+        value,
+        fit ? lineage(fit) : "",
+        [menu("fit", options, "Your rating replaces Tin’s, and later runs keep it."), lines.length ? `<div class="person-field-notes">${lines.join("")}</div>` : ""].join(""),
+        "fit",
+      ));
     }
     // A request of the viewer's waiting to go out says when, and can be cancelled (REQ-C2).
     const queued = person.request === "queued";
@@ -878,7 +890,7 @@ window.TinPeople = (() => {
       const key = view.menu;
       const value = option.dataset.choose;
       view.menu = null;
-      if (key === "icp") change({ fit: { icp: value === NOT_A_FIT ? null : value } });
+      if (key === "fit") change({ fit: { rating: Number(value) } });
       else if (key === "customer") change({ customer: value === "yes" });
     }));
     panel.querySelectorAll(".person-menu").forEach((list) => list.addEventListener("keydown", (event) => {

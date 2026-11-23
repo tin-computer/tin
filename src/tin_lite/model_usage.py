@@ -198,7 +198,10 @@ class ModelUsageRecorder:
             # The provider's own stop signal, and whether it said the output cap was reached.
             "stop_reason": observation.stop_reason,
             "output_truncated": observation.output_truncated,
-            "usage": {**asdict(observation.usage), "web_search_calls": 0},
+            "usage": {
+                **asdict(observation.usage),
+                "web_search_calls": observation.usage.web_search_calls or 0,
+            },
         }
         await self.db.complete_effect(
             conn,

@@ -21,6 +21,7 @@ from temporalio.exceptions import ApplicationError
 
 from tin_lite import linkedin_engagers as engagers
 from tin_lite import linkedin_requests as requests
+from tin_lite import people_icp
 from tin_lite import people_records as records
 from tin_lite.connection_collection import (
     PROVIDER,
@@ -44,18 +45,15 @@ from tin_lite.model_providers import (
     ModelMessage,
     ModelOutputTruncated,
     ModelProviderError,
-    ModelRequest,
+    WebSearchRequest,
 )
 from tin_lite.model_usage import model_usage_scope
 from tin_lite.organic_audit_publication import publish_artifacts
-from tin_lite.people_records import Value
 from tin_lite.workflow_inputs import WorkflowInputError
 
 logger = logging.getLogger(__name__)
 
 KEY = engagers.KEY
-MODEL_SECONDS = 120
-UNSCORED = "Tin couldn't score this person this time; the next run tries again."
 FALLBACK = "Tin couldn't finish reading who engaged with your LinkedIn posts. Try again later."
 # Reasons that end every read in the run: the account needs its owner, or LinkedIn objected.
 STOPS = frozenset(
@@ -84,6 +82,12 @@ SAYS = {
 def _heartbeat(detail) -> None:
     if activity.in_activity():
         activity.heartbeat(detail)
+
+
+async def _beat(detail, every: float = 30) -> None:
+    while True:
+        _heartbeat(detail)
+        await asyncio.sleep(every)
 
 
 def refusal(code: str) -> Exception:
@@ -277,7 +281,7 @@ class LinkedInEngagersActivities:
             if not (receipt and receipt.status == "completed"):
                 await self.db.start_effect(conn, execution_key=key, operation=self.key)
                 await self.db.complete_effect(
-                    conn, execution_key=key, result=await engagers.read_icp(self.storage, project)
+                    conn, execution_key=key, result=await people_icp.read_icp(self.storage, project)
                 )
             await records.ensure_fields(conn, run.project_id)
 
@@ -435,26 +439,27 @@ class LinkedInEngagersActivities:
                 path=f"workflows/{self.key}.json",
             )
         )
-        route = engagers.ROUTE
-        if definition.get("model_route") != {
-            "key": route.key,
-            "provider": route.provider.value,
-            "model": route.model,
-            "capabilities": sorted(c.value for c in route.capabilities),
-        }:
+        served = [
+            {
+                "key": route.key,
+                "provider": route.provider.value,
+                "model": route.model,
+                "capabilities": sorted(c.value for c in route.capabilities),
+            }
+            for route in (people_icp.ROUTE, engagers.LEGACY_ROUTE)
+        ]
+        if definition.get("model_route") not in served:
             raise ApplicationError("Worker does not serve this scoring model.", non_retryable=True)
 
-    async def _score_batch(self, run, batch, *, text: str, profiles: list[str], definition: str):
-        """The model's answer for one batch, kept in a receipt before any value is written.
+    async def _rate(self, run, person, *, text: str, profiles: list[str], definition: str):
+        """The model's answer for one person, kept in a receipt before any value is written.
 
-        A batch whose earlier call can't be confirmed isn't bought again; it returns None and
-        those people are left for a later run.
+        A person whose earlier call can't be confirmed isn't bought again; it returns None and
+        they are left for a later run.
         """
 
-        digest = hashlib.sha256(
-            (definition + ":" + ",".join(sorted(str(p["id"]) for p in batch))).encode()
-        ).hexdigest()[:24]
-        key = f"{run.id}:{self.prefix}:score:{digest}"
+        digest = hashlib.sha256(f"{definition}:{person['id']}".encode()).hexdigest()[:24]
+        key = f"{run.id}:{self.prefix}:rate:{digest}"
         async with self.db.effect_lock(key, self.key) as (conn, saved):
             if saved and saved.status == "completed":
                 return (saved.result or {}).get("output")
@@ -466,27 +471,29 @@ class LinkedInEngagersActivities:
                 with model_usage_scope(
                     run_id=run.id, step=f"linkedin_{self.prefix}:icp:{digest}", conn=conn
                 ):
-                    async with asyncio.timeout(MODEL_SECONDS + 15):
+                    async with asyncio.timeout(people_icp.MODEL_SECONDS + 15):
                         result = await self.router.generate(
-                            engagers.ROUTE.key,
-                            ModelRequest(
-                                system=engagers.score_instructions(profiles),
+                            people_icp.ROUTE.key,
+                            WebSearchRequest(
+                                system=people_icp.instructions(profiles),
                                 messages=(
                                     ModelMessage(
                                         role=MessageRole.USER,
-                                        content=engagers.score_input(text, batch),
+                                        content=people_icp.person_input(text, person),
                                     ),
                                 ),
-                                output_schema=engagers.score_schema(profiles),
-                                output_schema_name="icp_scores",
-                                max_output_tokens=engagers.MAX_OUTPUT_TOKENS,
+                                output_schema=people_icp.schema(profiles),
+                                output_schema_name="icp_rating",
+                                max_output_tokens=people_icp.MAX_OUTPUT_TOKENS,
+                                reasoning_effort=people_icp.REASONING,
+                                web_search_calls=people_icp.SEARCHES,
                             ),
-                            timeout_seconds=MODEL_SECONDS,
+                            timeout_seconds=people_icp.MODEL_SECONDS,
                         )
                 output = result.parsed
             except (ModelProviderError, ModelOutputTruncated, TimeoutError) as error:
                 # A check on model output never fails the run that paid for it.
-                logger.warning("ICP scoring batch failed for run %s: %s", run.id, type(error))
+                logger.warning("ICP rating failed for run %s: %s", run.id, type(error))
             await self.db.complete_effect(conn, execution_key=key, result={"output": output})
             return output
 
@@ -506,52 +513,52 @@ class LinkedInEngagersActivities:
         raw = await self.storage.read_canonical_artifact_if_exists(
             repo_id=project.state_repo_id, commit_sha=icp["revision"], path=icp["path"]
         )
-        text = (raw or b"")[: engagers.ICP_BYTES].decode("utf-8", "replace")
-        await self._progress(run.id, "score", *self.score_step, "Scoring people against your ICP")
+        text = (raw or b"")[: people_icp.ICP_BYTES].decode("utf-8", "replace")
+        # Ratings made before this scale have an older definition; the new one replaces them.
+        definition = icp["definition"].rsplit(":v", 1)[0] + f":v{people_icp.SCORER}"
+        await self._progress(run.id, "score", *self.score_step, "Rating people against your ICP")
         tried: list[UUID] = []
-        while len(tried) < engagers.MAX_SCORED:
+        stop = asyncio.get_running_loop().time() + people_icp.SCORE_SECONDS
+
+        async def rate(person):
+            output = await self._rate(
+                run, person, text=text, profiles=icp["profiles"], definition=definition
+            )
+            values = people_icp.values(output, icp["profiles"]) if output is not None else None
+            # An answer that came but can't be used is kept as such under this definition, so
+            # it isn't bought again; a call that didn't answer leaves them for a later run.
+            current = output is not None
             async with self.db.pool.acquire() as conn:
-                batch = await engagers.unscored(
-                    conn,
-                    run.project_id,
-                    icp["definition"],
-                    limit=engagers.SCORE_BATCH,
-                    skip=tried,
+                try:
+                    await records.set_values(
+                        conn,
+                        run.project_id,
+                        person["id"],
+                        values or people_icp.unscored_values(),
+                        set_by_kind="run",
+                        set_by=str(run.id),
+                        definition=definition if current else "",
+                        refresh=current,
+                    )
+                except records.RecordError as error:
+                    # The founder forgot this person while the model rated them.
+                    if error.code != "record_gone":
+                        raise
+
+        while len(tried) < people_icp.MAX_SCORED and asyncio.get_running_loop().time() < stop:
+            async with self.db.pool.acquire() as conn:
+                batch = await people_icp.unscored(
+                    conn, run.project_id, definition, limit=people_icp.PARALLEL, skip=tried
                 )
             if not batch:
                 break
             tried += [person["id"] for person in batch]
-            output = await self._score_batch(
-                run, batch, text=text, profiles=icp["profiles"], definition=icp["definition"]
-            )
-            if output is None:
-                # Left without this definition, so a later run scores them.
-                unscored = [Value("icp", None, UNSCORED), Value("icp_fit", None, UNSCORED)]
-                written = [(person, unscored, "") for person in batch]
-            else:
-                written = [
-                    (person, values, icp["definition"])
-                    for person, values in zip(
-                        batch, engagers.scores(output, batch, icp["profiles"]), strict=True
-                    )
-                ]
-            async with self.db.pool.acquire() as conn:
-                for person, values, definition in written:
-                    try:
-                        await records.set_values(
-                            conn,
-                            run.project_id,
-                            person["id"],
-                            values,
-                            set_by_kind="run",
-                            set_by=str(run.id),
-                            definition=definition,
-                            refresh=bool(definition),
-                        )
-                    except records.RecordError as error:
-                        # The founder forgot this person while the model scored them.
-                        if error.code != "record_gone":
-                            raise
+            # A rating that searches can take minutes; the heartbeat says the activity lives.
+            beating = asyncio.create_task(_beat({"scored": len(tried)}))
+            try:
+                await asyncio.gather(*(rate(person) for person in batch))
+            finally:
+                beating.cancel()
             _heartbeat({"scored": len(tried)})
 
     @activity.defn(name="linkedin_engagers_publish")

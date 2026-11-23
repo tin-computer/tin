@@ -27,6 +27,7 @@ from uuid import UUID
 from tin_lite import linkedin_engagers as engagers
 from tin_lite import people_records as records
 from tin_lite.domain import LINKEDIN_PROFILE_VIEWERS_WORKFLOW_NAME
+from tin_lite.people_icp import FIT_SHOWN
 from tin_lite.people_records import Value
 
 KEY = LINKEDIN_PROFILE_VIEWERS_WORKFLOW_NAME
@@ -186,7 +187,7 @@ async def need_ids(conn, project_id: UUID, member: str, *, limit: int) -> list[d
            LIMIT $4""",
         project_id,
         member,
-        engagers.FIT_SHOWN,
+        FIT_SHOWN,
         limit,
     )
     return [dict(row) for row in rows]
@@ -298,7 +299,7 @@ def render(people: list[dict], *, notes: dict, now: datetime) -> dict[str, str]:
                     field(person, "linkedin_relationship"), ""
                 ),
                 engagers._cell(field(person, "icp")),
-                f"{fit:.2f}" if fit != "" else "",
+                engagers.rating_text(fit),
                 engagers._cell(field(person, "icp_fit", "reason")),
                 f"{person['last_viewed']:%Y-%m-%d}",
                 person["views"],
@@ -312,7 +313,7 @@ def summary_markdown(people: list[dict], notes: dict, *, now: datetime) -> str:
         return (person["fields"].get(key) or {}).get(part)
 
     new = [p for p in people if field(p, "linkedin_relationship") == "none"]
-    fitting = [p for p in people if (field(p, "icp_fit", "number") or 0) >= engagers.FIT_SHOWN]
+    fitting = [p for p in people if (field(p, "icp_fit", "number") or 0) >= FIT_SHOWN]
     fitting_new = [p for p in fitting if p in new]
     lines = [
         "# People who viewed your LinkedIn profile",
@@ -331,13 +332,13 @@ def summary_markdown(people: list[dict], notes: dict, *, now: datetime) -> str:
         lines.append(f"- {counted(notes)}")
     if notes.get("icp"):
         lines.append(
-            f"- {len(fitting)} fit an ICP in `{notes['icp']}` at {engagers.FIT_SHOWN} or more, "
+            f"- {len(fitting)} rated {FIT_SHOWN} or more against `{notes['icp']}`, "
             f"{len(fitting_new)} of them not connected yet."
         )
     else:
         lines.append(
-            "- No ICP file, so nobody is scored. Add `strategy/ICP.md`, one `##` section per "
-            "profile, and the next run scores everyone."
+            "- No ICP file, so nobody is rated. Add `strategy/ICP.md`, one `##` section per "
+            "profile, and the next run rates everyone."
         )
     if fitting_new:
         lines += ["", "## Best fits you're not connected to", ""]
@@ -345,7 +346,8 @@ def summary_markdown(people: list[dict], notes: dict, *, now: datetime) -> str:
             lines.append(
                 f"- [{field(person, 'name') or 'Someone'}]({person['profile_url']}), "
                 f"{field(person, 'headline') or 'no headline'}: "
-                f"{field(person, 'icp')} {field(person, 'icp_fit', 'number'):.2f}, "
+                f"{field(person, 'icp')}, "
+                f"{engagers.rating_text(field(person, 'icp_fit', 'number'))}, "
                 f"viewed {person['last_viewed']:%-d %b}. {field(person, 'icp_fit', 'reason')}"
             )
     lines += [

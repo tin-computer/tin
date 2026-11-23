@@ -29,6 +29,7 @@ from tin_lite import (
     paid_ads_launch,
     paid_ads_monitor,
     payment_recovery,
+    people_icp,
     style_capture,
     technical_fix,
     website_change,
@@ -1573,13 +1574,13 @@ BUILTIN_WORKFLOWS = (
         title="People who engaged with your LinkedIn posts",
         description=(
             "Read your own LinkedIn posts from the last 90 days and everyone who reacted to "
-            "them, keep each person in People with whether you're already connected, score "
-            "them against strategy/ICP.md, and list them best fit first in "
+            "them, keep each person in People with whether you're already connected, rate "
+            "them 1 to 5 against strategy/ICP.md, and list them best fit first in "
             "people/linkedin-engagers.csv. People who fit and aren't connected get a connection "
             "request from you, a few each weekday. Reads with your saved LinkedIn session."
         ),
         executor=linkedin_engagers.KEY,
-        version_label="1.4.0",
+        version_label="1.5.0",
         presentation=WorkflowDiagram(
             direction="TD",
             nodes=(
@@ -1610,8 +1611,8 @@ BUILTIN_WORKFLOWS = (
                 DiagramNode(
                     "score",
                     "step",
-                    "Score against your ICP",
-                    "from headline and your notes, with a reason",
+                    "Rate against your ICP, 1 to 5",
+                    "from what Tin knows, your notes and a web search",
                 ),
                 DiagramNode(
                     "accepted",
@@ -1646,7 +1647,7 @@ BUILTIN_WORKFLOWS = (
         schedule_modes=("on_demand",),
         system=LINKEDIN_SYSTEM,
         input_schema=linkedin_engagers.INPUT_SCHEMA,
-        model_route=linkedin_engagers.ROUTE,
+        model_route=people_icp.ROUTE,
         integration_requirements=(
             IntegrationRequirement(
                 provider_key=connection_collection.PROVIDER,
@@ -1660,13 +1661,13 @@ BUILTIN_WORKFLOWS = (
         title="People who viewed your LinkedIn profile",
         description=(
             "Read who viewed your LinkedIn profile, newest first, keep each person in People "
-            "with whether you're already connected, score them against strategy/ICP.md, and "
-            "list them best fit first in people/linkedin-profile-viewers.csv. People who fit "
+            "with whether you're already connected, rate them 1 to 5 against strategy/ICP.md, "
+            "and list them best fit first in people/linkedin-profile-viewers.csv. People who fit "
             "and aren't connected get a connection request from you, a few each weekday. Reads "
             "with your saved LinkedIn session."
         ),
         executor=linkedin_profile_viewers.KEY,
-        version_label="1.2.0",
+        version_label="1.3.0",
         presentation=WorkflowDiagram(
             direction="TD",
             nodes=(
@@ -1691,8 +1692,8 @@ BUILTIN_WORKFLOWS = (
                 DiagramNode(
                     "score",
                     "step",
-                    "Score against your ICP",
-                    "from headline and your notes, with a reason",
+                    "Rate against your ICP, 1 to 5",
+                    "from what Tin knows, your notes and a web search",
                 ),
                 DiagramNode(
                     "ids",
@@ -1734,7 +1735,7 @@ BUILTIN_WORKFLOWS = (
         default_schedule={"cadence": "daily", "local_time": "08:00"},
         system=LINKEDIN_SYSTEM,
         input_schema=linkedin_profile_viewers.INPUT_SCHEMA,
-        model_route=linkedin_engagers.ROUTE,
+        model_route=people_icp.ROUTE,
         integration_requirements=(
             IntegrationRequirement(
                 provider_key=connection_collection.PROVIDER,

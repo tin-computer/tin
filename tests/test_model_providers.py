@@ -25,6 +25,7 @@ from tin_lite.model_providers import (
     OpenAIModelProvider,
     ProviderName,
     ReasoningEffort,
+    WebSearchRequest,
     configured_model_router,
     model_failure_reason,
 )
@@ -87,6 +88,47 @@ async def test_openai_adapter_uses_responses_and_validates_json_schema() -> None
     assert result.usage.cached_input_tokens == 2
     assert client.responses.parameters["reasoning"] == {"effort": "high"}
     assert client.responses.parameters["text"]["format"]["strict"] is True
+
+
+@pytest.mark.asyncio
+async def test_openai_adapter_searches_the_web_only_when_asked() -> None:
+    class Responses:
+        parameters = None
+
+        async def create(self, **parameters):
+            self.parameters = parameters
+            return SimpleNamespace(
+                output_text='{"answer":"found"}',
+                output=[
+                    {"type": "web_search_call", "action": {"type": "search", "query": "a"}},
+                    {"type": "web_search_call", "action": {"type": "open_page"}},
+                    SimpleNamespace(type="web_search_call", action=SimpleNamespace(type="search")),
+                    {"type": "message"},
+                ],
+                usage=None,
+            )
+
+    client = _Closable()
+    client.responses = Responses()
+    provider = OpenAIModelProvider(api_key="test", client=client)  # noqa: S106
+    plain = _request(structured=True)
+    searching = WebSearchRequest(**vars(plain), web_search_calls=7)
+    assert ModelCapability.WEB_SEARCH in searching.required_capabilities()
+    assert ModelCapability.WEB_SEARCH not in plain.required_capabilities()
+
+    result = await provider.generate(model="gpt-test", request=searching)
+    assert client.responses.parameters["tools"] == [{"type": "web_search"}]
+    assert client.responses.parameters["max_tool_calls"] == 7
+    # Opening a page isn't a search.
+    assert result.usage.web_search_calls == 2 and result.parsed == {"answer": "found"}
+
+    result = await provider.generate(model="gpt-test", request=plain)
+    assert "tools" not in client.responses.parameters
+    assert result.usage.web_search_calls is None
+    with pytest.raises(ValueError, match="web_search_calls"):
+        await provider.generate(
+            model="gpt-test", request=WebSearchRequest(**vars(plain), web_search_calls=0)
+        )
 
 
 @pytest.mark.asyncio
@@ -205,6 +247,11 @@ async def test_router_uses_only_explicit_route_and_capabilities() -> None:
         await router.generate("gpt-guessed", _request())
     with pytest.raises(ModelCapabilityError, match="json_schema"):
         await router.generate("weekly-summary", _request(structured=True))
+    with pytest.raises(ModelCapabilityError, match="web_search"):
+        await router.generate(
+            "weekly-summary",
+            WebSearchRequest(messages=(ModelMessage(MessageRole.USER, "Look it up."),)),
+        )
 
 
 @pytest.mark.asyncio
