@@ -109,7 +109,7 @@ def test_the_digest_groups_the_rest_and_says_nothing_for_nobody():
     people = [person(2), person(1), person(1), person(None)]
     body = rb2b_slack.digest_message(people, people_url="https://tin.test/p", project_name="Acme")
     text = text_of(body)
-    assert text.startswith("🌙 *4 more visitors today, none worth a message*")
+    assert text.startswith("🌙 *4 more visitors today*")
     assert "🟠 Weak fit (1): Jane Doe, CFO at Acme" in text
     assert "⚪ Not a fit (2)" in text and "❔ Not rated (1)" in text
     assert buttons(body) == ["See them in Tin"]
@@ -212,7 +212,7 @@ async def test_a_visitor_who_isnt_a_fit_waits_for_the_digest(collection_db, monk
     assert await rb2b_slack.post_digests(runtime, configured, now=before) == 0
     after = datetime(2026, 11, 20, 19, 0, tzinfo=UTC)
     assert await rb2b_slack.post_digests(runtime, configured, now=after) == 1
-    assert slack.posts[0]["text"] == "1 more visitor today, none worth a message"
+    assert slack.posts[0]["text"] == "1 more visitor today"
     assert await rb2b_slack.post_digests(runtime, configured, now=after) == 0
     assert len(slack.posts) == 1
     # The next day has nobody new: nothing is posted.

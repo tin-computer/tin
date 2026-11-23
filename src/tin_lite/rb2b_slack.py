@@ -189,7 +189,7 @@ def digest_message(people: list[dict], *, people_url: str, project_name: str) ->
     for person in people:
         groups.get(_fit(person), groups[None]).append(person)
     count = len(people)
-    said = f"{count} more visitor{'s' if count != 1 else ''} today, none worth a message"
+    said = f"{count} more visitor{'s' if count != 1 else ''} today"
     head = f"🌙 *{said}*"
     lines = []
     for fit, label in ((2, "🟠 Weak fit"), (1, "⚪ Not a fit"), (None, "❔ Not rated")):
