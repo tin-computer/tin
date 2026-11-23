@@ -129,7 +129,12 @@ def _visit_line(visit: dict | None) -> str | None:
 
 
 def visitor_message(
-    person: dict, visit: dict | None, *, people_url: str, project_name: str
+    person: dict,
+    visit: dict | None,
+    *,
+    people_url: str,
+    project_name: str,
+    warm: str | None = None,
 ) -> dict | None:
     """The Block Kit message for one visitor, or None when they aren't a good or strong fit."""
 
@@ -154,6 +159,11 @@ def visitor_message(
                 "type": "section",
                 "text": {"type": "mrkdwn", "text": _cut(f"💬  {_escape(reason)}", TEXT)},
             }
+        )
+    if warm:
+        # A warm path is the most useful line after the reason, so it reads at full size.
+        blocks.append(
+            {"type": "section", "text": {"type": "mrkdwn", "text": _cut(_escape(warm), TEXT)}}
         )
     small = []
     if visit_line := _visit_line(visit):

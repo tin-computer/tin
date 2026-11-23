@@ -94,6 +94,7 @@ TRUSTED_ACTIVITIES = frozenset(
         "rb2b_enrich",
         "rb2b_rate",
         "rb2b_notify",
+        "rb2b_warm",
         "rb2b_publish",
         "rb2b_failure",
         "ai_answers_measure",

@@ -96,6 +96,35 @@ person in Tin built from the app's address and IDs.
   before Slack is called. A refused post is recorded as failed and the run goes on; a row left
   `sending` may be in the channel, so it becomes `unknown` and is never sent again.
 
+## Warm paths
+
+After rating, `rb2b_warm` looks for a way in through the LinkedIn networks of the project's own
+members, never another project's (`warm_paths.py`). The good or strong fit's Slack message shows
+the closest path as one line, and nothing when there's none:
+
+1. **Already connected** (free): a member's `connected` relationship with the visitor in People.
+   `🤝 Ege is already connected`.
+2. **Second degree** (one LinkedIn read): for a good or strong fit with no direct connection,
+   one search of a member's second-degree network for the visitor's name, through their saved
+   session in the existing search sandbox (`kind: search`, document transport). The visitor's
+   card is the one with their profile, or the one namesake whose headline names their company;
+   its "X, Y & N other mutual connections" gives `🤝 2nd degree via Mira Chen + 11 others`.
+   The run starter's session (the member who set up the webhook) is tried first, then any
+   other member of the project with cloud reading on: every member's network serves the
+   project's warm paths by default, unlike Tin's other LinkedIn reads, which use only their
+   starter's. Managed clients are told this when Tin sets them up. It never crosses projects. The
+   read is receipted before the sandbox starts and never bought twice; one that can't run
+   leaves the message without the line. Searches are capped at
+   `warm_paths.SEARCHES_PER_DAY` per project per day as a runaway guard.
+3. **Someone at their company** (free): the members' first-degree connections whose current
+   `company` (from `social.linkedin_connections`' profile reads) matches the visitor's, compared
+   without case, accents, punctuation or legal suffixes.
+   `🤝 Ege knows Mira Chen (Treasury) + 1 more at Valley Bank`.
+
+Members are named by their Tin first name; without one, the line says "Your team". The result
+stays in the step's receipt; Temporal carries the run ID only. Tiers 1 and 3 need a member to
+have run `social.linkedin_connections`; tier 2 needs cloud reading on a member's LinkedIn card.
+
 ## Billing
 
 Tin funds it (`tin-funded-rb2b-visitors-v1`), as it does the LinkedIn reads' rating: the
