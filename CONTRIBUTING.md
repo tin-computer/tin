@@ -75,7 +75,8 @@ uv run pytest -n auto
 ```
 
 `-n auto` spreads the suite across CPU cores with pytest-xdist, as CI does; plain
-`uv run pytest` runs it serially. Database-backed tests need a disposable PostgreSQL 17 database configured through
+`uv run pytest` runs it serially. CI also splits the suite into four parallel jobs:
+`TEST_SHARD=2/4` runs the second quarter of the tests. Database-backed tests need a disposable PostgreSQL 17 database configured through
 `TIN_LITE_TEST_DATABASE_DSN`. Use a local test database and test-only credentials, never
 a hosted customer or production database. Tests create isolated schemas; without the test
 DSN, database-dependent tests skip. Report skips rather than calling that a complete test run.
