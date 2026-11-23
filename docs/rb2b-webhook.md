@@ -65,6 +65,12 @@ Temporal history holds the run ID, the visit's outcome and the wait. The payload
 and the visit stay in Postgres. Project deletion removes the hook, the visits and the run's
 receipts.
 
+## Billing
+
+Tin funds it (`tin-funded-rb2b-visitors-v1`), as it does the LinkedIn reads' rating: the
+PostHog reads and the rating call cost the founder nothing, and the usage is still recorded
+per call.
+
 ## Next
 
 A conditional Slack post at the end of the run (who visited, how they rate) when the rating
