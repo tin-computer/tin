@@ -7008,6 +7008,7 @@ class Database:
             "DELETE FROM record_fields WHERE project_id = $1",
             "DELETE FROM record_suppressions WHERE project_id = $1",
             # RB2B's posts (visitors' names and companies) and the project's webhook token.
+            "DELETE FROM rb2b_slack_posts WHERE project_id = $1",
             "DELETE FROM rb2b_visits WHERE project_id = $1",
             "DELETE FROM rb2b_hooks WHERE project_id = $1",
             "DELETE FROM effect_receipts WHERE operation IN "

@@ -408,7 +408,11 @@ async def build_runtime(settings: Settings) -> RuntimeServices:
         cipher=integrations._cipher,
     )
     rb2b_activities = RB2BActivities(
-        database=database, storage=storage, router=model_router, integrations=integrations
+        database=database,
+        storage=storage,
+        router=model_router,
+        integrations=integrations,
+        settings=settings,
     )
     code = CodeActivities(common=activity_instance, model_router=model_router)
     activities = [
@@ -483,6 +487,7 @@ async def build_runtime(settings: Settings) -> RuntimeServices:
         rb2b_activities.record,
         rb2b_activities.enrich,
         rb2b_activities.rate,
+        rb2b_activities.notify,
         rb2b_activities.publish,
         rb2b_activities.failure,
         plan_activities.prepare,

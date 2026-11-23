@@ -78,6 +78,11 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         summary_task = asyncio.create_task(
             summary_posts_loop(runtime, resolved_settings), name="run-summary-posts"
         )
+        from tin_lite.rb2b_slack import digest_loop
+
+        rb2b_digest_task = asyncio.create_task(
+            digest_loop(runtime, resolved_settings), name="rb2b-digests"
+        )
         billing_task = (
             asyncio.create_task(
                 billing_reconciliation_loop(runtime, resolved_settings),
@@ -100,6 +105,8 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             await asyncio.gather(removal_task, return_exceptions=True)
             summary_task.cancel()
             await asyncio.gather(summary_task, return_exceptions=True)
+            rb2b_digest_task.cancel()
+            await asyncio.gather(rb2b_digest_task, return_exceptions=True)
             review_task.cancel()
             await asyncio.gather(review_task, return_exceptions=True)
             if billing_task is not None:

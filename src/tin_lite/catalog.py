@@ -1820,12 +1820,14 @@ BUILTIN_WORKFLOWS = (
         description=(
             "When RB2B names a visitor to your site, keep them in People, read their visit in "
             "your PostHog (pages, time, how they arrived, earlier visits and a replay), rate "
-            "their fit and intent against strategy/ICP.md with a web search, and list the "
-            "latest visitors in people/rb2b-visitors.md. Tin starts it for each visitor RB2B "
-            "posts to your project's webhook, set up under Integrations."
+            "their fit and intent against strategy/ICP.md with a web search, post a good or "
+            "strong fit to the project's Slack channel when one is set (the rest go in an "
+            "evening digest), and list the latest visitors in people/rb2b-visitors.md. Tin "
+            "starts it for each visitor RB2B posts to your project's webhook, set up under "
+            "Integrations."
         ),
         executor=rb2b.KEY,
-        version_label="1.0.0",
+        version_label="1.1.0",
         presentation=WorkflowDiagram(
             direction="TD",
             nodes=(
@@ -1850,6 +1852,12 @@ BUILTIN_WORKFLOWS = (
                     "against your ICP, with a web search",
                 ),
                 DiagramNode(
+                    "slack",
+                    "surface",
+                    "Post good fits in Slack",
+                    "the rest wait for the 18:00 digest",
+                ),
+                DiagramNode(
                     "files",
                     "receipt",
                     "The latest visitors, in Files",
@@ -1861,7 +1869,8 @@ BUILTIN_WORKFLOWS = (
                 DiagramEdge("people", "wait"),
                 DiagramEdge("wait", "visit"),
                 DiagramEdge("visit", "rate"),
-                DiagramEdge("rate", "files"),
+                DiagramEdge("rate", "slack"),
+                DiagramEdge("slack", "files"),
                 DiagramEdge("people", "files", label="company only, or forgotten"),
             ),
         ),

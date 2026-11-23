@@ -325,7 +325,11 @@ def test_a_person_goes_to_the_model_as_data():
     }
     sent = json.loads(people_icp.person_input("# ICP", person))
     assert sent["icp_file"] == "# ICP"
-    assert sent["person"]["fields"] == person["fields"]
+    # The identification service goes unnamed in what the model reads.
+    assert sent["person"]["fields"] == {
+        **person["fields"],
+        "headline": "CFO at Acme (From the identification service)",
+    }
     assert sent["person"]["did"][0]["kind"] == "visited"
     assert sent["person"]["team_notes"] == ["Met at a conference"]
 

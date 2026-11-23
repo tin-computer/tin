@@ -90,6 +90,8 @@ TEXT_FIELDS = (
     "web_source",
 )
 UNSCORED = "Tin couldn't rate this person"
+# Visitor-identification services whose names stay out of what the model reads and writes.
+IDENTIFIER_NAMES = re.compile(r"\bRB2B\b", re.IGNORECASE)
 
 
 # The ICP file.
@@ -174,7 +176,8 @@ def instructions(profiles: list[str]) -> str:
         "team knows: it outweighs everything else.\n\n"
         "A name or company that came with a website visit was guessed by a service that "
         "matches IP addresses to people. It can be wrong: the company may only own the "
-        "network, or be a former employer. Check before you rely on it.\n\n"
+        "network, or be a former employer. Check before you rely on it. Don't name that "
+        "service, or any other tool the data came from, in the reason.\n\n"
         "Search the web as far as the rating needs, for who the person is now and what their "
         "company is. Skip searching when what you have already settles it. Never contact "
         "anyone or sign in anywhere. Don't guess: say what you couldn't confirm.\n\n"
@@ -224,7 +227,9 @@ def person_input(icp_text: str, person: dict) -> str:
         ]
     if person.get("notes"):
         item["team_notes"] = [note[:NOTE_CHARS] for note in person["notes"]]
-    return json.dumps({"icp_file": icp_text, "person": item}, ensure_ascii=False)
+    sent = json.dumps({"icp_file": icp_text, "person": item}, ensure_ascii=False)
+    # The reason is read by clients: the service that identified the visitor goes unnamed.
+    return IDENTIFIER_NAMES.sub("the identification service", sent)
 
 
 def values(output: Any, profiles: list[str]) -> list[Value] | None:
