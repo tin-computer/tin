@@ -1352,6 +1352,7 @@ function updateRail() {
 const PEOPLE_WORKFLOWS = new Set([
   "social.linkedin_engagers",
   "social.linkedin_profile_viewers",
+  "social.linkedin_connections",
   "product.visitor_journeys",
 ]);
 const AGENT_PROMPT = "Use Tin to grow my project like a pro!";

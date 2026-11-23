@@ -44,7 +44,8 @@ and member; every other integration stays one per project):
 
 The workflows that act through a member's own session are personal
 (`connection_collection.personal`): this collection, [engagers](linkedin-engagers.md),
-[profile viewers](linkedin-profile-viewers.md) and [connection requests](linkedin-requests.md).
+[profile viewers](linkedin-profile-viewers.md), [the connections export](linkedin-connections.md) and
+[connection requests](linkedin-requests.md).
 The project's ICP file and People stay shared; who runs them, and with whose LinkedIn, doesn't.
 - **Saved copies are the saver's.** Only the member who saved one changes, pauses, resumes,
   skips, runs, retries or removes it, over HTTP or MCP (`owns`); anyone else gets "This uses the

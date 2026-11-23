@@ -44,6 +44,7 @@ from tin_lite.integrations import IntegrationService
 from tin_lite.keyword_plan import POLICY as KEYWORD_POLICY
 from tin_lite.keyword_plan import ROUTE_KEY as KEYWORD_ROUTE_KEY
 from tin_lite.keyword_plan_activities import KeywordPlanActivities
+from tin_lite.linkedin_connections_activities import LinkedInConnectionsActivities
 from tin_lite.linkedin_engagers_activities import LinkedInEngagersActivities
 from tin_lite.linkedin_listening_activities import LinkedInListeningActivities
 from tin_lite.linkedin_profile_viewers_activities import LinkedInProfileViewersActivities
@@ -373,6 +374,17 @@ async def build_runtime(settings: Settings) -> RuntimeServices:
         integrations=integrations,
         temporal=temporal,
     )
+    # The founder's own connections: no model step, so no router.
+    connections_activities = LinkedInConnectionsActivities(
+        database=database,
+        storage=storage,
+        settings=settings,
+        cloud=LinkedInCloud(database, settings),
+        cipher=integrations._cipher,
+        router=None,
+        integrations=integrations,
+        temporal=temporal,
+    )
     requests_activities = LinkedInRequestsActivities(
         database=database,
         storage=storage,
@@ -439,6 +451,11 @@ async def build_runtime(settings: Settings) -> RuntimeServices:
         viewers_activities.viewers_accepted,
         viewers_activities.viewers_publish,
         viewers_activities.viewers_failure,
+        connections_activities.connections_prepare,
+        connections_activities.connections_read,
+        connections_activities.connections_positions,
+        connections_activities.connections_publish,
+        connections_activities.connections_failure,
         requests_activities.prepare,
         requests_activities.next,
         requests_activities.send,

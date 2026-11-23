@@ -7009,7 +7009,8 @@ class Database:
             "DELETE FROM record_suppressions WHERE project_id = $1",
             "DELETE FROM effect_receipts WHERE operation IN "
             "('social.linkedin_listen', 'social.linkedin_results', 'social.linkedin_engagers', "
-            "'social.linkedin_profile_viewers', 'social.linkedin_requests', "
+            "'social.linkedin_profile_viewers', 'social.linkedin_connections', "
+            "'social.linkedin_requests', "
             "'linkedin_engagement_v1', 'linkedin_request_v1') AND "
             "split_part(execution_key, ':', 1) IN (SELECT id::text FROM workflow_runs "
             "WHERE project_id = $1)",
@@ -7390,6 +7391,10 @@ class Database:
             "social.linkedin_profile_viewers": (
                 "linkedin_profile_viewers_ready",
                 "Your list of people who viewed your LinkedIn profile is ready.",
+            ),
+            "social.linkedin_connections": (
+                "linkedin_connections_ready",
+                "Your export of your LinkedIn connections is ready.",
             ),
             "social.linkedin_requests": (
                 "linkedin_requests_ready",

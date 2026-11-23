@@ -17,6 +17,7 @@ from tin_lite import (
     content_repository_delivery,
     growth_onboarding,
     growth_plan,
+    linkedin_connections_export,
     linkedin_engagers,
     linkedin_listening,
     linkedin_posts,
@@ -1734,6 +1735,75 @@ BUILTIN_WORKFLOWS = (
         system=LINKEDIN_SYSTEM,
         input_schema=linkedin_profile_viewers.INPUT_SCHEMA,
         model_route=linkedin_engagers.ROUTE,
+        integration_requirements=(
+            IntegrationRequirement(
+                provider_key=connection_collection.PROVIDER,
+                capabilities=(connection_collection.CAPABILITY,),
+            ),
+        ),
+    ),
+    BuiltinWorkflow(
+        id=linkedin_connections_export.WORKFLOW_ID,
+        key=linkedin_connections_export.KEY,
+        title="Export your LinkedIn connections",
+        description=(
+            "Export your first-degree LinkedIn connections with their current company and "
+            "position, which LinkedIn's own data export leaves out from December 2026. Reads "
+            "your connections list and each connection's profile with your saved LinkedIn "
+            "session, a hundred profiles a run, keeps everyone in People and writes "
+            "people/linkedin-connections.csv in the columns of LinkedIn's Connections.csv. Run "
+            "it daily until every profile is read; later runs catch new connections and job "
+            "changes."
+        ),
+        executor=linkedin_connections_export.KEY,
+        version_label="1.0.0",
+        presentation=WorkflowDiagram(
+            direction="TD",
+            nodes=(
+                DiagramNode(
+                    "session",
+                    "store",
+                    "Your saved LinkedIn session",
+                    "from Tin for Chrome, with cloud reading on",
+                ),
+                DiagramNode(
+                    "list",
+                    "surface",
+                    "Read your connections",
+                    "newest first, forty at a time, with pauses",
+                ),
+                DiagramNode(
+                    "people",
+                    "store",
+                    "People records",
+                    "name, headline, when you connected",
+                ),
+                DiagramNode(
+                    "profiles",
+                    "surface",
+                    "Read their profiles",
+                    "current company and position, a hundred a run",
+                ),
+                DiagramNode(
+                    "files",
+                    "receipt",
+                    "The export in project Files",
+                    "people/linkedin-connections.csv, a summary",
+                ),
+            ),
+            edges=(
+                DiagramEdge("session", "list"),
+                DiagramEdge("list", "people"),
+                DiagramEdge("people", "list", label="next page, to the end of the list"),
+                DiagramEdge("people", "profiles"),
+                DiagramEdge("profiles", "people", label="never-read first, then the oldest"),
+                DiagramEdge("profiles", "files"),
+            ),
+        ),
+        schedule_modes=("on_demand", "daily"),
+        default_schedule={"cadence": "daily", "local_time": "07:00"},
+        system=LINKEDIN_SYSTEM,
+        input_schema=linkedin_connections_export.INPUT_SCHEMA,
         integration_requirements=(
             IntegrationRequirement(
                 provider_key=connection_collection.PROVIDER,

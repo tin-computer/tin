@@ -74,6 +74,8 @@ your own accounts before use; ordinary contributor tests need no production cred
   who reacted, ICP scores and the list in Files.
 - [People who viewed your LinkedIn profile](linkedin-profile-viewers.md): the profile-views
   list read daily, each viewer in People, scored, and asked to connect when they fit.
+- [Export your LinkedIn connections](linkedin-connections.md): first-degree connections with
+  their current company and position, in the columns of LinkedIn's Connections.csv.
 - [Project API connections](project-api-connections.md): secure credentials and external requests.
 - [Stripe and PostHog connections](stripe-and-posthog-connections.md): the first-party read-only
   connections, their operations, projected records and offline test fakes.

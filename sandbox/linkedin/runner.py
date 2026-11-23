@@ -25,17 +25,29 @@ SECONDS = {
     "linkedin_invite": 120,
     "linkedin_viewers": 300,
     "linkedin_profile_ids": 300,
+    # A read of up to ten pages of the member's connections, or of up to 20 of their profiles.
+    "linkedin_connections": 300,
+    "linkedin_positions": 300,
 }
 
 
 async def engagement(packet):
     import httpx
 
+    from tin_lite.linkedin_connections import read_connections, read_positions
     from tin_lite.linkedin_engagement import read_posts, read_reactions
     from tin_lite.linkedin_invitations import read_relationships, send_invitation
     from tin_lite.linkedin_viewers import read_profile_ids, read_viewers
 
     async with httpx.AsyncClient(timeout=15, follow_redirects=False, trust_env=False) as client:
+        if packet["kind"] == "linkedin_connections":
+            return await read_connections(
+                packet["session"], packet["actor"], client=client, start=packet["start"]
+            )
+        if packet["kind"] == "linkedin_positions":
+            return await read_positions(
+                packet["session"], packet["actor"], client=client, members=packet["members"]
+            )
         if packet["kind"] == "linkedin_viewers":
             return await read_viewers(
                 packet["session"],

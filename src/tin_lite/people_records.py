@@ -24,7 +24,16 @@ from uuid import UUID, uuid4
 
 PERSON = "person"
 IDENTIFIER_KINDS = ("linkedin_member", "linkedin_slug", "email")
-EVENT_KINDS = ("reacted", "commented", "viewed", "invited", "accepted", "withdrawn", "visited")
+EVENT_KINDS = (
+    "reacted",
+    "commented",
+    "viewed",
+    "invited",
+    "accepted",
+    "withdrawn",
+    "visited",
+    "connected",
+)
 # What a person did that shows interest in a member: reacting to or commenting on their posts,
 # viewing their profile. Tin scores and proposes people with any of these.
 SIGNALS = ("reacted", "commented", "viewed")
@@ -38,6 +47,9 @@ WEB_SOURCES = ("ad", "organic", "ai", "social", "referral", "direct")
 FIELDS: dict[str, tuple[str, str, tuple[str, ...] | None]] = {
     "name": ("text", "Name", None),
     "headline": ("text", "Headline", None),
+    "company": ("text", "Company", None),
+    "position": ("text", "Position", None),
+    "location": ("text", "Location", None),
     "linkedin_relationship": ("choice", "On LinkedIn", RELATIONSHIPS),
     "icp": ("text", "ICP", None),
     "icp_fit": ("number", "ICP fit", None),
@@ -668,6 +680,7 @@ async def people(
 WRITERS = {
     "social.linkedin_engagers": "engagers",
     "social.linkedin_profile_viewers": "profile viewers",
+    "social.linkedin_connections": "connections",
     "social.linkedin_requests": "requests",
     "product.visitor_journeys": "visitors",
 }
