@@ -777,3 +777,70 @@ async def test_company_visits_from_before_the_deploy_never_start(collection_db, 
         "SELECT run_id, no_start FROM rb2b_visits WHERE dedupe_key=$1", "0" * 64
     )
     assert old["run_id"] is None and old["no_start"] is True
+
+
+async def test_two_company_visits_at_once_take_the_last_run_only_once(collection_db, monkeypatch):
+    import asyncio
+
+    from tin_lite import rb2b_api
+
+    monkeypatch.setattr(rb2b_api, "COMPANY_RUNS_PER_DAY", 1)
+    f = await rb2b_fixture(collection_db)
+    visits = [uuid4(), uuid4()]
+    for number, visit_id in enumerate(visits):
+        await f.db.pool.execute(
+            """INSERT INTO rb2b_visits (id, project_id, dedupe_key, kind, payload)
+               VALUES ($1, $2, $3, 'company', '{}'::jsonb)""",
+            visit_id,
+            f.project.id,
+            str(number) * 64,
+        )
+    hooks = rb2b_api.Hooks(SimpleNamespace(database=f.db), SimpleNamespace())
+    allowed = await asyncio.gather(*(hooks._may_start(f.project.id, v) for v in visits))
+    assert sorted(allowed) == [False, True]
+    rows = await f.db.pool.fetch("SELECT claimed_at, no_start FROM rb2b_visits")
+    assert sorted((r["claimed_at"] is not None, r["no_start"]) for r in rows) == [
+        (False, True),
+        (True, False),
+    ]
+    # The claimed one, retried, still starts; the other never does.
+    claimed = visits[allowed.index(True)]
+    assert await hooks._may_start(f.project.id, claimed) is True
+
+
+async def test_two_orders_at_once_count_each_others_reservation(collection_db, monkeypatch):
+    import asyncio
+
+    f = await rb2b_fixture(collection_db)
+    first = await company_run(f, monkeypatch)
+    other = {"Website": "other.test", "Company Name": "Other", "Captured URL": "https://o.test/"}
+    second = await company_run(f, monkeypatch, **other)
+    # Room for one $0.05 order today, not two.
+    monkeypatch.setattr(rb2b_company, "DELEGATE_USD_PER_DAY", 0.08)
+
+    class SlowDelegate(FakeDelegate):
+        async def order(self, *args, **kwargs):
+            await asyncio.sleep(0.2)
+            return await super().order(*args, **kwargs)
+
+    delegate = SlowDelegate()
+    work = work_for(f, CompanyRouter(), delegate, Slack(f.db))
+    runs = [await work._active(run_id) for run_id in (first, second)]
+    results = await asyncio.gather(
+        *(
+            work._hire(
+                run,
+                "profiles",
+                rb2b_company.PROFILES,
+                rb2b_company.profiles_input(["https://www.linkedin.com/in/robtonk"]),
+                rb2b_company.PROFILES_MAX_USD,
+                lambda payload: rb2b_company.checked(payload, "Acme Software", None),
+                scope={"requested_items": 1},
+            )
+            for run in runs
+        )
+    )
+    assert len(delegate.orders) == 1
+    assert sorted(price for _, price in results) == [0.0, 0.008]
+    # The order that went through settled from its $0.05 reservation to its $0.008 quote.
+    assert await work._spent_today(runs[0]) == 0.008

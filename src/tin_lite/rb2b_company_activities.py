@@ -81,6 +81,25 @@ class RB2BCompanyActivities(RB2BActivities):
             json.dumps(values),
         )
 
+    async def _reserve(self, run, conn, key: str, max_usd: float) -> bool:
+        """Reserve this order's most under the project's daily Delegate guard: the day's spend
+        is read and the reservation written in one transaction under a per-project lock, so
+        concurrent runs count each other's reservations. The order's receipt then settles to
+        the quoted price, or to nothing when Delegate refuses or refunds it."""
+
+        async with conn.transaction():
+            await conn.execute(
+                "SELECT pg_advisory_xact_lock(hashtextextended($1, 0))",
+                f"rb2b-delegate-spend:{run.project_id}",
+            )
+            spent = await self._spent_today(run, conn=conn)
+            if spent + max_usd > rb2b_company.DELEGATE_USD_PER_DAY:
+                return False
+            await self.db.save_effect_progress(
+                conn, execution_key=key, result={"price_usd": max_usd, "reserved": True}
+            )
+            return True
+
     async def _spent_today(self, run, *, conn=None) -> float:
         """What this project's company runs of the last day ordered at Delegate, from their
         receipts: placed orders count at their quoted price until Delegate refunds them."""
@@ -143,9 +162,7 @@ class RB2BCompanyActivities(RB2BActivities):
             if saved is None:
                 await self.db.start_effect(conn, execution_key=key, operation=KEY)
             if not placed.get("conversation_id"):
-                if await self._spent_today(run, conn=conn) + max_usd > (
-                    rb2b_company.DELEGATE_USD_PER_DAY
-                ):
+                if not placed.get("reserved") and not await self._reserve(run, conn, key, max_usd):
                     # The project's daily guard on Delegate spend: nothing is ordered.
                     await self.db.complete_effect(
                         conn,

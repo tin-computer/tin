@@ -7,4 +7,7 @@ ALTER TABLE rb2b_visits ADD COLUMN IF NOT EXISTS company jsonb;
 -- runs, and every company visit received before company visits started runs (no backfill of
 -- Tin-funded work nobody asked for).
 ALTER TABLE rb2b_visits ADD COLUMN IF NOT EXISTS no_start boolean NOT NULL DEFAULT false;
+-- When a company visit took one of the day's runs: counted under a per-project lock, so two
+-- visits at once can't both take the last one.
+ALTER TABLE rb2b_visits ADD COLUMN IF NOT EXISTS claimed_at timestamptz;
 UPDATE rb2b_visits SET no_start = true WHERE kind = 'company' AND run_id IS NULL;

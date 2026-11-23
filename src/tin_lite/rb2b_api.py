@@ -161,23 +161,35 @@ class Hooks:
                 await self.start(project_id, waiting_id, hook["created_by"])
 
     async def _may_start(self, project_id: UUID, visit_id: UUID) -> bool:
-        """A company visit starts only under the project's daily limit; over it, it is kept and
-        marked never to start."""
+        """A company visit starts only if it takes one of the project's runs for the day. The
+        count and the claim happen under one per-project lock, so two visits at once can't both
+        take the last run; over the limit, the visit is kept and marked never to start."""
 
-        if await self.db.pool.fetchval(
-            "SELECT kind <> 'company' FROM rb2b_visits WHERE id = $1", visit_id
-        ):
+        async with self.db.pool.acquire() as conn, conn.transaction():
+            row = await conn.fetchrow(
+                "SELECT kind, claimed_at FROM rb2b_visits WHERE id = $1", visit_id
+            )
+            if row is None or row["kind"] != "company":
+                return True
+            if row["claimed_at"] is not None:
+                return True  # claimed before; its start is being retried
+            await conn.execute(
+                "SELECT pg_advisory_xact_lock(hashtextextended($1, 0))",
+                f"rb2b-company-runs:{project_id}",
+            )
+            claimed = await conn.fetchval(
+                """SELECT count(*) FROM rb2b_visits
+                   WHERE project_id = $1 AND kind = 'company'
+                     AND claimed_at > now() - interval '1 day'""",
+                project_id,
+            )
+            if claimed >= COMPANY_RUNS_PER_DAY:
+                await conn.execute("UPDATE rb2b_visits SET no_start = true WHERE id = $1", visit_id)
+                return False
+            await conn.execute(
+                "UPDATE rb2b_visits SET claimed_at = clock_timestamp() WHERE id = $1", visit_id
+            )
             return True
-        started = await self.db.pool.fetchval(
-            """SELECT count(*) FROM rb2b_visits
-               WHERE project_id = $1 AND kind = 'company' AND run_id IS NOT NULL
-                 AND received_at > now() - interval '1 day'""",
-            project_id,
-        )
-        if started < COMPANY_RUNS_PER_DAY:
-            return True
-        await self.db.pool.execute("UPDATE rb2b_visits SET no_start = true WHERE id = $1", visit_id)
-        return False
 
     async def start(self, project_id: UUID, visit_id: UUID, member: str) -> None:
         from tin_lite.failures import public_error_text

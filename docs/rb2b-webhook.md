@@ -110,12 +110,16 @@ RB2B often matches a visit's network to an organisation and to nobody in it. The
 Runaway guards, since Tin funds all of it and a leaked webhook address must not run up its
 bill:
 
-- at most 200 company runs per project a day (`rb2b_api.COMPANY_RUNS_PER_DAY`); a company
-  visit over it is kept, marked `no_start` and never started, not even by the retry of waiting
-  visits;
+- at most 200 company runs per project a day (`rb2b_api.COMPANY_RUNS_PER_DAY`), counted by
+  when each visit claimed its run (`claimed_at`); the count and the claim happen in one
+  transaction under a per-project lock. A company visit over it is kept, marked `no_start` and
+  never started, not even by the retry of waiting visits;
 - at most $5 of Delegate orders per project a day (`rb2b_company.DELEGATE_USD_PER_DAY`, summed
-  from the order receipts of the last 24 hours). A company that would pass it is still judged
-  and posted; its run's line says the people search was skipped for today's limit;
+  from the order receipts of the last 24 hours). Each order first reserves its cap in its
+  receipt, in one transaction under a second per-project lock, so runs at once count each
+  other's reservations; the receipt then settles to the quoted price (nothing when refused or
+  refunded). A company that would pass it is still judged and posted; its run's line says the
+  people search was skipped for today's limit;
 - no backfill: migration 089 marks every company visit received before it `no_start`.
 
 The verdict, the people kept, how many the services listed, how many had left and what
