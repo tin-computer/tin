@@ -47,6 +47,20 @@ MAX_BODY_BYTES = max(value["max_request_bytes"] for value in CONTRACTS)
 # Google-hosted state or execution the shared key must not reach: another project's cached
 # contents or uploaded files, or tools whose price the card does not carry.
 FORBIDDEN_KEYS = frozenset({"cachedContent", "fileUri"})
+# Antigravity escalates its tool-call safety rater to Gemini 3.8 Flash with the whole
+# trajectory, about a fifth of a run's cost. Tin's sandbox, fence and run grants are the
+# boundary, and agy 1.5.16 carries on when this call is refused (its Flash-Lite first pass
+# still runs), so the relay refuses it before admission and buys nothing.
+REFUSED_MODELS = frozenset({"gemini-3.8-flash"})
+_REFUSED_BODY = json.dumps(
+    {
+        "error": {
+            "code": 400,
+            "message": "This model is not available on Tin's agent route.",
+            "status": "INVALID_ARGUMENT",
+        }
+    }
+)
 ALLOWED_TOOLS = frozenset({"functionDeclarations", "googleSearch", "urlContext"})
 # How often the harness may resend bytes Google refused outright (a 429 or 5xx bills nothing).
 MAX_REFUSED_RETRIES = 8
@@ -419,6 +433,9 @@ async def relay_gemini(run_id: UUID, target: str, request: Request):
         raise HTTPException(403, "Agent API access is unavailable")
     if request.headers.get("content-encoding", "identity") != "identity":
         raise HTTPException(415, "Compressed agent requests are not supported")
+    if target.partition(":")[0] in REFUSED_MODELS:
+        # Not the run's cause and never bought: answered like Google would, nothing recorded.
+        return Response(_REFUSED_BODY, status_code=400, media_type="application/json")
     raw = bytearray()
     async for chunk in request.stream():
         raw.extend(chunk)

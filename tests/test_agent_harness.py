@@ -504,6 +504,8 @@ async def test_helper_models_are_admitted_and_others_refused(publication_db):
         assert receipt["usage"]["search_queries"] == 1
         refused = await post(client, run, target="gemini-4-carbon:generateContent")
         assert refused.status_code == 404
+        rater = await post(client, run, target="gemini-3.8-flash:streamGenerateContent")
+        assert rater.status_code == 400 and rater.json()["error"]["status"] == "INVALID_ARGUMENT"
         assert len(sent) == 1
     finally:
         await client.aclose()
@@ -714,3 +716,28 @@ def test_progress_follows_the_agents_own_plan():
         {**step, "tool_info": repr({"parameters": {"steps": [{"status": "pending"}]}})},
     ):
         assert module.plan_progress(bad) is None
+
+
+async def test_the_escalation_rater_is_refused_before_anything_is_bought():
+    from fastapi import FastAPI
+
+    from tin_lite.agent_api_relay import router
+
+    class Relay:
+        def __getattr__(self, name):
+            raise AssertionError(f"the relay was reached: {name}")
+
+    app = FastAPI()
+    app.include_router(router)
+    app.state.runtime = SimpleNamespace(agent_api=Relay())
+    async with httpx.AsyncClient(
+        transport=httpx.ASGITransport(app=app), base_url="http://tin.test"
+    ) as client:
+        response = await client.post(
+            f"/internal/agent-api/{uuid4()}/gemini/v1beta/models/"
+            "gemini-3.8-flash:streamGenerateContent",
+            content=b"{}",
+            headers={"x-goog-api-key": "g" * 40},
+        )
+    assert response.status_code == 400
+    assert response.json()["error"]["status"] == "INVALID_ARGUMENT"

@@ -35,9 +35,11 @@ Google's harness rather than its own loop.
   (`agent_api_relay.py`) holds Tin's key. It admits each request against the run's
   contract and budget through the same admission as the Codex relay, then prices the
   usage Google reports on the run's pinned card (`GEMINI_AGENT_CARD`) before the stream's
-  last event reaches the harness. Antigravity also calls two helper models of its own,
-  Flash-Lite (web search and its tool-call rater) and Gemini 3.8 Flash (titles), and the
-  card prices them. Google Search grounding is priced per query. A request Google refuses
+  last event reaches the harness. Antigravity also calls Flash-Lite for web search
+  and as the first pass of its tool-call safety rater, and the card prices it. The rater
+  escalates to Gemini 3.8 Flash with the whole trajectory, which cost about a fifth of a
+  run; the relay refuses that model before admission (nothing is bought or recorded), and
+  agy carries on. The sandbox, fence and run grants are Tin's boundary, not the rater. Google Search grounding is priced per query. A request Google refuses
   outright (HTTP 429 or 5xx) bills nothing; the harness may resend those bytes up to eight
   times. An unconfirmed request is never bought again.
 - **Process.** Codex keeps its model grant in a controller process and runs commands
