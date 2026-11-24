@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import base64
 import json
 from datetime import UTC, datetime, timedelta
@@ -196,6 +197,17 @@ def client(f, monkeypatch, *, user=USER, start=None):
     )
     http = httpx.AsyncClient(transport=httpx.ASGITransport(app=app), base_url="https://tin.test")
     http.started = started
+    post = http.post
+
+    async def post_then_settle(url, *args, **kwargs):
+        # The webhook answers before its run starts; tests read what the start did.
+        response = await post(url, *args, **kwargs)
+        await rb2b_api.settled()
+        return response
+
+    post_then_settle.__wrapped_post__ = post
+    http.post = post_then_settle
+    http.app_state = app.state
     return http
 
 
@@ -348,6 +360,54 @@ async def test_a_run_that_cant_start_waits_for_the_next_visitor(collection_db, m
 
 
 # A visitor's run.
+
+
+async def test_the_webhook_answers_before_a_slow_run_start(collection_db, monkeypatch):
+    # RB2B disconnects an address that takes over 15 seconds; a start that hangs (Temporal
+    # slow, the database busy) must not hold its 200.
+    f = await rb2b_fixture(collection_db)
+    release = asyncio.Event()
+
+    async def start(**kwargs):
+        await release.wait()
+        return SimpleNamespace(id=await visitor_run(f, kwargs["input_payload"]["visit_id"]))
+
+    async with client(f, monkeypatch, start=start) as http:
+        hook = (await set_up(http, f)).removeprefix("https://tin.test")
+        from tin_lite import rb2b_api
+
+        answered = await asyncio.wait_for(
+            http.post.__wrapped_post__(hook, json=payload()), timeout=5
+        )
+        assert answered.status_code == 200
+        assert await f.db.pool.fetchval("SELECT count(*) FROM rb2b_visits WHERE run_id IS NULL")
+        release.set()
+        await rb2b_api.settled()
+    assert await f.db.pool.fetchval("SELECT count(*) FROM rb2b_visits WHERE run_id IS NULL") == 0
+
+
+async def test_the_sweep_starts_visits_kept_while_their_start_failed(collection_db, monkeypatch):
+    from tin_lite import rb2b_api
+
+    f = await rb2b_fixture(collection_db)
+    failing = {"on": True}
+
+    async def start(**kwargs):
+        if failing["on"]:
+            raise RuntimeError("Temporal is restarting")
+        return SimpleNamespace(id=await visitor_run(f, kwargs["input_payload"]["visit_id"]))
+
+    async with client(f, monkeypatch, start=start) as http:
+        hook = (await set_up(http, f)).removeprefix("https://tin.test")
+        await http.post(hook, json=payload())
+        failing["on"] = False
+        # A visit the webhook just kept is its own to start; the sweep waits half a minute.
+        hooks = rb2b_api.Hooks(http.app_state.runtime, http.app_state.settings)
+        await rb2b_api.sweep_waiting(hooks)
+        assert await f.db.pool.fetchval("SELECT count(*) FROM rb2b_visits WHERE run_id IS NULL")
+        await f.db.pool.execute("UPDATE rb2b_visits SET received_at = now() - interval '1 minute'")
+        await rb2b_api.sweep_waiting(hooks)
+    assert await f.db.pool.fetchval("SELECT count(*) FROM rb2b_visits WHERE run_id IS NULL") == 0
 
 
 async def test_a_visitor_is_kept_read_rated_and_listed(collection_db, monkeypatch):

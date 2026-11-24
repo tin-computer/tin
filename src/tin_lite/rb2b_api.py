@@ -2,9 +2,12 @@
 
 `POST /webhooks/rb2b/{token}` is what RB2B calls. RB2B disconnects an address that answers
 anything but 200 within 15 seconds, and sends no signature, so the endpoint always answers 200
-with an empty body (an unknown token too, which tells a prober nothing), keeps the payload, and
-starts the visitor's run. A run that can't start now is tried again with the project's next
-visitor; the card says how many wait.
+with an empty body (an unknown token too, which tells a prober nothing). It keeps the payload
+and answers; the visitor's run starts after, in the background, so nothing slow sits between
+RB2B and its 200. A run that can't start then is tried again by the main process's sweep of
+waiting visits (`waiting_visits_loop`) and with the project's next visitor; the card says how
+many wait. The webhook intake (a web-only process, see infra) answers while the main process
+restarts for a deploy.
 
 Members of the project set the address up, see it again, replace it and remove it under
 `/api/projects/{project_id}/rb2b`. Runs start as the member who set it up.
@@ -26,8 +29,13 @@ from tin_lite.auth import AuthContext, require_user
 logger = logging.getLogger(__name__)
 router = APIRouter()
 USER = Depends(require_user)
-# How long the webhook waits for a run to start before answering RB2B anyway.
+# How long one run start may take, in the background.
 START_SECONDS = 8
+# How long keeping the payload may take before the webhook answers RB2B anyway, well inside
+# its 15 seconds.
+RECEIVE_SECONDS = 8
+# How often the main process starts visits still waiting for their run.
+SWEEP_SECONDS = 60
 # Visitors whose run couldn't start, tried again with the next visitor: a few at a time.
 RETRY_WAITING = 3
 # Company-only visits started per project in a day: a runaway guard well above real traffic,
@@ -107,8 +115,9 @@ class Hooks:
         await self._member(project_id, viewer)
         await self.db.pool.execute("DELETE FROM rb2b_hooks WHERE project_id = $1", project_id)
 
-    async def receive(self, token: str, body: bytes) -> None:
-        """Keep what RB2B posted and start its run. Never raises: RB2B only hears 200."""
+    async def receive(self, token: str, body: bytes) -> tuple[UUID, UUID | None] | None:
+        """Keep what RB2B posted; the project and visit whose run is to start, or None.
+        Never raises: RB2B only hears 200."""
 
         if not token or len(token) > 200 or len(body) > rb2b.MAX_BODY:
             return
@@ -146,10 +155,20 @@ class Hooks:
             kind == "test",
         )
         if kind not in ("person", "company"):
+            return None
+        return project_id, visit_id
+
+    async def start_waiting(self, project_id: UUID, visit_id: UUID | None = None) -> None:
+        """Start this visit's run, and a few of the project's visits still waiting for one."""
+
+        hook = await self.db.pool.fetchrow(
+            "SELECT created_by FROM rb2b_hooks WHERE project_id = $1", project_id
+        )
+        if hook is None:
             return
         waiting = await self.db.pool.fetch(
             """SELECT id FROM rb2b_visits WHERE project_id = $1 AND kind IN ('person', 'company')
-                 AND run_id IS NULL AND NOT no_start AND id <> $2
+                 AND run_id IS NULL AND NOT no_start AND ($2::uuid IS NULL OR id <> $2)
                  AND received_at > now() - interval '7 days'
                ORDER BY received_at LIMIT $3""",
             project_id,
@@ -236,13 +255,64 @@ def _hooks(request: Request) -> Hooks:
     return Hooks(request.app.state.runtime, request.app.state.settings)
 
 
+# Run starts under way after their webhook answered; held so they aren't collected early.
+_starting: set[asyncio.Task] = set()
+
+
+async def _start_quietly(hooks: Hooks, project_id: UUID, visit_id: UUID | None) -> None:
+    try:
+        await hooks.start_waiting(project_id, visit_id)
+    except Exception:  # noqa: BLE001 - the sweep of waiting visits tries again
+        logger.exception("RB2B run start failed")
+
+
+async def settled() -> None:
+    """Wait for run starts under way (tests, and nothing else, need to)."""
+
+    await asyncio.gather(*list(_starting), return_exceptions=True)
+
+
 @router.post("/webhooks/rb2b/{token}", include_in_schema=False)
 async def rb2b_webhook(token: str, request: Request) -> Response:
+    hooks = _hooks(request)
     try:
-        await _hooks(request).receive(token, await request.body())
+        async with asyncio.timeout(RECEIVE_SECONDS):
+            started = await hooks.receive(token, await request.body())
     except Exception:  # noqa: BLE001 - RB2B disconnects on anything but 200
         logger.exception("RB2B webhook failed")
+        started = None
+    if started is not None:
+        task = asyncio.create_task(_start_quietly(hooks, *started), name="rb2b-start")
+        _starting.add(task)
+        task.add_done_callback(_starting.discard)
     return Response(status_code=200)
+
+
+async def waiting_visits_loop(runtime, settings) -> None:
+    """Start visits still waiting for their run: one the webhook kept while its start failed,
+    or one the webhook intake kept while this process restarted."""
+
+    while True:
+        await asyncio.sleep(SWEEP_SECONDS)
+        try:
+            await sweep_waiting(Hooks(runtime, settings))
+        except Exception:  # noqa: BLE001 - a sweep that fails runs again next time
+            logger.exception("RB2B waiting visits sweep failed")
+
+
+async def sweep_waiting(hooks: Hooks) -> None:
+    """Start a few waiting visits of each project with some, received at least half a minute
+    ago (a newer one is the webhook's own to start)."""
+
+    rows = await hooks.db.pool.fetch(
+        """SELECT DISTINCT v.project_id FROM rb2b_visits v
+           JOIN rb2b_hooks h ON h.project_id = v.project_id
+           WHERE v.kind IN ('person', 'company') AND v.run_id IS NULL
+             AND NOT v.no_start AND v.received_at > now() - interval '7 days'
+             AND v.received_at < now() - interval '30 seconds'"""
+    )
+    for row in rows:
+        await hooks.start_waiting(row["project_id"])
 
 
 @router.get("/api/projects/{project_id}/rb2b")

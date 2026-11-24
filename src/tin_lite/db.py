@@ -208,15 +208,16 @@ MIRRORED_ON_PAGE = (
 
 
 class Database:
-    def __init__(self, dsn: str) -> None:
+    def __init__(self, dsn: str, *, pool_max: int = 10) -> None:
         self._dsn = dsn
+        self._pool_max = pool_max
         self.billing = None
         self._pool: asyncpg.Pool | None = None
         self._chat_request_locks: WeakValueDictionary[str, asyncio.Lock] = WeakValueDictionary()
 
     async def connect(self) -> None:
         if self._pool is None:
-            self._pool = await asyncpg.create_pool(self._dsn, min_size=1, max_size=10)
+            self._pool = await asyncpg.create_pool(self._dsn, min_size=1, max_size=self._pool_max)
 
     async def close(self) -> None:
         if self._pool is not None:
