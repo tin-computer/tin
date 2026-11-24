@@ -1755,11 +1755,12 @@ BUILTIN_WORKFLOWS = (
             "your connections list and each connection's profile with your saved LinkedIn "
             "session, a hundred profiles a run, keeps everyone in People and writes "
             "people/linkedin-connections.csv in the columns of LinkedIn's Connections.csv. Run "
-            "it daily until every profile is read; later runs catch new connections and job "
-            "changes."
+            "it daily until every profile is read; later runs read only your newest connections "
+            "and catch job changes. Someone who connects with you after the first run shows in "
+            "People with everyone who engaged with you, not under Connections."
         ),
         executor=linkedin_connections_export.KEY,
-        version_label="1.0.0",
+        version_label="1.1.0",
         presentation=WorkflowDiagram(
             direction="TD",
             nodes=(
@@ -1797,7 +1798,7 @@ BUILTIN_WORKFLOWS = (
             edges=(
                 DiagramEdge("session", "list"),
                 DiagramEdge("list", "people"),
-                DiagramEdge("people", "list", label="next page, to the end of the list"),
+                DiagramEdge("people", "list", label="next page, until it reaches known ones"),
                 DiagramEdge("people", "profiles"),
                 DiagramEdge("profiles", "people", label="never-read first, then the oldest"),
                 DiagramEdge("profiles", "files"),

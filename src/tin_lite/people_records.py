@@ -35,13 +35,15 @@ EVENT_KINDS = (
     "visited",
     "connected",
     "starred",
+    "new_connection",
 )
 # What a person did that shows interest in a member: reacting to or commenting on their posts,
 # viewing their profile. Tin proposes connection requests to people with any of these.
 SIGNALS = ("reacted", "commented", "viewed")
-# What a person did on a social network the project is on: the LinkedIn signals, and starring
-# one of the project's GitHub repositories. People's Social segment, and worth a rating.
-SOCIAL = (*SIGNALS, "starred")
+# What a person did on a social network the project is on: the LinkedIn signals, connecting with
+# a member after Tin first read their connections, and starring one of the project's GitHub
+# repositories. People's Social segment, and worth a rating.
+SOCIAL = (*SIGNALS, "new_connection", "starred")
 # A repository as `starred` events name it.
 REPOSITORY = re.compile(r"[A-Za-z0-9-]{1,39}/[A-Za-z0-9._-]{1,100}")
 RELATIONSHIPS = ("connected", "pending", "none")
@@ -1123,7 +1125,7 @@ async def directory(
                 "visited": bool(visited),
                 # Found for their company's visit, never matched to a visit of their own.
                 "company_visit": visited == {True},
-                # Reacted, commented, viewed a profile or starred a repository.
+                # Reacted, commented, viewed a profile, newly connected or starred a repository.
                 "social": person["id"] in social,
                 "fields": fields,
                 "last_touch": touches.get(person["id"]),

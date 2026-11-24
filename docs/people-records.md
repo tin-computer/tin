@@ -137,19 +137,25 @@ tools share `people_service.People`.
     the panel it reads in full.
   - Last touch is the latest event and who was behind it (Paper TEAM-A): "reacted to you",
     "reacted to Mira", "viewed you", "invited by Mira", "connected with you", "connected to
-    Emre" (a teammate's own connection; "a teammate" without a name) and "starred on GitHub";
+    Emre" (a teammate's own connection; "a teammate" without a name), "new connection of you"
+    and "starred on GitHub";
     a visit is its day alone. LinkedIn gives no time for a reaction, so Last touch shows it on
     the post's date; intent cooling counts it from when Tin saw it. A profile view counts on
     the day LinkedIn's "3d ago" gives.
   - The segments are Visitors (anyone with a `visited` event or an "On the site" value, which
     includes people found for a visit only their company made), Hot (intent hot), Social
-    (reacted, commented, viewed a member's profile or starred the project's repository), all
+    (reacted, commented, viewed a member's profile, became a member's new connection or
+    starred the project's repository), all
     people, Connections, ICP fit (3 or more) and not connected yet, plus Invited once a
     [connection request](linkedin-requests.md) went out and From ads. Visitors, Hot, Social and
     Connections show only when someone is in them.
   - Connections holds a member's LinkedIn connections brought in by a bulk import (the
     connections export workflow or a CSV, `records.BULK_SOURCES`) who haven't done anything Tin
-    saw (a visit, a reaction, a comment, a profile view, a star): `imported` on the directory.
+    saw (a visit, a reaction, a comment, a profile view, a new connection, a star): `imported`
+    on the directory. A new connection is someone who connected with the member after the
+    connections export first read their list (a `new_connection` event, see
+    [connections](linkedin-connections.md#new-connections)); everyone connected before then
+    stays here.
     Every other segment, All people included, leaves them out, and Tin buys nothing for them
     (no phone lookup). Once one does something, they move out of Connections. The page opens on Visitors when anyone has visited, else on
     all people.

@@ -44,7 +44,8 @@ INTENT_MEANS = {
     "hot": "looking at this now: they asked for a demo or contact, came back several times "
     "within days, or searched the brand and read pricing",
     "warm": "some interest, nothing pressing: they read product, solution or pricing pages on "
-    "one visit, engaged with a post, or starred the company's GitHub repository",
+    "one visit, engaged with a post, connected with a team member on LinkedIn recently, or "
+    "starred the company's GitHub repository",
     "cold": "no sign of interest beyond being seen: the homepage or a blog post only, a long "
     "idle single page, or a match you doubt",
 }
@@ -197,8 +198,9 @@ def instructions(profiles: list[str]) -> str:
         "Fit and intent are null only when there is no name or role to judge.\n\n"
         "You get what Tin knows about the person: their name, headline and other fields, what "
         "they did (reacted to or commented on the team's LinkedIn posts, viewed a team "
-        "member's profile, starred the company's GitHub repository, visited the company's "
-        "website, with the pages, where they came from and how long they stayed) and the "
+        "member's profile, connected with a team member on LinkedIn, starred the company's "
+        "GitHub repository, visited the company's website, with the pages, where they came "
+        "from and how long they stayed) and the "
         "team's notes about them. A note is what the team knows: it outweighs everything "
         "else.\n\n"
         "A name or company that came with a website visit was guessed by a service that "

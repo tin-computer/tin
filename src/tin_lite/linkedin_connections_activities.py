@@ -34,7 +34,19 @@ from tin_lite.organic_audit_publication import publish_artifacts
 STEPS = 3
 FALLBACK = "Tin couldn't finish reading your LinkedIn connections. Try again later."
 # What a read hands Temporal: counts, never the people.
-RETURNED = ("outcome", "reason", "people", "new", "unnamed", "pages", "more", "read", "found")
+RETURNED = (
+    "outcome",
+    "reason",
+    "people",
+    "new",
+    "unnamed",
+    "pages",
+    "more",
+    "read",
+    "found",
+    "joined",
+    "caught_up",
+)
 # A profile read waits up to three minutes on the sandbox; the activity heartbeats meanwhile,
 # well inside the workflow's two-minute heartbeat timeout.
 BEAT_SECONDS = 30
@@ -70,13 +82,17 @@ class LinkedInConnectionsActivities(LinkedInEngagersActivities):
         await self._session(run)
         async with self.db.pool.acquire() as conn:
             await records.ensure_fields(conn, run.project_id)
+            # The member's first read sets the baseline new connections are counted from.
+            await export.start_list(conn, run.project_id, run.started_by_clerk_user_id)
         await self.db.mark_run_running(run.id)
         await self._progress(run.id, "connections", 0, STEPS, "Reading your LinkedIn connections")
 
     @activity.defn(name="linkedin_connections_read")
     async def connections_read(self, control: dict) -> dict:
         """One read of up to ten pages of the member's connections, from where the last read
-        stopped."""
+        stopped. Once a run has read the member's list to the end, a read that reaches
+        connections Tin already has is the last: the list is newest first, so the rest are
+        known too."""
 
         run = await self._active(control["run_id"])
         index = int(control["read"])
@@ -101,25 +117,36 @@ class LinkedInConnectionsActivities(LinkedInEngagersActivities):
                 raise refusal(reason)
             outcome = "stopped" if reason in STOPS else "unread"
             return _returned({"outcome": outcome, "reason": reason, "people": 0, "new": 0})
+        member = run.started_by_clerk_user_id
         async with self.db.effect_lock(key, ENGAGEMENT_OPERATION) as (conn, _receipt):
             async with conn.transaction():
+                listed = await export.list_state(conn, run.project_id, member)
                 counts = await export.record_connections(
                     conn,
                     project_id=run.project_id,
                     run_id=run.id,
-                    member=run.started_by_clerk_user_id,
+                    member=member,
                     connections=[item.model_dump() for item in parsed.connections],
                 )
+                # Caught up: the list was read to the end before, and this read reached
+                # connections Tin already has.
+                caught_up = listed["read_to_end"] and counts["known"] > 0
+                more = parsed.next is not None and not caught_up
+                if parsed.next is None or index + 1 >= export.LIST_READS:
+                    # The end of the list, or as far as Tin lists.
+                    await export.read_to_end(conn, run.project_id, member)
                 result = {
                     "outcome": "read",
                     "reason": None,
                     "people": counts["people"],
                     "new": counts["new"],
+                    "joined": counts["joined"],
+                    "caught_up": caught_up,
                     "unnamed": parsed.unnamed,
                     "pages": parsed.pages,
-                    "more": parsed.next is not None,
+                    "more": more,
                     # The next read starts where LinkedIn's list left off.
-                    "next": parsed.next,
+                    "next": parsed.next if more else None,
                 }
                 # The answer leaves the receipt with this; only counts and the offset stay.
                 await self.db.complete_effect(conn, execution_key=key, result=result)
