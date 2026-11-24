@@ -74,6 +74,15 @@ The built-in fields are:
   their count as the reason (`lead_phones`, see [RB2B webhook](rb2b-webhook.md#phone-numbers-for-leads)).
   People's panel shows each as a call link.
 
+A person no source gave a company gets one from what Tin has (`records.fill_company`): their
+headline's "Title at Company" or "Title @ Company" (the part before a `|`, `·` or `•`; not a
+lowercase phrase, a long sentence or a placeholder like "Retired"), else a work email's domain.
+It runs on any run's write of someone without a company, set by `people.company` with the
+reason "From their headline" or "From their email address", and follows a changed headline. A
+source that names the company replaces it, a member's is never replaced, and the LinkedIn
+connections export still reads the profile of anyone whose position came only from a headline.
+Name, headline, company, position and location are kept unescaped ("R&amp;D" reads "R&D").
+
 ## LinkedIn relationships
 
 Whether someone is connected is each member's own: a person can be one teammate's connection
