@@ -225,6 +225,114 @@ async def _rb2b_channel(project_id: UUID, channel: str, name: str) -> None:
         print("TIN_LITE_RB2B_SLACK_PROJECT_ID is unset here, so nothing posts until it is set")
 
 
+async def _intel_world_enable(created_by: str, *, paused: bool) -> None:
+    """Operator-only: the world feed as a saved workflow on the host project, scheduled daily
+    at 06:00 UTC. Idempotent: an existing active or paused configuration is kept."""
+    from types import SimpleNamespace
+    from uuid import uuid4
+
+    from tin_lite import intel_world
+    from tin_lite.project_workflow_operations import sync_project_workflow
+
+    settings = get_settings()
+    host = settings.intel_host_project_id
+    if host is None:
+        raise SystemExit("TIN_LITE_INTEL_HOST_PROJECT_ID is unset; set it to the host project")
+    database = Database(settings.runtime_dsn)
+    await database.connect()
+    try:
+        if not await database.pool.fetchval(
+            """SELECT true FROM project_memberships WHERE project_id = $1
+               AND clerk_user_id = $2""",
+            host,
+            created_by,
+        ):
+            raise SystemExit(f"{created_by} is not a member of the host project {host}")
+        existing = [
+            item
+            for item in await database.list_project_workflows(project_id=host)
+            if item.workflow_id == intel_world.WORKFLOW_ID
+            and item.status in {"active", "paused", "pending"}
+        ]
+        if existing:
+            print(
+                f"intel.world is already saved on {host}: {existing[0].id} ({existing[0].status})"
+            )
+            return
+        workflow = await database.get_workflow(intel_world.WORKFLOW_ID)
+        if workflow is None or workflow.current_commit_sha is None:
+            raise SystemExit("intel.world is not published here; run tin-lite sync-builtins first")
+        configured = await database.create_project_workflow(
+            project_id=host,
+            workflow_id=workflow.id,
+            definition_commit_sha=workflow.current_commit_sha,
+            name="World stories",
+            inputs={"project_id": str(host)},
+            input_schema=workflow.definition["input_schema"],
+            schedule={
+                "cadence": "daily",
+                "weekdays": [],
+                "months": [],
+                "local_time": intel_world.SCHEDULE_TIME,
+                "timezone": "UTC",
+            },
+            request_id=uuid4(),
+            created_by_clerk_user_id=created_by,
+            pinned_definition=workflow.definition,
+        )
+        temporal = await Client.connect(
+            settings.temporal_endpoint,
+            namespace=settings.temporal_namespace,
+            api_key=settings.temporal_api_key.get_secret_value(),
+            tls=True,
+        )
+        configured = await sync_project_workflow(
+            runtime=SimpleNamespace(database=database, temporal=temporal),
+            settings=settings,
+            configured=configured,
+            paused=paused,
+        )
+    finally:
+        await database.close()
+    print(f"intel.world saved on {host}: {configured.id} ({configured.status}), daily 06:00 UTC")
+    if not settings.intel_world_slack_channel:
+        print("TIN_LITE_INTEL_WORLD_SLACK_CHANNEL is unset here, so the summary is not posted")
+
+
+async def _intel_channel(project_id: UUID, channel: str, name: str) -> None:
+    """Operator-only: the channel in Tin's Slack a managed client's daily brief posts to, or
+    `none` to stop posting it."""
+    import re
+
+    channel = channel.strip()
+    clear = channel.lower() == "none"
+    if not clear and not re.fullmatch(r"[A-Z0-9]{1,32}", channel):
+        raise SystemExit(f"{channel} is not a Slack channel ID (like C0CH02TLTQ8), or none")
+    settings = get_settings()
+    database = Database(settings.runtime_dsn)
+    await database.connect()
+    try:
+        if await database.get_project(project_id) is None:
+            raise SystemExit(f"project {project_id} does not exist")
+        await database.pool.execute(
+            """INSERT INTO intel_projects (project_id, slack_channel_id, slack_channel_name)
+               VALUES ($1, $2, $3)
+               ON CONFLICT (project_id) DO UPDATE SET slack_channel_id = EXCLUDED.slack_channel_id,
+                   slack_channel_name = EXCLUDED.slack_channel_name, updated_at = now()""",
+            project_id,
+            None if clear else channel,
+            "" if clear else name.strip().removeprefix("#")[:100],
+        )
+    finally:
+        await database.close()
+    if clear:
+        print(f"the daily brief of project {project_id} is no longer posted to Slack")
+        return
+    print(f"the daily brief of project {project_id} posts to {name or channel}")
+    if settings.intel_host_project_id is None:
+        print("TIN_LITE_INTEL_HOST_PROJECT_ID is unset here, so nothing posts until it is set")
+
+
 async def _rollouts(run_id: UUID, *, out: Path | None, trace: bool, max_output_chars: int) -> None:
     """Operator-only read path for captured Codex rollouts; never a product surface."""
     settings = get_settings()
@@ -396,6 +504,23 @@ def main() -> None:
     rb2b_channel.add_argument("project_id", type=UUID)
     rb2b_channel.add_argument("channel", help="the Slack channel ID, or none to stop posting")
     rb2b_channel.add_argument("--name", default="", help="the channel's name, for reading")
+    intel_world_cmd = commands.add_parser(
+        "intel-world", help="daily intelligence's world feed on the host project"
+    )
+    intel_world_cmd.add_argument("action", choices=["enable"])
+    intel_world_cmd.add_argument(
+        "--created-by", required=True, help="the host project member the schedule starts as"
+    )
+    intel_world_cmd.add_argument(
+        "--paused", action="store_true", help="save the schedule paused (run it on demand)"
+    )
+    intel_channel = commands.add_parser(
+        "intel-channel",
+        help="post a managed client's daily brief to a channel in Tin's Slack (or none)",
+    )
+    intel_channel.add_argument("project_id", type=UUID)
+    intel_channel.add_argument("channel", help="the Slack channel ID, or none to stop posting")
+    intel_channel.add_argument("name", nargs="?", default="", help="the channel's name")
     rollouts = commands.add_parser(
         "rollouts", help="list, export, or print the Codex rollouts captured for a run"
     )
@@ -434,6 +559,10 @@ def main() -> None:
         asyncio.run(_import_ai_visibility(args.project_id, args.file))
     elif args.command == "rb2b-channel":
         asyncio.run(_rb2b_channel(args.project_id, args.channel, args.name))
+    elif args.command == "intel-world":
+        asyncio.run(_intel_world_enable(args.created_by, paused=args.paused))
+    elif args.command == "intel-channel":
+        asyncio.run(_intel_channel(args.project_id, args.channel, args.name))
     elif args.command == "rollouts":
         asyncio.run(
             _rollouts(

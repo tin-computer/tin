@@ -106,7 +106,18 @@ NATIVE_EXECUTORS = {
     "ads.monitor",
     "revenue.payment_recovery",
 }
-PARENT_EXECUTORS = {"organic.traffic_system", "growth.onboarding", "social.x_draft"}
+PARENT_EXECUTORS = {
+    "organic.traffic_system",
+    "growth.onboarding",
+    "social.x_draft",
+    "intel.world",
+    "intel.daily",
+}
+# Daily intelligence (intel.world, intel.daily) buys nothing itself: its Antigravity judge is a
+# session-funded child with its own $15 ceiling (codex_api_pricing.PROCEDURE_KEY_MAXIMUMS), and
+# the child's actual usage is charged once. Observed judge runs cost $2.00 to $2.30; the
+# ceiling is a runaway guard, not an estimate.
+INTEL_PARENT_USD = 15
 
 # Organic audit ceiling, from its bounded calls at the GPT-6 Luna rates above. A run makes at
 # most 28 searched calls (two research attempts, 12 questions asked twice, two brand checks) and
@@ -268,6 +279,8 @@ def service_terms(definition, *, inputs=None):
         maximum, kinds = 1 * NANOS_PER_DOLLAR, []
     elif executor == "growth.onboarding":
         maximum, kinds = 10 * NANOS_PER_DOLLAR, []
+    elif executor in {"intel.world", "intel.daily"}:
+        maximum, kinds = INTEL_PARENT_USD * NANOS_PER_DOLLAR, []
     elif executor == "growth.onboarding_plan":
         # About twenty-five bounded model steps; each reserves its conservative ceiling first.
         maximum = 8 * NANOS_PER_DOLLAR
@@ -287,7 +300,13 @@ def service_terms(definition, *, inputs=None):
         maximum, kinds = 2 * NANOS_PER_DOLLAR, ["native_model", "tool"]
     if type(maximum) is not int or maximum <= 0:
         raise BillingError("invalid_budget", "The workflow spending maximum is invalid.")
+    extra = {}
+    if executor == "intel.daily":
+        # The client's X List reads are operator-funded, like social.x_publish; each page's
+        # receipt carries its estimated supplier cost.
+        extra["external_api_funding"] = "operator_x_credits"
     return {
+        **extra,
         "rate_card": CARD["id"],
         "service_pricing": deepcopy(CARD),
         "currency": "USD",

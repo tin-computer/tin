@@ -68,6 +68,9 @@ TEST_IDENTITY_SMS_CAPABILITY = "test_identity.sms.read"
 # project-owned integration connection.
 STUDIO_PROVIDER = "tin.studio"
 STUDIO_VOICE_CAPABILITY = "studio.voice"
+# Daily intelligence's judges write their stories and brief through Tin's own intel routes.
+INTEL_PROVIDER = "tin.intel"
+INTEL_WRITE_CAPABILITY = "intel.write"
 TEST_IDENTITY_STATUSES = ("pending", "active", "blocked", "failed", "retired")
 
 
