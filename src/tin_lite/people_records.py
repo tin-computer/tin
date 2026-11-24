@@ -344,6 +344,8 @@ def _whole(number):
 COMPANY_WRITER = "people.company"
 _TITLE_AT = re.compile(r"^(?P<title>.{2,120}?)\s+(?:at\s+|@\s*)(?P<company>.{1,120})$", re.I)
 _HEADLINE_PARTS = re.compile(r"\s*[|·•]\s*")
+# Where a company's name ends inside a headline: "Acme - building X", "Acme, ex-Google".
+_COMPANY_END = re.compile(r"\s+[-–—]\s+|,\s+|\s+\(|\s+/\s+")
 NOT_COMPANIES = (
     "retired", "self employed", "self-employed", "freelanc", "unemployed", "seeking",
     "looking for", "open to work", "between roles", "various", "none",
@@ -370,10 +372,10 @@ def company_from_headline(headline: str | None) -> tuple[str, str] | None:
     if not found:
         return None
     title = found["title"].strip(" ,;:-")
-    company = found["company"].strip(" ,;:.")
+    company = _COMPANY_END.split(found["company"])[0].strip(" ,;:.")
     if not title or not company or not (company[0].isupper() or company[0].isdigit()):
         return None
-    if len(title.split()) > 8 or len(company.split()) > 8:
+    if len(title.split()) > 8 or len(company.split()) > 5:
         return None
     if any(word in company.lower() for word in NOT_COMPANIES):
         return None
@@ -420,6 +422,11 @@ async def fill_company(conn, project_id: UUID, record_id: UUID, *, set_by: str) 
             values.append(Value("position", title, "From their headline"))
     elif domain := company_from_email(row["email"]):
         values.append(Value("company", domain, "From their email address"))
+    elif row["company_by"] == COMPANY_WRITER:
+        # What Tin read before no longer holds (a new headline, a stricter reading): cleared.
+        values.append(Value("company", None, ""))
+        if row["position_by"] == COMPANY_WRITER:
+            values.append(Value("position", None, ""))
     if not values:
         return False
     await set_values(conn, project_id, record_id, values, set_by_kind="run", set_by=set_by)
@@ -854,6 +861,7 @@ COMPANY_VISIT = "rb2b_company"
 # Short names for the workflows that write records, shown beside a value as who set it.
 WRITERS = {
     COMPANY_WRITER: "Tin",
+    "github_star": "GitHub stars",
     "social.linkedin_engagers": "engagers",
     "social.linkedin_profile_viewers": "profile viewers",
     "social.linkedin_connections": "connections",
@@ -1027,8 +1035,11 @@ async def directory(
         only,
     ):
         at = _when(row)
-        if row["kind"] in ACTIVE and at > active.get(row["person"], at - timedelta(1)):
-            active[row["person"]] = at
+        # How warm intent still is counts from when they did it, as the rater sees it: a
+        # reaction without its own time dates from when Tin saw it, never the post's date.
+        did = row["occurred_at"] or row["recorded_at"]
+        if row["kind"] in ACTIVE and did > active.get(row["person"], did - timedelta(1)):
+            active[row["person"]] = did
         company_visit = row["kind"] == "visited" and row["source"] == COMPANY_VISIT
         if row["kind"] == "visited":
             visits.setdefault(row["person"], set()).add(company_visit)

@@ -358,20 +358,28 @@ def _short(person: dict) -> str:
 
 async def send(db, slack, *, project_id: UUID, key: str, place: Destination, body: dict) -> str:
     """Post one message once. Returns its outcome: sent, failed, unknown, or `already` when this
-    key was recorded before (sent or not, it is never sent again)."""
+    key was recorded before. A post Slack definitely didn't take (`failed`: rate-limited,
+    refused) is tried again for RETRY_HOURS; one that may be in the channel never is."""
 
     post_id = uuid4()
     recorded = await db.pool.fetchval(
         """INSERT INTO rb2b_slack_posts (id, project_id, post_key, channel_id, status)
            VALUES ($1, $2, $3, $4, 'sending')
-           ON CONFLICT (project_id, post_key) DO NOTHING RETURNING id""",
+           ON CONFLICT (project_id, post_key) DO UPDATE SET status = 'sending',
+               channel_id = EXCLUDED.channel_id, error_code = NULL, error_message = NULL,
+               settled_at = NULL
+           WHERE rb2b_slack_posts.status = 'failed'
+             AND rb2b_slack_posts.created_at > now() - make_interval(hours => $5)
+           RETURNING id""",
         post_id,
         project_id,
         key,
         place.channel_id,
+        RETRY_HOURS,
     )
     if recorded is None:
         return "already"
+    post_id = recorded
     status, ts, code, message = "sent", None, None, None
     try:
         ts = await slack.post(
@@ -405,6 +413,24 @@ async def send(db, slack, *, project_id: UUID, key: str, place: Destination, bod
     return status
 
 
+# How long a post Slack refused is tried again (each digest pass, each visitor run retry).
+RETRY_HOURS = 6
+# Tries of a run's own message, the first included: within its step's three attempts, and the
+# last never raises, so a Slack refusal never fails the run.
+POST_TRIES = 3
+
+
+def retry_refused(outcome: str) -> None:
+    """Ask Temporal to run the posting step again when Slack refused the post, unless this is
+    the step's last try."""
+
+    from temporalio import activity
+    from temporalio.exceptions import ApplicationError
+
+    if outcome == "failed" and activity.in_activity() and activity.info().attempt < POST_TRIES:
+        raise ApplicationError("Slack didn't take the post; trying again shortly.")
+
+
 async def recover(db, *, older_than_seconds: int = 600) -> None:
     """Posts left `sending` by a crash may be in the channel: never sent again, now unknown."""
 
@@ -431,15 +457,16 @@ def digest_window(now: datetime, zone: ZoneInfo) -> tuple[str, datetime, datetim
 
 
 async def digest_people(conn, project_id: UUID, start: datetime, end: datetime) -> list[dict]:
-    """RB2B visitors seen in [start, end) whose current fit isn't good or strong."""
+    """RB2B visitors Tin recorded in [start, end) whose current fit isn't good or strong. By
+    when Tin recorded the visit, not when it happened: a visit is read about ten minutes after
+    it, so one just before 18:00 lands in the next digest rather than none."""
 
     rows = await conn.fetch(
         """SELECT COALESCE(r.merged_into, r.id) AS id,
                max(COALESCE(e.occurred_at, e.recorded_at)) AS seen
            FROM record_events e JOIN records r ON r.id = e.record_id
            WHERE e.project_id = $1 AND e.kind = 'visited' AND e.detail->>'source' = 'rb2b'
-             AND COALESCE(e.occurred_at, e.recorded_at) >= $2
-             AND COALESCE(e.occurred_at, e.recorded_at) < $3
+             AND e.recorded_at >= $2 AND e.recorded_at < $3
            GROUP BY 1 ORDER BY 2""",
         project_id,
         start,
@@ -503,9 +530,12 @@ async def post_digests(runtime: Any, settings: Any, *, now: datetime | None = No
         day, start, end = window
         key = f"digest:{day}"
         if await db.pool.fetchval(
-            "SELECT 1 FROM rb2b_slack_posts WHERE project_id = $1 AND post_key = $2",
+            """SELECT 1 FROM rb2b_slack_posts WHERE project_id = $1 AND post_key = $2
+                 AND NOT (status = 'failed'
+                          AND created_at > now() - make_interval(hours => $3))""",
             hook["project_id"],
             key,
+            RETRY_HOURS,
         ):
             continue
         place = await destination(db, settings, hook["project_id"])

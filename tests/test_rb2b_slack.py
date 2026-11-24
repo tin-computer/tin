@@ -232,6 +232,10 @@ async def test_a_visitor_who_isnt_a_fit_waits_for_the_digest(collection_db, monk
 
     runtime = SimpleNamespace(database=f.db, integrations=SimpleNamespace(slack=slack))
     configured = settings()
+    # Tin recorded the visit about ten minutes after it; the digest goes by that time.
+    await f.db.pool.execute(
+        "UPDATE record_events SET recorded_at = occurred_at + interval '10 minutes'"
+    )
     # Before 18:00 in the project's zone (UTC here), nothing; after it, one digest, once.
     before = datetime(2026, 11, 20, 17, 0, tzinfo=UTC)
     assert await rb2b_slack.post_digests(runtime, configured, now=before) == 0
@@ -250,14 +254,16 @@ async def test_a_visitor_who_isnt_a_fit_waits_for_the_digest(collection_db, monk
 
 
 @pytest.mark.parametrize(
-    ("error", "status"),
+    ("error", "status", "tries"),
     [
-        (IntegrationDeliveryRefusedError("Slack refused the post: x", status=200), "failed"),
-        (IntegrationDeliveryUnknownError("Slack answered fatal_error"), "unknown"),
+        # Slack refused it: nothing is in the channel, so a retried step posts again.
+        (IntegrationDeliveryRefusedError("Slack refused the post: x", status=200), "failed", 2),
+        # It may be in the channel: never sent again.
+        (IntegrationDeliveryUnknownError("Slack answered fatal_error"), "unknown", 1),
     ],
 )
-async def test_a_post_that_doesnt_go_through_is_recorded_and_never_sent_again(
-    collection_db, monkeypatch, error, status
+async def test_a_post_that_doesnt_go_through_is_recorded_and_retried_only_if_refused(
+    collection_db, monkeypatch, error, status, tries
 ):
     f = await rb2b_fixture(collection_db)
     run_id = await visitor_run(f, monkeypatch)
@@ -265,9 +271,35 @@ async def test_a_post_that_doesnt_go_through_is_recorded_and_never_sent_again(
     work, _ = await through(f, run_id, slack)
     row = await f.db.pool.fetchrow("SELECT * FROM rb2b_slack_posts")
     assert row["status"] == status and row["error_message"]
-    # The run carries on; a retried step doesn't post again.
+    await work.notify(run_id)
+    assert len(slack.posts) == tries
+    assert await f.db.pool.fetchval("SELECT count(*) FROM rb2b_slack_posts") == 1
+
+
+async def test_a_refused_post_is_tried_again_only_for_a_few_hours(collection_db, monkeypatch):
+    f = await rb2b_fixture(collection_db)
+    run_id = await visitor_run(f, monkeypatch)
+    slack = Slack(f.db, fail=IntegrationDeliveryRefusedError("Slack refused", status=200))
+    work, _ = await through(f, run_id, slack)
+    await f.db.pool.execute("UPDATE rb2b_slack_posts SET created_at = now() - interval '7 hours'")
     await work.notify(run_id)
     assert len(slack.posts) == 1
+
+
+def test_a_refused_post_asks_temporal_to_run_the_step_again_but_not_the_last_time(monkeypatch):
+    from temporalio import activity
+    from temporalio.exceptions import ApplicationError
+
+    monkeypatch.setattr(activity, "in_activity", lambda: True)
+    for attempt, raises in ((1, True), (2, True), (3, False)):
+        monkeypatch.setattr(activity, "info", lambda a=attempt: SimpleNamespace(attempt=a))
+        if raises:
+            with pytest.raises(ApplicationError):
+                rb2b_slack.retry_refused("failed")
+        else:
+            rb2b_slack.retry_refused("failed")
+    rb2b_slack.retry_refused("unknown")
+    rb2b_slack.retry_refused("sent")
 
 
 async def test_nothing_posts_without_tins_slack_project_or_a_channel(collection_db, monkeypatch):

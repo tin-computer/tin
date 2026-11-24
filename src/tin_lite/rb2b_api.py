@@ -170,7 +170,9 @@ class Hooks:
             """SELECT id FROM rb2b_visits WHERE project_id = $1 AND kind IN ('person', 'company')
                  AND run_id IS NULL AND NOT no_start AND ($2::uuid IS NULL OR id <> $2)
                  AND received_at > now() - interval '7 days'
-               ORDER BY received_at LIMIT $3""",
+               -- Visits that never failed to start go first, newest first: one that keeps
+               -- failing never holds up the rest.
+               ORDER BY start_error IS NOT NULL, received_at DESC LIMIT $3""",
             project_id,
             visit_id,
             RETRY_WAITING,

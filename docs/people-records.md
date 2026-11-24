@@ -126,7 +126,7 @@ imported connections never push visitors out. `people_records.people` reads each
 the whole list (no per-person scans), so ten thousand connections list in about two seconds. The HTTP routes (`people_api.py`) and the MCP
 tools share `people_service.People`.
 
-- **Grid:** name, company, headline, ICP, ICP fit, intent ("🔥 hot", "🌤 warm", "🧊 cold";
+- **Grid:** name, company, headline, ICP, Fit, intent ("🔥 hot", "🌤 warm", "🧊 cold";
   sorted hot first, then people without one), came from and last touch. Notes live in the
   panel and in search. A visit's last touch is its day alone; the segment and Came from say what it was.
   - The name opens the person's LinkedIn profile in a new tab, when Tin knows it; the rest of
@@ -135,19 +135,18 @@ tools share `people_service.People`.
     its way: "queued", then "invited oct 16".
   - The full grid names an ICP by its short label ("ICP 1"), with the heading on hover; beside
     the panel it reads in full.
-  - Notes shows the start of the newest note; hovering shows it whole, with who wrote it and
-    how many notes there are. Search covers every note.
   - Last touch is the latest event and who was behind it (Paper TEAM-A): "reacted to you",
     "reacted to Mira", "viewed you", "invited by Mira", "connected with you", "connected to
-    Emre" (a teammate's own connection; "a teammate" without a name), "visited" and "company
-    visited". LinkedIn gives no
-    time for a reaction, so a reaction counts on the post's date; a profile view counts on the
-    day LinkedIn's "3d ago" gives.
+    Emre" (a teammate's own connection; "a teammate" without a name) and "starred on GitHub";
+    a visit is its day alone. LinkedIn gives no time for a reaction, so Last touch shows it on
+    the post's date; intent cooling counts it from when Tin saw it. A profile view counts on
+    the day LinkedIn's "3d ago" gives.
   - The segments are Visitors (anyone with a `visited` event or an "On the site" value, which
-    includes people found for a visit only their company made), Hot (intent hot), all people,
-    ICP fit (3 or more) and not connected yet, plus Invited once a
-    [connection request](linkedin-requests.md) went out and From ads. Visitors and Hot show
-    only when someone is in them. The page opens on Visitors when anyone has visited, else on
+    includes people found for a visit only their company made), Hot (intent hot), Social
+    (reacted, commented, viewed a member's profile or starred the project's repository), all
+    people, ICP fit (3 or more) and not connected yet, plus Invited once a
+    [connection request](linkedin-requests.md) went out and From ads. Visitors, Hot and Social
+    show only when someone is in them. The page opens on Visitors when anyone has visited, else on
     all people.
   - With the viewer's own LinkedIn reading on the project, a tick lane before the name lets
     them choose people to ask to connect (Paper REQ-A). Only people they can ask get a box:
@@ -158,10 +157,11 @@ tools share `people_service.People`.
     the footer beside the count says why (REQ-A4): "Everyone on this list is already connected
     to you or invited". Neither moves the grid.
 - **Score hover:** the reason, the rating ("4 · Strong fit"), the ICP and when it was set.
-  - A score computed under an earlier `strategy/ICP.md`, or by an earlier version of the
-    scoring, reads "old": the view compares each value's `definition` with the current one
-    (`people_icp.read_icp`), and the next run that rates people rates it again. So does a score
-    older than the person's newest note.
+  - A score computed by an earlier version of the scoring, or under another ICP file path,
+    reads "old": the view compares each value's rubric (`people_records.rubric`: the path and
+    scorer version, not the file's words) with the current one, and the next run that rates
+    people rates it again. Editing `strategy/ICP.md` marks nothing old. So does a score older
+    than the person's newest note.
   - A member's fit reads "you" (or "team") beside the number, and the hover gives Tin's rating
     it replaced.
 - **Person panel:** `GET …/people/{person_id}` adds the timeline, `position`, `location` and
