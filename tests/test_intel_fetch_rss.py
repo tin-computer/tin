@@ -101,7 +101,7 @@ def test_invalid_sources_are_skipped_with_a_reason():
     assert [s["id"] for s in ready] == ["ok"]
     reasons = {s["id"]: s["error"] for s in skipped}
     assert set(reasons) == {"local", "badre", "issn", "q", "what"}
-    assert "public http(s)" in reasons["local"] and "url_pattern" in reasons["badre"]
+    assert "public http(s)" in reasons["local"] and rss.REGEX_GONE in reasons["badre"]
     assert all(s["status"] == "skipped" for s in skipped)
 
 
@@ -116,59 +116,97 @@ def test_groups_split_the_client_sources_by_method():
 # Untrusted configs on Tin's worker: patterns, fan-out and deadlines are bounded.
 
 
-def test_patterns_that_backtrack_or_backreference_are_skipped():
-    for pattern in ("(a+)+$", r"(\w+\s?)*$", "(a|aa)+$", r"(a)\1", "(?P<x>a)(?P=x)", "x" * 201):
-        assert rss.safe_pattern(pattern), pattern
-    for pattern in (
-        r"^https://www\.vendor\.example/epic/post/[^/]+/?$",
-        r"vendor\.example/(blog|press|news)/[^/]+/?$",
-        r"vendor\.example/(news|insights)[^?]*/[^/]+/?$",
-        r"a{2,}(b{1,3})?",
+def test_path_globs_match_segment_by_segment():
+    match = rss.glob_match
+    assert match("vendor.example/blog/*", "https://vendor.example/blog/launch")
+    assert match("vendor.example/blog/*", "https://www.vendor.example/blog/launch/")
+    assert match("www.vendor.example/blog/*", "http://VENDOR.example/blog/launch?utm=1#top")
+    assert not match("vendor.example/blog/*", "https://vendor.example/blog/")
+    assert not match("vendor.example/blog/*", "https://vendor.example/blog/a/b")
+    assert not match("vendor.example/blog/*", "https://vendor.example/Blog/a")
+    assert not match("vendor.example/blog/*", "https://evil.example/blog/a")
+    assert not match("vendor.example/blog/*", "https://blog.vendor.example/blog/a")
+    assert not match("vendor.example/blog/*", "https://vendor.example//a")
+    assert match("vendor.example/news/**", "https://vendor.example/news/2026/11/a")
+    assert match("vendor.example/news/**", "https://vendor.example/news/a")
+    assert not match("vendor.example/news/**", "https://vendor.example/news/")
+    assert match("vendor.example/epic/post/*", "https://www.vendor.example/epic/post/x")
+    assert rss.matching(
+        ["vendor.example/blog/*", "vendor.example/press/*"],
+        [
+            "https://vendor.example/press/a",
+            "https://vendor.example/about",
+            "https://vendor.example/blog/b",
+        ],
+    ) == ["https://vendor.example/press/a", "https://vendor.example/blog/b"]
+
+
+def test_bad_globs_and_old_regexes_are_skipped_with_a_reason():
+    for globs, reason in (
+        (["vendor.example/**/x"], "only as its last part"),
+        (["vendor.example/blog-*"], "whole segment"),
+        (["*.vendor.example/blog/*"], "host and a path"),
+        (["https://vendor.example/blog/*"], "host and a path"),
+        (["vendor.example/blog/*?x"], "host and a path"),
+        (["x" * 201], "longer than 200"),
+        ([f"vendor.example/{n}/*" for n in range(21)], "1 to 20"),
+        ([], "1 to 20"),
     ):
-        assert rss.safe_pattern(pattern) is None, pattern
+        assert reason in rss.globs_problem(globs), globs
     cfg = {
         "sources": [
             {
-                "id": "evil",
-                "name": "Evil",
+                "id": "old",
+                "name": "Old",
                 "method": "html_links",
                 "url": "https://x.example/",
                 "link_pattern": "(a+)+$",
+                "link_paths": ["x.example/a/*"],
             },
             {
-                "id": "evil2",
-                "name": "Evil 2",
+                "id": "old2",
+                "name": "Old 2",
                 "method": "sitemap",
                 "url": "https://x.example/s.xml",
-                "url_pattern": "(.*a){12}",
+                "url_pattern": "x",
+            },
+            {
+                "id": "bad",
+                "name": "Bad",
+                "method": "sitemap",
+                "url": "https://x.example/s.xml",
+                "url_paths": ["x.example/**/y"],
+            },
+            {
+                "id": "good",
+                "name": "Good",
+                "method": "sitemap",
+                "url": "https://x.example/s.xml",
+                "url_paths": ["x.example/blog/*", "x.example/news/**"],
             },
         ]
     }
     ready, skipped = config.select(cfg, "client")
-    assert ready == [] and len(skipped) == 2
-    assert "repeats" in skipped[0]["error"] and "repeats" in skipped[1]["error"]
+    assert [s["id"] for s in ready] == ["good"]
+    reasons = {s["id"]: s["error"] for s in skipped}
+    assert rss.REGEX_GONE in reasons["old"] and rss.REGEX_GONE in reasons["old2"]
+    assert "url_paths" in reasons["bad"]
 
 
-async def test_matching_runs_off_the_loop_and_a_slow_pattern_fails_its_source(monkeypatch):
+def test_hostile_urls_stay_linear():
     import time
 
-    from tin_lite.intel_fetch.http import FetchError
-
-    def slow(pattern, candidates):
-        time.sleep(0.5)
-        return candidates
-
-    monkeypatch.setattr(rss, "_match_all", slow)
-    monkeypatch.setattr(rss, "MATCH_SECONDS", 0.05)
-    try:
-        await rss.matching("a", ["a"])
-    except FetchError as exc:
-        assert "too long" in str(exc)
-    else:
-        raise AssertionError("a slow match must fail its source")
-    monkeypatch.undo()
-    many = [f"https://x.example/blog/{n}" for n in range(rss.MAX_CANDIDATES + 50)]
-    assert len(await rss.matching(r"/blog/\d+$", many)) == rss.MAX_CANDIDATES
+    glob = "vendor.example/" + "/".join(["*"] * 10) + "/**"
+    many = "https://vendor.example/" + "/".join(["a"] * 50_000)
+    long_segment = "https://vendor.example/" + "a" * 2_000_000
+    started = time.monotonic()
+    for _ in range(20):
+        assert rss.glob_match(glob, many)
+        assert not rss.glob_match(glob, long_segment)
+        assert not rss.glob_match("vendor.example/a/b", many)
+    assert time.monotonic() - started < 2
+    candidates = [f"https://vendor.example/blog/{n}" for n in range(rss.MAX_CANDIDATES + 50)]
+    assert len(rss.matching(["vendor.example/blog/*"], candidates)) == rss.MAX_CANDIDATES
 
 
 async def test_sitemap_indexes_are_followed_only_so_far():
@@ -189,29 +227,3 @@ async def test_sitemap_indexes_are_followed_only_so_far():
     fetched_children = [u for u in reader.requests if "/s" in u and not u.endswith("sitemap.xml")]
     assert len(fetched_children) <= rss.MAX_CHILD_SITEMAPS
     assert len(found) == rss.MAX_SITEMAP_ENTRIES
-
-
-async def test_a_source_past_its_deadline_fails_alone():
-    import asyncio
-
-    async def endless(src, window, ctx):
-        await asyncio.sleep(10)
-        return []
-
-    slow = rss.bounded(endless, 0.05)
-    ok = {
-        "id": "health-weekly",
-        "name": "H",
-        "method": "rss",
-        "url": "https://feeds.example/health.xml",
-    }
-    cfg = _config()
-    items, statuses = await run_sources(
-        {"slow": slow, "rss": rss.METHODS["rss"]},
-        [{"id": "slow", "name": "Slow", "method": "slow"}, ok],
-        WINDOW,
-        rss_reader(),
-        settings={**rss.settings(cfg), "fetched_at": "2026-11-24T13:00:00Z"},
-    )
-    assert statuses[0]["status"] == "failed" and "TimeoutError" in statuses[0]["error"]
-    assert statuses[1]["status"] == "ok" and len(items) == 3

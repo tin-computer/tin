@@ -138,3 +138,11 @@ async def test_arctic_shift_errors_fail_only_their_subreddit():
     )
     assert items == [] and statuses[0]["status"] == "failed"
     assert "Arctic Shift" in statuses[0]["error"]
+
+
+def test_a_subreddit_gets_a_longer_deadline_than_the_default():
+    from tin_lite.intel_fetch import deadline
+
+    settings = intel_daily.group_settings("reddit", {"settings": {}})
+    assert deadline({"id": "reddit:x", "method": "reddit"}, settings) == 900
+    assert deadline({"id": "hn:x", "method": "hn"}, settings) == 300

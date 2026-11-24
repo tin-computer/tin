@@ -600,16 +600,7 @@ async def m_reddit(src: dict, window: Window, ctx: dict) -> list[Item]:
     return items
 
 
-def bounded(method, seconds: float):
-    """A method under a per-source deadline: a slow or endless source fails alone."""
-
-    async def run(src: dict, window: Window, ctx: dict) -> list[Item]:
-        async with asyncio.timeout(seconds):
-            return await method(src, window, ctx)
-
-    run.__name__ = method.__name__
-    return run
-
-
-# A subreddit with busy threads takes minutes at Arctic Shift's pace; these are runaway guards.
-METHODS = {"hn": bounded(m_hn, 300), "reddit": bounded(m_reddit, 900)}
+# A subreddit with busy threads takes minutes at Arctic Shift's pace: its per-source deadline
+# in run_sources (settings["method_timeouts"]) is longer than the default.
+METHOD_TIMEOUTS = {"reddit": 900}
+METHODS = {"hn": m_hn, "reddit": m_reddit}

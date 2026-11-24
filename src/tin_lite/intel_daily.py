@@ -165,7 +165,10 @@ def group_settings(group: str, config: dict) -> dict:
     if group in {"rss", "gnews", "pages"}:
         return dict(found.get("rss") or rss.settings({}))
     if group in {"hn", "reddit"}:
-        return {name: found[name] for name in ("hn", "reddit") if name in found}
+        return {
+            **{name: found[name] for name in ("hn", "reddit") if name in found},
+            "method_timeouts": dict(hn_reddit.METHOD_TIMEOUTS),
+        }
     return {}
 
 
