@@ -27,6 +27,8 @@ from tin_lite.domain import (
     CODEX_PROCEDURE_EXECUTOR,
     EMAIL_CAMPAIGN_WORKFLOW_NAME,
     EMAIL_SHORTLIST_PATH,
+    INTEL_PROVIDER,
+    INTEL_WRITE_CAPABILITY,
     MEMORY_INDEX_PATH,
     PROJECT_MEMORY_WORKFLOW_NAME,
     PROJECT_TASK_WORKFLOW_NAME,
@@ -2839,6 +2841,11 @@ class TinActivities:
             return False
         if procedure.output_validator == "content-refresh.v1":
             return await self._prepare_content_refresh(run_id)
+        if procedure.intel_scope is not None:
+            # A judge runs only as its active intel parent's child, on the parent's day.
+            from tin_lite.intel_judge import check_parent
+
+            await check_parent(self._db, await self._require_run(run_id), procedure.intel_scope)
         if procedure.output_validator in content_draft.VALIDATORS:
             run = await self._require_run(run_id)
             if run.status.value not in {"pending", "running"}:
@@ -3515,6 +3522,37 @@ class TinActivities:
                         f"{self._settings.switchboard_public_url.rstrip('/')}"
                         "/internal/run-tools/mcp"
                     )
+                intel_input: bytes | None = None
+                intel_url: str | None = None
+                intel_grant: str | None = None
+                if procedure.intel_scope is not None:
+                    # A judge reads its parent's snapshot and writes its stories and brief
+                    # through this grant (intel_run_tools); it carries no other run tools.
+                    if run_tools_grant is not None:
+                        raise RuntimeError("intel judges cannot also carry run tools")
+                    from tin_lite import intel_store
+
+                    snapshot = await intel_store.get_snapshot(
+                        self._db.pool, UUID(str((run.input or {}).get("parent_run_id")))
+                    )
+                    if snapshot is None:
+                        raise RuntimeError("The day's intelligence snapshot is missing.")
+                    intel_input = snapshot[0]
+                    intel_grant = secrets.token_urlsafe(32)
+                    await self._db.create_run_tool_grant(
+                        run_id=run_id,
+                        sandbox_id=sandbox_id,
+                        token=intel_grant,
+                        connection_id=None,
+                        external_account_id="",
+                        provider_key=INTEL_PROVIDER,
+                        capabilities=(INTEL_WRITE_CAPABILITY,),
+                        ttl_seconds=procedure.sandbox.timeout_seconds + 60,
+                    )
+                    intel_url = (
+                        f"{self._settings.switchboard_public_url.rstrip('/')}"
+                        "/internal/run-tools/intel"
+                    )
                 content_source = None
                 if procedure.result_kind == GITHUB_PULL_REQUEST_RESULT:
                     technical = None
@@ -3695,6 +3733,9 @@ class TinActivities:
                             result_kind=procedure.result_kind,
                             run_tools_url=run_tools_url,
                             run_tools_grant=run_tools_grant,
+                            intel_input=intel_input,
+                            intel_url=intel_url,
+                            intel_grant=intel_grant,
                             workspace_archive=workspace_archive,
                             workspace_evidence=workspace_evidence,
                             workspace_references=tuple(reference_archives),

@@ -661,7 +661,8 @@ class BillingService:
             if native["kind"] == "parent":
                 native["codex_api_children"] = codex_api_enabled(self.settings, project_id)
                 if not native["codex_api_children"] and (
-                    definition["executor"] in {"growth.onboarding", "content.plan"}
+                    definition["executor"]
+                    in {"growth.onboarding", "content.plan", "intel.world", "intel.daily"}
                     or (inputs or {}).get("technical_fix")
                     or definition.get("organic_system_policy", {}).get("version")
                     in {
@@ -1232,6 +1233,20 @@ class BillingService:
             if step == "draft" and (not pinned or pinned.get(step) != definition):
                 return False
             return step is not None and key == f"system:{parent_id}:{step}"
+        if parent["executor"] in {"intel.world", "intel.daily"}:
+            # Daily intelligence's one child is its judge, at the parent's own registry
+            # revision, under the start key the parent derives from its run.
+            from tin_lite.intel_judge import PARENTS, start_key
+
+            revision = await conn.fetchval(
+                "SELECT definition_commit_sha FROM workflow_runs WHERE id=$1", parent_id
+            )
+            return bool(
+                PARENTS.get(definition.get("key")) == parent["executor"]
+                and key == start_key(parent_id)
+                and revision is not None
+                and str(run["definition_commit_sha"]) == str(revision)
+            )
         if parent["executor"] == "content.plan":
             # v9: the plan's one child is its planning agent, at the plan's own registry
             # revision, under the start key the plan derives from its run.

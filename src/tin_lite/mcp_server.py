@@ -2141,6 +2141,53 @@ def create_mcp_app(
         }
 
     @server.tool(annotations=ToolAnnotations(readOnlyHint=True))
+    async def read_intel_stories(
+        project_id: str,
+        scope: str = "world",
+        since_days: int = 7,
+        query: str | None = None,
+        limit: int = 50,
+    ) -> dict[str, Any]:
+        """Read daily intelligence stories: Tin's shared world feed (`scope` "world", any
+        project member) or this project's own market stories (`scope` "project").
+
+        Each story has its key, title, summary, relevance (high, medium, low), tags, whether it
+        is sensitive (never a hook for a brand), the days it ran and the items that cover it,
+        newest first. `query` matches words in the title, summary, key or tags. The result also
+        says how the latest world day went: ready, partial (the judge stopped early) or failed.
+        """
+        from datetime import UTC, datetime, timedelta
+
+        from tin_lite import intel_store
+
+        token = await caller()
+        project = _mcp_uuid(project_id, field="project_id")
+        await require_project(project, token, tool_name="read_intel_stories")
+        if scope not in {"world", "project"}:
+            raise ToolError('invalid_input: scope is "world" or "project"')
+        days = max(1, min(int(since_days), 90))
+        count = max(1, min(int(limit), 200))
+        pool = runtime().database.pool
+        found = await intel_store.stories(
+            pool,
+            project_id=None if scope == "world" else project,
+            since_day=(datetime.now(UTC) - timedelta(days=days)).date(),
+            query=(query or "")[:200] or None,
+            limit=count,
+        )
+        for story in found:
+            story.pop("id", None)
+            story["items"] = [
+                {k: v for k, v in item.items() if k in {"day", "url", "title", "source"}}
+                for item in (story.get("items") or [])[:20]
+            ]
+        return {
+            "scope": scope,
+            "stories": found,
+            "world_day": await intel_store.latest_world_status(pool),
+        }
+
+    @server.tool(annotations=ToolAnnotations(readOnlyHint=True))
     async def get_official_profiles(project_id: str) -> dict[str, Any]:
         """Read the business's confirmed official profiles and parent company.
 

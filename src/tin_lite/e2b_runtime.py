@@ -41,6 +41,10 @@ from tin_lite.usage_capture import observe_sandbox
 logger = logging.getLogger(__name__)
 
 CONTEXT_PATH = "/home/user/.tin-lite/procedure-context.json"
+# The intel CLI version an image must carry (sandbox/intel/intel.py VERSION), and where an intel
+# judge's snapshot lands for the root helper to load.
+INTEL_CLI_VERSION = "1"
+INTEL_INPUT_PATH = "/home/user/.tin-lite/intel-input.jsonl.gz"
 SERVICE_ERROR_EXIT = 3
 """code_runner's exit status when authored code let a forwarded service error escape."""
 CODE_BRIDGE_MAX_BYTES = 4_000_000
@@ -156,6 +160,11 @@ class SandboxProcedureInput(SandboxRunInput):
     output_max_bytes: int
     run_tools_url: str | None = None
     run_tools_grant: str | None = None
+    # An intel judge's day (intel_snapshot) and its grant for the /intel routes, not a tin-run
+    # MCP server: the CLI in the image calls them.
+    intel_input: bytes | None = None
+    intel_url: str | None = None
+    intel_grant: str | None = None
     # The repository snapshot: its temporary file, or bytes.
     workspace_archive: Any = None
     workspace_evidence: bytes | None = None
@@ -693,6 +702,15 @@ class E2BRuntime:
                     expected = agent_ready_line(run_input.api_contract)
                     if ready.stdout.strip() != expected:
                         raise RuntimeError("isolated sandbox lacks the pinned agent harness")
+                    if run_input.context.get("intel"):
+                        # The judge's CLI and read-only SQLite must be in the image before
+                        # any spend; an older image fails closed here.
+                        ready = await sandbox.commands.run(
+                            "/usr/bin/sudo -n /opt/tin-lite/isolated-procedure check-intel",
+                            timeout=45,
+                        )
+                        if ready.stdout.strip() != f"TIN_INTEL_READY_V1 {INTEL_CLI_VERSION}":
+                            raise RuntimeError("isolated sandbox lacks the intel CLI")
                 elif run_input.api_url is not None:
                     protocol = (run_input.api_contract or {}).get("protocol")
                     version = {
@@ -710,6 +728,15 @@ class E2BRuntime:
                     if ready.stdout.strip() != expected:
                         raise RuntimeError("isolated sandbox lacks the Codex API protocol")
             await sandbox.files.write(CONTEXT_PATH, context)
+            if run_input.context.get("intel"):
+                if not (run_input.intel_input and run_input.intel_url and run_input.intel_grant):
+                    raise ValueError("intel procedures require their snapshot and grant")
+                if not (run_input.isolated and is_agent_contract(run_input.api_contract)):
+                    raise ValueError("intel procedures run on an agent harness in isolation")
+                await sandbox.files.write(INTEL_INPUT_PATH, run_input.intel_input)
+                envs["TIN_INTEL_INPUT"] = INTEL_INPUT_PATH
+                envs["TIN_INTEL_URL"] = run_input.intel_url
+                envs["TIN_INTEL_GRANT"] = run_input.intel_grant
             if run_input.workspace_archive is not None:
                 archive = run_input.workspace_archive
                 if not isinstance(archive, bytes):
@@ -1198,7 +1225,8 @@ def _run_secrets(run_input: SandboxRunInput) -> tuple[str, ...]:
         proxy_url=run_input.proxy_url,
         run_tools_grant=getattr(run_input, "run_tools_grant", None),
         extra=run_input.redact
-        + ((run_input.api_grant,) if getattr(run_input, "api_grant", None) else ()),
+        + ((run_input.api_grant,) if getattr(run_input, "api_grant", None) else ())
+        + ((run_input.intel_grant,) if getattr(run_input, "intel_grant", None) else ()),
     )
 
     # Explicit secrets include short payment security codes.
