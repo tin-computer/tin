@@ -38,6 +38,7 @@ from tin_lite.domain import (
     PAID_ADS_MONITOR_WORKFLOW_NAME,
     PAYMENT_RECOVERY_DECISION_DAYS,
     PAYMENT_RECOVERY_WORKFLOW_NAME,
+    PEOPLE_RATE_WORKFLOW_NAME,
     PREREQUISITE_WAIT_MEMO,
     PREREQUISITE_WAIT_MINUTES,
     PROJECT_MEMORY_WORKFLOW_NAME,
@@ -2039,6 +2040,39 @@ class LinkedInRequestsWorkflow:
             raise
 
 
+@workflow.defn(name=PEOPLE_RATE_WORKFLOW_NAME)
+class PeopleRateWorkflow:
+    """Rate everyone in People who did something and has no current rating, then list them.
+    History holds the run ID and counts; names and ratings stay in Postgres."""
+
+    @workflow.run
+    async def run(self, run_id: str) -> None:
+        policy = RetryPolicy(initial_interval=timedelta(seconds=30), maximum_attempts=3)
+        try:
+            counts = await workflow.execute_activity(
+                "people_rate_score",
+                run_id,
+                # Up to fifteen minutes of rating, then the count of who is left.
+                start_to_close_timeout=timedelta(minutes=25),
+                heartbeat_timeout=timedelta(minutes=2),
+                retry_policy=policy,
+            )
+            await workflow.execute_activity(
+                "people_rate_publish",
+                {"run_id": run_id, **counts},
+                start_to_close_timeout=timedelta(minutes=5),
+                retry_policy=policy,
+            )
+        except BaseException as exc:
+            await workflow.execute_activity(
+                "people_rate_failure",
+                failure_input(run_id, exc),
+                start_to_close_timeout=timedelta(minutes=1),
+                retry_policy=policy,
+            )
+            raise
+
+
 @workflow.defn(name=RB2B_VISITOR_WORKFLOW_NAME)
 class RB2BVisitorWorkflow:
     """One visitor RB2B posted: keep them in People, wait until PostHog has the visit, read it,
@@ -2232,6 +2266,7 @@ def registered_workflows() -> list[type]:
         LinkedInConnectionsWorkflow,
         LinkedInRequestsWorkflow,
         RB2BVisitorWorkflow,
+        PeopleRateWorkflow,
         OrganicTrafficSystemWorkflow,
         GrowthOnboardingWorkflow,
         GrowthOnboardingPlanWorkflow,
@@ -2278,6 +2313,7 @@ def registered_workflow_implementations() -> dict[str, type]:
         LINKEDIN_CONNECTIONS_WORKFLOW_NAME: LinkedInConnectionsWorkflow,
         LINKEDIN_REQUESTS_WORKFLOW_NAME: LinkedInRequestsWorkflow,
         RB2B_VISITOR_WORKFLOW_NAME: RB2BVisitorWorkflow,
+        PEOPLE_RATE_WORKFLOW_NAME: PeopleRateWorkflow,
         "organic.traffic_system": OrganicTrafficSystemWorkflow,
         "growth.onboarding": GrowthOnboardingWorkflow,
         "growth.onboarding_plan": GrowthOnboardingPlanWorkflow,

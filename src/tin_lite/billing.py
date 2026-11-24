@@ -70,6 +70,8 @@ CONNECTED_ACCOUNT_EXECUTORS = {
     # Tin pays the PostHog reads and the ICP rating of each visitor RB2B posts, as for the
     # LinkedIn reads' rating.
     "people.rb2b_visitor": "tin-funded-rb2b-visitors-v1",
+    # Tin pays the same ICP rating when it rates a project's earlier people in one go.
+    "people.rate": "tin-funded-people-rate-v1",
 }
 # Spending limits a new hosted project starts with, in nanodollars. Saved policies keep
 # their own limits: these apply only where a project has no policy yet.

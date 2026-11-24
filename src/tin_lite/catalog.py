@@ -30,6 +30,7 @@ from tin_lite import (
     paid_ads_monitor,
     payment_recovery,
     people_icp,
+    people_rate,
     rb2b,
     style_capture,
     technical_fix,
@@ -1812,6 +1813,41 @@ BUILTIN_WORKFLOWS = (
                 capabilities=(connection_collection.CAPABILITY,),
             ),
         ),
+    ),
+    BuiltinWorkflow(
+        id=people_rate.WORKFLOW_ID,
+        key=people_rate.KEY,
+        title="Rate your people against your ICP",
+        description=(
+            "Rate everyone in People who visited your site or engaged with you on LinkedIn and "
+            "has no rating under your current strategy/ICP.md: fit and intent, with a web "
+            "search, the same rating each visitor gets. Use it once your earlier visitors are in "
+            "People, or after you change the ICP file. Your own ratings are kept. Lists whom it "
+            "rated in people/ratings.md."
+        ),
+        executor=people_rate.KEY,
+        version_label="1.0.0",
+        presentation=WorkflowDiagram(
+            direction="TD",
+            nodes=(
+                DiagramNode("people", "store", "People", "who visited or engaged, not yet rated"),
+                DiagramNode("icp", "store", "strategy/ICP.md", "the profiles to rate against"),
+                DiagramNode(
+                    "rate", "step", "Rate fit and intent", "each person, with a web search"
+                ),
+                DiagramNode("files", "receipt", "Whom Tin rated, in Files", "people/ratings.md"),
+            ),
+            edges=(
+                DiagramEdge("people", "rate"),
+                DiagramEdge("icp", "rate"),
+                DiagramEdge("rate", "files"),
+            ),
+        ),
+        schedule_modes=("on_demand",),
+        system=PRODUCT_QA_SYSTEM,
+        agent_only=True,
+        input_schema=people_rate.INPUT_SCHEMA,
+        model_route=people_icp.ROUTE,
     ),
     BuiltinWorkflow(
         id=rb2b.WORKFLOW_ID,

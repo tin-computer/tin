@@ -7014,7 +7014,7 @@ class Database:
             "DELETE FROM effect_receipts WHERE operation IN "
             "('social.linkedin_listen', 'social.linkedin_results', 'social.linkedin_engagers', "
             "'social.linkedin_profile_viewers', 'social.linkedin_connections', "
-            "'social.linkedin_requests', 'people.rb2b_visitor', "
+            "'social.linkedin_requests', 'people.rb2b_visitor', 'people.rate', "
             "'linkedin_engagement_v1', 'linkedin_request_v1') AND "
             "split_part(execution_key, ':', 1) IN (SELECT id::text FROM workflow_runs "
             "WHERE project_id = $1)",
@@ -7405,6 +7405,7 @@ class Database:
                 "Tin finished sending your connection requests.",
             ),
             "people.rb2b_visitor": ("rb2b_visitor_ready", "Tin read a visitor RB2B identified."),
+            "people.rate": ("people_rate_ready", "Tin rated your people against your ICP."),
             "social.linkedin_results": (
                 "linkedin_results_ready",
                 "Today's LinkedIn results are in.",

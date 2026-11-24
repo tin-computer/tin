@@ -408,7 +408,12 @@ async def build_runtime(settings: Settings) -> RuntimeServices:
         cipher=integrations._cipher,
     )
     from tin_lite.delegate import Delegate
+    from tin_lite.people_rate_activities import PeopleRateActivities
     from tin_lite.rb2b_company_activities import RB2BCompanyActivities
+
+    people_rate_activities = PeopleRateActivities(
+        database=database, storage=storage, router=model_router
+    )
 
     delegate_key = getattr(settings, "delegate_api_key", None)
     delegate_key = delegate_key.get_secret_value() if delegate_key else ""
@@ -501,6 +506,9 @@ async def build_runtime(settings: Settings) -> RuntimeServices:
         rb2b_activities.notify,
         rb2b_activities.publish,
         rb2b_activities.failure,
+        people_rate_activities.score,
+        people_rate_activities.publish,
+        people_rate_activities.failure,
         rb2b_activities.judge,
         rb2b_activities.find,
         rb2b_activities.rate_people,
