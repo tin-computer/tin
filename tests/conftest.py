@@ -29,6 +29,13 @@ def pytest_collection_modifyitems(config: pytest.Config, items: list[pytest.Item
         items[:] = kept
 
 
+def pytest_sessionfinish(session: pytest.Session, exitstatus: int) -> None:
+    """Drop the migrated template database this process made for its tests, if any."""
+    from disposable_db import drop_template
+
+    drop_template()
+
+
 # Windows refuses to create a symlink without Developer Mode or an elevated shell.
 _WINDOWS_SYMLINK_PRIVILEGE = 1314
 

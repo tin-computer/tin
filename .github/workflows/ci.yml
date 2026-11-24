@@ -116,8 +116,11 @@ jobs:
       - run: uv python install 3.12
       - run: uv sync --frozen
       - run: npm ci --ignore-scripts --no-audit --no-fund
-      - run: npm run check:diagrams
-      - run: npm run check:comparison
+      # The bundle checks run once, beside the extension's suites, the shortest part.
+      - if: matrix.part == 'extension'
+        run: npm run check:diagrams
+      - if: matrix.part == 'extension'
+        run: npm run check:comparison
       - uses: actions/cache@v6.1.0
         with:
           path: ~/.cache/ms-playwright

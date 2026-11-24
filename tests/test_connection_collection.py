@@ -2,14 +2,12 @@ from __future__ import annotations
 
 import asyncio
 import json
-import os
 from datetime import UTC, datetime
-from pathlib import Path
 from types import SimpleNamespace
 from uuid import uuid4
 
-import asyncpg
 import pytest
+from disposable_db import migrated_database
 from pydantic import ValidationError
 
 from tin_lite.connection_collection import (
@@ -25,7 +23,6 @@ from tin_lite.connection_collection import (
 )
 from tin_lite.connection_collection_activities import artifacts
 from tin_lite.connection_collection_store import CollectionStore, record, token_hash
-from tin_lite.db import Database, apply_migrations
 from tin_lite.failures import INTERNAL_MESSAGE, failure_payload, from_details
 
 ACTOR = {
@@ -71,26 +68,9 @@ def batch(claim, page=1, *, more=True, person="person", index=0):
 
 @pytest.fixture
 async def collection_db():
-    dsn = os.environ.get("TIN_LITE_TEST_DATABASE_DSN")
-    if not dsn:
-        pytest.skip("set TIN_LITE_TEST_DATABASE_DSN to an isolated disposable Postgres")
-    schema = "collection_test_" + uuid4().hex
-    admin = await asyncpg.connect(dsn)
-    await admin.execute(f'CREATE SCHEMA "{schema}"')
-    db = Database(dsn)
-    try:
-        db._pool = await asyncpg.create_pool(
-            dsn, min_size=1, max_size=10, server_settings={"search_path": schema}
-        )
-        await apply_migrations(
-            dsn + ("? " if "?" not in dsn else "&").strip() + f"search_path={schema}",
-            Path(__file__).parents[1] / "migrations",
-        )
-        yield db
-    finally:
-        await db.close()
-        await admin.execute(f'DROP SCHEMA "{schema}" CASCADE')
-        await admin.close()
+    """Real migrations/SQL in a disposable database, never the configured product DB."""
+    async with migrated_database(max_size=10) as database:
+        yield database
 
 
 async def seed(db):

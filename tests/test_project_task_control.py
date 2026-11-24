@@ -4,22 +4,19 @@ from __future__ import annotations
 
 import asyncio
 import json
-import os
 from dataclasses import replace
-from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, Mock
 from uuid import uuid4
 
-import asyncpg
 import httpx
 import pytest
+from disposable_db import migrated_database
 from fastapi import FastAPI
 from mcp.server.mcpserver.exceptions import ToolError
 
 from tin_lite.api import router
 from tin_lite.auth import AuthContext, require_user
-from tin_lite.db import Database, apply_migrations
 from tin_lite.domain import RunStatus, WorkflowRun
 from tin_lite.mcp_server import _run_allowed_actions, create_mcp_app
 from tin_lite.project_task_control import (
@@ -85,25 +82,9 @@ def test_task_view_exposes_the_question_and_changed_paths_without_patches() -> N
 
 @pytest.fixture
 async def task_db():
-    """Real migrations/SQL in a disposable schema, never the configured product DB."""
-    dsn = os.environ.get("TIN_LITE_TEST_DATABASE_DSN")
-    if not dsn:
-        pytest.skip("set TIN_LITE_TEST_DATABASE_DSN for isolated Postgres contract tests")
-    schema = "task_control_test_" + uuid4().hex
-    admin = await asyncpg.connect(dsn)
-    await admin.execute(f'CREATE SCHEMA "{schema}"')
-    database = Database(dsn)
-    try:
-        database._pool = await asyncpg.create_pool(
-            dsn, min_size=1, max_size=10, server_settings={"search_path": schema}
-        )
-        scoped_dsn = dsn + ("&" if "?" in dsn else "?") + f"search_path={schema}"
-        await apply_migrations(scoped_dsn, Path(__file__).parents[1] / "migrations")
+    """Real migrations/SQL in a disposable database, never the configured product DB."""
+    async with migrated_database(max_size=10) as database:
         yield database
-    finally:
-        await database.close()
-        await admin.execute(f'DROP SCHEMA "{schema}" CASCADE')
-        await admin.close()
 
 
 async def seed_task(

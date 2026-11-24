@@ -4,15 +4,14 @@ page reads one week with every week's totals."""
 from __future__ import annotations
 
 import json
-import os
 from datetime import date
-from pathlib import Path
 from types import SimpleNamespace
 from uuid import UUID, uuid4
 
 import asyncpg
 import httpx
 import pytest
+from disposable_db import migrated_database
 from fastapi import FastAPI
 
 from tin_lite.ai_visibility import (
@@ -24,7 +23,6 @@ from tin_lite.ai_visibility import (
 )
 from tin_lite.api import router
 from tin_lite.auth import AuthContext, require_user
-from tin_lite.db import Database, apply_migrations
 
 USER = "user_founder"
 OTHER = "user_stranger"
@@ -246,25 +244,9 @@ async def test_a_member_project_without_weeks_says_so() -> None:
 
 @pytest.fixture
 async def visibility_db():
-    """Real migrations in a disposable schema, never the configured product DB."""
-    dsn = os.environ.get("TIN_LITE_TEST_DATABASE_DSN")
-    if not dsn:
-        pytest.skip("set TIN_LITE_TEST_DATABASE_DSN for isolated Postgres contract tests")
-    schema = "ai_visibility_test_" + uuid4().hex
-    admin = await asyncpg.connect(dsn)
-    await admin.execute(f'CREATE SCHEMA "{schema}"')
-    database = Database(dsn)
-    try:
-        database._pool = await asyncpg.create_pool(
-            dsn, min_size=1, max_size=4, server_settings={"search_path": schema}
-        )
-        scoped = dsn + ("&" if "?" in dsn else "?") + f"search_path={schema}"
-        await apply_migrations(scoped, Path(__file__).parents[1] / "migrations")
+    """Real migrations/SQL in a disposable database, never the configured product DB."""
+    async with migrated_database(max_size=4) as database:
         yield database
-    finally:
-        await database.close()
-        await admin.execute(f'DROP SCHEMA "{schema}" CASCADE')
-        await admin.close()
 
 
 @pytest.mark.asyncio

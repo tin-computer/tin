@@ -3,16 +3,15 @@ from __future__ import annotations
 import asyncio
 import hashlib
 import json
-import os
 import subprocess
 from dataclasses import replace
 from pathlib import Path
 from types import SimpleNamespace
 from uuid import uuid4
 
-import asyncpg
 import httpx
 import pytest
+from disposable_db import migrated_database
 from fastapi import FastAPI
 from temporalio.exceptions import ApplicationError
 
@@ -20,7 +19,6 @@ from tin_lite.activities import TinActivities
 from tin_lite.api import RunView, router
 from tin_lite.auth import AuthContext, require_user
 from tin_lite.code_storage import CodeStorage
-from tin_lite.db import Database, apply_migrations
 from tin_lite.domain import RunStatus, SideEffectConflictError, StaleGenerationError, WorkflowRun
 from tin_lite.mcp_server import create_mcp_app
 from tin_lite.procedures import (
@@ -441,27 +439,9 @@ async def test_invalid_metadata_or_checkpoint_never_causes_publication():
 
 @pytest.fixture
 async def publication_db():
-    """Real migrations/SQL in a disposable schema, never the configured product DB."""
-    dsn = os.environ.get("TIN_LITE_TEST_DATABASE_DSN")
-    if not dsn:
-        pytest.skip("set TIN_LITE_TEST_DATABASE_DSN for isolated Postgres contract tests")
-    schema = "publication_test_" + uuid4().hex
-    admin = await asyncpg.connect(dsn)
-    await admin.execute(f'CREATE SCHEMA "{schema}"')
-    database = Database(dsn)
-    try:
-        database._pool = await asyncpg.create_pool(
-            dsn, min_size=1, max_size=10, server_settings={"search_path": schema}
-        )
-        scoped_dsn = dsn + ("&" if "?" in dsn else "?") + f"search_path={schema}"
-        migrations = Path(__file__).parents[1] / "migrations"
-        assert "024_retained_procedure_output.sql" in await apply_migrations(scoped_dsn, migrations)
-        assert await apply_migrations(scoped_dsn, migrations) == []
+    """Real migrations/SQL in a disposable database, never the configured product DB."""
+    async with migrated_database(max_size=10) as database:
         yield database
-    finally:
-        await database.close()
-        await admin.execute(f'DROP SCHEMA "{schema}" CASCADE')
-        await admin.close()
 
 
 async def activity_fixture(database, *, review=False, isolated=False, created=False):

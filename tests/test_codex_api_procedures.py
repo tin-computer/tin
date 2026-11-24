@@ -926,9 +926,16 @@ def test_the_controller_enables_subagents_only_under_a_parallel_contract():
     assert module._own_thread({}, "lead")
 
 
-async def test_requests_in_flight_cannot_carry_a_run_past_its_token_stop(publication_db):
+async def test_requests_in_flight_cannot_carry_a_run_past_its_token_stop(
+    publication_db, monkeypatch
+):
+    from tin_lite import codex_api_relay
     from tin_lite.codex_api import PARALLEL_PROCEDURE_CONTRACT
 
+    # The request waits for the one in flight to settle, then is refused; a short wait
+    # proves the same refusal as the relay's 170 seconds.
+    monkeypatch.setattr(codex_api_relay, "PARALLEL_WAIT_SECONDS", 0.2)
+    monkeypatch.setattr(codex_api_relay, "PARALLEL_WAIT_STEP_SECONDS", 0.1)
     run, relay, client, sent = await setup_relay(publication_db)
     try:
         await upgrade_attempt(publication_db, run, PARALLEL_PROCEDURE_CONTRACT)

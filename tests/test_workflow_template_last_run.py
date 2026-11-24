@@ -1,37 +1,17 @@
 from __future__ import annotations
 
-import os
 from datetime import UTC, datetime, timedelta
-from pathlib import Path
 from uuid import uuid4
 
-import asyncpg
 import pytest
-
-from tin_lite.db import Database, apply_migrations
+from disposable_db import migrated_database
 
 
 @pytest.fixture
 async def template_db():
-    """Real migrations/SQL in a disposable schema, never the configured product DB."""
-    dsn = os.environ.get("TIN_LITE_TEST_DATABASE_DSN")
-    if not dsn:
-        pytest.skip("set TIN_LITE_TEST_DATABASE_DSN for isolated Postgres contract tests")
-    schema = "template_last_run_test_" + uuid4().hex
-    admin = await asyncpg.connect(dsn)
-    await admin.execute(f'CREATE SCHEMA "{schema}"')
-    database = Database(dsn)
-    try:
-        database._pool = await asyncpg.create_pool(
-            dsn, min_size=1, max_size=4, server_settings={"search_path": schema}
-        )
-        scoped_dsn = dsn + ("&" if "?" in dsn else "?") + f"search_path={schema}"
-        await apply_migrations(scoped_dsn, Path(__file__).parents[1] / "migrations")
+    """Real migrations/SQL in a disposable database, never the configured product DB."""
+    async with migrated_database(max_size=4) as database:
         yield database
-    finally:
-        await database.close()
-        await admin.execute(f'DROP SCHEMA "{schema}" CASCADE')
-        await admin.close()
 
 
 async def _insert_run(database, *, project_id, workflow_id, status, finished_at):
