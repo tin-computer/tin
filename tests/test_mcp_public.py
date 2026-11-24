@@ -666,6 +666,9 @@ def test_reviewed_public_catalog_coverage_and_explicit_exclusions():
         "intel.world_judge",
         # content.plan's planning agent; only content.plan starts it.
         "content.plan_research",
+        # A client's daily brief, saved by an operator, and its analyst; agent only.
+        "intel.daily",
+        "intel.client_judge",
     }
     assert {w.key for w in PUBLIC_WORKFLOWS if w.id in entries} | {
         "style.capture",
