@@ -28,6 +28,7 @@ from tin_lite.activity_lanes import (
     trusted_task_queue,
     workflow_runner,
 )
+from tin_lite.agent_api_relay import GeminiAgentRelay
 from tin_lite.awesome_submit_activities import AwesomeSubmitActivities
 from tin_lite.catalog import sync_builtin_workflows
 from tin_lite.character_design import MODEL_ROUTE as CHARACTER_MODEL_ROUTE
@@ -102,6 +103,8 @@ class RuntimeServices:
     output_resolution: OutputResolutionService
     studio: StudioService
     codex_api: CodexAPIRelay | None = None
+    # Another harness's model route (agent_harness); present when Tin holds the Gemini key.
+    agent_api: GeminiAgentRelay | None = None
 
 
 async def build_runtime(settings: Settings) -> RuntimeServices:
@@ -714,6 +717,11 @@ async def build_runtime(settings: Settings) -> RuntimeServices:
         studio=StudioService(settings=settings, database=database),
         codex_api=CodexAPIRelay(database=database, api_key=settings.luna_api_key.get_secret_value())
         if settings.luna_api_key is not None
+        else None,
+        agent_api=GeminiAgentRelay(
+            database=database, api_key=settings.gemini_api_key.get_secret_value()
+        )
+        if settings.gemini_api_key is not None
         else None,
     )
 

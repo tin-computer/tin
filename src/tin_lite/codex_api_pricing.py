@@ -261,6 +261,11 @@ def api_terms(
             request_maximum_input_bytes=contract["max_request_bytes"],
             request_maximum_nanos=request_maximum(contract),
         )
+    from tin_lite.agent_harness import selection_of
+
+    agent = selection_of(definition)
+    if agent is not None:
+        return _agent_terms(terms, definition, agent, session_budget=session_budget)
     if definition.get("procedure", {}).get("sandbox", {}).get("profile") == "studio":
         from tin_lite.studio_billing import CARD
 
@@ -281,6 +286,29 @@ def api_terms(
             codex_contract=session,
             request_maximum_input_bytes=session["max_request_bytes"],
         )
+        terms.pop("request_maximum_nanos")
+    return terms
+
+
+def _agent_terms(terms, definition, agent, *, session_budget):
+    """Terms for a procedure another harness runs (agent_harness): its own card and contract,
+    the same ceilings, funding and policies as a Codex procedure. Quotes issued before agents
+    existed never carry these, so there is no earlier shape to honor."""
+    from tin_lite.agent_harness import card_for, contract, request_maximum
+
+    card = card_for(agent)
+    session = session_budget and definition.get("executor") == "codex.procedure"
+    pinned = contract(agent, session=session)
+    terms = {
+        **terms,
+        "rate_card": card["id"],
+        "pricing": card,
+        "codex_contract": pinned,
+        "request_maximum_input_bytes": pinned["max_request_bytes"],
+        "request_maximum_nanos": request_maximum(pinned, card),
+    }
+    if session:
+        terms["funding"] = SESSION_FUNDING
         terms.pop("request_maximum_nanos")
     return terms
 
@@ -309,6 +337,11 @@ def issued_before_isolated_v3(quoted_terms, terms, definition):
 
 def price_response(card, record):
     """Only complete, internally consistent supplier facts admit a price."""
+    from tin_lite.agent_harness import AGENT_CARDS
+    from tin_lite.agent_harness import price_response as price_agent_response
+
+    if card in AGENT_CARDS:
+        return price_agent_response(card, record)
     usage = record.get("usage")
     if (
         (card != RATE_CARD and card not in HISTORICAL_RATE_CARDS)

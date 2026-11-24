@@ -25,6 +25,7 @@ from e2b import (
     TimeoutException,
 )
 
+from tin_lite.agent_harness import agent_ready_line, is_agent_contract
 from tin_lite.procedures import RUN_ID_ENV, SandboxProfile, procedure_state_dir
 from tin_lite.proxy_grants import proxy_grant
 from tin_lite.rollouts import (
@@ -682,7 +683,17 @@ class E2BRuntime:
                 )
                 if ready.stdout.strip() != "TIN_ISOLATION_READY_V1":
                     raise RuntimeError("isolated sandbox did not confirm its runtime protocol")
-                if run_input.api_url is not None:
+                if run_input.api_url is not None and is_agent_contract(run_input.api_contract):
+                    # Another harness: the image must carry its pinned CLI and the helper that
+                    # starts it as the worker. An older image fails closed before any spend.
+                    ready = await sandbox.commands.run(
+                        "/usr/bin/sudo -n /opt/tin-lite/isolated-procedure check-agent",
+                        timeout=45,
+                    )
+                    expected = agent_ready_line(run_input.api_contract)
+                    if ready.stdout.strip() != expected:
+                        raise RuntimeError("isolated sandbox lacks the pinned agent harness")
+                elif run_input.api_url is not None:
                     protocol = (run_input.api_contract or {}).get("protocol")
                     version = {
                         "tin-codex-api-v2": 2,

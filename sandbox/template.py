@@ -16,6 +16,28 @@ STUDIO_API_TEMPLATE_ALIAS = "tin-lite-codex-studio-api"
 # the CLI explicitly; the model every sandbox runs is pinned in codex_config.toml next to it.
 CODEX_CLI_VERSION = "0.159.1"
 
+# Google's Antigravity CLI, the harness for procedures that name it (agent_harness). Pinned by
+# the release archive's own digest from Google's release manifest; auto-update is disabled at
+# run time and its update host is fenced. Keep these three equal to agent_harness.
+ANTIGRAVITY_VERSION = "1.5.16"
+ANTIGRAVITY_URL = (
+    "https://storage.googleapis.com/antigravity-public/antigravity-cli/"
+    "1.5.16-5250855658717184/linux-x64/cli_linux_x64.tar.gz"
+)
+ANTIGRAVITY_SHA512 = (
+    "3dee9f26e298156db673f6ce2a0f5dfed5b30006e04ceb9809c68070e7b717587b33a3da0f8bc2eda45af81a"
+    "50bc8b14c82b28ae5832bcfe3e7fd49397117b31"
+)
+_ANTIGRAVITY_INSTALL = (
+    f"curl -fsSL -o /tmp/agy.tar.gz {ANTIGRAVITY_URL} && "
+    f'echo "{ANTIGRAVITY_SHA512}  /tmp/agy.tar.gz" | sha512sum -c - && '
+    "tar -xzf /tmp/agy.tar.gz -C /tmp antigravity && "
+    "install -o root -g root -m 0755 /tmp/antigravity /usr/local/bin/agy && "
+    "rm -f /tmp/agy.tar.gz /tmp/antigravity && "
+    f'test "$(AGY_CLI_DISABLE_AUTO_UPDATE=true HOME=/root /usr/local/bin/agy --version)" = '
+    f'"{ANTIGRAVITY_VERSION}"'
+)
+
 # Pinned browser-profile dependencies. A template rebuild is the only way any of these move.
 CAMOUFOX_PACKAGE_VERSION = "0.5.5"
 CAMOUFOX_BROWSER_BUILD = "official/152.0.4-beta.29"
@@ -239,6 +261,13 @@ def isolated_template():
             "/opt/tin-lite/codex_api_config.py",
             user="root",
             mode=0o644,
+        )
+        .run_cmd(_ANTIGRAVITY_INSTALL, user="root")
+        .copy(
+            "sandbox/agent_procedure.py",
+            "/opt/tin-lite/agent-procedure",
+            user="root",
+            mode=0o755,
         )
     )
 

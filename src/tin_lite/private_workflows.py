@@ -165,6 +165,7 @@ def validate_private_definition(definition):
             "project_skills",
             "sandbox",
             "services",
+            "agent",
         },
         "private procedure",
     )

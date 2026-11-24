@@ -111,6 +111,8 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             await runtime.model_router.close()
             if runtime.codex_api is not None:
                 await runtime.codex_api.close()
+            if runtime.agent_api is not None:
+                await runtime.agent_api.close()
             await runtime.database.close()
             await auth.close()
             await plugin_auth.close()

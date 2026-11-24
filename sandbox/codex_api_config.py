@@ -175,6 +175,12 @@ if __name__ == "__main__":
         print("TIN_CODEX_API_READY_V4")
     elif sys.argv[1:] == ["--check-v5"]:
         print("TIN_CODEX_API_READY_V5")
+    elif sys.argv[1:] == ["--worker-proxy-only"]:
+        # Another agent harness (agent_procedure): no Codex configuration, only the run's
+        # forward-proxy grant for the worker's commands.
+        if os.environ.get("TIN_PROCEDURE_ISOLATED") != "1":
+            raise ValueError("agent procedures require isolation")
+        write_worker_proxy(WORKER_PROXY, os.environ)
     else:
         configure(Path("/home/user/.codex/config.toml"), os.environ)
         write_worker_proxy(WORKER_PROXY, os.environ)

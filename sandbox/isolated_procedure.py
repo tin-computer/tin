@@ -11,6 +11,7 @@ from __future__ import annotations
 import json
 import os
 import pwd
+import shutil
 import signal
 import stat
 import subprocess
@@ -29,6 +30,26 @@ STUDIO_CONFIG = Path("/home/user/.tin-lite/studio-worker.json")
 PROXY_CONFIG = Path("/home/user/.tin-lite/proxy-worker.json")
 PROXY_KEYS = frozenset(
     {"HTTP_PROXY", "HTTPS_PROXY", "http_proxy", "https_proxy", "NO_PROXY", "no_proxy"}
+)
+# Another agent harness (Tin's agent_harness): Google's Antigravity CLI, pinned in the image.
+AGENT_CONFIG = Path("/home/user/.tin-lite/agent-worker.json")
+AGENT_BINARY = Path("/usr/local/bin/agy")
+AGENT_VERSION = "1.5.16"
+AGENT_HOME = Path("/home/tin-work")
+AGENT_SKILLS = Path("/home/user/.agents/skills")
+AGENT_REQUIRED = frozenset(
+    {"GEMINI_API_KEY", "GOOGLE_GEMINI_BASE_URL", "TIN_AGENT_MODEL", "TIN_AGENT_SCHEMA"}
+)
+AGENT_OPTIONAL = frozenset(
+    {"TIN_RUN_TOOLS_URL", "TIN_RUN_TOOLS_GRANT", "TIN_RUN_ID", "TIN_AGENT_STATE_DIR"}
+)
+# The harness's own telemetry and self-update hosts, and Gemini itself, go direct instead of
+# through the run's proxy, so the egress fence refuses them: the harness reaches Gemini only
+# through Tin's relay, reports nothing to Google and never replaces its pinned binary.
+AGENT_FENCED_HOSTS = (
+    "play.googleapis.com",
+    "generativelanguage.googleapis.com",
+    "antigravity-cli-auto-updater-974169037036.us-central1.run.app",
 )
 
 
@@ -86,7 +107,110 @@ def protect_runtime() -> None:
                 os.chmod(path, stat.S_IMODE(info.st_mode) & ~0o022)
 
 
-def worker_command(*command: str) -> list[str]:
+def agent_values() -> dict[str, str]:
+    """This run's harness settings, written only by the controller. The model grant in it is
+    the run's: it expires with the run, buys only its pinned model and stops at its ceiling."""
+    value = trusted_config(AGENT_CONFIG, "agent")
+    if value is None or not AGENT_REQUIRED <= set(value) <= AGENT_REQUIRED | AGENT_OPTIONAL:
+        raise RuntimeError("invalid agent configuration")
+    url = value["GOOGLE_GEMINI_BASE_URL"]
+    if (
+        not url.startswith("https://")
+        or "/internal/agent-api/" not in url
+        or not url.endswith("/gemini")
+    ):
+        raise RuntimeError("invalid agent model route")
+    model = value["TIN_AGENT_MODEL"]
+    if not model.startswith("gemini-") or not all(c.isalnum() or c in ".-" for c in model):
+        raise RuntimeError("invalid agent model")
+    schema = Path(value["TIN_AGENT_SCHEMA"])
+    if schema.parent != Path("/home/user/.agents") or not schema.is_file():
+        raise RuntimeError("invalid agent result schema")
+    if ("TIN_RUN_TOOLS_URL" in value) != ("TIN_RUN_TOOLS_GRANT" in value) or not value.get(
+        "TIN_RUN_TOOLS_URL", "https://"
+    ).startswith("https://"):
+        raise RuntimeError("invalid agent run tools")
+    if value.get("TIN_AGENT_STATE_DIR", "/home/user/project") not in {
+        "/home/user/project",
+        "/home/user/state",
+    }:
+        raise RuntimeError("invalid agent state directory")
+    return value
+
+
+def prepare_agent(value: dict[str, str]) -> None:
+    """The worker's harness home: settings, Tin's skills (read-only) and the run's tools."""
+    worker = pwd.getpwnam(WORKER)
+    config = AGENT_HOME / ".gemini" / "config"
+    cli = AGENT_HOME / ".gemini" / "antigravity-cli"
+    for path in (AGENT_HOME / ".gemini", config, cli, AGENT_HOME / "scratch"):
+        path.mkdir(parents=True, exist_ok=True)
+        os.chown(path, worker.pw_uid, worker.pw_gid)
+        os.chmod(path, 0o755)  # noqa: S103 — the worker's own harness home
+    skills = config / "skills"
+    if skills.exists() or skills.is_symlink():
+        raise RuntimeError("agent skills already exist")
+    # A copy the worker can read and not change: instructions are Tin's, not the agent's.
+    shutil.copytree(AGENT_SKILLS, skills, symlinks=False)
+    for parent, _directories, files in os.walk(skills):
+        os.chown(parent, 0, 0)
+        os.chmod(parent, 0o755)  # noqa: S103 — readable, never writable, instructions
+        for name in files:
+            os.chown(Path(parent) / name, 0, 0)
+            os.chmod(Path(parent) / name, 0o644)
+    settings = {
+        "modelProvider": "gemini",
+        "toolPermission": "always-proceed",
+        "allowNonWorkspaceAccess": True,
+        "enableTerminalSandbox": False,
+    }
+    servers = {}
+    if "TIN_RUN_TOOLS_URL" in value:
+        servers["tin-run"] = {
+            "serverUrl": value["TIN_RUN_TOOLS_URL"],
+            "headers": {"Authorization": f"Bearer {value['TIN_RUN_TOOLS_GRANT']}"},
+            "timeoutSeconds": 300,
+        }
+    for path, content in (
+        (cli / "settings.json", settings),
+        (config / "mcp_config.json", {"mcpServers": servers}),
+    ):
+        path.write_text(json.dumps(content))
+        os.chown(path, worker.pw_uid, worker.pw_gid)
+        os.chmod(path, 0o600)
+
+
+def agent_command(value: dict[str, str]) -> list[str]:
+    state = value.get("TIN_AGENT_STATE_DIR", "/home/user/project")
+    command = [
+        str(AGENT_BINARY),
+        "--input-format",
+        "stream-json",
+        "--output-format",
+        "stream-json",
+        "--model",
+        value["TIN_AGENT_MODEL"],
+        "--dangerously-skip-permissions",
+        "--json-schema",
+        value["TIN_AGENT_SCHEMA"],
+    ]
+    for directory in (state, "/home/user/repos", str(AGENT_HOME / "scratch")):
+        if directory != "/home/user/project" and Path(directory).is_dir():
+            command += ["--add-dir", directory]
+    environment = [
+        f"GEMINI_API_KEY={value['GEMINI_API_KEY']}",
+        f"GOOGLE_GEMINI_BASE_URL={value['GOOGLE_GEMINI_BASE_URL']}",
+        "AGY_CLI_DISABLE_AUTO_UPDATE=true",
+        # Google refuses some requests outright (429/503) and bills nothing for them; the
+        # relay admits a bounded number of identical retries.
+        "AGY_CLI_MODEL_API_MAX_RETRIES=4",
+    ]
+    if run_id := value.get("TIN_RUN_ID"):
+        environment.append(f"TIN_RUN_ID={run_id}")
+    return worker_command(*environment, *command, fenced_hosts=AGENT_FENCED_HOSTS)
+
+
+def worker_command(*command: str, fenced_hosts: tuple[str, ...] = ()) -> list[str]:
     # An allowlist, not an expanding credential denylist. No broker, storage, provider or
     # integration credential reaches commands or repository build hooks. The only grants
     # are this run's forward-proxy grant and, in Studio, its voice capability.
@@ -107,7 +231,12 @@ def worker_command(*command: str) -> list[str]:
         "GIT_CONFIG_VALUE_0=/home/user/project",
         "GIT_CONFIG_KEY_1=safe.directory",
         "GIT_CONFIG_VALUE_1=/home/user/state",
-        *proxy_environment(),
+        *(
+            f"{entry},{','.join(fenced_hosts)}"
+            if fenced_hosts and entry.split("=", 1)[0] in {"NO_PROXY", "no_proxy"}
+            else entry
+            for entry in proxy_environment()
+        ),
         *studio_environment(),
         *command,
     ]
@@ -240,6 +369,26 @@ def main() -> None:
         if version.strip() != "codex-cli 0.159.1":
             raise RuntimeError("isolated runtime requires the pinned Codex CLI")
         print("TIN_ISOLATION_READY_V1")
+    elif action == "check-agent" and not args:
+        protect_runtime()
+        info = AGENT_BINARY.lstat()
+        if info.st_uid != 0 or not stat.S_ISREG(info.st_mode) or info.st_mode & 0o022:
+            raise RuntimeError("agent harness is not protected")
+        version = subprocess.check_output(  # noqa: S603 — the fixed pinned binary
+            [str(AGENT_BINARY), "--version"],
+            text=True,
+            env={"PATH": "/usr/bin:/bin", "HOME": "/root", "AGY_CLI_DISABLE_AUTO_UPDATE": "true"},
+            timeout=30,
+        )
+        if version.strip() != AGENT_VERSION:
+            raise RuntimeError("isolated runtime requires the pinned agent harness")
+        print(f"TIN_AGENT_READY_V1 antigravity {AGENT_VERSION}")
+    elif action == "agent" and not args:
+        # The whole harness runs as the worker; its stdin/stdout are the controller's pipes.
+        value = agent_values()
+        prepare_agent(value)
+        os.chdir("/home/user/project")
+        os.execv("/usr/bin/setpriv", agent_command(value))  # noqa: S606 — drops identity first
     elif action == "prepare" and not args:
         prepare()
     elif action == "serve" and not args:

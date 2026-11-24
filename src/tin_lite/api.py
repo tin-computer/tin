@@ -27,6 +27,7 @@ from pydantic import (
 )
 
 from tin_lite import analytics, project_task_control
+from tin_lite.agent_api_relay import router as agent_api_router
 from tin_lite.ai_visibility import AIVisibilityStore
 from tin_lite.auth import AuthContext, require_user
 from tin_lite.billing_contracts import BillingError
@@ -169,6 +170,7 @@ class _RunSafeRoute(APIRoute):
 router = APIRouter(route_class=_RunSafeRoute)
 
 router.include_router(codex_api_router)
+router.include_router(agent_api_router)
 router.include_router(private_workflow_router)
 router.include_router(content_program_router)
 router.include_router(content_draft_router)
