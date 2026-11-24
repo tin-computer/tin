@@ -1311,7 +1311,8 @@ def create_mcp_app(
     ) -> dict[str, Any]:
         """List a project's people, best ICP fit first: who they are and their company, the ICP
         profile they come closest to, their fit (1 not a fit to 4 strong fit, named in
-        `ratings`) and intent (hot, warm or cold) with who set them and why, whether they are a
+        `ratings`) and intent (hot, warm or cold, cooled by quiet days: hot reads warm after 7, any
+        cold after 30) with who set them and why, whether they are a
         customer, their newest note, and way_in: who on the team is connected to them or knows
         someone at their company ("🤝 Emre knows Mira Chen (Treasury) at Valley Bank"), read
         from People alone, or null when there's no path.

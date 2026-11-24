@@ -689,7 +689,11 @@ window.TinPeople = (() => {
         "fit",
       ));
       const intent = field(person, "intent");
-      if (intent?.value) rows.push(fieldRow("Intent", `<strong>${intentHtml(intent.value)}</strong>`, lineage(intent)));
+      // Intent cools with quiet days; the panel says what Tin rated and since when it's quiet.
+      const cooled = intent?.rated && intent.rated !== intent.value
+        ? `<div class="person-field-notes"><p>Rated ${escape(intent.rated)}; nothing new since ${escape(day(intent.active_at))}, so it reads ${escape(intent.value)} now.</p></div>`
+        : "";
+      if (intent?.value) rows.push(fieldRow("Intent", `<strong>${intentHtml(intent.value)}</strong>${cooled}`, lineage(intent)));
     }
     // A request of the viewer's waiting to go out says when, and can be cancelled (REQ-C2).
     const queued = person.request === "queued";

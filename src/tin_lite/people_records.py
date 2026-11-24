@@ -42,6 +42,27 @@ RELATIONSHIPS = ("connected", "pending", "none")
 WEB_TIERS = ("lead", "new_user", "user")
 # How much interest a person shows now, as the ICP rating judged it from what they did.
 INTENTS = ("hot", "warm", "cold")
+# Intent cools with time since the person last did something (a visit, reaction, comment or
+# profile view): hot reads as warm after HOT_DAYS, anything as cold after WARM_DAYS. The rated
+# value stays as the model set it; a new signal gets them rated again.
+HOT_DAYS = 7
+WARM_DAYS = 30
+ACTIVE = (*SIGNALS, "visited")
+
+
+def cooled_intent(intent: str | None, active_at: datetime | None, now: datetime) -> str | None:
+    """The intent as it reads now: the rated one cooled by days since their last activity."""
+
+    if intent not in INTENTS or active_at is None:
+        return intent
+    age = now - active_at
+    if age > timedelta(days=WARM_DAYS):
+        return "cold"
+    if age > timedelta(days=HOT_DAYS) and intent == "hot":
+        return "warm"
+    return intent
+
+
 # How their last visit arrived: an ad click, a search engine, an AI assistant, a social site,
 # another site, or no referrer. The value's reason names it ("Google Ads, keyword …").
 WEB_SOURCES = ("ad", "organic", "ai", "social", "referral", "direct")
@@ -867,6 +888,8 @@ async def directory(
     # Who visited, and whose only visits were their company's (RB2B named the company, and Tin
     # found them there): the Visitors segment, and the panel's mark.
     visits: dict[UUID, set[bool]] = {}
+    # When each person last did something, for how warm their intent still is.
+    active: dict[UUID, datetime] = {}
     for row in await conn.fetch(
         """SELECT COALESCE(r.merged_into, r.id) AS person, e.kind, e.occurred_at,
                e.recorded_at, e.detail->>'posted_at' AS posted_at, e.detail->>'member' AS member,
@@ -877,6 +900,8 @@ async def directory(
         only,
     ):
         at = _when(row)
+        if row["kind"] in ACTIVE and at > active.get(row["person"], at - timedelta(1)):
+            active[row["person"]] = at
         company_visit = row["kind"] == "visited" and row["source"] == COMPANY_VISIT
         if row["kind"] == "visited":
             visits.setdefault(row["person"], set()).add(company_visit)
@@ -907,6 +932,7 @@ async def directory(
         row = touch.pop("row")
         touch["member"] = _event_member(row["member"], row["run_id"], runs)
     notes = await _notes(conn, project_id, only)
+    now = datetime.now(UTC)
     result = []
     for person in listed:
         written = notes.get(person["id"], [])
@@ -918,6 +944,14 @@ async def directory(
             definition=definition,
             noted=max((n["updated_at"] for n in written), default=None),
         )
+        intent = fields.get("intent")
+        if intent and intent.get("value"):
+            at = active.get(person["id"])
+            now_reads = cooled_intent(intent["value"], at, now)
+            if now_reads != intent["value"]:
+                # Shown as it reads now; the panel says what Tin rated and when they went quiet.
+                fields["intent"] = {**intent, "value": now_reads, "rated": intent["value"],
+                                    "active_at": at}  # fmt: skip
         relationship = mine.get(person["id"])
         if relationship:
             fields["linkedin_relationship"] = {

@@ -41,9 +41,12 @@ MEANS = {
 }
 INTENTS = records.INTENTS
 INTENT_MEANS = {
-    "hot": "what they did says they are looking at this now",
-    "warm": "some interest, nothing pressing",
-    "cold": "no sign of interest beyond being seen",
+    "hot": "looking at this now: they asked for a demo or contact, came back several times "
+    "within days, or searched the brand and read pricing",
+    "warm": "some interest, nothing pressing: they read product, solution or pricing pages on "
+    "one visit, or engaged with a post",
+    "cold": "no sign of interest beyond being seen: the homepage or a blog post only, a long "
+    "idle single page, or a match you doubt",
 }
 # People rated this or higher count as fitting: the People segment and connection requests.
 FIT_SHOWN = 3
