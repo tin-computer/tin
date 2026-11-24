@@ -23,9 +23,10 @@ each weekday.
    - Reads the ICP file at the project's head: `strategy/ICP.md`, else
      `context/linkedin/ICP.md`, first 8 KB.
    - Each `##` heading names a profile. The scores' definition is the file's path, a hash of
-     its text and the scorer's version (`strategy/ICP.md@<hash>:v2`), so editing the ICP or
-     changing how Tin scores marks old scores stale and a run rescores them. Other commits
-     don't.
+     its text and the scorer's version (`strategy/ICP.md@<hash>:v2`). Only the path and the
+     version decide whether a score is current (`people_records.rubric`): changing how Tin
+     scores, or moving the ICP to another file, marks old scores stale and a run rescores them.
+     Editing the ICP file never does; later ratings read the new words.
 2. **Posts.** One sandbox read (`linkedin_posts`) finds the member's own posts from the last
    90 days, up to 60. A failure here ends the run with its reason, such as an expired
    session or LinkedIn asking to verify the account.

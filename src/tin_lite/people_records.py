@@ -752,6 +752,17 @@ WRITERS = {
 }
 # LinkedIn shows each member their own relationship, from `record_relationships`.
 VIEW_FIELDS = ("icp", "icp_fit", "intent", "customer", "web_tier", "web_summary", "web_source")
+
+
+def rubric(definition: str | None) -> str:
+    """What a rating's definition says about how it was rated: the ICP file's path and the
+    scorer's version ("strategy/ICP.md:v3"), without the digest of the file's words. ICP files
+    are edited all the time with small changes; a rating goes stale only when the scorer
+    changes or the ICP moves to another file, never on an edit."""
+
+    return re.sub(r"@[^:]*", "", definition or "")
+
+
 # Values computed under a definition, such as the ICP file, go stale when it changes.
 DEFINED_FIELDS = ("icp", "icp_fit", "intent")
 POST = re.compile(r"urn:li:(?:activity|ugcPost|share):[0-9]{1,30}")
@@ -825,7 +836,11 @@ def _fields(
             by = (runs.get(value["set_by"]) or {}).get("by") or "Tin"
         stale = ""
         if key in DEFINED_FIELDS and not member:
-            if definition and value["definition"] and value["definition"] != definition:
+            if (
+                definition
+                and value["definition"]
+                and rubric(value["definition"]) != rubric(definition)
+            ):
                 stale = "definition"
             elif noted and noted > datetime.fromisoformat(value["set_at"]):
                 stale = "note"

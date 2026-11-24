@@ -30,7 +30,7 @@ from test_linkedin_engagers import (
 )
 from test_linkedin_per_member import TEAMMATE, add_teammate
 
-from tin_lite import people_icp
+from tin_lite import people_icp, people_rating
 from tin_lite import people_records as records
 from tin_lite.auth import AuthContext, require_user
 from tin_lite.people_api import router
@@ -86,14 +86,20 @@ async def test_the_list_shows_each_value_with_who_set_it_and_the_last_touch(coll
     assert one["last_touch"]["at"][:10] == item["published_at"][:10]
     assert one["added"]["by"] == "engagers"
 
-    # A changed ICP file marks every score old until the next run rescores it.
+    # Editing the ICP file, even adding a profile, never marks scores old; nor does the next
+    # run rate them again.
     changed = ICP + "\n## 3. Agencies\n\nBuyer: a CTO.\n"
     f.storage.repo.edit({"strategy/ICP.md": changed.encode()}, message="ICP")
     async with client(f) as http:
         people = by_name((await http.get(f"/api/projects/{f.project.id}/people")).json())
-    assert people["Person 1"]["fields"]["icp_fit"]["stale"] is True
-    assert people["Person 1"]["fields"]["icp"]["stale"] is True
+    assert people["Person 1"]["fields"]["icp_fit"]["stale"] is False
+    assert people["Person 1"]["fields"]["icp"]["stale"] is False
     assert people["Person 1"]["fields"]["linkedin_relationship"]["stale"] is False
+    icp = await people_icp.read_icp(f.storage, f.project)
+    async with f.db.pool.acquire() as conn:
+        assert not await people_icp.unscored(
+            conn, f.project.id, people_rating.definition_for(icp), limit=10
+        )
 
 
 async def test_a_change_in_how_tin_scores_marks_scores_old_until_a_run_rescores_them(
@@ -484,3 +490,10 @@ async def test_mcp_reads_and_corrects_people_like_a_member(collection_db, monkey
     outsider = mcp(f, monkeypatch, actor="user_outsider")
     with pytest.raises(ToolError, match="not_found"):
         await outsider.call_tool("list_people", {"project_id": project})
+
+
+def test_a_rating_is_current_under_any_edit_of_the_same_file_and_scorer():
+    a = "strategy/ICP.md@0123456789ab:v3"
+    assert records.rubric(a) == records.rubric("strategy/ICP.md@ba9876543210:v3")
+    assert records.rubric(a) != records.rubric("strategy/ICP.md@0123456789ab:v2")
+    assert records.rubric(a) != records.rubric("context/ICP.md@0123456789ab:v3")

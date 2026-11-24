@@ -89,7 +89,9 @@ author and when. Only the author edits or deletes a note. A merge moves notes to
 The ICP rating sends a person's five newest notes with their fields and what they did, and the
 instructions weigh a note above everything else. A note newer than a rating, or something new
 the person did, makes the rating stale: the view marks it, and `unscored` picks the person up
-again. A fit a member set is never sent to the model.
+again. A fit a member set is never sent to the model. Editing the ICP file doesn't: only a new
+scorer version or another ICP file marks ratings old (`people_records.rubric`), so routine
+edits never rate everyone again.
 
 ## Events
 
