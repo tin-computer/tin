@@ -44,14 +44,14 @@ INTENT_MEANS = {
     "hot": "looking at this now: they asked for a demo or contact, came back several times "
     "within days, or searched the brand and read pricing",
     "warm": "some interest, nothing pressing: they read product, solution or pricing pages on "
-    "one visit, or engaged with a post",
+    "one visit, engaged with a post, or starred the company's GitHub repository",
     "cold": "no sign of interest beyond being seen: the homepage or a blog post only, a long "
     "idle single page, or a match you doubt",
 }
 # People rated this or higher count as fitting: the People segment and connection requests.
 FIT_SHOWN = 3
-# What a person did that gets them rated: the LinkedIn signals and a visit to the site.
-SIGNALS = (*records.SIGNALS, "visited")
+# What a person did that gets them rated: the social signals and a visit to the site.
+SIGNALS = (*records.SOCIAL, "visited")
 ROUTE = ModelRoute(
     key="people.icp",
     provider=ProviderName.GEMINI,
@@ -74,7 +74,7 @@ MAX_OUTPUT_TOKENS = 24000
 # Per run: how many people, how many at once, and when to stop starting new ones (the rest are
 # rated by the next run).
 MAX_SCORED = 600
-PARALLEL = 6
+PARALLEL = 10
 SCORE_SECONDS = 15 * 60
 # What the model reads about one person.
 NOTES_READ = 5
@@ -187,9 +187,10 @@ def instructions(profiles: list[str]) -> str:
         "Fit and intent are null only when there is no name or role to judge.\n\n"
         "You get what Tin knows about the person: their name, headline and other fields, what "
         "they did (reacted to or commented on the team's LinkedIn posts, viewed a team "
-        "member's profile, visited the company's website, with the pages, where they came "
-        "from and how long they stayed) and the team's notes about them. A note is what the "
-        "team knows: it outweighs everything else.\n\n"
+        "member's profile, starred the company's GitHub repository, visited the company's "
+        "website, with the pages, where they came from and how long they stayed) and the "
+        "team's notes about them. A note is what the team knows: it outweighs everything "
+        "else.\n\n"
         "A name or company that came with a website visit was guessed by a service that "
         "matches IP addresses to people. It can be wrong: the company may only own the "
         "network, or be a former employer. Check before you rely on it. Don't name that "
@@ -314,9 +315,9 @@ async def unscored(
     only: UUID | None = None,
 ) -> list[dict]:
     """People who did something worth rating and have no current rating, leaving out those
-    this run already tried, oldest first. A rating is current under the ICP definition and
-    newer than the person's notes and what they did; a rating a member set is never
-    replaced. `only` limits it to one person."""
+    this run already tried: site visitors first, then oldest first. A rating is current under
+    the ICP definition and newer than the person's notes and what they did; a rating a member
+    set is never replaced. `only` limits it to one person."""
 
     rows = await conn.fetch(
         """SELECT r.id,
@@ -351,7 +352,9 @@ async def unscored(
                                  '-infinity'))
              AND NOT (r.id = ANY($4::uuid[]))
              AND ($9::uuid IS NULL OR r.id = $9)
-           ORDER BY r.created_at, r.id
+           ORDER BY EXISTS (SELECT 1 FROM record_events e WHERE e.project_id = $1
+                            AND e.record_id = r.id AND e.kind = 'visited') DESC,
+                    r.created_at, r.id
            LIMIT $3""",
         project_id,
         records.rubric(definition),

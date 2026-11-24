@@ -1,9 +1,10 @@
 """Rate everyone in People who did something and has no current rating.
 
 `people.rate` runs the one ICP rater (`people_rating`, the same call RB2B and the LinkedIn reads
-use) over the project's people who visited, reacted, commented or viewed a profile and have no
-rating under the current ICP file. It's how a project's earlier visitors get rated when it
-starts using the rater, and how everyone is re-rated after the ICP file changes. Imported
+use) over the project's people who visited, reacted, commented, viewed a profile or starred a
+repository and have no rating under the current ICP file. It's how a project's earlier visitors
+get rated when it starts using the rater, and how everyone is re-rated after the ICP file
+changes. Imported
 connections with nothing but a `connected` event are never picked up. A member's own rating is
 never replaced.
 
@@ -49,7 +50,7 @@ def report(people: list[dict], *, rated: int, left: int) -> str:
     else:
         lines += [
             f"Tin rated {rated} {'person' if rated == 1 else 'people'} who visited your site or "
-            "engaged on LinkedIn and had no rating under your current ICP file.",
+            "engaged on LinkedIn or GitHub and had no rating under your current ICP file.",
             "",
             "| Name | Headline | Fit | Intent | Why |",
             "| --- | --- | --- | --- | --- |",

@@ -33,21 +33,27 @@ EVENT_KINDS = (
     "withdrawn",
     "visited",
     "connected",
+    "starred",
 )
 # What a person did that shows interest in a member: reacting to or commenting on their posts,
 # viewing their profile. Tin proposes connection requests to people with any of these.
 SIGNALS = ("reacted", "commented", "viewed")
+# What a person did on a social network the project is on: the LinkedIn signals, and starring
+# one of the project's GitHub repositories. People's Social segment, and worth a rating.
+SOCIAL = (*SIGNALS, "starred")
+# A repository as `starred` events name it.
+REPOSITORY = re.compile(r"[A-Za-z0-9-]{1,39}/[A-Za-z0-9._-]{1,100}")
 RELATIONSHIPS = ("connected", "pending", "none")
 # What a person was on the project's site or product when a run last read them.
 WEB_TIERS = ("lead", "new_user", "user")
 # How much interest a person shows now, as the ICP rating judged it from what they did.
 INTENTS = ("hot", "warm", "cold")
-# Intent cools with time since the person last did something (a visit, reaction, comment or
-# profile view): hot reads as warm after HOT_DAYS, anything as cold after WARM_DAYS. The rated
-# value stays as the model set it; a new signal gets them rated again.
+# Intent cools with time since the person last did something (a visit, reaction, comment,
+# profile view or star): hot reads as warm after HOT_DAYS, anything as cold after WARM_DAYS.
+# The rated value stays as the model set it; a new signal gets them rated again.
 HOT_DAYS = 7
 WARM_DAYS = 30
-ACTIVE = (*SIGNALS, "visited")
+ACTIVE = (*SOCIAL, "visited")
 
 
 def cooled_intent(intent: str | None, active_at: datetime | None, now: datetime) -> str | None:
@@ -903,6 +909,8 @@ async def directory(
     # Who visited, and whose only visits were their company's (RB2B named the company, and Tin
     # found them there): the Visitors segment, and the panel's mark.
     visits: dict[UUID, set[bool]] = {}
+    # Who did something on a social network: the Social segment.
+    social: set[UUID] = set()
     # When each person last did something, for how warm their intent still is.
     active: dict[UUID, datetime] = {}
     for row in await conn.fetch(
@@ -920,6 +928,8 @@ async def directory(
         company_visit = row["kind"] == "visited" and row["source"] == COMPANY_VISIT
         if row["kind"] == "visited":
             visits.setdefault(row["person"], set()).add(company_visit)
+        if row["kind"] in SOCIAL:
+            social.add(row["person"])
         if row["person"] not in touches or at > touches[row["person"]]["at"]:
             touches[row["person"]] = {"kind": row["kind"], "at": at, "row": row}
             if company_visit:
@@ -992,6 +1002,8 @@ async def directory(
                 "visited": bool(visited),
                 # Found for their company's visit, never matched to a visit of their own.
                 "company_visit": visited == {True},
+                # Reacted, commented, viewed a profile or starred a repository.
+                "social": person["id"] in social,
                 "fields": fields,
                 "last_touch": touches.get(person["id"]),
                 "invited_at": invited.get(person["id"]),
@@ -1064,6 +1076,14 @@ async def person(
                 "kind": row["kind"],
                 "at": _when(row),
                 "reaction": reaction if isinstance(reaction, str) else None,
+                # The repository a `starred` event names.
+                "repository": (
+                    repository
+                    if row["kind"] == "starred"
+                    and isinstance(repository := detail.get("repository"), str)
+                    and REPOSITORY.fullmatch(repository)
+                    else ""
+                ),
                 "post_url": (
                     f"https://www.linkedin.com/feed/update/{post}/" if POST.fullmatch(post) else ""
                 ),
