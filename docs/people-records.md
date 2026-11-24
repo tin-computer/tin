@@ -59,7 +59,10 @@ The built-in fields are:
 - `icp_fit` (1 not a fit, 2 weak fit, 3 good fit, 4 strong fit; migration 086 turned the earlier
   0 to 1 scores into these by their bands) and `intent` (`hot`, `warm` or `cold`: how much
   interest they show now), both from the shared ICP rating (`people_rating`), each with its
-  reason;
+  reason. Intent cools when read (`cooled_intent`): with nothing new from the person (a visit,
+  reaction, comment or profile view), hot reads as warm after 7 days and anything as cold after
+  30. The stored rating is unchanged; the panel says what Tin rated and since when it's quiet,
+  and their next activity gets them rated again;
 - `customer` (`yes` or `no`), which only members set;
 - `web_tier` (`lead`, `new_user` or `user`: what they were on the site when visitor journeys last
   read them, with where they stopped as the reason) and `web_summary` (that run's one-line
