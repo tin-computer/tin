@@ -5,6 +5,8 @@ MCP uses; Tin's own workflows write the rest. A score computed under an older IC
 before a newer note, comes back marked stale.
 """
 
+import json
+from datetime import datetime
 from uuid import UUID
 
 from fastapi import APIRouter, Depends, HTTPException, Request, Response
@@ -50,9 +52,22 @@ async def _answer(call):
         raise HTTPException(error.status, error.message) from None
 
 
+def _plain(value):
+    if isinstance(value, datetime):
+        return value.isoformat()
+    if isinstance(value, UUID):
+        return str(value)
+    raise TypeError(f"{type(value).__name__} isn't JSON")
+
+
 @router.get("")
 async def list_people(project_id: UUID, request: Request, user: AuthContext = USER):
-    return await _answer(_people(request).list(project_id, user.clerk_user_id))
+    listed = await _answer(_people(request).list(project_id, user.clerk_user_id))
+    # Ten thousand imported connections: encoded in one pass rather than FastAPI's per-value walk.
+    return Response(
+        json.dumps(listed, default=_plain, ensure_ascii=False, separators=(",", ":")),
+        media_type="application/json",
+    )
 
 
 @router.get("/{person_id}")

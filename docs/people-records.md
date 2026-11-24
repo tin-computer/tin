@@ -102,23 +102,35 @@ that later merged counts under the survivor.
 
 `/people` lists a project's people for its members (`src/tin_lite/static/people.js`, Paper
 boards PEOPLE-A1, C1, C1b, E1–E3, N1 and N1b). It reads `GET /api/projects/{project_id}/people`
-(`people_records.directory`), at most 5,000 people, newest first, with the ICP file's profiles;
-the page sorts, searches, segments and pages them. The HTTP routes (`people_api.py`) and the MCP
+(`people_records.directory`), every person up to a 30,000 runaway guard, with the ICP file's
+profiles; the page sorts, searches, segments and pages them, fifty at a time. Past the guard,
+people with a score, a visit, a note or an event besides `connected` come first, so a member's
+imported connections never push visitors out. `people_records.people` reads each part once for
+the whole list (no per-person scans), so ten thousand connections list in about two seconds. The HTTP routes (`people_api.py`) and the MCP
 tools share `people_service.People`.
 
-- **Grid:** name (with "customer" for a customer), headline, ICP, ICP fit, notes, LinkedIn
-  (the viewer's own: connected or not, "—" where Tin hasn't read it for them) and last touch.
+- **Grid:** name, company, headline, ICP, ICP fit, intent ("🔥 hot", "🌤 warm", "🧊 cold";
+  sorted hot first, then people without one), notes and last touch.
+  - The name opens the person's LinkedIn profile in a new tab, when Tin knows it; the rest of
+    the row opens them in the panel. The row is one keyboard stop (Enter or Space opens the
+    person) and the name link the next. Beside the name: "customer", or the viewer's request on
+    its way: "queued", then "invited oct 16".
   - The full grid names an ICP by its short label ("ICP 1"), with the heading on hover; beside
     the panel it reads in full.
   - Notes shows the start of the newest note; hovering shows it whole, with who wrote it and
     how many notes there are. Search covers every note.
   - Last touch is the latest event and who was behind it (Paper TEAM-A): "reacted to you",
-    "reacted to Mira", "viewed you", "invited by Mira", "connected with you". LinkedIn gives no
+    "reacted to Mira", "viewed you", "invited by Mira", "connected with you", "connected to
+    Emre" (a teammate's own connection; "a teammate" without a name), "visited" and "company
+    visited". LinkedIn gives no
     time for a reaction, so a reaction counts on the post's date; a profile view counts on the
     day LinkedIn's "3d ago" gives.
-  - The segments are all people, ICP fit (3 or more) and not connected yet, plus Invited
-    once a [connection request](linkedin-requests.md) went out. The LinkedIn column reads
-    "Queued" for the viewer's request waiting to go out and "Invited oct 16" for one Tin sent.
+  - The segments are Visitors (anyone with a `visited` event or an "On the site" value, which
+    includes people found for a visit only their company made), Hot (intent hot), all people,
+    ICP fit (3 or more) and not connected yet, plus Invited once a
+    [connection request](linkedin-requests.md) went out and From ads. Visitors and Hot show
+    only when someone is in them. The page opens on Visitors when anyone has visited, else on
+    all people.
   - With the viewer's own LinkedIn reading on the project, a tick lane before the name lets
     them choose people to ask to connect (Paper REQ-A). Only people they can ask get a box:
     someone with a LinkedIn profile ID, not a customer, not their connection or invitee, and
@@ -127,16 +139,25 @@ tools share `people_service.People`.
     [connection requests](linkedin-requests.md)). When nobody on the list has a box, a line in
     the footer beside the count says why (REQ-A4): "Everyone on this list is already connected
     to you or invited". Neither moves the grid.
-- **Score hover:** the reason, the rating ("4 · Strong fit"), the ICP and when it was set. The
-  grid shows the intent after the fit.
+- **Score hover:** the reason, the rating ("4 · Strong fit"), the ICP and when it was set.
   - A score computed under an earlier `strategy/ICP.md`, or by an earlier version of the
     scoring, reads "old": the view compares each value's `definition` with the current one
     (`people_icp.read_icp`), and the next run that rates people rates it again. So does a score
     older than the person's newest note.
   - A member's fit reads "you" (or "team") beside the number, and the hover gives Tin's rating
     it replaced.
-- **Person panel:** `GET …/people/{person_id}` adds the timeline. The address keeps the person
-  (`?person=`), so a reload opens them again.
+- **Person panel:** `GET …/people/{person_id}` adds the timeline, `position`, `location` and
+  `way_in`. The address keeps the person (`?person=`), so a reload opens them again.
+  - Under the headline: position, company and location, leaving out what the headline already
+    says, and "Found for a company visit" for someone found at a company whose visit RB2B
+    matched only to the company (`visited` events with `source: rb2b_company` and no visit of
+    their own).
+  - **Way in:** the same 🤝 line the [RB2B Slack message](rb2b-webhook.md) uses, computed
+    server-side with `warm_paths.known` and `line`: who on the team is connected to them, or
+    knows someone at their company, by first name, "You" for the viewer, "Your team" without a
+    name. A second-degree path a past RB2B run of this project found (its `{run_id}:rb2b:warm`
+    receipt) shows when there's no direct connection. It reads People and receipts only, never
+    LinkedIn, and only this project's members and runs. No path, no row.
   - From 1240px wide the grid narrows beside the panel; below that the panel floats over the grid,
     so opening someone moves nothing, and on a phone it fills the screen.
   - Each field says who set it: the workflow's short name ("engagers"), or "you" and
@@ -162,15 +183,16 @@ tools share `people_service.People`.
 The menu shows People where the project is offered a workflow that finds people
 (`social.linkedin_engagers` or `social.linkedin_profile_viewers`, both gated per project, or
 `product.visitor_journeys`), and on `/people` itself. People a visitor journeys run named have an
-"On the site" segment and field; once any visit's source is known the grid adds a sortable
+"On the site" field (and are in Visitors); once any visit's source is known the grid adds a sortable
 "Came from" column (descending reads ads first) and a "From ads" segment, and MCP's
-`list_people` returns `came_from` and takes the `from_ads` segment. The LinkedIn column links to
-the person's profile when Tin knows it; the grid's Headline shows their last visit's summary, the panel
+`list_people` returns `came_from` and takes the `from_ads` segment. The grid's Headline shows their last visit's summary, the panel
 shows their email, and a visit in the timeline opens its replay with the suggested next step under
 it. Any project
 member can read, correct, annotate and forget the project's people; other users get 404.
 
-MCP gives a member's coding agent the same: `list_people` (segments, a search over notes),
+MCP gives a member's coding agent the same: `list_people` (segments including `visitors` and
+`hot`, a search over notes and companies, each row's `company`, `visited`, `company_visit` and
+`way_in` from People),
 `get_person`, `update_person` (a fit of 1 to 4, Tin's rating again, customer),
 `add_person_note`, `delete_person_note` (the caller's own) and `forget_person`, which needs the
 person's exact name.

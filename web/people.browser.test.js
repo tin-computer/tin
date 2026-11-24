@@ -5,7 +5,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import { chromium } from "playwright";
-import { openApp, serveApp, syntheticPeople, visitorPerson } from "./app-fixture.js";
+import { openApp, serveApp, syntheticPeople, visitorPeople, visitorPerson } from "./app-fixture.js";
 
 const title = page => page.locator("#main h1").first().evaluate(node => {
   const style = getComputedStyle(node);
@@ -64,7 +64,9 @@ test("the grid lists people best fit first, by segment, with the reason behind a
     assert.equal(await page.locator('.nav-item[data-view="people"]').getAttribute("class"), "nav-item is-active");
     const names = () => page.locator(".people-table tbody td.is-name").allTextContents();
     assert.deepEqual(await names(), ["Maya Lindqvist", "Daniel Okafor", "Sofia Marchetti", "Lea Fischer", "Hannah Kim"]);
-    assert.deepEqual(await page.locator(".people-sections .workflow-section").allTextContents(), ["All people 5", "ICP fit 3", "Not connected yet 3"]);
+    // Without visitors the tab opens on All people; Hot shows once anyone is hot.
+    assert.deepEqual(await page.locator(".people-sections .workflow-section").allTextContents(), ["Hot 1", "All people 5", "ICP fit 3", "Not connected yet 3"]);
+    assert.equal(await page.getByRole("tab", {name: "All people 5"}).getAttribute("aria-selected"), "true");
     // A score made under an older ICP file reads "old"; a person not scored shows a dash.
     assert.equal(await page.locator('td[data-fit="p-sofia"]').textContent(), "old3");
     assert.equal(await page.locator('td[data-fit="p-hannah"]').textContent(), "—");
@@ -142,7 +144,7 @@ test("a person opens beside a narrower grid, and the address keeps them", {timeo
     assert.equal(await page.locator(".people-table th.is-headline").isVisible(), false);
     assert.equal(await page.locator(".people-table th.is-touch").isVisible(), false);
     assert.equal(new URL(page.url()).searchParams.get("person"), "p-maya");
-    assert.match(await panel.locator(".person-section").first().innerText(), /Fields\s*4[\s\S]*ICP fit\s*4 · Strong fit\s*engagers · oct 15[\s\S]*Customer\s*No/);
+    assert.match(await panel.locator(".person-section").first().innerText(), /Fields\s*5[\s\S]*ICP fit\s*4 · Strong fit\s*engagers · oct 15[\s\S]*Intent\s*🔥 hot[\s\S]*Customer\s*No/);
     await panel.getByText("Reacted to your post with Insightful").waitFor();
     assert.equal(await panel.getByText("Viewed your profile").count(), 1);
     // The timeline names the teammate too (TEAM-C).
@@ -371,12 +373,15 @@ test("someone a visitor journeys run named reads by their email, their visit and
     // Visitor journeys finds people too, so People shows in the menu without LinkedIn.
     await page.locator('.nav-item[data-view="people"]').click();
     await page.locator(".people-table").waitFor();
+    // Anyone who visited makes Visitors the tab People opens on.
     assert.deepEqual(
       await page.locator(".people-sections .workflow-section").allTextContents(),
-      ["All people 6", "ICP fit 3", "Not connected yet 3", "On the site 1"],
+      ["Visitors 1", "Hot 1", "All people 6", "ICP fit 3", "Not connected yet 3"],
     );
-    await page.getByRole("tab", {name: "On the site 1"}).click();
+    assert.equal(await page.getByRole("tab", {name: "Visitors 1"}).getAttribute("aria-selected"), "true");
     const row = page.getByRole("row", {name: "Ana Souza"});
+    // Known by her email alone: no LinkedIn, so her name is plain text.
+    assert.equal(await row.locator("td.is-name a").count(), 0);
     assert.equal(await row.locator("td.is-headline").textContent(), "Signed up from the hackathon page, picked a plan, stopped at Connect GitHub.");
     await page.getByRole("tab", {name: "All people 6"}).click();
     await page.getByLabel("Search people").fill("fieldnotes.dev");
@@ -392,6 +397,197 @@ test("someone a visitor journeys run named reads by their email, their visit and
     assert.equal(await visit.getAttribute("target"), "_blank");
     assert.equal(await panel.locator(".person-event-note").textContent(), "Suggested: Email her a two-line guide to connecting GitHub.");
     assert.equal(await panel.locator("footer code").textContent(), "added oct 16 by visitors");
+    assert.deepEqual(errors, []);
+    await context.close();
+  } finally {
+    await browser.close();
+    server.close();
+  }
+});
+
+test("Visitors opens first, with each person's company and intent, sorted hot first", {timeout: 120000}, async () => {
+  const {server, base} = await serveApp({engagers: true, people: [...syntheticPeople(), ...visitorPeople()]});
+  const browser = await chromium.launch({headless: true});
+  try {
+    const {page, context, errors} = await openApp(browser, base, {url: "/people"});
+    await page.locator(".people-table").waitFor();
+    const names = () => page.locator(".people-table tbody td.is-name").allInnerTexts();
+    assert.deepEqual(
+      await page.locator(".people-sections .workflow-section").allTextContents(),
+      ["Visitors 2", "Hot 2", "All people 9", "ICP fit 5", "Not connected yet 3", "From ads 1"],
+    );
+    // RB2B's visitor and the person found for their company's visit; imported connections wait in All people.
+    assert.equal(await page.getByRole("tab", {name: "Visitors 2"}).getAttribute("aria-selected"), "true");
+    assert.deepEqual(await names(), ["Rosa Alvarez", "Omar Haddad"]);
+    // LinkedIn has no column of its own: the name is the way there.
+    const headers = await page.locator(".people-table thead th").allInnerTexts();
+    assert.deepEqual(headers.map(text => text.trim()), ["Name", "Company", "Headline", "ICP", "ICP fit", "Intent", "Notes", "Came from", "Last touch"]);
+    assert.equal(await page.locator(".people-table th.is-linkedin").count(), 0);
+    const rosa = page.getByRole("row", {name: "Rosa Alvarez"});
+    assert.equal(await rosa.locator("td.is-company").innerText(), "Valley Bank");
+    assert.equal(await rosa.locator("td.is-intent").innerText(), "🔥 hot");
+    // Intent has its own column; the fit cell holds only the number.
+    assert.equal(await rosa.locator("td.is-fit").innerText(), "4");
+    assert.equal(await page.getByRole("row", {name: "Omar Haddad"}).locator("td.is-touch").innerText(), "oct 19 · company visited");
+    assert.equal(await rosa.locator("td.is-touch").innerText(), "oct 20 · visited");
+
+    await page.getByRole("tab", {name: "Hot 2"}).click();
+    assert.deepEqual(await names(), ["Maya Lindqvist", "Rosa Alvarez"]);
+    await page.getByRole("tab", {name: "All people 9"}).click();
+    await page.getByRole("button", {name: "Intent"}).click();
+    // Hot, warm, cold, then no intent; names break ties.
+    assert.deepEqual((await page.locator(".people-table tbody td.is-intent").allInnerTexts()).slice(0, 5), ["🔥 hot", "🔥 hot", "🌤 warm", "🌤 warm", "🧊 cold"]);
+    assert.deepEqual((await names()).slice(0, 2), ["Maya Lindqvist", "Rosa Alvarez"]);
+    assert.equal(await page.locator(".people-table th.is-intent").getAttribute("aria-sort"), "descending");
+    await page.getByRole("button", {name: "Company"}).click();
+    // Companies A to Z, people without one last.
+    assert.deepEqual(await page.locator(".people-table tbody td.is-company").allInnerTexts(), ["Fieldline", "Lumen", "Northwind Freight", "Patchbay", "Paywise", "Quanta Labs", "Valley Bank", "—", "—"]);
+    // Search reads the company too.
+    await page.getByLabel("Search people").fill("northwind");
+    assert.deepEqual(await names(), ["Omar Haddad"]);
+    assert.deepEqual(errors, []);
+    await context.close();
+  } finally {
+    await browser.close();
+    server.close();
+  }
+});
+
+// The name is a link to LinkedIn, in a new tab; the row around it, a separate stop for the keyboard,
+// opens the person beside the grid.
+test("the name opens LinkedIn in a new tab, and the rest of the row opens the person", {timeout: 120000}, async () => {
+  const {server, base} = await serveApp({engagers: true});
+  const browser = await chromium.launch({headless: true});
+  try {
+    const {page, context, errors} = await openApp(browser, base, {url: "/people"});
+    await page.locator(".people-table").waitFor();
+    const row = page.getByRole("row", {name: "Maya Lindqvist"});
+    const link = row.getByRole("link", {name: "Maya Lindqvist on LinkedIn (opens in a new tab)"});
+    assert.equal(await link.getAttribute("href"), "https://www.linkedin.com/in/p-maya");
+    assert.equal(await link.getAttribute("target"), "_blank");
+    assert.equal(await link.getAttribute("rel"), "noopener noreferrer");
+
+    // Clicking the name opens LinkedIn and leaves the panel shut.
+    const [tab] = await Promise.all([context.waitForEvent("page"), link.click()]);
+    await tab.close();
+    assert.equal(await page.locator("#person-panel").count(), 0);
+    // Anywhere else on the row, even the name's cell past the name, opens the person.
+    await row.locator("td.is-name").click({position: {x: 200, y: 20}});
+    await page.locator("#person-panel h2").getByText("Maya Lindqvist").waitFor();
+    await page.keyboard.press("Escape");
+    await page.locator("aside.person-panel").waitFor({state: "detached"});
+
+    // The keyboard: the row is one stop (Enter opens the person), the name the next.
+    await row.focus();
+    await page.keyboard.press("Enter");
+    await page.locator("#person-panel h2").getByText("Maya Lindqvist").waitFor();
+    await page.keyboard.press("Escape");
+    await page.locator("aside.person-panel").waitFor({state: "detached"});
+    assert.equal(await page.evaluate(() => document.activeElement.dataset.person), "p-maya");
+    await page.keyboard.press("Tab");
+    assert.equal(await page.evaluate(() => document.activeElement.getAttribute("aria-label")), "Maya Lindqvist on LinkedIn (opens in a new tab)");
+    const [again] = await Promise.all([context.waitForEvent("page"), page.keyboard.press("Enter")]);
+    await again.close();
+    assert.equal(await page.locator("#person-panel").count(), 0);
+    assert.deepEqual(errors, []);
+    await context.close();
+  } finally {
+    await browser.close();
+    server.close();
+  }
+});
+
+test("the panel names the way in, where they work, and a visit only their company made", {timeout: 120000}, async () => {
+  const {server, base} = await serveApp({engagers: true, people: [...syntheticPeople(), ...visitorPeople()]});
+  const browser = await chromium.launch({headless: true});
+  try {
+    const {page, context, errors} = await openApp(browser, base, {url: "/people"});
+    await page.locator(".people-table").waitFor();
+    const panel = page.locator("#person-panel");
+    const field = label => panel.locator(".person-field", {has: page.locator(".person-field-line > span", {hasText: new RegExp(`^${label}$`)})});
+
+    await page.getByRole("row", {name: "Rosa Alvarez"}).locator("td.is-headline").click();
+    await field("Way in").waitFor();
+    // The same 🤝 line Slack posts, from People.
+    assert.match(await field("Way in").innerText(), /^Way in\s*🤝 Emre knows Mira Chen \(Treasury\) at Valley Bank$/);
+    assert.match(await field("Intent").innerText(), /Intent\s*🔥 hot/);
+    // Her headline already says her role and company, so only where she lives is added.
+    assert.equal(await panel.locator(".person-panel-work").innerText(), "Austin, Texas");
+    assert.equal(await panel.locator(".person-panel-found").count(), 0);
+
+    // Beside the panel the grid is compact; another row opens from its ICP cell.
+    await page.getByRole("row", {name: "Omar Haddad"}).locator("td.is-icp").click();
+    await panel.locator(".person-panel-found").waitFor();
+    assert.equal(await panel.locator(".person-panel-found").innerText(), "Found for a company visit");
+    assert.equal(await panel.locator(".person-panel-work").innerText(), "Chicago, Illinois");
+    // No path, no row.
+    assert.equal(await field("Way in").count(), 0);
+
+    // Someone with no path to them has no Way in row.
+    await page.getByRole("tab", {name: "All people 9"}).click();
+    await page.getByRole("row", {name: "Maya Lindqvist"}).locator("td.is-icp").click();
+    await panel.getByText("Reacted to your post with Insightful").waitFor();
+    assert.equal(await field("Way in").count(), 0);
+    assert.deepEqual(errors, []);
+    await context.close();
+  } finally {
+    await browser.close();
+    server.close();
+  }
+});
+
+// A connection of a teammate reads with their first name, or "a teammate"; "you" is only the
+// viewer's own.
+test("a teammate's connection is named, not called yours", {timeout: 120000}, async () => {
+  const {server, base} = await serveApp({engagers: true, people: [...syntheticPeople(), ...visitorPeople()]});
+  const browser = await chromium.launch({headless: true});
+  try {
+    const {page, context, errors} = await openApp(browser, base, {url: "/people"});
+    await page.locator(".people-table").waitFor();
+    await page.getByRole("tab", {name: "All people 9"}).click();
+    const touch = name => page.getByRole("row", {name}).locator("td.is-touch").innerText();
+    assert.equal(await touch("Inês Costa"), "oct 2 · connected to Emre");
+    assert.equal(await touch("Tom Becker"), "sep 28 · connected to a teammate");
+    assert.equal(await touch("Maya Lindqvist"), "oct 13 · reacted to you");
+    await page.getByRole("row", {name: "Inês Costa"}).locator("td.is-headline").click();
+    const panel = page.locator("#person-panel");
+    await panel.getByText("🤝 Emre is already connected").waitFor();
+    assert.equal(await panel.getByText("Connected with Emre on LinkedIn").count(), 1);
+    assert.equal(await panel.getByText(/with you/).count(), 0);
+    await page.getByRole("row", {name: "Tom Becker"}).locator("td.is-icp").click();
+    await panel.getByText("🤝 Your team is already connected").waitFor();
+    assert.equal(await panel.getByText("Connected with a teammate on LinkedIn").count(), 1);
+    assert.deepEqual(errors, []);
+    await context.close();
+  } finally {
+    await browser.close();
+    server.close();
+  }
+});
+
+// Ten thousand imported connections: the grid shows fifty at a time and stays quick to sort and search.
+test("a list of ten thousand people stays paged and quick", {timeout: 120000}, async () => {
+  const people = syntheticPeople();
+  for (let index = 0; index < 10500; index++) {
+    people.push({...structuredClone(people[4]), id: `p-conn-${index}`, name: `Connection ${String(index).padStart(5, "0")}`, company: `Company ${index % 700}`, fields: {}, last_touch: {kind: "connected", at: "2026-11-20T10:00:00Z", who: "you"}});
+  }
+  const {server, base} = await serveApp({engagers: true, people: [...people, ...visitorPeople()]});
+  const browser = await chromium.launch({headless: true});
+  try {
+    const {page, context, errors} = await openApp(browser, base, {url: "/people"});
+    await page.locator(".people-table").waitFor();
+    // Visitors still open first, ahead of the connections.
+    assert.deepEqual(await page.locator(".people-table tbody td.is-name").allInnerTexts(), ["Rosa Alvarez", "Omar Haddad"]);
+    await page.getByRole("tab", {name: /^All people/}).click();
+    assert.equal(await page.getByRole("tab", {name: /^All people/}).textContent(), "All people 10,509");
+    assert.equal(await page.locator(".people-table tbody tr[data-person]").count(), 50);
+    assert.equal(await page.locator(".people-pager code").textContent(), "1–50 of 10,509");
+    const started = Date.now();
+    await page.getByRole("button", {name: "Company"}).click();
+    await page.getByRole("button", {name: "Next page"}).click();
+    await page.getByLabel("Search people").fill("Connection 10499");
+    assert.deepEqual(await page.locator(".people-table tbody td.is-name").allInnerTexts(), ["Connection 10499"]);
+    assert.ok(Date.now() - started < 5000, `${Date.now() - started}ms to sort, page and search`);
     assert.deepEqual(errors, []);
     await context.close();
   } finally {

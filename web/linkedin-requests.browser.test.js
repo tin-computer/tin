@@ -108,7 +108,7 @@ test("a warning from LinkedIn pauses sending until you resume it", {timeout: 120
   });
 });
 
-test("People shows who was invited, in the column and as a segment", {timeout: 120000}, async () => {
+test("People shows who was invited, beside their name and as a segment", {timeout: 120000}, async () => {
   const people = syntheticPeople();
   const maya = people.find(item => item.id === "p-maya");
   maya.fields.linkedin_relationship = {...maya.fields.linkedin_relationship, value: "pending", by: "requests"};
@@ -116,9 +116,9 @@ test("People shows who was invited, in the column and as a segment", {timeout: 1
   await open({url: "/people", state: requests({on: true}), people}, async page => {
     await page.locator(".people-table").waitFor();
     assert.match(await page.getByRole("tab", {name: /^Invited/}).innerText(), /^Invited\s+1$/);
-    assert.equal(await page.locator('tr[data-person="p-maya"] td.is-linkedin').innerText(), "Invited oct 16");
+    assert.equal(await page.locator('tr[data-person="p-maya"] td.is-name .people-state').innerText(), "invited oct 16");
     await page.getByRole("tab", {name: /^Invited/}).click();
-    assert.deepEqual(await page.locator(".people-table tbody td.is-name").allInnerTexts(), ["Maya Lindqvist"]);
+    assert.deepEqual(await page.locator(".people-table tbody td.is-name").allInnerTexts(), ["Maya Lindqvist\ninvited oct 16"]);
   });
 });
 
@@ -142,7 +142,7 @@ test("people ticked in People are queued at once, best fit first", {timeout: 120
     assert.deepEqual(write.body.people, ["p-daniel", "p-lea"]);
     assert.match(write.body.request_id, /^[0-9a-f-]{36}$/);
     assert.equal(await page.locator(".people-picked:not(.is-leaving)").count(), 0);
-    assert.equal(await page.locator('tr[data-person="p-daniel"] td.is-linkedin').innerText(), "Queued");
+    assert.equal(await page.locator('tr[data-person="p-daniel"] td.is-name .people-state').innerText(), "queued");
     assert.equal(await page.locator('tr[data-person="p-daniel"] td.is-pick input').count(), 0);
   });
 });
@@ -210,7 +210,7 @@ test("a queued request says when it goes in the panel, and can be cancelled", {t
   await open({url: "/people", state: requests({on: true}), people: syntheticPeople()}, async (page, served) => {
     await page.locator('tr[data-person="p-daniel"] td.is-pick input').check();
     await page.locator(".people-picked").getByRole("button", {name: "Send 1 request"}).click();
-    await page.locator('tr[data-person="p-daniel"] td.is-linkedin', {hasText: "Queued"}).waitFor();
+    await page.locator('tr[data-person="p-daniel"] td.is-name .people-state', {hasText: "queued"}).waitFor();
     await page.getByRole("row", {name: "Daniel Okafor"}).click();
     const row = page.locator("#person-panel .person-field", {hasText: "LinkedIn"});
     assert.match(await row.innerText(), /^LinkedIn\s*Queued\s*you · [a-z]{3} \d{1,2}\s*Tin sends it from your LinkedIn around \d+:\d\d (today|tomorrow), one at a time with your other requests\. No note\.\s*Cancel request$/);
@@ -218,7 +218,7 @@ test("a queued request says when it goes in the panel, and can be cancelled", {t
     await page.locator(".toast", {hasText: "Request cancelled. Tin won’t send it."}).waitFor();
     assert.deepEqual(served.requestWrites.at(-1), {method: "POST", path: "/people/p-daniel/cancel", body: {}});
     assert.match(await row.innerText(), /^LinkedIn\s*Not connected/);
-    assert.equal(await page.locator('tr[data-person="p-daniel"] td.is-linkedin').innerText(), "Not connected");
+    assert.equal(await page.locator('tr[data-person="p-daniel"] td.is-name .people-state').count(), 0);
     assert.equal(await page.locator('tr[data-person="p-daniel"] td.is-pick input').count(), 1);
   });
 });

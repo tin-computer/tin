@@ -1277,7 +1277,12 @@ def create_mcp_app(
             "id": str(person["id"]),
             "name": person["name"],
             "headline": person["headline"],
+            "company": person.get("company") or None,
             "profile_url": person["profile_url"],
+            # Named for a visit Tin read (RB2B or a visitor journeys run); company_visit when
+            # only their company's visit was seen and Tin found them there.
+            "visited": bool(person.get("visited") or value("web_tier")),
+            "company_visit": bool(person.get("company_visit")),
             # People a visitor journeys run named: their email and their last visit.
             "email": person.get("email") or None,
             "on_the_site": value("web_tier"),
@@ -1304,26 +1309,36 @@ def create_mcp_app(
     async def list_people(
         project_id: str, segment: str = "all", query: str | None = None, limit: int = 100
     ) -> dict[str, Any]:
-        """List a project's people, best ICP fit first: who they are, the ICP profile they come
-        closest to, their fit (1 not a fit to 4 strong fit, named in `ratings`) and intent (hot,
-        warm or cold) with who set them and why, whether they are a customer, and their newest
-        note.
+        """List a project's people, best ICP fit first: who they are and their company, the ICP
+        profile they come closest to, their fit (1 not a fit to 4 strong fit, named in
+        `ratings`) and intent (hot, warm or cold) with who set them and why, whether they are a
+        customer, their newest note, and way_in: who on the team is connected to them or knows
+        someone at their company ("🤝 Emre knows Mira Chen (Treasury) at Valley Bank"), read
+        from People alone, or null when there's no path.
 
-        segment: "all", "icp_fit" (rated fit_shown or more), "not_connected" (not
-        connected on LinkedIn), "on_the_site" (named by a visitor journeys run, with their
-        email, tier and last visit) or "from_ads" (their last visit came from an ad click).
-        came_from is how the last visit arrived (ad, organic, ai, social, referral, direct).
-        query matches name, headline, email, last visit, ICP and notes. `profiles` are the ICP
-        file's profiles.
+        segment: "all", "visitors" (anyone RB2B or a visitor journeys run named, including
+        people found for a visit only their company made: company_visit), "hot" (intent hot),
+        "icp_fit" (rated fit_shown or more), "not_connected" (not connected on LinkedIn),
+        "on_the_site" (named by a visitor journeys run, with their email, tier and last visit)
+        or "from_ads" (their last visit came from an ad click). came_from is how the last visit
+        arrived (ad, organic, ai, social, referral, direct). query matches name, headline,
+        company, email, last visit, ICP and notes. `profiles` are the ICP file's profiles.
         """
         parsed, viewer, people = await people_service(project_id, "list_people")
-        if segment not in {"all", "icp_fit", "not_connected", "on_the_site", "from_ads"}:
+        segments = ("all", "visitors", "hot", "icp_fit", "not_connected", "on_the_site", "from_ads")
+        if segment not in segments:
             raise ToolError(
-                'invalid: segment is "all", "icp_fit", "not_connected", "on_the_site" or "from_ads"'
+                "invalid: segment is "
+                + ", ".join(f'"{name}"' for name in segments[:-1])
+                + f' or "{segments[-1]}"'
             )
         listed = await people_result(people.list(parsed, viewer))
         rows = [person_row(person) for person in listed["people"]]
-        if segment == "icp_fit":
+        if segment == "visitors":
+            rows = [r for r in rows if r["visited"]]
+        elif segment == "hot":
+            rows = [r for r in rows if r["intent"] == "hot"]
+        elif segment == "icp_fit":
             rows = [r for r in rows if (r["icp_fit"] or 0) >= listed["fit_shown"]]
         elif segment == "not_connected":
             rows = [r for r in rows if r["linkedin"] in {"none", "pending"}]
@@ -1342,6 +1357,7 @@ def create_mcp_app(
                     [
                         r["name"],
                         r["headline"],
+                        r["company"] or "",
                         r["email"] or "",
                         r["last_visit"] or "",
                         r["came_from_detail"] or "",
@@ -1352,8 +1368,12 @@ def create_mcp_app(
             ]
         rows.sort(key=lambda r: (r["icp_fit"] is None, -(r["icp_fit"] or 0), r["name"].casefold()))
         limit = max(1, min(int(limit), 500))
+        shown = rows[:limit]
+        ways = await people_result(people.ways_in(parsed, viewer, shown))
+        for row in shown:
+            row["way_in"] = ways.get(row["id"])
         return {
-            "people": rows[:limit],
+            "people": shown,
             "total": len(rows),
             "fit_shown": listed["fit_shown"],
             "ratings": listed["ratings"],
@@ -1363,8 +1383,10 @@ def create_mcp_app(
 
     @server.tool(annotations=ToolAnnotations(readOnlyHint=True))
     async def get_person(project_id: str, person_id: str) -> dict[str, Any]:
-        """Read one person: their fields with who set each and why, every note (newest
-        first) and their timeline of reactions to the team's posts."""
+        """Read one person: their fields with who set each and why, their company, position
+        and location, way_in (who on the team is connected to them or knows someone at their
+        company, or null), every note (newest first) and their timeline of reactions to the
+        team's posts and visits."""
         parsed, viewer, people = await people_service(project_id, "get_person")
         person = await people_result(
             people.get(parsed, _mcp_uuid(person_id, field="person_id"), viewer)

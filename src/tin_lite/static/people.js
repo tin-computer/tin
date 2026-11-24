@@ -15,28 +15,43 @@ window.TinPeople = (() => {
     APPRECIATION: "Support", ENTERTAINMENT: "Funny",
   };
   const SEGMENTS = [
+    // Everyone RB2B or a visitor journeys run named, and people found for their company's visit.
+    // The tab opens here when anyone has visited, so imported connections don't bury them.
+    { key: "visitors", label: "Visitors" },
+    // People the ICP rating judged hot from what they did.
+    { key: "hot", label: "Hot" },
     { key: "all", label: "All people" },
     { key: "fit", label: "ICP fit" },
     { key: "new", label: "Not connected yet" },
     // Shown once someone has been sent a connection request (#450).
     { key: "invited", label: "Invited" },
-    // Shown once a visitor journeys run named someone who used the site or product.
-    { key: "site", label: "On the site" },
     // Shown once someone's last visit came from an ad click.
     { key: "ads", label: "From ads" },
   ];
+  // Segments that show only while someone is in them (or they're open).
+  const WHEN_ANY = ["visitors", "hot", "invited", "ads"];
+  // How much interest a person shows now, as the ICP rating judged it; sorted hot first.
+  const INTENT = { hot: ["🔥", "hot"], warm: ["🌤", "warm"], cold: ["🧊", "cold"] };
+  const INTENT_RANK = { hot: 3, warm: 2, cold: 1 };
   // What a person was on the site when a visitor journeys run last read them.
   const WEB_TIER = { lead: "Lead", new_user: "New user", user: "User" };
   // How their last visit arrived; the value's reason names the source ("Google Ads, keyword …").
   const WEB_SOURCE = { ad: "Ad", organic: "Organic", ai: "AI", social: "Social", referral: "Referral", direct: "Direct" };
   const SOURCE_ORDER = ["ad", "organic", "ai", "social", "referral", "direct"];
+  // One collator for every sort: ten thousand imported connections sort in a blink.
+  const collate = new Intl.Collator(undefined, { sensitivity: "base", numeric: true }).compare;
   const SORTS = {
-    name: (a, b) => a.name.localeCompare(b.name),
+    name: (a, b) => collate(a.name, b.name),
+    // People without a company go last, A to Z.
+    company: (a, b) => (!a.company - !b.company) || collate(a.company || "", b.company || ""),
     fit: (a, b) => fitOf(a) - fitOf(b),
+    intent: (a, b) => intentOf(a) - intentOf(b),
     touch: (a, b) => touchOf(a) - touchOf(b),
     // Descending reads ads first, then organic search, AI, social, referral, direct, unknown.
     source: (a, b) => sourceRank(b) - sourceRank(a),
   };
+  // Sorts that start A to Z; the rest start highest first.
+  const ASCENDING = ["name", "company"];
   const NOT_A_FIT = "none";
   const RATING_VALUES = [4, 3, 2, 1];
   // "4 · Contact this week", with the label the server sends for each rating.
@@ -59,6 +74,16 @@ window.TinPeople = (() => {
     return typeof value === "number" ? value : -1;
   };
   const touchOf = (person) => (person.last_touch ? Date.parse(person.last_touch.at) : 0);
+  const intentOf = (person) => INTENT_RANK[field(person, "intent")?.value] || 0;
+  // Named for a visit: RB2B, a visitor journeys run, or their company's visit.
+  const isVisitor = (person) => Boolean(person.visited || field(person, "web_tier"));
+  // "🔥 hot", the emoji left out for screen readers.
+  const intentHtml = (value) => {
+    const [mark, word] = INTENT[value] || ["", value];
+    return `${mark ? `<span aria-hidden="true">${mark}</span> ` : ""}${escape(word)}`;
+  };
+  // Only a LinkedIn profile address opens from the name; anything else stays plain text.
+  const profileUrl = (person) => (/^https:\/\/www\.linkedin\.com\/in\/[^/?#\s]+\/?$/.test(person?.profile_url || "") ? person.profile_url : "");
   const sourceRank = (person) => {
     const index = SOURCE_ORDER.indexOf(field(person, "web_source")?.value);
     return index < 0 ? SOURCE_ORDER.length : index;
@@ -102,12 +127,23 @@ window.TinPeople = (() => {
     return RELATIONSHIP[relationship] || "—";
   }
 
-  // The LinkedIn cell opens their profile when Tin knows it; with no relationship read for the
-  // viewer it says "Profile".
-  function linkedinCell(person, relationship) {
-    const label = relationshipLabel(person, relationship);
-    if (!person.profile_url) return `<span>${escape(label)}</span>`;
-    return `<a class="people-linkedin" href="${escape(person.profile_url)}" target="_blank" rel="noopener noreferrer" aria-label="Open ${escape(person.name || "this person")} on LinkedIn" data-people-profile><span>${escape(label === "—" ? "Profile" : label)}</span>${OUT}</a>`;
+  // A request of the viewer's on its way, beside the name: "queued", or "invited oct 16".
+  function requestState(person, relationship) {
+    if (person.request === "queued") return "queued";
+    if (relationship === "pending") return person.invited_at ? `invited ${day(person.invited_at)}` : "invited";
+    return "";
+  }
+
+  // The name opens their LinkedIn profile in a new tab; the rest of the row opens them here.
+  function nameCell(person, relationship) {
+    const name = escape(person.name || "Unnamed");
+    const url = profileUrl(person);
+    const shown = url
+      ? `<a class="people-name-link" href="${escape(url)}" target="_blank" rel="noopener noreferrer" aria-label="${name} on LinkedIn (opens in a new tab)" data-people-profile><span>${name}</span>${OUT}</a>`
+      : `<span>${name}</span>`;
+    const state = requestState(person, relationship);
+    const customer = field(person, "customer")?.value === "yes";
+    return `<span class="people-name">${shown}${customer ? "<small>customer</small>" : ""}${state ? `<small class="people-state">${escape(state)}</small>` : ""}</span>`;
   }
 
   // A value a member set, rather than a run: no run replaces it.
@@ -139,7 +175,8 @@ window.TinPeople = (() => {
     if (fresh) {
       close();
       view = {
-        ...options, people: null, error: null, fitShown: 3, ratings: {}, profiles: [], segment: "all", query: "",
+        // No segment until the first list: Visitors when anyone has visited, else All people.
+        ...options, people: null, error: null, fitShown: 3, ratings: {}, profiles: [], segment: null, query: "",
         sort: { key: "fit", descending: true }, page: 0, picked: new Set(), queueing: false,
         openId: new URLSearchParams(window.location.search).get("person"),
         person: null, personError: null, confirming: false, forgetting: false, forgetError: null,
@@ -173,6 +210,7 @@ window.TinPeople = (() => {
       current.fitShown = listed.fit_shown;
       current.ratings = listed.ratings || {};
       current.profiles = listed.profiles || [];
+      current.segment ??= listed.people.some(isVisitor) ? "visitors" : "all";
       current.error = null;
     } catch (error) {
       if (view !== current || !current.active) return;
@@ -184,10 +222,11 @@ window.TinPeople = (() => {
 
   function segmentPeople(key) {
     const people = view.people || [];
+    if (key === "visitors") return people.filter(isVisitor);
+    if (key === "hot") return people.filter((person) => field(person, "intent")?.value === "hot");
     if (key === "fit") return people.filter((person) => fitOf(person) >= view.fitShown);
     if (key === "new") return people.filter((person) => field(person, "linkedin_relationship")?.value === "none");
     if (key === "invited") return people.filter((person) => field(person, "linkedin_relationship")?.value === "pending");
-    if (key === "site") return people.filter((person) => field(person, "web_tier"));
     if (key === "ads") return people.filter((person) => field(person, "web_source")?.value === "ad");
     return people;
   }
@@ -195,11 +234,11 @@ window.TinPeople = (() => {
   function shown() {
     const query = view.query.trim().toLowerCase();
     const people = segmentPeople(view.segment).filter((person) => !query ||
-      [person.name, person.headline, person.email, field(person, "web_summary")?.value, sourceText(field(person, "web_source")), field(person, "icp")?.value, person.notes_text].some((text) => (text || "").toLowerCase().includes(query)));
+      [person.name, person.headline, person.company, person.email, field(person, "web_summary")?.value, sourceText(field(person, "web_source")), field(person, "icp")?.value, person.notes_text].some((text) => (text || "").toLowerCase().includes(query)));
     const compare = SORTS[view.sort.key];
     return [...people].sort((a, b) => {
       const order = view.sort.descending ? compare(b, a) : compare(a, b);
-      return order || a.name.localeCompare(b.name);
+      return order || collate(a.name, b.name);
     });
   }
 
@@ -316,27 +355,28 @@ window.TinPeople = (() => {
     const barBefore = body.querySelector(".people-grid > .people-picked:not(.is-leaving)");
     body.innerHTML = `
       <div class="workflow-sections system-sections people-sections" role="tablist" aria-label="People segments">
-        ${SEGMENTS.filter((segment) => !["invited", "site", "ads"].includes(segment.key) || view.segment === segment.key || segmentPeople(segment.key).length).map((segment) => `<button class="workflow-section ${view.segment === segment.key ? "is-active" : ""}" type="button" role="tab" aria-selected="${view.segment === segment.key}" data-people-segment="${segment.key}">${segment.label} <span>${segmentPeople(segment.key).length}</span></button>`).join("")}
+        ${SEGMENTS.map((segment) => ({ ...segment, count: segmentPeople(segment.key).length })).filter((segment) => !WHEN_ANY.includes(segment.key) || view.segment === segment.key || segment.count).map((segment) => `<button class="workflow-section ${view.segment === segment.key ? "is-active" : ""}" type="button" role="tab" aria-selected="${view.segment === segment.key}" data-people-segment="${segment.key}">${segment.label} <span>${segment.count.toLocaleString("en-US")}</span></button>`).join("")}
       </div>
       <div class="people-grid">
         ${pickedBar(!barBefore)}
-        <table class="tin-table people-table ${pick ? "has-pick" : ""}">
+        <table class="tin-table people-table ${pick ? "has-pick" : ""} ${sources ? "has-sources" : ""}">
           <thead><tr>
             ${pick ? `<th class="is-pick" scope="col"><input type="checkbox" data-people-pick-all aria-label="Tick everyone on this page you can ask to connect" ${pickable.length ? "" : "disabled"} ${pickable.length && ticked === pickable.length ? "checked" : ""} /></th>` : ""}
             ${header("name", "Name")}
+            ${header("company", "Company")}
             <th class="is-headline" scope="col">Headline</th>
             <th class="is-icp" scope="col">ICP</th>
             ${header("fit", "ICP fit")}
+            ${header("intent", "Intent")}
             <th class="is-notes" scope="col">Notes</th>
             ${sources ? header("source", "Came from") : ""}
-            <th class="is-linkedin" scope="col">LinkedIn</th>
             ${header("touch", "Last touch")}
           </tr></thead>
-          <tbody>${visible.length ? visible.map((person) => row(person, pick, sources)).join("") : `<tr class="is-none"><td colspan="${7 + (pick ? 1 : 0) + (sources ? 1 : 0)}">${view.query.trim() ? `No one matches “${escape(view.query.trim())}”.` : "No one here yet."}</td></tr>`}</tbody>
+          <tbody>${visible.length ? visible.map((person) => row(person, pick, sources)).join("") : `<tr class="is-none"><td colspan="${8 + (pick ? 1 : 0) + (sources ? 1 : 0)}">${view.query.trim() ? `No one matches “${escape(view.query.trim())}”.` : "No one here yet."}</td></tr>`}</tbody>
         </table>
       </div>
       <footer class="people-pager">
-        <code>${people.length ? `${start + 1}–${start + visible.length} of ${people.length}` : "0 of 0"}</code>
+        <code>${people.length ? `${(start + 1).toLocaleString("en-US")}–${(start + visible.length).toLocaleString("en-US")} of ${people.length.toLocaleString("en-US")}` : "0 of 0"}</code>
         ${nobodyLine(people)}
         <span></span>
         ${pages > 1 ? `<div>
@@ -412,7 +452,6 @@ window.TinPeople = (() => {
     const icp = field(person, "icp");
     const fit = field(person, "icp_fit");
     const relationship = field(person, "linkedin_relationship")?.value;
-    const customer = field(person, "customer")?.value === "yes";
     const icpLabel = icpText(icp?.value);
     const fitValue = typeof fit?.value === "number" ? fit.value : null;
     const intent = field(person, "intent")?.value;
@@ -426,14 +465,15 @@ window.TinPeople = (() => {
       ? `<td class="is-pick">${person.requestable ? `<input type="checkbox" data-people-pick="${escape(person.id)}" aria-label="Ask ${escape(person.name || "this person")} to connect" ${picked ? "checked" : ""} />` : ""}</td>`
       : "";
     return `<tr tabindex="0" data-person="${escape(person.id)}" class="${person.id === view.openId ? "is-selected" : ""} ${picked ? "is-picked" : ""}" aria-label="${escape(person.name || "Unnamed")}">
-      ${box}<td class="is-name"><span class="people-name"><span>${escape(person.name || "Unnamed")}</span>${customer ? "<small>customer</small>" : ""}</span></td>
+      ${box}<td class="is-name">${nameCell(person, relationship)}</td>
+      <td class="is-company ${person.company ? "" : "is-muted"}" title="${escape(person.company || "")}"><span>${escape(person.company || "—")}</span></td>
       <td class="is-headline"><span>${escape(person.headline || field(person, "web_summary")?.value || "")}</span></td>
       <td class="is-icp ${icpLabel.muted ? "is-muted" : ""}" title="${escape(icpLabel.muted ? "" : icpLabel.text)}"><span class="is-short">${escape(icpLabel.short)}</span><span class="is-full">${escape(icpLabel.text)}</span></td>
-      <td class="is-fit ${fitClass}" ${fit ? `data-fit="${escape(person.id)}"` : ""}>${mark ? `<small>${mark}</small>` : ""}<span>${fitValue === null ? "—" : escape(fitValue)}</span>${intent ? `<small class="people-intent">${escape(intent)}</small>` : ""}</td>
+      <td class="is-fit ${fitClass}" ${fit ? `data-fit="${escape(person.id)}"` : ""}>${mark ? `<small>${mark}</small>` : ""}<span>${fitValue === null ? "—" : escape(fitValue)}</span></td>
+      <td class="is-intent ${intent ? `is-${escape(intent)}` : "is-muted"}"><span>${intent ? intentHtml(intent) : "—"}</span></td>
       <td class="is-notes" ${note ? `data-note="${escape(person.id)}"` : ""}><span>${note ? escape(note.body.split("\n")[0]) : ""}</span></td>
       ${sources ? `<td class="is-source ${source ? "" : "is-muted"}" title="${escape(sourceText(source))}"><span>${source ? `<strong>${escape(WEB_SOURCE[source.value] || source.value)}</strong>${sourcePlace(source) ? ` · ${escape(sourcePlace(source))}` : ""}` : "—"}</span></td>` : ""}
-      <td class="is-linkedin">${linkedinCell(person, relationship)}</td>
-      <td class="is-touch"><span>${touch ? `${escape(day(touch.at))} · ${escape(touchText(touch))}` : "—"}</span></td>
+      <td class="is-touch" title="${touch ? escape(`${day(touch.at)} · ${touchText(touch)}`) : ""}"><span>${touch ? `${escape(day(touch.at))} · ${escape(touchText(touch))}` : "—"}</span></td>
     </tr>`;
   }
 
@@ -445,7 +485,7 @@ window.TinPeople = (() => {
     }));
     body.querySelectorAll("[data-people-sort]").forEach((button) => button.addEventListener("click", () => {
       const key = button.dataset.peopleSort;
-      view.sort = view.sort.key === key ? { key, descending: !view.sort.descending } : { key, descending: key !== "name" };
+      view.sort = view.sort.key === key ? { key, descending: !view.sort.descending } : { key, descending: !ASCENDING.includes(key) };
       view.page = 0;
       renderBody();
     }));
@@ -476,7 +516,8 @@ window.TinPeople = (() => {
     });
     body.querySelector("[data-people-open-linkedin]")?.addEventListener("click", () => view.openLinkedInCard?.());
     body.querySelector("[data-people-send]")?.addEventListener("click", () => sendRequests());
-    // Opening a profile on LinkedIn doesn't open the person here too.
+    // The name opens their LinkedIn in a new tab, and doesn't open the person here too: the rest
+    // of the row does, and the row is its own stop for the keyboard.
     body.querySelectorAll("[data-people-profile]").forEach((link) => {
       link.addEventListener("click", (event) => event.stopPropagation());
       link.addEventListener("keydown", (event) => event.stopPropagation());
@@ -648,7 +689,7 @@ window.TinPeople = (() => {
         "fit",
       ));
       const intent = field(person, "intent");
-      if (intent?.value) rows.push(fieldRow("Intent", `<strong>${escape(intent.value)}</strong>`, lineage(intent)));
+      if (intent?.value) rows.push(fieldRow("Intent", `<strong>${intentHtml(intent.value)}</strong>`, lineage(intent)));
     }
     // A request of the viewer's waiting to go out says when, and can be cancelled (REQ-C2).
     const queued = person.request === "queued";
@@ -659,6 +700,8 @@ window.TinPeople = (() => {
       const since = queued && person.queued ? `you · ${day(person.queued.queued_at)}` : lineage(relationship);
       rows.push(fieldRow("LinkedIn", `<strong>${escape(relationshipLabel(person, relationship?.value))}</strong>`, since, notes));
     }
+    // Who on the team can introduce them, as Slack says it: read from People, never LinkedIn.
+    if (person.way_in) rows.push(fieldRow("Way in", `<strong class="person-way-in">${escape(person.way_in)}</strong>`, ""));
     const web = field(person, "web_tier");
     if (web) {
       const summary = field(person, "web_summary");
@@ -738,6 +781,7 @@ window.TinPeople = (() => {
 
   // The grid's Last touch: "reacted to you", "invited by Mira".
   function touchText(touch) {
+    if (touch.kind === "visited") return visitText(touch);
     const who = whoOf(touch);
     if (!who) return touch.kind;
     if (touch.kind === "reacted") return `reacted to ${who}`;
@@ -747,6 +791,11 @@ window.TinPeople = (() => {
     if (touch.kind === "accepted") return `connected with ${who}`;
     if (touch.kind === "connected") return `connected to ${who}`;
     return touch.kind;
+  }
+
+  // A visit has no member behind it: the person's own, or their company's.
+  function visitText(touch) {
+    return touch.company_visit ? "company visited" : "visited";
   }
 
   function eventText(event) {
@@ -804,6 +853,15 @@ window.TinPeople = (() => {
     return `<footer><code>${escape(added)}</code><button class="person-forget-start" type="button" data-person-forget>Forget this person</button></footer>`;
   }
 
+  // Where they work and live, beside the headline, leaving out what the headline already says.
+  function workLine(person) {
+    const headline = (person.headline || "").toLowerCase();
+    return [person.position, person.company, person.location]
+      .map((part) => (part || "").trim())
+      .filter((part, index, parts) => part && !headline.includes(part.toLowerCase()) && parts.indexOf(part) === index)
+      .join(" · ");
+  }
+
   function renderPanel() {
     let panel = document.getElementById("person-panel");
     if (!view?.openId) {
@@ -854,8 +912,10 @@ window.TinPeople = (() => {
       panel.innerHTML = `<header>
           <div class="person-panel-title"><h2 id="person-panel-name">${escape(person.name || "Unnamed")}</h2><button class="diagram-panel-close" type="button" data-close-person aria-label="Close this person">${CLOSE}</button></div>
           ${person.headline ? `<p>${escape(person.headline)}</p>` : ""}
+          ${workLine(person) ? `<p class="person-panel-work">${escape(workLine(person))}</p>` : ""}
+          ${person.company_visit ? '<p class="person-panel-found">Found for a company visit</p>' : ""}
           ${person.email ? `<p class="person-panel-email">${escape(person.email)}</p>` : ""}
-          ${person.profile_url ? `<a class="person-panel-linkedin" href="${escape(person.profile_url)}" target="_blank" rel="noopener noreferrer">Open on LinkedIn${OUT}</a>` : ""}
+          ${profileUrl(person) ? `<a class="person-panel-linkedin" href="${escape(profileUrl(person))}" target="_blank" rel="noopener noreferrer">Open on LinkedIn${OUT}</a>` : ""}
         </header>
         <div class="person-panel-body">${body}${view.personError ? `<p class="person-quiet">${escape(view.personError)}</p>` : ""}</div>
         ${footerHtml(person)}`;
@@ -1001,6 +1061,7 @@ window.TinPeople = (() => {
     current.people = (current.people || []).map((item) => (item.id !== person.id ? item : {
       ...item,
       fields: person.fields,
+      company: person.company ?? item.company,
       requestable: person.requestable,
       request: person.request,
       note: notes[0] ? { body: notes[0].body, by: notes[0].by, at: notes[0].at, count: notes.length } : null,

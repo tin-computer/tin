@@ -634,35 +634,68 @@ async def forget(conn, project_id: UUID, record_id: UUID) -> bool:
         return True
 
 
+# Values that make someone more than a name in a member's network: a score, a customer mark or
+# a visit. People with one, a note or an event besides `connected` come first, so a long list
+# of imported connections never pushes them past a limit.
+ENGAGED_FIELDS = ("icp", "icp_fit", "intent", "customer", "web_tier", "web_source")
+
+
 async def people(
     conn, project_id: UUID, *, limit: int = 5000, only: UUID | None = None
 ) -> list[dict[str, Any]]:
-    """Current people with identifiers, values and event counts, newest first; `only` reads
-    one."""
+    """Current people with identifiers, values and event counts: people with a score, a visit,
+    a note or an event besides `connected` first, then the rest, newest first in each; `only`
+    reads one. Each part is read once for the whole list, so ten thousand people stay quick."""
 
     rows = await conn.fetch(
-        """SELECT r.id, r.source, r.created_at, r.updated_at,
-               (SELECT jsonb_object_agg(i.kind, i.value) FROM record_identifiers i
-                WHERE i.record_id = r.id) AS identifiers,
-               (SELECT jsonb_object_agg(v.field, jsonb_build_object(
-                    'text', v.value_text, 'number', v.value_number, 'reason', v.reason,
-                    'definition', v.definition, 'set_by_kind', v.set_by_kind,
-                    'set_by', v.set_by, 'set_at', v.set_at, 'previous', v.previous))
-                FROM record_values v WHERE v.record_id = r.id) AS fields,
-               (SELECT jsonb_object_agg(kind, n) FROM (
-                    SELECT e.kind, count(*) AS n FROM record_events e
-                    WHERE e.record_id = r.id
-                       OR e.record_id IN (SELECT m.id FROM records m WHERE m.merged_into = r.id)
-                    GROUP BY e.kind) counted) AS events
-           FROM records r
-           WHERE r.project_id = $1 AND r.type = $2 AND r.merged_into IS NULL
-             AND ($4::uuid IS NULL OR r.id = $4)
-           ORDER BY r.created_at DESC, r.id
-           LIMIT $3""",
+        """WITH chosen AS (
+               SELECT r.id, r.source, r.created_at, r.updated_at,
+                   (EXISTS (SELECT 1 FROM record_events e
+                            WHERE e.record_id = r.id AND e.kind <> 'connected')
+                    OR EXISTS (SELECT 1 FROM record_values v
+                               WHERE v.record_id = r.id AND v.field = ANY($5::text[]))
+                    OR EXISTS (SELECT 1 FROM record_notes n WHERE n.record_id = r.id)) AS engaged
+               FROM records r
+               WHERE r.project_id = $1 AND r.type = $2 AND r.merged_into IS NULL
+                 AND ($4::uuid IS NULL OR r.id = $4)
+               ORDER BY engaged DESC, r.created_at DESC, r.id
+               LIMIT $3
+           ),
+           -- The chosen records and the records merged into them, whose events count too.
+           written AS (
+               SELECT id, id AS person FROM chosen
+               UNION ALL
+               SELECT m.id, m.merged_into FROM records m
+               WHERE m.project_id = $1 AND m.merged_into IN (SELECT id FROM chosen)
+           )
+           SELECT c.id, c.source, c.created_at, c.updated_at, i.identifiers, v.fields, k.events
+           FROM chosen c
+           LEFT JOIN (
+               SELECT record_id, jsonb_object_agg(kind, value) AS identifiers
+               FROM record_identifiers WHERE record_id IN (SELECT id FROM chosen)
+               GROUP BY record_id
+           ) i ON i.record_id = c.id
+           LEFT JOIN (
+               SELECT record_id, jsonb_object_agg(field, jsonb_build_object(
+                    'text', value_text, 'number', value_number, 'reason', reason,
+                    'definition', definition, 'set_by_kind', set_by_kind,
+                    'set_by', set_by, 'set_at', set_at, 'previous', previous)) AS fields
+               FROM record_values WHERE record_id IN (SELECT id FROM chosen)
+               GROUP BY record_id
+           ) v ON v.record_id = c.id
+           LEFT JOIN (
+               SELECT person, jsonb_object_agg(kind, n) AS events FROM (
+                   SELECT w.person, e.kind, count(*) AS n
+                   FROM record_events e JOIN written w ON w.id = e.record_id
+                   GROUP BY w.person, e.kind) counted
+               GROUP BY person
+           ) k ON k.person = c.id
+           ORDER BY c.engaged DESC, c.created_at DESC, c.id""",
         project_id,
         PERSON,
         limit,
         only,
+        list(ENGAGED_FIELDS),
     )
     result = []
     for row in rows:
@@ -684,6 +717,9 @@ async def people(
 
 
 # What the People view reads: each person's fields with who set them, and their timeline.
+
+# The `visited` event of someone found at a company whose visit RB2B matched only to the company.
+COMPANY_VISIT = "rb2b_company"
 
 # Short names for the workflows that write records, shown beside a value as who set it.
 WRITERS = {
@@ -828,18 +864,26 @@ async def directory(
     listed = await people(conn, project_id, limit=limit, only=only)
     touches: dict[UUID, dict] = {}
     invited: dict[UUID, datetime] = {}
+    # Who visited, and whose only visits were their company's (RB2B named the company, and Tin
+    # found them there): the Visitors segment, and the panel's mark.
+    visits: dict[UUID, set[bool]] = {}
     for row in await conn.fetch(
         """SELECT COALESCE(r.merged_into, r.id) AS person, e.kind, e.occurred_at,
                e.recorded_at, e.detail->>'posted_at' AS posted_at, e.detail->>'member' AS member,
-               e.run_id
+               e.detail->>'source' AS source, e.run_id
            FROM record_events e JOIN records r ON r.id = e.record_id
            WHERE e.project_id = $1 AND ($2::uuid IS NULL OR COALESCE(r.merged_into, r.id) = $2)""",
         project_id,
         only,
     ):
         at = _when(row)
+        company_visit = row["kind"] == "visited" and row["source"] == COMPANY_VISIT
+        if row["kind"] == "visited":
+            visits.setdefault(row["person"], set()).add(company_visit)
         if row["person"] not in touches or at > touches[row["person"]]["at"]:
             touches[row["person"]] = {"kind": row["kind"], "at": at, "row": row}
+            if company_visit:
+                touches[row["person"]]["company_visit"] = True
         # When the viewer's connection request last went out, for "Invited oct 16".
         if (
             row["kind"] == "invited"
@@ -886,13 +930,19 @@ async def directory(
                 "definition": "",
                 "previous": None,
             }
+        visited = visits.get(person["id"], set())
         result.append(
             {
                 "id": person["id"],
                 "name": (person["fields"].get("name") or {}).get("text") or "",
                 "headline": (person["fields"].get("headline") or {}).get("text") or "",
+                "company": (person["fields"].get("company") or {}).get("text") or "",
                 "profile_url": person["profile_url"],
                 "email": person["identifiers"].get("email", ""),
+                # A visit Tin read, from RB2B or a visitor journeys run.
+                "visited": bool(visited),
+                # Found for their company's visit, never matched to a visit of their own.
+                "company_visit": visited == {True},
                 "fields": fields,
                 "last_touch": touches.get(person["id"]),
                 "invited_at": invited.get(person["id"]),
@@ -912,6 +962,10 @@ async def directory(
                 "notes_text": " \n".join(n["body"] for n in written)[: NOTE_LIMIT * 2],
             }
         )
+        if only is not None:
+            # One person, for the panel: where they work and live, beside the headline.
+            for key in ("position", "location"):
+                result[-1][key] = (person["fields"].get(key) or {}).get("text") or ""
     return result
 
 

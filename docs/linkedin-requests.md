@@ -154,8 +154,8 @@ helper, `read_accepted`.
 - **LinkedIn card:** the Sending row (switch, consent, limits, the paused state with Resume) and
   This week (sent, accepted, queued, pending, next send). A held sending makes the card need
   you.
-- **People:** the tick lane and its bar; "Queued", then "Invited oct 16", in the LinkedIn
-  column; in the panel, when a queued request goes and "Cancel request" (Paper REQ-C2); an Invited segment once someone is invited; and "Connection request sent" /
+- **People:** the tick lane and its bar; "queued", then "invited oct 16", beside the person's
+  name; in the panel, when a queued request goes and "Cancel request" (Paper REQ-C2); an Invited segment once someone is invited; and "Connection request sent" /
   "Accepted your connection request" on the timeline ("A teammate sent a connection request"
   for someone else's).
 

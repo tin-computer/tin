@@ -99,7 +99,7 @@ export const values = {
     const header = await f.rect(".people-view h1");
     return {x: main.x, y: header.y - 20, width: main.width, height: 1};
   },
-  // Tin's read asks the ones who fit: their boxes go and their LinkedIn column reads Queued.
+  // Tin's read asks the ones who fit: their boxes go and "queued" reads beside their names.
   askTheFits: f => {
     for (const id of FITS) asked(f.world.people.find(item => item.id === id));
   },
@@ -153,9 +153,9 @@ export const beats = [
   // its next trip is to the founder's own pick.
   {caption: "Tin asks the ones who fit."},
   {run: "askTheFits"},
-  {open: "/people", ready: '.people-table tr[data-person="p-daniel"] td.is-linkedin'},
-  {highlight: '.people-table tr[data-person="p-daniel"] td.is-linkedin', hold: 1.2, delay: 0},
-  {highlight: '.people-table tr[data-person="p-hannah"] td.is-linkedin', hold: 1.2, delay: 0.07},
+  {open: "/people", ready: '.people-table tr[data-person="p-daniel"] td.is-name .people-state'},
+  {highlight: '.people-table tr[data-person="p-daniel"] td.is-name .people-state', hold: 1.2, delay: 0},
+  {highlight: '.people-table tr[data-person="p-hannah"] td.is-name .people-state', hold: 1.2, delay: 0.07},
   {hold: 2.2},
   {mark: "asked"},
 
@@ -177,8 +177,8 @@ export const beats = [
   {look: null},
   {ready: ".toast.is-visible"},
   {hold: 0.2},
-  {highlight: '.people-table tr[data-person="p-chloe"] td.is-linkedin', hold: 1.4, delay: 0},
-  {highlight: '.people-table tr[data-person="p-lea"] td.is-linkedin', hold: 1.4, delay: 0.07},
+  {highlight: '.people-table tr[data-person="p-chloe"] td.is-name .people-state', hold: 1.4, delay: 0},
+  {highlight: '.people-table tr[data-person="p-lea"] td.is-name .people-state', hold: 1.4, delay: 0.07},
   {hold: 2},
   {mark: "queued"},
   // The toast leaves on its own before her panel opens over it.
