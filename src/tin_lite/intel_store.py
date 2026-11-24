@@ -158,6 +158,9 @@ async def record_sources(conn, *, run_id: UUID, statuses: list[dict]) -> None:
     """Record sources' statuses, replacing an earlier status of the same source."""
     if not statuses:
         return
+    if not hasattr(conn, "transaction"):
+        async with conn.acquire() as acquired:
+            return await record_sources(acquired, run_id=run_id, statuses=statuses)
     async with conn.transaction():
         current = await conn.fetchval(
             "SELECT source_status FROM intel_fetches WHERE run_id = $1 FOR UPDATE", run_id
@@ -600,3 +603,54 @@ def window_iso(value: datetime) -> str:
 
 def published(value: str | None) -> datetime | None:
     return parse_iso(value)
+
+
+WORLD_SOURCE = "World stories"
+_RELEVANCE_ORDER = {"high": 1, "medium": 2, "low": 3}
+
+
+async def put_world_items(conn, *, run_id: UUID, now: datetime) -> dict | None:
+    """A client run's copy of today's world stories, as items from "World stories" that its
+    judge can search, cite and attach: the story's strongest item as the URL, its summary (and
+    SENSITIVE, and its tags) as the text, relevance order as the rank. Returns the world day
+    used, or None when no usable world day is recent enough."""
+    day = await latest_world_day(conn, now=now)
+    if day is None:
+        return None
+    found = await stories(
+        conn, project_id=None, since_day=date.fromisoformat(day["day"]), limit=400
+    )
+    ordered = sorted(
+        found, key=lambda s: (_RELEVANCE_ORDER.get(s.get("relevance") or "", 4), s["key"])
+    )
+    items: list[Item] = []
+    for story in ordered:
+        url = next(
+            (i["url"] for i in story.get("items") or [] if str(i["url"]).startswith("https://")),
+            None,
+        )
+        if url is None:
+            continue
+        text = story["summary"] + ("\nSENSITIVE" if story.get("sensitive") else "")
+        if story.get("tags"):
+            text += "\nTags: " + ", ".join(story["tags"])
+        items.append(
+            Item(
+                source_type="world",
+                source=WORLD_SOURCE,
+                source_id="world-stories",
+                source_url=None,
+                url=url,
+                discussion_url=None,
+                publisher_site=None,
+                title=story["title"],
+                author=None,
+                published_at=window_iso(now),
+                text=text,
+                engagement={},
+                rank=len(items) + 1,
+                fetched_at=window_iso(now),
+            )
+        )
+    await put_items(conn, run_id=run_id, items=items)
+    return day

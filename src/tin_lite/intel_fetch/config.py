@@ -29,12 +29,19 @@ def digest(config: dict[str, Any]) -> str:
     ).hexdigest()
 
 
-def load(raw: bytes | str) -> dict[str, Any]:
+def load(raw: bytes | str, *, require_sources: bool = True) -> dict[str, Any]:
+    """A config file as an object. Other top-level keys are kept as they are; a config whose
+    sources another shape holds (hn-reddit.json) is read with require_sources=False and
+    expanded into a `sources` list by its own scope before `select`."""
     try:
         value = json.loads(raw)
     except ValueError as exc:
         raise ConfigError("the source config is not valid JSON") from exc
-    if not isinstance(value, dict) or not isinstance(value.get("sources"), list):
+    if not isinstance(value, dict):
+        raise ConfigError("the source config must be a JSON object")
+    if not require_sources:
+        return value
+    if not isinstance(value.get("sources"), list):
         raise ConfigError("the source config needs a `sources` list")
     if len(value["sources"]) > MAX_SOURCES:
         raise ConfigError(f"the source config lists more than {MAX_SOURCES} sources")
