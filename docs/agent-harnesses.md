@@ -60,6 +60,12 @@ Google's harness rather than its own loop.
   size, the controller sends the agent back with what to fix, up to three times, instead
   of failing the run.
 
+Daily intelligence's judges (`intel.world_judge`, `intel.client_judge`) run on Antigravity
+only. They read the day through the image's `intel` command over a read-only file the root
+helper installs after `check-intel`, and write their stories and brief through the run's own
+`tin.intel` grant rather than a `tin-run` MCP server. See
+[daily intelligence](daily-intelligence.md).
+
 Codex only, for now: browser and Studio profiles, test identities, and diagram and video
 procedures. Host-side output validators (for example `content-draft.v3`) still run after
 the sandbox, as for Codex; they are not yet available to the agent inside the run.
