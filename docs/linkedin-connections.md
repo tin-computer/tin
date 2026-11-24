@@ -41,7 +41,9 @@ The same as [profile viewers](linkedin-profile-viewers.md), without the model se
    A daily run then makes one read.
    - Each connection is upserted by profile ID and slug, with their name and headline.
    - The member's relationship is set to `connected`.
-   - A `connected` event is added once per member and person, dated `createdAt`. Its detail
+   - A `connected` event is added once per member and person, dated `createdAt`. Its key names
+     the member (`linkedin:connected:<member>:<person>`), and the export reads whose
+     connection it is from there, so connections copied into a project without a run count. Its detail
      keeps LinkedIn's first and last name for the CSV.
    - A forgotten person is skipped.
    - Someone LinkedIn says connected after the baseline also gets a `new_connection` event
