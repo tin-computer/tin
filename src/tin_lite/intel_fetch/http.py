@@ -37,7 +37,15 @@ SITEMAP_MAX_BYTES = 10 * 1024 * 1024
 MAX_REDIRECTS = 5
 CONCURRENCY = 10
 # Seconds between two requests to one host; a 429 also pauses the host for everyone.
-HOST_GAP = {"news.google.com": 1.5, "api.gdeltproject.org": 5.0}
+HOST_GAP = {
+    "news.google.com": 1.5,
+    "api.gdeltproject.org": 5.0,
+    "arctic-shift.photon-reddit.com": 1.2,
+    "hn.algolia.com": 0.15,
+}
+# What a refused read keeps of its answer: a short body and the rate-limit headers, so a source's
+# status can say why (Arctic Shift reports a spent budget in its body, with x-ratelimit-reset).
+ERROR_BODY = 300
 REDIRECTS = frozenset({301, 302, 303, 307, 308})
 _host_next: dict[str, float] = {}
 
@@ -223,6 +231,8 @@ class PublicReader:
                 "location": response.headers.get("location", ""),
                 "retry-after": response.headers.get("retry-after", ""),
                 "content-type": response.headers.get("content-type", "")[:200],
+                "x-ratelimit-reset": response.headers.get("x-ratelimit-reset", "")[:40],
+                "x-ratelimit-remaining": response.headers.get("x-ratelimit-remaining", "")[:40],
             }
             if response.status_code in REDIRECTS:
                 return Response(response.status_code, b"", url, None, kept)
@@ -278,8 +288,15 @@ class PublicReader:
                 continue
             if response.status == 200:
                 return response
-            last = Response(response.status, b"", response.url, f"HTTP {response.status}")
-            last.headers = response.headers
+            short = response.body[:ERROR_BODY]
+            said = " ".join(short.decode("utf-8", "replace").split())[:200]
+            last = Response(
+                response.status,
+                short,
+                response.url,
+                f"HTTP {response.status}" + (f": {said}" if said else ""),
+                response.headers,
+            )
             if response.status == 429 and attempt < retries:
                 wait = retry_after(response.headers) or min(120, 15 * 2**attempt)
                 cool_down(url, wait)
