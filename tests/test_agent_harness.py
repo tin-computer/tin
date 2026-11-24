@@ -686,3 +686,31 @@ def test_missing_or_oversized_deliverables_send_the_agent_back(monkeypatch, tmp_
     assert module.deliverable_problems(pull, "github.pull_request", {"summary": ""})
     # A pull request's title and body fall back to the summary and message, as for Codex.
     assert not module.deliverable_problems(pull, "github.pull_request", {"summary": "s"})
+
+
+def test_progress_follows_the_agents_own_plan():
+    module = controller()
+    info = {
+        "name": "update_steps",
+        "parameters": {
+            "steps": [
+                {"status": "completed", "title": "Read the project"},
+                {"status": "in_progress", "title": "Read competitors' pricing pages"},
+                {"status": "pending", "title": "Write the report"},
+            ]
+        },
+    }
+    step = {"step_type": "tool", "tool_name": "update_steps", "state": "ACTIVE"}
+    # agy reports tool_info as a Python repr; JSON is read as well.
+    assert module.plan_progress({**step, "tool_info": repr(info)}) == (
+        "Read competitors' pricing pages"
+    )
+    assert module.plan_progress({**step, "tool_info": json.dumps(info)}) == (
+        "Read competitors' pricing pages"
+    )
+    for bad in (
+        {**step, "tool_info": "__import__('os').system('x')"},
+        {**step, "tool_name": "run_command", "tool_info": repr(info)},
+        {**step, "tool_info": repr({"parameters": {"steps": [{"status": "pending"}]}})},
+    ):
+        assert module.plan_progress(bad) is None

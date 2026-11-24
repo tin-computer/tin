@@ -15,6 +15,7 @@ the outside effects only Tin performs after review.
 
 from __future__ import annotations
 
+import ast
 import importlib.machinery
 import importlib.util
 import json
@@ -167,6 +168,37 @@ def brief(context: dict[str, Any], output_kind: str, output_path: object) -> str
     return "\n".join(lines)
 
 
+def plan_progress(body: dict[str, Any]) -> str | None:
+    """The step the agent's own plan marks in progress, for the run's progress line.
+
+    Antigravity attaches text only to its final response, so narration comes from the plan it
+    keeps with its update_steps tool. The switchboard redacts and bounds the line again.
+    """
+    if body.get("step_type") != "tool" or body.get("tool_name") != "update_steps":
+        return None
+    raw = body.get("tool_info")
+    if isinstance(raw, str) and len(raw) <= 50_000:
+        try:
+            raw = json.loads(raw)
+        except ValueError:
+            try:
+                raw = ast.literal_eval(raw)
+            except (ValueError, SyntaxError, MemoryError, RecursionError):
+                return None
+    if not isinstance(raw, dict):
+        return None
+    parameters = raw.get("parameters")
+    steps = parameters.get("steps") if isinstance(parameters, dict) else None
+    if not isinstance(steps, list):
+        return None
+    for step in steps:
+        if isinstance(step, dict) and step.get("status") == "in_progress":
+            title = step.get("title")
+            if isinstance(title, str) and title.strip():
+                return title
+    return None
+
+
 def deliverable_problems(context: dict[str, Any], output_kind: str, result: object) -> list[str]:
     """What is missing from a finished turn, in words the agent can act on."""
     output = context["output"]
@@ -313,6 +345,7 @@ def execute() -> int:
     conversation = None
     final = None
     fixes = 0
+    narrated = None
     try:
         _send(proc, text)
         while True:
@@ -336,6 +369,10 @@ def execute() -> int:
             conversation = conversation or body.get("conversation_id")
             transcript.write(line, conversation)
             if event == "step_update":
+                step = plan_progress(body) if body.get("state") == "ACTIVE" else None
+                if step is not None and step != narrated:
+                    narrated = step
+                    pas._progress(step)
                 if (
                     body.get("step_type") == "agent_response"
                     and body.get("state") == "DONE"
