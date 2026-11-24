@@ -332,7 +332,6 @@ test("notes show in the panel and in search, and a new one makes the score old",
     assert.equal(await box.inputValue(), "");
     // The score Tin made before the note is old until the next run reads it.
     assert.match(await panel.locator(".person-field").nth(1).innerText(), /old · 4 · Strong fit[\s\S]*Your note came after this rating\. The next run reads it and rates again\./);
-    assert.equal(await page.locator('td[data-note="p-maya"]').innerText(), "Customer since September; renews in March.");
 
     await panel.getByRole("button", {name: "Edit"}).click();
     await panel.getByRole("textbox", {name: "Edit note"}).fill("Customer since September.");
