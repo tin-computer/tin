@@ -44,14 +44,14 @@ INTENT_MEANS = {
     "hot": "looking at this now: they asked for a demo or contact, came back several times "
     "within days, or searched the brand and read pricing",
     "warm": "some interest, nothing pressing: they read product, solution or pricing pages on "
-    "one visit, or engaged with a post",
+    "one visit, engaged with a post, or starred the company's GitHub repository",
     "cold": "no sign of interest beyond being seen: the homepage or a blog post only, a long "
     "idle single page, or a match you doubt",
 }
 # People rated this or higher count as fitting: the People segment and connection requests.
 FIT_SHOWN = 3
-# What a person did that gets them rated: the LinkedIn signals and a visit to the site.
-SIGNALS = (*records.SIGNALS, "visited")
+# What a person did that gets them rated: the social signals and a visit to the site.
+SIGNALS = (*records.SOCIAL, "visited")
 ROUTE = ModelRoute(
     key="people.icp",
     provider=ProviderName.GEMINI,
@@ -187,9 +187,10 @@ def instructions(profiles: list[str]) -> str:
         "Fit and intent are null only when there is no name or role to judge.\n\n"
         "You get what Tin knows about the person: their name, headline and other fields, what "
         "they did (reacted to or commented on the team's LinkedIn posts, viewed a team "
-        "member's profile, visited the company's website, with the pages, where they came "
-        "from and how long they stayed) and the team's notes about them. A note is what the "
-        "team knows: it outweighs everything else.\n\n"
+        "member's profile, starred the company's GitHub repository, visited the company's "
+        "website, with the pages, where they came from and how long they stayed) and the "
+        "team's notes about them. A note is what the team knows: it outweighs everything "
+        "else.\n\n"
         "A name or company that came with a website visit was guessed by a service that "
         "matches IP addresses to people. It can be wrong: the company may only own the "
         "network, or be a former employer. Check before you rely on it. Don't name that "

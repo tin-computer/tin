@@ -206,3 +206,27 @@ async def test_site_visitors_are_rated_before_older_people_who_only_engaged(
     people = {p["id"]: p for p in await records.people(f.db.pool, f.project.id)}
     assert people[visitor]["fields"]["icp_fit"]["number"] == 4
     assert people[engaged]["fields"].get("icp_fit", {}).get("number") is None
+
+
+async def test_a_github_star_puts_someone_in_social_and_gets_them_rated(collection_db):
+    f = await fixture(collection_db)
+    star = await person(f, "Sam Star", "Founder at Starco", event="starred")
+    async with f.db.pool.acquire() as conn:
+        await records.add_event(
+            conn,
+            f.project.id,
+            star,
+            kind="starred",
+            event_key="starred:acme/tool:samstar",
+            detail={"repository": "acme/tool", "login": "samstar"},
+        )
+        listed = {p["id"]: p for p in await records.directory(conn, f.project.id, viewer="m")}
+        shown = await records.person(conn, f.project.id, star, viewer="m")
+    assert listed[star]["social"] is True and listed[star]["visited"] is False
+    assert listed[star]["last_touch"]["kind"] == "starred"
+    assert {e["repository"] for e in shown["events"]} == {"", "acme/tool"}
+
+    router = Router()
+    work = PeopleRateActivities(database=f.db, storage=f.storage, router=router)
+    counts = await through(work, await rate_run(f))
+    assert counts["rated"] == 1 and len(router.requests) == 1

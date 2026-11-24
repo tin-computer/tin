@@ -20,6 +20,8 @@ window.TinPeople = (() => {
     { key: "visitors", label: "Visitors" },
     // People the ICP rating judged hot from what they did.
     { key: "hot", label: "Hot" },
+    // Whoever reacted, commented, viewed a member's profile or starred the project's repository.
+    { key: "social", label: "Social" },
     { key: "all", label: "All people" },
     { key: "fit", label: "ICP fit" },
     { key: "new", label: "Not connected yet" },
@@ -29,7 +31,7 @@ window.TinPeople = (() => {
     { key: "ads", label: "From ads" },
   ];
   // Segments that show only while someone is in them (or they're open).
-  const WHEN_ANY = ["visitors", "hot", "invited", "ads"];
+  const WHEN_ANY = ["visitors", "hot", "social", "invited", "ads"];
   // How much interest a person shows now, as the ICP rating judged it; sorted hot first.
   const INTENT = { hot: ["🔥", "hot"], warm: ["🌤", "warm"], cold: ["🧊", "cold"] };
   const INTENT_RANK = { hot: 3, warm: 2, cold: 1 };
@@ -224,6 +226,7 @@ window.TinPeople = (() => {
     const people = view.people || [];
     if (key === "visitors") return people.filter(isVisitor);
     if (key === "hot") return people.filter((person) => field(person, "intent")?.value === "hot");
+    if (key === "social") return people.filter((person) => person.social);
     if (key === "fit") return people.filter((person) => fitOf(person) >= view.fitShown);
     if (key === "new") return people.filter((person) => field(person, "linkedin_relationship")?.value === "none");
     if (key === "invited") return people.filter((person) => field(person, "linkedin_relationship")?.value === "pending");
@@ -777,6 +780,7 @@ window.TinPeople = (() => {
   // The grid's Last touch: "reacted to you", "invited by Mira".
   function touchText(touch) {
     if (touch.kind === "visited") return "";
+    if (touch.kind === "starred") return "starred on GitHub";
     const who = whoOf(touch);
     if (!who) return touch.kind;
     if (touch.kind === "reacted") return `reacted to ${who}`;
@@ -804,6 +808,7 @@ window.TinPeople = (() => {
     if (event.kind === "withdrawn") return "Connection request withdrawn";
     // A connection read from the member's own LinkedIn list, dated when they connected.
     if (event.kind === "connected") return who && who !== "you" ? `Connected with ${who} on LinkedIn` : "Connected with you on LinkedIn";
+    if (event.kind === "starred") return event.repository ? `Starred ${event.repository} on GitHub` : "Starred on GitHub";
     if (event.kind === "visited") return event.summary ? `Visited: ${event.summary}` : "Visited the site";
     return event.kind;
   }
