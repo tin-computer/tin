@@ -43,6 +43,10 @@ PHONE = re.compile(r"\+?\(?[0-9][0-9 ().-]{5,24}[0-9]")
 # Delegate statuses that are its answer about the input itself: the lookup is done. Anything
 # else (a 5xx, out of funds, a changed price, no answer) leaves it for a later run.
 DEFINITE = frozenset({400, 404, 422})
+# Refusals that come before Delegate creates an order: an empty balance (402), a conflict or
+# rate limit (409, 429), and Tin's own checks before ordering.
+BEFORE_ORDER_STATUSES = frozenset({402, 409, 429})
+BEFORE_ORDER = frozenset({"price_above_max", "missing_scope", "offer_selection"})
 
 
 def key(project_id: UUID, record_id: UUID) -> str:
@@ -174,7 +178,12 @@ async def look_up(db, delegate, project_id: UUID, person: dict, *, run_id: UUID)
             except DelegateError as error:
                 if error.status not in DEFINITE:
                     # No answer, or one that may change (funds, price, a 5xx): the receipt
-                    # stays open with its reservation, and a later run asks again.
+                    # stays open and a later run asks again. A refusal known to come before
+                    # any order exists (funds, a changed price, no offer to buy) bought nothing
+                    # and drops its reservation; anything else (no answer, a 5xx, an answer
+                    # Tin can't read) may hide a placed order, so it keeps counting.
+                    if error.status in BEFORE_ORDER_STATUSES or error.code in BEFORE_ORDER:
+                        await db.save_effect_progress(conn, execution_key=execution_key, result={})
                     return "later"
                 await db.complete_effect(
                     conn,
