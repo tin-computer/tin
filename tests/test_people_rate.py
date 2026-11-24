@@ -230,3 +230,56 @@ async def test_a_github_star_puts_someone_in_social_and_gets_them_rated(collecti
     work = PeopleRateActivities(database=f.db, storage=f.storage, router=router)
     counts = await through(work, await rate_run(f))
     assert counts["rated"] == 1 and len(router.requests) == 1
+
+
+class Flaky(Router):
+    """The rating model, failing the first `fails` calls the way Gemini does when a rating
+    searches past its deadline (a 504)."""
+
+    def __init__(self, fails):
+        super().__init__()
+        self.fails = fails
+
+    async def generate(self, route, request, *, timeout_seconds):
+        from tin_lite.model_providers import ModelProviderError
+
+        if self.fails:
+            self.fails -= 1
+            self.requests.append(request)
+            raise ModelProviderError("504 Gateway Timeout")
+        return await super().generate(route, request, timeout_seconds=timeout_seconds)
+
+
+async def test_a_rating_that_times_out_is_asked_once_more_lighter_in_the_same_run(collection_db):
+    from tin_lite import people_icp
+
+    f = await fixture(collection_db)
+    ada = await person(f, "Ada Byron", "Founder at Acme")
+    router = Flaky(fails=1)
+    work = PeopleRateActivities(database=f.db, storage=f.storage, router=router)
+
+    counts = await through(work, await rate_run(f))
+    assert counts["left"] == 0 and len(router.requests) == 2
+    first, again = router.requests
+    assert first.web_search_calls == people_icp.SEARCHES
+    assert again.web_search_calls == people_icp.RETRY_SEARCHES
+    assert again.reasoning_effort == people_icp.RETRY_REASONING
+    people = {p["id"]: p for p in await records.people(f.db.pool, f.project.id)}
+    assert people[ada]["fields"]["icp_fit"]["number"] == 4
+
+
+async def test_a_person_neither_call_rates_is_tried_again_by_the_next_run(collection_db):
+    f = await fixture(collection_db)
+    ada = await person(f, "Ada Byron", "Founder at Acme")
+    router = Flaky(fails=2)
+    work = PeopleRateActivities(database=f.db, storage=f.storage, router=router)
+
+    counts = await through(work, await rate_run(f))
+    assert counts["left"] == 1 and len(router.requests) == 2
+    people = {p["id"]: p for p in await records.people(f.db.pool, f.project.id)}
+    assert people[ada]["fields"]["icp_fit"]["number"] is None
+
+    await through(work, await rate_run(f))
+    assert len(router.requests) == 3
+    people = {p["id"]: p for p in await records.people(f.db.pool, f.project.id)}
+    assert people[ada]["fields"]["icp_fit"]["number"] == 4

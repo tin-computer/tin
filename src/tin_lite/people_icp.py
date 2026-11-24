@@ -70,12 +70,19 @@ REASONING = ReasoningEffort.MEDIUM
 MODEL_SECONDS = 300
 # Runaway guards per person, well above what a rating needs.
 SEARCHES = 15
+# A call that fails (most often the model searching past MODEL_SECONDS, which Gemini answers
+# with a 504) is asked once more, lighter, so it finishes in time.
+RETRY_SEARCHES = 5
+RETRY_REASONING = ReasoningEffort.LOW
+RETRY_SECONDS = 240
 MAX_OUTPUT_TOKENS = 24000
 # Per run: how many people, how many at once, and when to stop starting new ones (the rest are
 # rated by the next run).
 MAX_SCORED = 600
 PARALLEL = 10
-SCORE_SECONDS = 15 * 60
+# A person started just before this can take MODEL_SECONDS and a retry; the score activity's
+# 25 minutes leave room for both.
+SCORE_SECONDS = 14 * 60
 # What the model reads about one person.
 NOTES_READ = 5
 NOTE_CHARS = 600

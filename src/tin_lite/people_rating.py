@@ -49,20 +49,62 @@ async def icp_text(storage, project, icp: dict) -> str:
 
 
 async def answer(db, router, run, person, *, text, profiles, definition, operation, step):
-    """The model's answer for one person, or None when an earlier call can't be confirmed."""
+    """The model's answer for one person, or None when no call answered or an earlier call
+    can't be confirmed.
+
+    A call that fails, most often because the model searched past its deadline, is asked once
+    more with fewer searches and less reasoning, so it can finish in time. A person neither
+    call answers keeps no current rating, so a later run tries them again."""
 
     digest = hashlib.sha256(f"{definition}:{person['id']}".encode()).hexdigest()[:24]
-    key = f"{run.id}:{step}:rate:{digest}"
+    asked = {
+        "db": db,
+        "router": router,
+        "run": run,
+        "person": person,
+        "text": text,
+        "profiles": profiles,
+        "operation": operation,
+    }
+    output, failed = await _ask(
+        **asked,
+        key=f"{run.id}:{step}:rate:{digest}",
+        usage=f"{step}:icp:{digest}",
+        searches=people_icp.SEARCHES,
+        reasoning=people_icp.REASONING,
+        seconds=people_icp.MODEL_SECONDS,
+    )
+    if not failed:
+        return output
+    output, _ = await _ask(
+        **asked,
+        key=f"{run.id}:{step}:rate:{digest}:again",
+        usage=f"{step}:icp:{digest}:again",
+        searches=people_icp.RETRY_SEARCHES,
+        reasoning=people_icp.RETRY_REASONING,
+        seconds=people_icp.RETRY_SECONDS,
+    )
+    return output
+
+
+async def _ask(
+    *, db, router, run, person, text, profiles, operation, key, usage, searches, reasoning, seconds
+) -> tuple[object, bool]:
+    """One receipted call: its output, and whether it failed (no usable answer came back). A
+    call whose receipt was started but never settled is uncertain: no output, not failed, so
+    it isn't bought again."""
+
     async with db.effect_lock(key, operation) as (conn, saved):
         if saved and saved.status == "completed":
-            return (saved.result or {}).get("output")
+            output = (saved.result or {}).get("output")
+            return output, output is None
         if saved:
-            return None
+            return None, False
         await db.start_effect(conn, execution_key=key, operation=operation)
         output = None
         try:
-            with model_usage_scope(run_id=run.id, step=f"{step}:icp:{digest}", conn=conn):
-                async with asyncio.timeout(people_icp.MODEL_SECONDS + 15):
+            with model_usage_scope(run_id=run.id, step=usage, conn=conn):
+                async with asyncio.timeout(seconds + 15):
                     result = await router.generate(
                         people_icp.ROUTE.key,
                         WebSearchRequest(
@@ -76,17 +118,17 @@ async def answer(db, router, run, person, *, text, profiles, definition, operati
                             output_schema=people_icp.schema(profiles),
                             output_schema_name="icp_rating",
                             max_output_tokens=people_icp.MAX_OUTPUT_TOKENS,
-                            reasoning_effort=people_icp.REASONING,
-                            web_search_calls=people_icp.SEARCHES,
+                            reasoning_effort=reasoning,
+                            web_search_calls=searches,
                         ),
-                        timeout_seconds=people_icp.MODEL_SECONDS,
+                        timeout_seconds=seconds,
                     )
             output = result.parsed
         except (ModelProviderError, ModelOutputTruncated, TimeoutError) as error:
             # A check on model output never fails the run that paid for it.
             logger.warning("ICP rating failed for run %s: %s", run.id, type(error))
         await db.complete_effect(conn, execution_key=key, result={"output": output})
-        return output
+        return output, output is None
 
 
 async def rate(db, router, run, person, *, text, profiles, definition, operation, step) -> None:
