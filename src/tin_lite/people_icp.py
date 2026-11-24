@@ -79,7 +79,10 @@ MAX_OUTPUT_TOKENS = 24000
 # Per run: how many people, how many at once, and when to stop starting new ones (the rest are
 # rated by the next run).
 MAX_SCORED = 600
-PARALLEL = 10
+# Each rating holds a database connection for its whole model call (its receipt and the
+# usage record), so this stays well under the process's pool (db_pool_max, 10): ten at once
+# took every connection and left the web server waiting.
+PARALLEL = 4
 # A person started just before this can take MODEL_SECONDS and a retry; the score activity's
 # 25 minutes leave room for both.
 SCORE_SECONDS = 14 * 60

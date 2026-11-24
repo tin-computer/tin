@@ -124,6 +124,28 @@ until started; do
 done
 echo "release ${release_sha} started after $((SECONDS - restart_began))s"
 
+# The webhook intake moves to the release only now, while the main process answers webhooks
+# in its place (Caddy falls back to it). Its failing to start is reported, not fatal: the main
+# process serves webhooks meanwhile.
+if systemctl cat tin-lite-intake.service >/dev/null 2>&1; then
+  intake_at="$(date '+%Y-%m-%d %H:%M:%S')"
+  systemctl restart tin-lite-intake
+  intake_deadline=$((SECONDS + 120))
+  intake_started() {
+    local count
+    count="$(journalctl -u tin-lite-intake --since "${intake_at}" --no-pager -q |
+      grep -c "Application startup complete" || true)"
+    (( count > 0 ))
+  }
+  until intake_started; do
+    if (( SECONDS > intake_deadline )); then
+      echo "the webhook intake did not report startup; webhooks go to the main process" >&2
+      break
+    fi
+    sleep 3
+  done
+fi
+
 # Keep the newest 20 releases, plus whatever current and the previous release point at.
 keep_current="$(readlink -f /opt/tin-lite/current)"
 keep_previous="$(readlink -f "${previous:-/nonexistent}" 2>/dev/null || true)"

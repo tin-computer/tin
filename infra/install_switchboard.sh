@@ -108,7 +108,21 @@ ${technical_host} {
 
 ${public_hosts} {
     encode zstd gzip
-    reverse_proxy 127.0.0.1:8000
+    # Webhooks (RB2B, Stripe, GitHub, Twilio) go to the webhook intake first, a web-only
+    # process a deploy restarts only once the main one is back, and to the main process
+    # while the intake restarts: a sender always gets an answer.
+    @webhooks path /webhooks/*
+    handle @webhooks {
+        reverse_proxy 127.0.0.1:8001 127.0.0.1:8000 {
+            lb_policy first
+            lb_try_duration 10s
+            lb_try_interval 250ms
+            fail_duration 10s
+        }
+    }
+    handle {
+        reverse_proxy 127.0.0.1:8000
+    }
     header {
         Strict-Transport-Security "max-age=31536000; includeSubDomains"
         X-Content-Type-Options "nosniff"
@@ -212,7 +226,41 @@ ReadWritePaths=/var/cache/tin-lite-uv /var/lib/tin-lite-proxy-grants
 WantedBy=multi-user.target
 EOF
 
+# The webhook intake: the same release, web-only (no Temporal worker, no background loops),
+# on its own port with two database connections. activate_release.sh restarts it after the
+# main process is up.
+cat > /etc/systemd/system/tin-lite-intake.service <<'UNIT'
+[Unit]
+Description=Tin Lite webhook intake (web-only)
+After=network-online.target caddy.service
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=tinlite
+Group=tinlite
+WorkingDirectory=/opt/tin-lite/current
+EnvironmentFile=/etc/tin-lite/clerk.env
+EnvironmentFile=/etc/tin-lite/runtime.env
+Environment=TIN_LITE_WEB_ONLY=true
+Environment=TIN_LITE_PORT=8001
+Environment=TIN_LITE_DB_POOL_MAX=2
+ExecStart=/usr/local/bin/uv run --frozen --no-dev tin-lite serve
+Restart=always
+RestartSec=5
+TimeoutStopSec=60
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=strict
+ProtectHome=true
+ReadWritePaths=/var/cache/tin-lite-uv
+
+[Install]
+WantedBy=multi-user.target
+UNIT
+
 systemctl daemon-reload
+systemctl enable tin-lite-intake
 systemctl enable caddy
 systemctl restart caddy
 source_dir="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"

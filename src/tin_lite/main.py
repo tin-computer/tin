@@ -57,40 +57,32 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         runtime = await build_runtime(resolved_settings)
         app.state.settings = resolved_settings
         app.state.runtime = runtime
-        worker_task = asyncio.create_task(runtime.worker.run(), name="temporal-worker")
-        from tin_lite.workflow_review_dispatch import review_reconciliation_loop
+        # The worker and the background loops run in the main process only; a web-only
+        # process (the webhook intake) serves HTTP alone.
+        background: list[asyncio.Task] = []
+        worker_task = None
+        if not getattr(resolved_settings, "web_only", False):
+            worker_task = asyncio.create_task(runtime.worker.run(), name="temporal-worker")
+            from tin_lite.agent_traffic_connection import removal_loop
+            from tin_lite.connection_collection_connection import session_cleanup_loop
+            from tin_lite.rb2b_api import waiting_visits_loop
+            from tin_lite.rb2b_slack import digest_loop
+            from tin_lite.summary_posts import summary_posts_loop
+            from tin_lite.workflow_review_dispatch import review_reconciliation_loop
 
-        review_task = asyncio.create_task(
-            review_reconciliation_loop(runtime, resolved_settings), name="review-reconciliation"
-        )
-        from tin_lite.connection_collection_connection import session_cleanup_loop
-
-        session_task = asyncio.create_task(
-            session_cleanup_loop(runtime.database), name="connection-session-cleanup"
-        )
-        from tin_lite.agent_traffic_connection import removal_loop
-
-        removal_task = asyncio.create_task(
-            removal_loop(runtime.integrations), name="analytics-removals"
-        )
-        from tin_lite.summary_posts import summary_posts_loop
-
-        summary_task = asyncio.create_task(
-            summary_posts_loop(runtime, resolved_settings), name="run-summary-posts"
-        )
-        from tin_lite.rb2b_slack import digest_loop
-
-        rb2b_digest_task = asyncio.create_task(
-            digest_loop(runtime, resolved_settings), name="rb2b-digests"
-        )
-        billing_task = (
-            asyncio.create_task(
-                billing_reconciliation_loop(runtime, resolved_settings),
-                name="billing-reconciliation",
-            )
-            if runtime.database.billing is not None
-            else None
-        )
+            loops = {
+                "review-reconciliation": review_reconciliation_loop(runtime, resolved_settings),
+                "connection-session-cleanup": session_cleanup_loop(runtime.database),
+                "analytics-removals": removal_loop(runtime.integrations),
+                "run-summary-posts": summary_posts_loop(runtime, resolved_settings),
+                "rb2b-digests": digest_loop(runtime, resolved_settings),
+                "rb2b-waiting-visits": waiting_visits_loop(runtime, resolved_settings),
+            }
+            if runtime.database.billing is not None:
+                loops["billing-reconciliation"] = billing_reconciliation_loop(
+                    runtime, resolved_settings
+                )
+            background = [asyncio.create_task(loop, name=name) for name, loop in loops.items()]
         try:
             async with (
                 mcp_app.router.lifespan_context(mcp_app),
@@ -99,26 +91,18 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             ):
                 yield
         finally:
-            session_task.cancel()
-            await asyncio.gather(session_task, return_exceptions=True)
-            removal_task.cancel()
-            await asyncio.gather(removal_task, return_exceptions=True)
-            summary_task.cancel()
-            await asyncio.gather(summary_task, return_exceptions=True)
-            rb2b_digest_task.cancel()
-            await asyncio.gather(rb2b_digest_task, return_exceptions=True)
-            review_task.cancel()
-            await asyncio.gather(review_task, return_exceptions=True)
-            if billing_task is not None:
-                billing_task.cancel()
-                await asyncio.gather(billing_task, return_exceptions=True)
+            for task in background:
+                task.cancel()
+            await asyncio.gather(*background, return_exceptions=True)
             # Usually already drained by the serve command's SIGTERM handling; the
             # group's shutdown is idempotent and then returns at once.
-            await runtime.worker.shutdown()
+            if worker_task is not None:
+                await runtime.worker.shutdown()
             posthog_client = getattr(mcp_server, "posthog_client", None)
             if posthog_client is not None:
                 posthog_client.shutdown()  # flush PostHog's MCP analytics queue
-            await worker_task
+            if worker_task is not None:
+                await worker_task
             if runtime.luna is not None:
                 await runtime.luna.close()
             await runtime.integrations.close()

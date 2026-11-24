@@ -105,7 +105,7 @@ class RuntimeServices:
 
 
 async def build_runtime(settings: Settings) -> RuntimeServices:
-    database = Database(settings.runtime_dsn)
+    database = Database(settings.runtime_dsn, pool_max=getattr(settings, "db_pool_max", 10))
     await database.connect()
     from tin_lite.billing import configure_billing
 

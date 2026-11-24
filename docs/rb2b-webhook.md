@@ -20,6 +20,24 @@ reads their visit in the project's PostHog and rates them against `strategy/ICP.
 - Code: `rb2b_api.py` (the endpoint, the card's API), `rb2b.py` (payload, People and PostHog),
   `rb2b_activities.py`, `static/rb2b.js`; migration 087.
 
+### Always answering
+
+RB2B turns the integration off after a delivery that gets no 200 within 15 seconds, and a
+founder has to turn it back on by hand. So:
+
+- The endpoint keeps the payload and answers; the run starts after, in the background
+  (`rb2b_api.rb2b_webhook`), and keeping it is bounded by `RECEIVE_SECONDS` (8). A start that
+  fails is retried by the main process's sweep (`waiting_visits_loop`, every minute, for
+  visits waiting over half a minute) and with the project's next visitor.
+- Deploys restart the main process (30 to 50 seconds without HTTP). `/webhooks/*` goes
+  through Caddy to the webhook intake first (`tin-lite-intake.service`: the same release with
+  `TIN_LITE_WEB_ONLY=true`, port 8001, two database connections, no worker or loops) and to
+  the main process when the intake is down. `activate_release.sh` restarts the intake only
+  after the main process reports startup, so one of them always answers.
+- Postgres allows 25 connections in all. A rating holds one for its whole model call, so
+  `people_icp.PARALLEL` (4) stays well under the main process's pool (`TIN_LITE_DB_POOL_MAX`,
+  10); at 10 a rating run took every connection and the webhook timed out.
+
 ## What RB2B posts
 
 A flat JSON object with spaced keys ("LinkedIn URL", "First Name", "Title", "Company Name",

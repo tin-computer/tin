@@ -343,6 +343,12 @@ class Settings(BaseSettings):
     worker_graceful_shutdown_seconds: int = Field(
         default=300, ge=0, alias="TIN_LITE_WORKER_GRACEFUL_SHUTDOWN_SECONDS"
     )
+    # A web-only process serves HTTP without the Temporal worker or the background loops: the
+    # webhook intake that keeps answering while the main process restarts for a deploy.
+    web_only: bool = Field(default=False, alias="TIN_LITE_WEB_ONLY")
+    port: int = Field(default=8000, ge=1, le=65535, alias="TIN_LITE_PORT")
+    # Postgres connections this process may hold; the database's own limit is shared.
+    db_pool_max: int = Field(default=10, ge=1, le=50, alias="TIN_LITE_DB_POOL_MAX")
     switchboard_public_url: str = Field(
         default="http://127.0.0.1:8000", alias="TIN_LITE_PUBLIC_URL"
     )
