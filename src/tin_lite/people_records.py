@@ -1033,7 +1033,9 @@ async def directory(
     active: dict[UUID, datetime] = {}
     for row in await conn.fetch(
         """SELECT COALESCE(r.merged_into, r.id) AS person, e.kind, e.occurred_at,
-               e.recorded_at, e.detail->>'posted_at' AS posted_at, e.detail->>'member' AS member,
+               e.recorded_at, e.detail->>'posted_at' AS posted_at,
+               COALESCE(e.detail->>'member', CASE WHEN e.kind IN ('connected', 'new_connection')
+                   THEN split_part(e.event_key, ':', 3) END) AS member,
                e.detail->>'source' AS source, e.run_id
            FROM record_events e JOIN records r ON r.id = e.record_id
            WHERE e.project_id = $1 AND ($2::uuid IS NULL OR COALESCE(r.merged_into, r.id) = $2)""",
@@ -1169,7 +1171,9 @@ async def person(
         return None
     rows = await conn.fetch(
         """SELECT e.kind, e.occurred_at, e.recorded_at, e.detail, e.run_id,
-               e.detail->>'posted_at' AS posted_at
+               e.detail->>'posted_at' AS posted_at,
+               CASE WHEN e.kind IN ('connected', 'new_connection')
+                   THEN split_part(e.event_key, ':', 3) END AS key_member
            FROM record_events e JOIN records r ON r.id = e.record_id
            WHERE e.project_id = $1 AND (r.id = $2 OR r.merged_into = $2)""",
         project_id,
@@ -1193,7 +1197,8 @@ async def person(
             visit["replay_url"] = (
                 replay if isinstance(replay, str) and REPLAY.fullmatch(replay) else ""
             )
-        member = _event_member(detail.get("member"), row["run_id"], runs)
+        # A connection names its member in its key, even one copied in without a run.
+        member = _event_member(detail.get("member") or row["key_member"], row["run_id"], runs)
         events.append(
             {
                 **visit,

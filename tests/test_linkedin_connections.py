@@ -551,6 +551,26 @@ async def test_a_run_exports_every_connection_with_their_position(collection_db)
     assert rows[3]["Company"] == "Kaya Labs"
 
 
+async def test_connections_copied_in_without_a_run_are_still_the_members(collection_db):
+    f = await fixture(collection_db)
+    cloud = sample()
+    await run_through(work(f, cloud), await export_run(f))
+    # As when a member's connections are copied into another project: same events and keys,
+    # no run behind them.
+    await f.db.pool.execute("UPDATE record_events SET run_id=NULL WHERE kind='connected'")
+    async with f.db.pool.acquire() as conn:
+        assert await export.need_positions(conn, f.project.id, USER, limit=20) == [member(3)]
+        assert [p["first_name"] for p in await export.connections(conn, f.project.id, USER)] == [
+            "Ada",
+            "Bob",
+            "Cem",
+        ]
+        # Someone else's list is still theirs alone.
+        assert await export.connections(conn, f.project.id, "user_someoneelse") == []
+    people = {p["name"]: p for p in await records.directory(f.db.pool, f.project.id, viewer=USER)}
+    assert people["Ada Yilmaz"]["last_touch"]["member"] == USER
+
+
 async def test_a_list_never_read_to_the_end_is_read_to_the_end(collection_db):
     f = await fixture(collection_db)
     cloud = sample()

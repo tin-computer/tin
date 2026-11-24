@@ -62,6 +62,8 @@ NO_POSITION = "LinkedIn showed no current position"
 
 
 def connected_key(member: str, record_id: UUID) -> str:
+    # Whose connection it is reads from the key (`split_part(event_key, ':', 3)`), so a
+    # connection copied into a project without a run still belongs to its member.
     return f"linkedin:connected:{member}:{record_id}"
 
 
@@ -190,9 +192,9 @@ async def need_positions(conn, project_id: UUID, member: str, *, limit: int) -> 
                SELECT COALESCE(r.merged_into, r.id) AS person, max(e.occurred_at) AS connected
                FROM record_events e
                JOIN records r ON r.id = e.record_id
-               JOIN workflow_runs w ON w.id = e.run_id
                WHERE e.project_id = $1 AND e.kind = 'connected'
-                 AND w.started_by_clerk_user_id = $2
+                 -- The member is in the event's key, whichever run (or copy) wrote it.
+                 AND split_part(e.event_key, ':', 3) = $2
                GROUP BY 1)
            SELECT i.value AS member, v.set_at
            FROM mine
@@ -277,9 +279,9 @@ async def connections(conn, project_id: UUID, member: str) -> list[dict]:
                    e.detail
                FROM record_events e
                JOIN records r ON r.id = e.record_id
-               JOIN workflow_runs w ON w.id = e.run_id
                WHERE e.project_id = $1 AND e.kind = 'connected'
-                 AND w.started_by_clerk_user_id = $2
+                 -- The member is in the event's key, whichever run (or copy) wrote it.
+                 AND split_part(e.event_key, ':', 3) = $2
                ORDER BY COALESCE(r.merged_into, r.id), e.occurred_at DESC)
            SELECT mine.person, mine.connected, mine.detail,
                (SELECT jsonb_object_agg(i.kind, i.value) FROM record_identifiers i
