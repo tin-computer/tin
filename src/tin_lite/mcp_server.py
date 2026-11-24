@@ -718,6 +718,9 @@ get_person reads one with their notes and timeline. When the founder corrects so
 own words (a customer, not a buyer, the right ICP, how they know them), use update_person or
 add_person_note: no run replaces a member's pick, and Tin reads notes the next time it scores
 the person. Forget a person (forget_person) only when the founder asked, with their exact name.
+To bring in people the founder has (a list, a CSV, prospects), use add_people, with a tag naming
+the group when they want to compare groups; tag_people labels people already there, and
+connection_request_results compares how each group's requests went.
 
 Films: when the founder wants a short film of their product (a feature, a launch, an idea for a
 post), you make it, on this machine, and Tin keeps it. Call get_film(project_id, slug) first and
@@ -1287,6 +1290,8 @@ def create_mcp_app(
             "social": bool(person.get("social")),
             # Known only from a bulk import of connections, nothing done Tin saw.
             "imported": bool(person.get("imported")),
+            # A member's labels, such as the outreach group they were added in.
+            "tags": list(person.get("tags") or []),
             # Named for a visit Tin read (RB2B or a visitor journeys run); company_visit when
             # only their company's visit was seen and Tin found them there.
             "visited": bool(person.get("visited") or value("web_tier")),
@@ -1315,7 +1320,11 @@ def create_mcp_app(
 
     @server.tool(annotations=ToolAnnotations(readOnlyHint=True))
     async def list_people(
-        project_id: str, segment: str = "all", query: str | None = None, limit: int = 100
+        project_id: str,
+        segment: str = "all",
+        query: str | None = None,
+        limit: int = 100,
+        tag: str | None = None,
     ) -> dict[str, Any]:
         """List a project's people, best ICP fit first: who they are and their company, the ICP
         profile they come closest to, their fit (1 not a fit to 4 strong fit, named in
@@ -1336,7 +1345,8 @@ def create_mcp_app(
         or "from_ads" (their last visit came from an ad click). came_from is how the last visit
         arrived (ad, organic, ai, social, referral, direct). phone is the numbers on file for
         a good or strong lead. query matches name, headline, company, email, phone, last visit,
-        ICP and notes. `profiles` are the ICP file's profiles.
+        ICP, notes and tags. tag keeps only people with that tag (tag_people), within the segment.
+        `profiles` are the ICP file's profiles.
         """
         parsed, viewer, people = await people_service(project_id, "list_people")
         segments = (
@@ -1369,6 +1379,9 @@ def create_mcp_app(
             rows = [r for r in rows if r["on_the_site"]]
         elif segment == "from_ads":
             rows = [r for r in rows if r["came_from"] == "ad"]
+        if tag:
+            wanted = " ".join(tag.split()).casefold()
+            rows = [r for r in rows if wanted in {t.casefold() for t in r["tags"]}]
         if query:
             words = query.casefold()
             texts = {str(p["id"]): p.get("notes_text") or "" for p in listed["people"]}
@@ -1387,6 +1400,7 @@ def create_mcp_app(
                         r["came_from_detail"] or "",
                         r["icp"] or "",
                         texts[r["id"]],
+                        *r["tags"],
                     ]
                 ).casefold()
             ]
@@ -1404,6 +1418,59 @@ def create_mcp_app(
             "profiles": listed["profiles"],
             "links": {"people": f"{dashboard_url(settings)}/people?project={parsed}"},
         }
+
+    @server.tool()
+    async def add_people(
+        project_id: str,
+        people: list[dict[str, Any]],
+        tags: list[str] | None = None,
+        connections: bool = False,
+    ) -> dict[str, Any]:
+        """Add people the founder gave you to the project's People, up to 1,000 a call: a list
+        they pasted, a CSV or sheet you read, prospects for outreach. Each person is an object
+        with `linkedin_url` (a profile link, with or without https://, or an ACo… profile ID)
+        and/or `email`, and optionally `name`, `headline`, `company`, `position`, `location`
+        and `tags`. Someone already in People is matched by their link or email, never
+        duplicated, and keeps what Tin already has; only empty fields are filled. `tags` here
+        go on everyone in the call, beside each person's own: use a tag to name a group (an
+        outreach batch, an event, a source) and compare groups with
+        connection_request_results. Set `connections` only when the list is the caller's own
+        LinkedIn connections: they're then marked connected to the caller and listed under
+        Connections. Otherwise they're listed in All people. Adding someone never contacts
+        them or buys anything; send_connection_requests asks them to connect, and a profile
+        link is enough for that. Returns how many were added and matched, `skipped` (each
+        list position with why) and `person_ids` in list order."""
+        parsed, viewer, service = await people_service(project_id, "add_people")
+        return await people_result(
+            service.add_people(parsed, viewer, people, tags=tags or [], connections=connections)
+        )
+
+    @server.tool()
+    async def tag_people(
+        project_id: str,
+        person_ids: list[str],
+        add: list[str] | None = None,
+        remove: list[str] | None = None,
+    ) -> dict[str, Any]:
+        """Add or remove tags on people (up to 1,000 at a time): short labels the team uses, such
+        as the outreach group someone is in. Everyone on the project sees them in People;
+        list_people filters by one, and connection_request_results compares groups."""
+        parsed, viewer, service = await people_service(project_id, "tag_people")
+        ids = [_mcp_uuid(item, field="person_ids") for item in person_ids]
+        return await people_result(
+            service.tag(parsed, viewer, ids, add=add or [], remove=remove or [])
+        )
+
+    @server.tool(annotations=ToolAnnotations(readOnlyHint=True))
+    async def connection_request_results(project_id: str, tag: str | None = None) -> dict[str, Any]:
+        """How the project's connection requests went, by tag: per group, how many wait to go
+        out, went out, were accepted, are still pending, weren't asked (already connected or
+        invited, nobody at that link, refused) or are uncertain, and acceptance_rate (accepted
+        of those that went out). A person with two tags counts in both; untagged people are
+        the group with tag null. Tin learns who accepted from the member's LinkedIn reads:
+        the connections export, engagers or profile viewers runs."""
+        parsed, viewer, service = await people_service(project_id, "connection_request_results")
+        return await people_result(service.request_results(parsed, viewer, tag))
 
     @server.tool(annotations=ToolAnnotations(readOnlyHint=True))
     async def get_person(project_id: str, person_id: str) -> dict[str, Any]:
@@ -1803,7 +1870,9 @@ def create_mcp_app(
     ) -> dict[str, Any]:
         """Send LinkedIn connection requests to people the founder chose, only as they said in
         their words. list_people shows who `can_request` (someone Tin can name on LinkedIn, not
-        a customer, not already connected to the caller or asked by anyone on the project).
+        a customer, not already connected to the caller or asked by anyone on the project). A
+        person known only by their profile link (add_people) can be asked: Tin looks up their
+        profile ID right before it sends.
         Tin queues them and sends them one at a time on its own schedule from the caller's own
         LinkedIn session, and stops at LinkedIn's first warning. People who fit and engaged with
         the caller's posts or viewed their profile are queued on their own after each LinkedIn

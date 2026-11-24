@@ -39,11 +39,27 @@ height, pinned with the header, so nothing under the cursor moves)
 (`POST /api/projects/{project_id}/linkedin-requests/send`, or `send_connection_requests`).
 `linkedin_requests.pick` queues them, in the order sent, in a batch of their own that is
 approved at once, and hands it to the member's sending run. Anyone chosen must be someone the
-member can ask (`pickable`): with a LinkedIn profile ID, not a customer, not the member's
+member can ask (`pickable`): with a LinkedIn profile ID or a profile link, not a customer, not the member's
 connection or invitee as far as Tin knows, and with no request from anyone on the project that
 went out or waits. A request that lapsed, was declined or never went out doesn't stop them. The
 fit doesn't matter: the member chose them. Up to 1,000 at a time; the same `request_id` repeats
 the same choice. If a new run can't start, the batch is removed and the member reads why.
+
+### Someone known only by their profile link
+
+People a member added by their link ([adding people](people-records.md#adding-people-and-tags))
+have a slug and no profile ID (ACo…), which the request needs. `pick` queues them with the slug
+(`linkedin_requests.slug`, `target` empty). When their turn comes, the sending run first looks
+up the ID with one `linkedin_profile_ids` read as the member, under its own receipt
+(`<run>:requests:<request>:id:<turn>`):
+- found: the ID is kept on the person (merging with anyone Tin already knew by it) and on the
+  request, and the request is sent as usual;
+- the member is already connected or has invited them: settled as `connected` or `invited`;
+- nobody at that link: `unknown_person`, nothing sent;
+- a reason that stops sending (a challenge, an expired session): handled as for a request;
+- a read that didn't finish: the request waits its turn again.
+
+Tin queues people on its own after a read (`queue`) only when it has their profile ID.
 
 ## One line per member
 
@@ -128,6 +144,13 @@ chosen again.
 Not the sending run: it would sit in Running for weeks only to wait. The member's own LinkedIn
 reads read it instead, after their main reads and before they publish:
 [profile viewers](linkedin-profile-viewers.md) (daily) and [engagers](linkedin-engagers.md).
+The [connections export](linkedin-connections.md) settles it too: anyone with a request of the
+member's that went out who now shows in the member's connections list accepted
+(`linkedin_requests.connected_now`), however long ago it went.
+
+`connection_request_results` (MCP) compares groups: per tag, how many wait, went out, were
+accepted, are pending, weren't asked or are uncertain, and the share of those that went out that
+were accepted.
 
 - **When:** about once a day (`linkedin_requests.reading_due`): while a request of the member's
   on the project waits for an answer, and the last read was 20 hours ago or more, whichever of

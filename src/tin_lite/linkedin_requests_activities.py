@@ -20,11 +20,13 @@ from temporalio import activity
 from temporalio.exceptions import ApplicationError
 
 from tin_lite import linkedin_requests as requests
+from tin_lite import people_records as records
 from tin_lite.connection_collection import CollectionError
 from tin_lite.failures import failure_projection, split_failure_input
 from tin_lite.integrations import IntegrationAuthorizationError, IntegrationUpstreamError
 from tin_lite.linkedin_engagers_activities import read_accepted, saved_session
 from tin_lite.linkedin_invitations import InviteResult
+from tin_lite.linkedin_viewers import ProfileIdsResult
 from tin_lite.organic_audit_publication import publish_artifacts
 from tin_lite.workflow_inputs import WorkflowInputError
 
@@ -144,6 +146,26 @@ class LinkedInRequestsActivities:
             if receipt is None:
                 await self._settle(run, request_id, "rate_limited")
             return {"outcome": "wait", "wait": 6 * 3600}
+        if request["target"] is None:
+            # Known by their profile link only: look up the profile ID the request needs.
+            target, found = await self._look_up(run, request, session, actor)
+            if found == "again":
+                # Nothing reached LinkedIn's invitation: the request waits its turn again.
+                await self._settle(run, request_id, "rate_limited")
+                return {"outcome": "wait", "wait": 3600}
+            if found is None:
+                # The lookup may have merged them with someone Tin knew: ask again whether
+                # they can be asked.
+                async with self.db.pool.acquire() as conn, conn.transaction():
+                    found = await requests.still_askable(conn, request_id)
+                if found == "skip":
+                    return {"outcome": "skip", "skip": True}
+            if found is not None:
+                status = await self._settle(run, request_id, found)
+                if found in STOPPING:
+                    await self._pause(request["member"], found)
+                return {"outcome": found, "status": status}
+            request = {**dict(request), "target": target}
         answer, code = await self._invite(run, key, request, session, actor)
         if code is not None:
             outcome = code
@@ -167,6 +189,79 @@ class LinkedInRequestsActivities:
             return await requests.settle(
                 conn, request_id, outcome, run_id=run.id, invitation=invitation
             )
+
+    async def _look_up(self, run, request, session, actor) -> tuple[str | None, str | None]:
+        """The profile ID behind the request's profile link, from one receipted read as the
+        member: (ID, None), or (None, what it came to): connected or invited (the member
+        already is), unknown_person (LinkedIn shows nobody there), a reason that stops sending,
+        or "again" when the read didn't finish. A found ID is kept on the person and the
+        request."""
+
+        turn = int(request["attempted_at"].timestamp()) if request["attempted_at"] else 0
+        key = f"{run.id}:requests:{request['id']}:id:{turn}"
+        async with self.db.effect_lock(key, REQUEST_OPERATION) as (conn, receipt):
+            if receipt is not None:
+                saved = receipt.result or {}
+                if receipt.status == "completed":
+                    return saved.get("target"), saved.get("outcome")
+                if saved.get("sandbox_id"):
+                    await self.cloud.cleanup(saved["sandbox_id"])
+                await self.db.complete_effect(
+                    conn, execution_key=key, result={"target": None, "outcome": "again"}
+                )
+                return None, "again"
+            await self.db.start_effect(conn, execution_key=key, operation=REQUEST_OPERATION)
+            try:
+                raw = await self.cloud.engagement(
+                    conn,
+                    execution_key=key,
+                    run_id=run.id,
+                    session=session,
+                    packet={
+                        "kind": "linkedin_profile_ids",
+                        "slugs": [request["slug"]],
+                        "actor": actor,
+                    },
+                    seconds=110,
+                )
+                answer = ProfileIdsResult.model_validate(raw)
+            except CollectionError as error:
+                outcome = error.code if error.code in STOPPING else "again"
+                await self.db.complete_effect(
+                    conn, execution_key=key, result={"target": None, "outcome": outcome}
+                )
+                return None, outcome
+            except ValueError:
+                await self.db.complete_effect(
+                    conn, execution_key=key, result={"target": None, "outcome": "again"}
+                )
+                return None, "again"
+            person = next((p for p in answer.people if p.slug == request["slug"]), None)
+            target, outcome = None, "unknown_person"
+            if person is not None and person.member:
+                target = person.member
+                outcome = person.state if person.state in ("connected", "invited") else None
+                async with conn.transaction():
+                    kept = await records.upsert_person(
+                        conn,
+                        request["project_id"],
+                        {"linkedin_member": target, "linkedin_slug": request["slug"]},
+                        source=requests.KEY,
+                        run_id=run.id,
+                    )
+                    if kept is None:
+                        # That profile is someone the project forgot: never asked.
+                        target, outcome = None, "unknown_person"
+                    else:
+                        await conn.execute(
+                            "UPDATE linkedin_requests SET target = $2 WHERE id = $1",
+                            request["id"],
+                            target,
+                        )
+            await self.db.complete_effect(
+                conn, execution_key=key, result={"target": target, "outcome": outcome}
+            )
+            return target, outcome
 
     async def _invite(self, run, key: str, request, session, actor):
         """One receipted send: (answer, None), or (None, reason). An interrupted send whose

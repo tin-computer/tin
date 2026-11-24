@@ -243,7 +243,7 @@ window.TinPeople = (() => {
   function shown() {
     const query = view.query.trim().toLowerCase();
     const people = segmentPeople(view.segment).filter((person) => !query ||
-      [person.name, person.headline, person.company, person.email, field(person, "phone")?.value, field(person, "web_summary")?.value, sourceText(field(person, "web_source")), field(person, "icp")?.value, person.notes_text].some((text) => (text || "").toLowerCase().includes(query)));
+      [person.name, person.headline, person.company, person.email, field(person, "phone")?.value, field(person, "web_summary")?.value, sourceText(field(person, "web_source")), field(person, "icp")?.value, person.notes_text, ...(person.tags || [])].some((text) => (text || "").toLowerCase().includes(query)));
     const compare = SORTS[view.sort.key];
     return [...people].sort((a, b) => {
       const order = view.sort.descending ? compare(b, a) : compare(a, b);
@@ -700,6 +700,8 @@ window.TinPeople = (() => {
     }
     // Who on the team can introduce them, as Slack says it: read from People, never LinkedIn.
     if (person.way_in) rows.push(fieldRow("Way in", `<strong class="person-way-in">${escape(person.way_in)}</strong>`, ""));
+    // The team's labels, such as the outreach group they were added in (MCP's tag_people).
+    if (person.tags?.length) rows.push(fieldRow("Tags", `<strong>${escape(person.tags.join(", "))}</strong>`, ""));
     // Numbers on file for a good or strong lead, each one a call away.
     const phone = field(person, "phone");
     if (phone?.value) {
