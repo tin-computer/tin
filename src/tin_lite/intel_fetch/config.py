@@ -147,6 +147,8 @@ def select(config: dict[str, Any], scope: str) -> tuple[list[dict], list[dict]]:
             reason = "its id repeats another source's"
         elif not _text(source.get("name"), 200):
             reason = "its name is missing"
+        elif "timeout_seconds" in source and not _int(source["timeout_seconds"], 10, 1800):
+            reason = "its timeout_seconds is not between 10 and 1800"
         elif source.get("method") not in methods:
             reason = f"its method {str(source.get('method'))[:40]!r} is not one Tin runs"
         else:

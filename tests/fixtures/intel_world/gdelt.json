@@ -1,0 +1,25 @@
+{
+ "articles": [
+  {
+   "url": "https://news.example.de/artikel-1?utm_source=gdelt",
+   "title": "Ein Artikel",
+   "seendate": "20261123T101500Z",
+   "domain": "news.example.de",
+   "sourcecountry": "Germany"
+  },
+  {
+   "url": "https://news.example.fr/a2",
+   "title": "Un article",
+   "seendate": "20261123T111500Z",
+   "domain": "news.example.fr",
+   "sourcecountry": "France"
+  },
+  {
+   "url": "https://news.example.jp/old",
+   "title": "Old",
+   "seendate": "20261101T000000Z",
+   "domain": "news.example.jp",
+   "sourcecountry": "Japan"
+  }
+ ]
+}

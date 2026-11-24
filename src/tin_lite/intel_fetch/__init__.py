@@ -24,6 +24,27 @@ from tin_lite.intel_fetch.items import Item, Window
 __all__ = ["GROUPS", "Item", "Window", "group", "register_group", "run_sources"]
 
 Method = Callable[[dict, Window, dict], Awaitable[list[Item]]]
+# Every source gets a deadline, so one stuck read can't hold its group: five minutes unless the
+# source sets `timeout_seconds` or its scope sets one for the method (settings
+# "method_timeouts"). A method's own shorter timeouts sit inside it. Runaway guards.
+SOURCE_TIMEOUT_SECONDS = 300
+MIN_TIMEOUT_SECONDS = 10
+MAX_TIMEOUT_SECONDS = 1800
+
+
+def deadline(src: dict, settings: dict[str, Any]) -> float:
+    value = src.get("timeout_seconds")
+    if value is None:
+        value = (settings.get("method_timeouts") or {}).get(src.get("method"))
+    if value is None:
+        value = settings.get("source_timeout", SOURCE_TIMEOUT_SECONDS)
+    try:
+        number = float(value)
+    except (TypeError, ValueError):
+        number = SOURCE_TIMEOUT_SECONDS
+    return min(max(number, MIN_TIMEOUT_SECONDS), MAX_TIMEOUT_SECONDS)
+
+
 GROUPS: dict[tuple[str, str], tuple[Callable[[dict], list[dict]], dict[str, Method]]] = {}
 
 
@@ -48,14 +69,22 @@ async def run_source(
 ) -> tuple[list[Item], dict]:
     ctx: dict[str, Any] = {**settings, "http": None, "seen": 0, "excluded": 0}
     started = time.monotonic()
+    limit = deadline(src, settings)
     try:
-        items = list(await method(src, window, ctx))
+        async with asyncio.timeout(limit) as clock:
+            items = list(await method(src, window, ctx))
         for rank, item in enumerate(items, 1):
             item["rank"] = rank  # the source's own order (front page, feed, views rank)
             item.setdefault("source_id", src["id"])
         status = {"status": "ok" if items else "empty", "error": None}
     except asyncio.CancelledError:
         raise
+    except TimeoutError as exc:
+        items = []
+        if clock.expired():
+            status = {"status": "failed", "error": f"timed out after {limit:g} s"}
+        else:
+            status = {"status": "failed", "error": f"TimeoutError: {exc}"[:300]}
     except Exception as exc:  # noqa: BLE001 — one source's failure is its status, not the run's
         items = []
         status = {"status": "failed", "error": f"{type(exc).__name__}: {exc}"[:300]}

@@ -225,7 +225,10 @@ class PublicReader:
             },
             extensions={"sni_hostname": host} if parts.scheme == "https" else {},
         )
+        # No cookies, whatever client this reader was given: nothing a site set is sent back.
+        request.headers.pop("cookie", None)
         response = await self._client.send(request, stream=True)
+        self._client.cookies.clear()
         try:
             kept = {
                 "location": response.headers.get("location", ""),
