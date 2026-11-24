@@ -311,7 +311,7 @@ def _serve() -> None:
     async def drain_worker() -> None:
         runtime = getattr(app.state, "runtime", None)
         # A web-only process never ran the worker; there is nothing to drain.
-        if runtime is not None and not settings.web_only:
+        if runtime is not None and not getattr(settings, "web_only", False):
             await runtime.worker.shutdown()
 
     # OAuth providers return short-lived authorization codes in callback query
@@ -320,7 +320,7 @@ def _serve() -> None:
     config = uvicorn.Config(
         app,
         host="0.0.0.0",  # noqa: S104
-        port=settings.port,
+        port=getattr(settings, "port", 8000),
         access_log=False,
         # Persistent MCP/SSE connections must not hold shutdown until systemd
         # kills the process. This applies after the worker drain below.

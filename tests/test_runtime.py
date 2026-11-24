@@ -30,7 +30,7 @@ async def test_build_runtime_wires_services_without_unknown_activity_arguments(
     project_files = object()
     worker = object()
 
-    monkeypatch.setattr(runtime, "Database", lambda _dsn: database)
+    monkeypatch.setattr(runtime, "Database", lambda _dsn, **_options: database)
     monkeypatch.setattr(runtime, "CodeStorage", lambda **_kwargs: storage)
     monkeypatch.setattr(runtime, "sync_system_wiki", AsyncMock(return_value=object()))
     monkeypatch.setattr(runtime, "sync_builtin_workflows", AsyncMock())

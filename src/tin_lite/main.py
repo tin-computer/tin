@@ -61,7 +61,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         # process (the webhook intake) serves HTTP alone.
         background: list[asyncio.Task] = []
         worker_task = None
-        if not resolved_settings.web_only:
+        if not getattr(resolved_settings, "web_only", False):
             worker_task = asyncio.create_task(runtime.worker.run(), name="temporal-worker")
             from tin_lite.agent_traffic_connection import removal_loop
             from tin_lite.connection_collection_connection import session_cleanup_loop
