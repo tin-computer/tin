@@ -110,7 +110,10 @@ async def unwrap_text(conn, reader: PublicReader, text: str, *, limit: int = 60)
     """Replace the Google News article links in `text` with publisher URLs, at most `limit`
     distinct links. Returns the text and how many links were replaced; a link that won't
     unwrap is left as it is."""
-    links = list(dict.fromkeys(match.group(0) for match in ARTICLE.finditer(text or "")))
+    # Sentence punctuation after a link is not part of it.
+    links = list(
+        dict.fromkeys(match.group(0).rstrip(".,;:!?") for match in ARTICLE.finditer(text or ""))
+    )
     replaced = 0
     found: dict[str, str] = {}
     for link in links[:limit]:

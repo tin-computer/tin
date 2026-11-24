@@ -53,6 +53,7 @@ INTEL_DIR = Path("/opt/tin-intel")
 INTEL_DB = INTEL_DIR / "day.db"
 INTEL_VERSION = "1"
 INTEL_MAX_INPUT = 64 * 1024 * 1024
+SQLITE_SHELL = Path("/usr/bin/sqlite3")
 INTEL_KEYS = frozenset({"INTEL_DB", "INTEL_URL", "INTEL_GRANT", "INTEL_SCOPE", "INTEL_DAY"})
 # The harness's own telemetry and self-update hosts, and Gemini itself, go direct instead of
 # through the run's proxy, so the egress fence refuses them: the harness reaches Gemini only
@@ -198,7 +199,7 @@ def check_intel() -> str:
     import sqlite3
 
     sqlite3.connect(":memory:").execute("CREATE VIRTUAL TABLE t USING fts5(x)")
-    if Path("/usr/bin/sqlite3").exists():
+    if SQLITE_SHELL.exists():
         raise RuntimeError("the isolated image must not carry the sqlite3 shell")
     return f"TIN_INTEL_READY_V1 {INTEL_VERSION}"
 
