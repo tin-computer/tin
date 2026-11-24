@@ -111,3 +111,107 @@ def test_groups_split_the_client_sources_by_method():
     assert [s["id"] for s in pick["rss"]] == ["health-weekly"]
     assert [s["id"] for s in pick["gnews"]] == ["gn-lakehouse"]
     assert [s["id"] for s in pick["pages"]] == ["vendor-newsroom", "vendor-blog", "jx-crossref"]
+
+
+# Untrusted configs on Tin's worker: patterns, fan-out and deadlines are bounded.
+
+
+def test_patterns_that_backtrack_or_backreference_are_skipped():
+    for pattern in ("(a+)+$", r"(\w+\s?)*$", "(a|aa)+$", r"(a)\1", "(?P<x>a)(?P=x)", "x" * 201):
+        assert rss.safe_pattern(pattern), pattern
+    for pattern in (
+        r"^https://www\.vendor\.example/epic/post/[^/]+/?$",
+        r"vendor\.example/(blog|press|news)/[^/]+/?$",
+        r"vendor\.example/(news|insights)[^?]*/[^/]+/?$",
+        r"a{2,}(b{1,3})?",
+    ):
+        assert rss.safe_pattern(pattern) is None, pattern
+    cfg = {
+        "sources": [
+            {
+                "id": "evil",
+                "name": "Evil",
+                "method": "html_links",
+                "url": "https://x.example/",
+                "link_pattern": "(a+)+$",
+            },
+            {
+                "id": "evil2",
+                "name": "Evil 2",
+                "method": "sitemap",
+                "url": "https://x.example/s.xml",
+                "url_pattern": "(.*a){12}",
+            },
+        ]
+    }
+    ready, skipped = config.select(cfg, "client")
+    assert ready == [] and len(skipped) == 2
+    assert "repeats" in skipped[0]["error"] and "repeats" in skipped[1]["error"]
+
+
+async def test_matching_runs_off_the_loop_and_a_slow_pattern_fails_its_source(monkeypatch):
+    import time
+
+    from tin_lite.intel_fetch.http import FetchError
+
+    def slow(pattern, candidates):
+        time.sleep(0.5)
+        return candidates
+
+    monkeypatch.setattr(rss, "_match_all", slow)
+    monkeypatch.setattr(rss, "MATCH_SECONDS", 0.05)
+    try:
+        await rss.matching("a", ["a"])
+    except FetchError as exc:
+        assert "too long" in str(exc)
+    else:
+        raise AssertionError("a slow match must fail its source")
+    monkeypatch.undo()
+    many = [f"https://x.example/blog/{n}" for n in range(rss.MAX_CANDIDATES + 50)]
+    assert len(await rss.matching(r"/blog/\d+$", many)) == rss.MAX_CANDIDATES
+
+
+async def test_sitemap_indexes_are_followed_only_so_far():
+    from intel_client_fakes import FakeReader
+
+    children = "".join(
+        f"<sitemap><loc>https://big.example/s{n}.xml</loc></sitemap>" for n in range(40)
+    )
+    index = f'<sitemapindex xmlns="x">{children}</sitemapindex>'.encode()
+    entries = "".join(
+        f"<url><loc>https://big.example/blog/{n}</loc><lastmod>2026-11-24</lastmod></url>"
+        for n in range(400)
+    )
+    child = f'<urlset xmlns="x">{entries}</urlset>'.encode()
+    reader = FakeReader(lambda url: index if url.endswith("/sitemap.xml") else child)
+    ctx = {"reader": reader}
+    found = await rss._sitemap_entries(ctx, "https://big.example/sitemap.xml")
+    fetched_children = [u for u in reader.requests if "/s" in u and not u.endswith("sitemap.xml")]
+    assert len(fetched_children) <= rss.MAX_CHILD_SITEMAPS
+    assert len(found) == rss.MAX_SITEMAP_ENTRIES
+
+
+async def test_a_source_past_its_deadline_fails_alone():
+    import asyncio
+
+    async def endless(src, window, ctx):
+        await asyncio.sleep(10)
+        return []
+
+    slow = rss.bounded(endless, 0.05)
+    ok = {
+        "id": "health-weekly",
+        "name": "H",
+        "method": "rss",
+        "url": "https://feeds.example/health.xml",
+    }
+    cfg = _config()
+    items, statuses = await run_sources(
+        {"slow": slow, "rss": rss.METHODS["rss"]},
+        [{"id": "slow", "name": "Slow", "method": "slow"}, ok],
+        WINDOW,
+        rss_reader(),
+        settings={**rss.settings(cfg), "fetched_at": "2026-11-24T13:00:00Z"},
+    )
+    assert statuses[0]["status"] == "failed" and "TimeoutError" in statuses[0]["error"]
+    assert statuses[1]["status"] == "ok" and len(items) == 3
