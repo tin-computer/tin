@@ -1,11 +1,11 @@
 """Rate everyone in People who did something and has no current rating.
 
 `people.rate` runs the one ICP rater (`people_rating`, the same call RB2B and the LinkedIn reads
-use) over the project's people who visited, reacted, commented, viewed a profile or starred a
-repository and have no rating under the current ICP file. It's how a project's earlier visitors
-get rated when it starts using the rater, and how everyone is re-rated after the ICP file
-changes. Imported
-connections with nothing but a `connected` event are never picked up. A member's own rating is
+use) over the project's people who visited, reacted, commented, viewed a profile, connected with
+a member since Tin first read their connections, or starred a repository and have no rating
+under the current ICP file. It's how a project's earlier visitors get rated when it starts using
+the rater, and how everyone is re-rated after the ICP file changes. Imported connections with
+nothing but a `connected` event are never picked up. A member's own rating is
 never replaced.
 
 A run rates in rounds that each fit one activity, and keeps going until nobody is left, a round

@@ -1282,7 +1282,8 @@ def create_mcp_app(
             "profile_url": person["profile_url"],
             # Numbers ContactOut has on file for a good or strong lead, comma-separated.
             "phone": value("phone"),
-            # Reacted, commented, viewed a member's profile or starred the project's repository.
+            # Reacted, commented, viewed a member's profile, connected with a member since Tin
+            # first read their connections, or starred the project's repository.
             "social": bool(person.get("social")),
             # Known only from a bulk import of connections, nothing done Tin saw.
             "imported": bool(person.get("imported")),
@@ -1326,7 +1327,8 @@ def create_mcp_app(
 
         segment: "all", "visitors" (anyone RB2B or a visitor journeys run named, including
         people found for a visit only their company made: company_visit), "hot" (intent hot),
-        "social" (reacted, commented, viewed a member's profile or starred the repository),
+        "social" (reacted, commented, viewed a member's profile, connected with a member since
+        Tin first read their connections, or starred the repository),
         "connections" (a member's LinkedIn connections from a bulk import who haven't done
         anything Tin saw; every other segment, "all" included, leaves them out),
         "icp_fit" (rated fit_shown or more), "not_connected" (not connected on LinkedIn),

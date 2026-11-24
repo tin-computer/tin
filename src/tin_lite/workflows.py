@@ -1916,8 +1916,9 @@ class LinkedInProfileViewersWorkflow:
 @workflow.defn(name=LINKEDIN_CONNECTIONS_WORKFLOW_NAME)
 class LinkedInConnectionsWorkflow:
     """Read the founder's own LinkedIn connections, newest first, ten pages at a time to the
-    end of the list; then read the current company and position of up to a hundred of them,
-    never-read first; and write the list. History holds read numbers and counts; names,
+    end of the list, or, once it was read to the end, to the connections Tin already has; then
+    read the current company and position of up to a hundred of them, never-read first; and
+    write the list. History holds read numbers and counts; names,
     positions and where the next read starts stay in Postgres."""
 
     # Reads per run (linkedin_connections_export.LIST_READS and POSITION_READS).
@@ -1953,6 +1954,12 @@ class LinkedInConnectionsWorkflow:
                 notes["people"] += read["people"] or 0
                 notes["new"] += read["new"] or 0
                 notes["unnamed"] += read["unnamed"] or 0
+                # New connections since the list's baseline, and whether the run stopped at
+                # connections it already had. Reads from before don't say.
+                if read.get("joined"):
+                    notes["joined"] = notes.get("joined", 0) + read["joined"]
+                if read.get("caught_up"):
+                    notes["caught_up"] = True
                 if read["outcome"] == "stopped":
                     notes["stopped"] = read["reason"]
                     break

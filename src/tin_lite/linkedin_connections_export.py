@@ -11,6 +11,14 @@ pauses: connections never read first, newest first, then those read longest ago,
 read is `STALE_DAYS` old. A member with more connections than that gets their companies and
 positions over a few daily runs; the summary says how many are still to come.
 
+Someone who connects with the member after Tin first read their list (the list's baseline) also
+gets a `new_connection` event: they did something Tin saw, so People lists them with everyone
+who engaged, and the rater and phone lookups treat them like anyone who did. Everyone already
+connected at the baseline stays a connection, under People's Connections.
+
+The list is newest first, so once a run has read it to the end, the next run reads only until
+it reaches connections it already has.
+
 The list is rendered to project Files as `people/linkedin-connections.csv`, in the columns of
 LinkedIn's own `Connections.csv` (without the email addresses LinkedIn no longer exports),
 plus headline, location and when the profile was read.
@@ -57,13 +65,56 @@ def connected_key(member: str, record_id: UUID) -> str:
     return f"linkedin:connected:{member}:{record_id}"
 
 
+def new_connection_key(member: str, record_id: UUID) -> str:
+    return f"linkedin:new_connection:{member}:{record_id}"
+
+
+async def start_list(conn, project_id: UUID, member: str) -> None:
+    """Note when Tin first reads this member's connections: everyone connected by then is the
+    baseline, and anyone LinkedIn dates later is a new connection."""
+
+    await conn.execute(
+        """INSERT INTO linkedin_connection_lists (project_id, member, baseline_at)
+           VALUES ($1, $2, now()) ON CONFLICT (project_id, member) DO NOTHING""",
+        project_id,
+        member,
+    )
+
+
+async def list_state(conn, project_id: UUID, member: str) -> dict[str, Any]:
+    """When Tin first read the member's list, and whether a run has read it to the end."""
+
+    row = await conn.fetchrow(
+        """SELECT baseline_at, read_to_end_at FROM linkedin_connection_lists
+           WHERE project_id = $1 AND member = $2""",
+        project_id,
+        member,
+    )
+    return {
+        "baseline_at": row["baseline_at"] if row else None,
+        "read_to_end": bool(row and row["read_to_end_at"]),
+    }
+
+
+async def read_to_end(conn, project_id: UUID, member: str) -> None:
+    await conn.execute(
+        """UPDATE linkedin_connection_lists SET read_to_end_at = now()
+           WHERE project_id = $1 AND member = $2""",
+        project_id,
+        member,
+    )
+
+
 async def record_connections(
     conn, *, project_id: UUID, run_id: UUID, member: str, connections: list[dict]
 ) -> dict[str, int]:
     """Write a read's connections as records, values, the member's relationship and one
-    `connected` event each. It's the run's starter's own list, so they're all connected."""
+    `connected` event each. It's the run's starter's own list, so they're all connected.
+    Someone LinkedIn says connected after the list's baseline also gets a `new_connection`
+    event. `known` counts connections an earlier read had already recorded."""
 
-    counts = {"people": 0, "new": 0, "forgotten": 0}
+    counts = {"people": 0, "new": 0, "forgotten": 0, "joined": 0, "known": 0}
+    baseline = (await list_state(conn, project_id, member))["baseline_at"]
     for connection in connections:
         identifiers = {"linkedin_member": connection["member"]}
         if connection.get("slug"):
@@ -98,13 +149,14 @@ async def record_connections(
         )
         counts["people"] += 1
         target = await records.current(conn, project_id, record_id)
-        counts["new"] += await records.add_event(
+        connected_at = datetime.fromisoformat(connection["connected_at"])
+        added = await records.add_event(
             conn,
             project_id,
             target,
             kind="connected",
             event_key=connected_key(member, target),
-            occurred_at=datetime.fromisoformat(connection["connected_at"]),
+            occurred_at=connected_at,
             # LinkedIn's own columns, so the export can repeat them.
             detail={
                 "first_name": connection["first_name"],
@@ -112,6 +164,19 @@ async def record_connections(
             },
             run_id=run_id,
         )
+        counts["new"] += added
+        counts["known"] += not added
+        if baseline is not None and connected_at > baseline:
+            counts["joined"] += await records.add_event(
+                conn,
+                project_id,
+                target,
+                kind="new_connection",
+                event_key=new_connection_key(member, target),
+                occurred_at=connected_at,
+                detail={},
+                run_id=run_id,
+            )
     return counts
 
 
@@ -310,6 +375,13 @@ def summary_markdown(people: list[dict], notes: dict, *, now: datetime) -> str:
             f"seconds apart, so a daily run finishes in about {days} "
             f"day{'s' if days != 1 else ''}."
         )
+    if notes.get("joined"):
+        joined = notes["joined"]
+        lines.append(
+            f"- {joined} new connection{'s' if joined != 1 else ''} this run: they connected "
+            "with you after Tin first read your list, so People lists them with everyone who "
+            "engaged with you, not under Connections."
+        )
     if notes.get("capped"):
         lines.append(
             f"- Tin read your newest {MAX_CONNECTIONS:,} connections; older ones aren't listed."
@@ -332,7 +404,15 @@ def sentence(notes: dict) -> str:
     """The run's one line: what it read."""
 
     people, new, positions = notes.get("people", 0), notes.get("new", 0), notes.get("positions", 0)
-    text = f"{people} LinkedIn connection{'s' if people != 1 else ''} read"
-    if new and new != people:
-        text += f", {new} new since the last run"
+    if notes.get("caught_up"):
+        # The run read only the newest connections, up to those it already had.
+        text = (
+            f"{new} new LinkedIn connection{'s' if new != 1 else ''} since the last run"
+            if new
+            else "No new LinkedIn connections since the last run"
+        )
+    else:
+        text = f"{people} LinkedIn connection{'s' if people != 1 else ''} read"
+        if new and new != people:
+            text += f", {new} new since the last run"
     return text + f"; company and position read for {positions} profiles this run."

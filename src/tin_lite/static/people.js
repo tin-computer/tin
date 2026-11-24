@@ -20,7 +20,8 @@ window.TinPeople = (() => {
     { key: "visitors", label: "Visitors" },
     // People the ICP rating judged hot from what they did.
     { key: "hot", label: "Hot" },
-    // Whoever reacted, commented, viewed a member's profile or starred the project's repository.
+    // Whoever reacted, commented, viewed a member's profile, connected with a member since Tin
+    // first read their connections, or starred the project's repository.
     { key: "social", label: "Social" },
     { key: "all", label: "All people" },
     // A member's LinkedIn connections, brought in by the export workflow or a CSV, who haven't
@@ -805,6 +806,7 @@ window.TinPeople = (() => {
     if (touch.kind === "invited") return `invited by ${who}`;
     if (touch.kind === "accepted") return `connected with ${who}`;
     if (touch.kind === "connected") return `connected to ${who}`;
+    if (touch.kind === "new_connection") return `new connection of ${who}`;
     return touch.kind;
   }
 
@@ -824,6 +826,8 @@ window.TinPeople = (() => {
     if (event.kind === "withdrawn") return "Connection request withdrawn";
     // A connection read from the member's own LinkedIn list, dated when they connected.
     if (event.kind === "connected") return who && who !== "you" ? `Connected with ${who} on LinkedIn` : "Connected with you on LinkedIn";
+    // A connection made after Tin first read the member's list.
+    if (event.kind === "new_connection") return who && who !== "you" ? `Became ${possessive(who)} new connection on LinkedIn` : "Became your new connection on LinkedIn";
     if (event.kind === "starred") return event.repository ? `Starred ${event.repository} on GitHub` : "Starred on GitHub";
     if (event.kind === "visited") return event.summary ? `Visited: ${event.summary}` : "Visited the site";
     return event.kind;
@@ -831,8 +835,10 @@ window.TinPeople = (() => {
 
   function timelineHtml(person) {
     if (!person.events) return view.personError ? "" : '<section class="person-section"><h3>Timeline</h3><p class="person-quiet">Loading…</p></section>';
-    if (!person.events.length) return "";
-    const rows = person.events.map((event) => {
+    // A new connection says it once: its `connected` event at the same moment is the same fact.
+    const events = person.events.filter((event) => !(event.kind === "connected" && person.events.some((other) => other.kind === "new_connection" && other.at === event.at)));
+    if (!events.length) return "";
+    const rows = events.map((event) => {
       const content = `<code>${escape(day(event.at))}</code><span>${escape(eventText(event))}</span>`;
       // A visit opens its PostHog replay; the suggested next step reads under it.
       const link = event.post_url || event.replay_url;
@@ -841,7 +847,7 @@ window.TinPeople = (() => {
         : `<div class="person-event">${content}</div>`;
       return event.action ? `${shown}<p class="person-event-note">Suggested: ${escape(event.action)}</p>` : shown;
     }).join("");
-    return `<section class="person-section"><h3>Timeline <span>${person.events.length}</span></h3>${rows}</section>`;
+    return `<section class="person-section"><h3>Timeline <span>${events.length}</span></h3>${rows}</section>`;
   }
 
   function footerHtml(person) {

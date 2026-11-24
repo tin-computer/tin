@@ -380,6 +380,10 @@ async def run_through(w, run_id):
         notes["people"] += read["people"] or 0
         notes["new"] += read["new"] or 0
         notes["unnamed"] += read["unnamed"] or 0
+        if read.get("joined"):
+            notes["joined"] = notes.get("joined", 0) + read["joined"]
+        if read.get("caught_up"):
+            notes["caught_up"] = True
         if read["outcome"] == "stopped":
             notes["stopped"] = read["reason"]
             break
@@ -485,16 +489,56 @@ async def test_a_run_exports_every_connection_with_their_position(collection_db)
     )
     assert kept and not any(name in row["result"] for name in ("Ada", "Yilmaz") for row in kept)
 
-    # The next day: one new connection. Nobody is counted twice, and only the profiles not yet
-    # read are read.
+    # Everyone listed on the first run is the member's existing network: a connection, not a
+    # lead.
+    assert (
+        await f.db.pool.fetchval(
+            "SELECT count(*) FROM record_events WHERE project_id=$1 AND kind='new_connection'",
+            f.project.id,
+        )
+        == 0
+    )
+    # The first run read the list to the end; Tin's first read is the baseline.
+    await f.db.pool.execute(
+        "UPDATE linkedin_connection_lists SET baseline_at=$2 WHERE project_id=$1",
+        f.project.id,
+        NOW - timedelta(hours=12),
+    )
+
+    # The next day: one new connection. The run reads only until it reaches connections it
+    # has, nobody is counted twice, and only the profiles not yet read are read.
     cloud.calls.clear()
     cloud.connections.insert(0, friend(4, "Deniz", "Ak", days=0))
     cloud.positions[member(3)] = ("Kaya Labs", "Founder")
     again = await export_run(f)
     notes = await run_through(work(f, cloud), again)
-    assert notes["people"] == 4 and notes["new"] == 1
+    assert notes["reads"] == 1 and notes["caught_up"] is True
+    assert notes["people"] == 2 and notes["new"] == 1 and notes["joined"] == 1
+    assert [c["start"] for c in cloud.calls if c["kind"] == "linkedin_connections"] == [0]
     asked = [c["members"] for c in cloud.calls if c["kind"] == "linkedin_positions"]
     assert asked == [[member(4), member(3)]]
+    # Deniz connected after the baseline: a new connection, listed with everyone who engaged.
+    # Ada was already a connection and stays under Connections.
+    listed_people = {
+        p["name"]: p for p in await records.directory(f.db.pool, f.project.id, viewer=USER)
+    }
+    assert listed_people["Deniz Ak"]["imported"] is False
+    assert listed_people["Deniz Ak"]["social"] is True
+    assert listed_people["Ada Yilmaz"]["imported"] is True
+    assert (
+        await f.db.pool.fetchval(
+            "SELECT occurred_at FROM record_events WHERE project_id=$1 AND kind='new_connection'",
+            f.project.id,
+        )
+        == NOW
+    )
+    assert await f.db.pool.fetchval(
+        "SELECT result_summary FROM workflow_runs WHERE id=$1", UUID(again)
+    ) == (
+        # LinkedIn answered for Cem's profile, not Deniz's.
+        "1 new LinkedIn connection since the last run; company and position read for 1 "
+        "profiles this run."
+    )
     assert (
         await f.db.pool.fetchval(
             "SELECT count(*) FROM record_events WHERE project_id=$1 AND kind='connected'",
@@ -505,6 +549,27 @@ async def test_a_run_exports_every_connection_with_their_position(collection_db)
     rows, _summary = listed(f.storage)
     assert [r["First Name"] for r in rows] == ["Deniz", "Ada", "Bob", "Cem"]
     assert rows[3]["Company"] == "Kaya Labs"
+
+
+async def test_a_list_never_read_to_the_end_is_read_to_the_end(collection_db):
+    f = await fixture(collection_db)
+    cloud = sample()
+    await run_through(work(f, cloud), await export_run(f))
+    # As for a member whose list was read before Tin kept where it ended (migration 091).
+    await f.db.pool.execute("UPDATE linkedin_connection_lists SET read_to_end_at=NULL")
+    cloud.calls.clear()
+    notes = await run_through(work(f, cloud), await export_run(f))
+    assert [c["start"] for c in cloud.calls if c["kind"] == "linkedin_connections"] == [0, 2]
+    assert notes["new"] == 0 and not notes.get("caught_up") and not notes.get("joined")
+    assert await f.db.pool.fetchval(
+        "SELECT read_to_end_at IS NOT NULL FROM linkedin_connection_lists WHERE project_id=$1",
+        f.project.id,
+    )
+    # Now caught up: one read.
+    cloud.calls.clear()
+    notes = await run_through(work(f, cloud), await export_run(f))
+    assert [c["start"] for c in cloud.calls if c["kind"] == "linkedin_connections"] == [0]
+    assert notes["caught_up"] is True
 
 
 async def test_a_read_position_is_read_again_once_it_is_stale(collection_db):
