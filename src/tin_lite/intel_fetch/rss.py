@@ -56,6 +56,14 @@ MAX_TEXT = 4000
 ENRICH_BELOW = 280
 METHOD_NAMES = ("rss", "google_news", "html_links", "sitemap", "crossref")
 GOOGLE_NEWS = "news.google.com"
+# Runaway guards for untrusted configs: pattern length, links or sitemap entries matched per
+# source, child sitemaps followed per source, the matching deadline and a source's whole read.
+MAX_PATTERN = 200
+MAX_CANDIDATES = 2000
+MAX_CHILD_SITEMAPS = 30
+MAX_SITEMAP_ENTRIES = 5000
+MATCH_SECONDS = 5
+SOURCE_SECONDS = 300
 
 
 def in_window(d: datetime | None, window: Window) -> bool:
@@ -193,12 +201,18 @@ async def m_google_news(src: dict, window: Window, ctx: dict) -> list[Item]:
 async def m_html_links(src: dict, window: Window, ctx: dict) -> list[Item]:
     response = await ctx["reader"].fetch(src["url"], headers={**HEADERS, "Accept": "text/html"})
     ctx["http"] = response.status
-    pattern = re.compile(src["link_pattern"])
-    links: list[str] = []
-    for href in re.findall(r"href=[\"']([^\"'#]+)", response.body.decode("utf-8", "replace")):
-        url = urllib.parse.urljoin(response.url, html.unescape(href))
-        if len(url) <= 2000 and pattern.search(url) and url not in links:
-            links.append(url)
+    hrefs = re.findall(r"href=[\"']([^\"'#]+)", response.body.decode("utf-8", "replace"))
+    urls = list(
+        dict.fromkeys(
+            url
+            for url in (
+                urllib.parse.urljoin(response.url, html.unescape(href))
+                for href in hrefs[:MAX_CANDIDATES]
+            )
+            if len(url) <= 2000
+        )
+    )
+    links = await matching(src["link_pattern"], urls)
     links = links[: src.get("max_links", 20)]
     ctx["seen"] = len(links)
     pages = await asyncio.gather(
@@ -224,6 +238,9 @@ async def m_html_links(src: dict, window: Window, ctx: dict) -> list[Item]:
 async def _sitemap_entries(
     ctx: dict, url: str, depth: int = 0
 ) -> list[tuple[str, datetime | None]]:
+    """A sitemap's (loc, lastmod) entries, following an index one level down. Bounded per
+    source: at most MAX_CHILD_SITEMAPS child sitemaps and MAX_SITEMAP_ENTRIES entries."""
+    budget = ctx.setdefault("sitemap_budget", {"children": 0, "entries": 0})
     body = sitemap_body(await _body(ctx, url, max_bytes=SITEMAP_MAX_BYTES))
     root = parse_xml(body)
     found: list[tuple[str, datetime | None]] = []
@@ -231,21 +248,27 @@ async def _sitemap_entries(
         if depth > 1:
             return found
         for child in root:
+            if budget["children"] >= MAX_CHILD_SITEMAPS or budget["entries"] >= MAX_SITEMAP_ENTRIES:
+                break
             loc = next((c.text for c in child if ln(c.tag) == "loc"), None)
             if loc:
+                budget["children"] += 1
                 try:
                     found += await _sitemap_entries(ctx, loc.strip(), depth + 1)
                 except (FetchError, ValueError, SyntaxError):
                     pass  # one unreadable child sitemap leaves the others
         return found
     for entry in root:
+        if budget["entries"] >= MAX_SITEMAP_ENTRIES:
+            break
         loc = lastmod = None
         for child in entry:
             if ln(child.tag) == "loc":
                 loc = (child.text or "").strip()
             elif ln(child.tag) == "lastmod":
                 lastmod = parse_date(child.text or "")
-        if loc:
+        if loc and len(loc) <= 2000:
+            budget["entries"] += 1
             found.append((loc, lastmod))
     return found
 
@@ -253,15 +276,11 @@ async def _sitemap_entries(
 async def m_sitemap(src: dict, window: Window, ctx: dict) -> list[Item]:
     entries = await _sitemap_entries(ctx, src["url"])
     ctx["http"] = 200
-    pattern = re.compile(src["url_pattern"])
     floor = window.since - timedelta(days=src.get("lastmod_slack_days", 1))
+    recent = {loc: lastmod for loc, lastmod in entries if lastmod and lastmod >= floor}
+    matched = set(await matching(src["url_pattern"], list(recent)))
     candidates = sorted(
-        [
-            (lastmod, loc)
-            for loc, lastmod in entries
-            if len(loc) <= 2000 and pattern.search(loc) and lastmod and lastmod >= floor
-        ],
-        reverse=True,
+        [(lastmod, loc) for loc, lastmod in recent.items() if loc in matched], reverse=True
     )[: src.get("max_pages", 25)]
     ctx["seen"] = len(candidates)
     pages = await asyncio.gather(
@@ -328,30 +347,104 @@ async def m_crossref(src: dict, window: Window, ctx: dict) -> list[Item]:
     return await _finish(src, ctx, found)
 
 
+def bounded(method, seconds: float):
+    """A method under a per-source deadline: a slow or endless source fails alone."""
+
+    async def run(src: dict, window: Window, ctx: dict) -> list[Item]:
+        async with asyncio.timeout(seconds):
+            return await method(src, window, ctx)
+
+    run.__name__ = method.__name__
+    return run
+
+
 METHODS = {
-    "rss": m_rss,
-    "google_news": m_google_news,
-    "html_links": m_html_links,
-    "sitemap": m_sitemap,
-    "crossref": m_crossref,
+    name: bounded(method, SOURCE_SECONDS)
+    for name, method in {
+        "rss": m_rss,
+        "google_news": m_google_news,
+        "html_links": m_html_links,
+        "sitemap": m_sitemap,
+        "crossref": m_crossref,
+    }.items()
 }
 
 
 _ISSN = re.compile(r"^[0-9]{4}-[0-9]{3}[0-9Xx]$")
+_QUANTIFIER = re.compile(r"[*+]|\{\d*,?\d*\}")
+_BACKREFERENCE = re.compile(r"\\[1-9]|\(\?P=|\\k<|\(\?\(")
 
 
 def _url(value: object) -> bool:
     return isinstance(value, str) and PublicReader.allowed(value)
 
 
-def _regex(value: object) -> bool:
-    if not isinstance(value, str) or not 0 < len(value) <= 500:
-        return False
+def nested_quantifier(pattern: str) -> bool:
+    """Whether a quantified group holds a quantifier or an alternation itself, like (a+)+,
+    (x*y)* or (a|aa)+: the shapes that backtrack catastrophically. Escapes and character
+    classes are skipped."""
+    stack: list[bool] = []
+    i = 0
+    while i < len(pattern):
+        c = pattern[i]
+        if c == "\\":
+            i += 2
+            continue
+        if c == "[":
+            j = i + 1
+            if j < len(pattern) and pattern[j] == "]":
+                j += 1
+            while j < len(pattern) and pattern[j] != "]":
+                j += 2 if pattern[j] == "\\" else 1
+            i = j + 1
+            continue
+        if c == "(":
+            stack.append(False)
+        elif c == ")":
+            inner = stack.pop() if stack else False
+            follows = _QUANTIFIER.match(pattern, i + 1)
+            if follows and inner:
+                return True
+            if stack and (inner or follows):
+                stack[-1] = True
+        elif (c == "|" or _QUANTIFIER.match(pattern, i)) and stack:
+            # A repeated alternation, like (a|aa)+, backtracks the same way.
+            stack[-1] = True
+        i += 1
+    return False
+
+
+def safe_pattern(value: object) -> str | None:
+    """Why a config's URL pattern can't run on Tin's worker, or None. Project files are
+    untrusted: patterns are short, compile, and have no backreferences or nested quantifiers."""
+    if not isinstance(value, str) or not 0 < len(value) <= MAX_PATTERN:
+        return f"is missing or longer than {MAX_PATTERN} characters"
+    if _BACKREFERENCE.search(value):
+        return "uses a backreference or conditional"
+    if nested_quantifier(value):
+        return "repeats a group that itself repeats or alternates, like (a+)+ or (a|b)+"
     try:
         re.compile(value)
     except re.error:
-        return False
-    return True
+        return "is not a valid pattern"
+    return None
+
+
+def _match_all(pattern: str, candidates: list[str]) -> list[str]:
+    compiled = re.compile(pattern)
+    return [value for value in candidates if compiled.search(value)]
+
+
+async def matching(pattern: str, candidates: list[str]) -> list[str]:
+    """The candidates a config's pattern matches, off the event loop and under a deadline, so
+    a pattern that slipped past the checks fails its source instead of stalling the worker."""
+    try:
+        return await asyncio.wait_for(
+            asyncio.to_thread(_match_all, pattern, candidates[:MAX_CANDIDATES]),
+            timeout=MATCH_SECONDS,
+        )
+    except TimeoutError as exc:
+        raise FetchError("the source's URL pattern took too long to match; simplify it") from exc
 
 
 def _int(source: dict, name: str, default: int, low: int, high: int) -> bool:
@@ -369,13 +462,13 @@ def check(source: dict) -> str | None:
         if not isinstance(query, str) or not 0 < len(query.strip()) <= 500:
             return "its query is missing or longer than 500 characters"
     if method == "html_links":
-        if not _regex(source.get("link_pattern")):
-            return "its link_pattern is not a valid pattern"
+        if reason := safe_pattern(source.get("link_pattern")):
+            return f"its link_pattern {reason}"
         if not _int(source, "max_links", 20, 1, 100):
             return "its max_links is out of range (1 to 100)"
     if method == "sitemap":
-        if not _regex(source.get("url_pattern")):
-            return "its url_pattern is not a valid pattern"
+        if reason := safe_pattern(source.get("url_pattern")):
+            return f"its url_pattern {reason}"
         if not _int(source, "max_pages", 25, 1, 100):
             return "its max_pages is out of range (1 to 100)"
         if not _int(source, "lastmod_slack_days", 1, 0, 30):
