@@ -334,11 +334,27 @@ def test_gemini_requests_are_checked_and_bounded():
         value,
     )
     assert body["generationConfig"]["maxOutputTokens"] == value["max_output_tokens"]
+    thinking = gemini_body(
+        json.dumps(
+            {"contents": [], "generationConfig": {"thinkingConfig": {"thinkingBudget": 10**9}}}
+        ).encode(),
+        value,
+    )
+    assert (
+        thinking["generationConfig"]["thinkingConfig"]["thinkingBudget"]
+        == (value["max_output_tokens"])
+    )
     for bad in (
         {"contents": [], "cachedContent": "cachedContents/other"},
         {"contents": [{"parts": [{"fileData": {"fileUri": "files/other"}}]}]},
         {"contents": [], "tools": [{"codeExecution": {}}]},
         {"contents": "text"},
+        {"contents": [], "cached_content": "cachedContents/other"},
+        {"contents": [{"parts": [{"file_data": {"file_uri": "files/other"}}]}]},
+        {"contents": [], "generation_config": {"max_output_tokens": 10_000_000}},
+        {"contents": [], "generationConfig": {"max_output_tokens": 10_000_000}},
+        {"contents": [], "generationConfig": {"candidateCount": 8}},
+        {"contents": [], "generationConfig": {"thinkingConfig": {"thinking_budget": 10**9}}},
     ):
         with pytest.raises(Exception):  # noqa: B017, PT011 — HTTPException
             gemini_body(json.dumps(bad).encode(), value)

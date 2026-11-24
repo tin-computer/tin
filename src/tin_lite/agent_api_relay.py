@@ -52,6 +52,18 @@ ALLOWED_TOOLS = frozenset({"functionDeclarations", "googleSearch", "urlContext"}
 MAX_REFUSED_RETRIES = 8
 
 
+def _camel(key: str) -> str:
+    """The lowerCamel name Google's JSON parser also maps a snake_case key to."""
+    head, *rest = key.split("_")
+    return head + "".join(part[:1].upper() + part[1:] for part in rest)
+
+
+def _one_spelling(value: dict, what: str) -> None:
+    # Google accepts both spellings of a field, so a snake_case key could slip past a check.
+    if any("_" in key for key in value):
+        raise HTTPException(400, f"Unsupported field spelling in the agent {what}")
+
+
 def split_target(target: str) -> tuple[str, str]:
     match = _TARGET.fullmatch(target)
     if match is None or match.group(1) not in KNOWN_MODELS or match.group(2) not in OPERATIONS:
@@ -74,7 +86,7 @@ def gemini_body(raw: bytes, contract) -> dict:
 
     def check(value):
         if isinstance(value, dict):
-            if any(key in value for key in FORBIDDEN_KEYS):
+            if any(_camel(key) in FORBIDDEN_KEYS for key in value):
                 raise HTTPException(400, "Stored provider objects are not supported by this route")
             for item in value.values():
                 check(item)
@@ -91,16 +103,29 @@ def gemini_body(raw: bytes, contract) -> dict:
         not isinstance(tool, dict) or not tool or not set(tool) <= ALLOWED_TOOLS for tool in tools
     ):
         raise HTTPException(400, "Unsupported tool on the agent model route")
+    _one_spelling(body, "request")
     config = body.get("generationConfig", {})
     if not isinstance(config, dict):
         raise HTTPException(400, "Invalid agent generation config")
-    requested = config.get("maxOutputTokens", contract["max_output_tokens"])
+    _one_spelling(config, "generation config")
+    if config.get("candidateCount", 1) != 1:
+        raise HTTPException(400, "The agent route returns one candidate")
+    bound = contract["max_output_tokens"]
+    requested = config.get("maxOutputTokens", bound)
     if type(requested) is not int or requested < 1:
         raise HTTPException(400, "Invalid agent output bound")
-    body["generationConfig"] = {
-        **config,
-        "maxOutputTokens": min(requested, contract["max_output_tokens"]),
-    }
+    config = {**config, "maxOutputTokens": min(requested, bound)}
+    thinking = config.get("thinkingConfig")
+    if thinking is not None:
+        if not isinstance(thinking, dict):
+            raise HTTPException(400, "Invalid agent thinking config")
+        _one_spelling(thinking, "thinking config")
+        budget = thinking.get("thinkingBudget")
+        if budget is not None and (type(budget) is not int or budget < -1):
+            raise HTTPException(400, "Invalid agent thinking budget")
+        if budget is not None and budget > bound:
+            config["thinkingConfig"] = {**thinking, "thinkingBudget": bound}
+    body["generationConfig"] = config
     return body
 
 
