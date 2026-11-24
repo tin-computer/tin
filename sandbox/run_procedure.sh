@@ -44,6 +44,14 @@ if [[ "${TIN_PROCEDURE_ISOLATED:-}" != "1" || -n "${TIN_BROKER_GRANT:-}" ||
   exit 64
 fi
 required+=(TIN_CODEX_API_URL TIN_CODEX_API_GRANT)
+# Codex unless the run's pinned contract names another agent harness (agent_harness).
+agent_harness="$(python3 -c 'import json, os
+value = json.loads(os.environ.get("TIN_CODEX_API_CONTRACT") or "{}")
+print(value.get("harness", "") if isinstance(value, dict) else "")')"
+if [[ -n "${agent_harness}" && "${agent_harness}" != "antigravity" ]]; then
+  echo "unsupported agent harness" >&2
+  exit 64
+fi
 for name in "${required[@]}"; do
   if [[ -z "${!name:-}" ]]; then
     echo "missing required procedure setting: ${name}" >&2
@@ -118,10 +126,18 @@ if [[ -n "${TIN_RUN_TOOLS_URL:-}" || -n "${TIN_RUN_TOOLS_GRANT:-}" ]]; then
     echo "incomplete run-tool configuration" >&2
     exit 64
   fi
-  /usr/local/bin/codex mcp remove tin-run >/dev/null 2>&1 || true
-  /usr/local/bin/codex mcp add tin-run \
-    --url "${TIN_RUN_TOOLS_URL}" \
-    --bearer-token-env-var TIN_RUN_TOOLS_GRANT >/dev/null
+  # Another harness gets the run's tools from the root helper, in its own MCP config.
+  if [[ -z "${agent_harness}" ]]; then
+    /usr/local/bin/codex mcp remove tin-run >/dev/null 2>&1 || true
+    /usr/local/bin/codex mcp add tin-run \
+      --url "${TIN_RUN_TOOLS_URL}" \
+      --bearer-token-env-var TIN_RUN_TOOLS_GRANT >/dev/null
+  fi
+fi
+if [[ -n "${agent_harness}" && ( "${TIN_PROCEDURE_BROWSER:-}" == "1" || \
+      "${TIN_PROCEDURE_STUDIO:-}" == "1" ) ]]; then
+  echo "browser and Studio profiles run on Codex only" >&2
+  exit 64
 fi
 if [[ "${TIN_PROCEDURE_BROWSER:-}" == "1" ]]; then
   # Browser profile: the Tin-owned camoufox-mcp server launches one persistent Camoufox
@@ -200,7 +216,11 @@ cleanup() {
 trap cleanup EXIT
 
 mkdir -p /home/user/.codex /home/user/.tin-lite
-python3 /opt/tin-lite/codex_api_config.py
+if [[ -n "${agent_harness}" ]]; then
+  python3 /opt/tin-lite/codex_api_config.py --worker-proxy-only
+else
+  python3 /opt/tin-lite/codex_api_config.py
+fi
 
 rm -rf "${workspace}" /home/user/state
 if [[ -n "${TIN_PROCEDURE_WORKSPACE_ARCHIVE:-}" ]]; then
@@ -315,7 +335,8 @@ TIN_PROCEDURE_RESULT_KIND="${result_kind}" \
     -u TIN_LITE_INTEGRATION_CREDENTIAL_KEY \
     -u TIN_LITE_GOOGLE_OAUTH_CLIENT_SECRET -u TIN_LITE_GITHUB_APP_PRIVATE_KEY_PATH \
     -u TIN_LITE_GITHUB_WEBHOOK_SECRET -u FAL_KEY \
-    /opt/tin-lite/procedure-app-server
+    "$( [[ -n "${agent_harness}" ]] && printf /opt/tin-lite/agent-procedure ||
+        printf /opt/tin-lite/procedure-app-server )"
 
 if [[ "${result_kind}" == "github.pull_request" ]]; then
   if [[ "$(git -C "${workspace}" rev-parse HEAD)" != "${metadata_base_head}" ]]; then
@@ -452,6 +473,19 @@ else
     git -C "${state_workspace}" status --porcelain --untracked-files=all | cut -c4- |
       outside_outputs
   )"
+  if [[ -n "${unexpected}" && -n "${agent_harness}" ]]; then
+    # Another harness works freely in the checkout; only the declared outputs are kept.
+    while IFS= read -r extra; do
+      [[ -z "${extra}" ]] && continue
+      if git -C "${state_workspace}" ls-files --error-unmatch -- "${extra}" >/dev/null 2>&1; then
+        git -C "${state_workspace}" checkout --quiet -- "${extra}"
+      else
+        rm -rf -- "${state_workspace:?}/${extra}"
+      fi
+    done <<< "${unexpected}"
+    echo "Discarded changes outside the procedure output contract" >&2
+    unexpected=""
+  fi
   if [[ -n "${unexpected}" ]]; then
     echo "Codex changed files outside the procedure output contract:" >&2
     printf '%s\n' "${unexpected}" | head -n 20 >&2

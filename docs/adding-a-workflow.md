@@ -82,6 +82,10 @@ The [package guide](../workflow_packages/README.md#codex-procedure-example) has 
 example. Procedure packages can produce a project artifact or an unmerged GitHub PR.
 They don't acquire the interactive conversation and controls of a one-off `project.task`.
 
+A procedure runs on Codex. Tin can run it on another harness and model instead, such as
+Antigravity on Gemini 4 Neon, by naming it in the definition; see
+[agent harnesses](agent-harnesses.md). The package stays the same.
+
 A procedure knows its own run, as code does through `ctx["run_id"]`. Tin adds a `RUN CONTEXT`
 line naming the run ID to the end of the brief, and sets `TIN_RUN_ID` for the procedure's
 commands. Ask for it wherever the output names its run, such as a report heading, a receipt

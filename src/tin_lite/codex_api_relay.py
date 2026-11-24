@@ -8,6 +8,8 @@ import json
 import logging
 import re
 import secrets
+from collections.abc import Callable
+from dataclasses import dataclass
 from datetime import UTC, datetime
 from uuid import UUID
 
@@ -15,6 +17,7 @@ import httpx
 from fastapi import APIRouter, HTTPException, Request
 from fastapi.responses import Response, StreamingResponse
 
+from tin_lite.agent_harness import is_agent_contract
 from tin_lite.billing_contracts import BillingError
 from tin_lite.codex_api import (
     ATTEMPT,
@@ -250,6 +253,33 @@ def request_body(raw: bytes, operation: str, contract=CONTRACT, models=None):
     return body
 
 
+@dataclass(frozen=True)
+class RelayRoute:
+    """What differs between harness routes on the shared admission path: which pinned
+    contracts may use the route, how a request is checked against one, which operations a
+    billed run may buy, and how the attempt names its provider and model."""
+
+    provider: str
+    execution_kind: str
+    billed_operations: frozenset
+    accepts: Callable
+    validate: Callable
+    requested_model: Callable
+    requested_tier: Callable
+
+
+CODEX_ROUTE = RelayRoute(
+    provider="openai",
+    execution_kind="codex_openai_api",
+    billed_operations=frozenset({"responses"}),
+    # Another harness's run never buys OpenAI responses with its grant.
+    accepts=lambda contract: not is_agent_contract(contract),
+    validate=lambda raw, operation, contract: request_body(raw, operation, contract),
+    requested_model=lambda operation, contract: contract["model"],
+    requested_tier=lambda operation: "default" if operation == "responses" else None,
+)
+
+
 def request_identity(headers, raw, operation):
     # Codex 0.156.1 uses its THREAD id for x-client-request-id, not a per-call id.
     # Within our single-turn controller, a new model step changes explicit context.
@@ -294,12 +324,20 @@ class CodexAPIRelay:
         except Exception:  # noqa: BLE001 — logging already names the cause
             logger.warning("Codex API rejection cause was not recorded run=%s", run_id)
 
-    async def admit(self, run_id, grant, fingerprint, operation, *, request_bytes=0, raw=None):
+    async def admit(
+        self, run_id, grant, fingerprint, operation, *, request_bytes=0, raw=None, route=None
+    ):
         waited = 0.0
         while True:
             try:
                 return await self._admit_once(
-                    run_id, grant, fingerprint, operation, request_bytes=request_bytes, raw=raw
+                    run_id,
+                    grant,
+                    fingerprint,
+                    operation,
+                    request_bytes=request_bytes,
+                    raw=raw,
+                    route=route,
                 )
             except RelayRejected as exc:
                 # A parallel request waits here for one in flight to settle, instead of
@@ -310,11 +348,17 @@ class CodexAPIRelay:
                 waited += PARALLEL_WAIT_STEP_SECONDS
 
     async def _admit_once(
-        self, run_id, grant, fingerprint, operation, *, request_bytes=0, raw=None
+        self, run_id, grant, fingerprint, operation, *, request_bytes=0, raw=None, route=None
     ):
         try:
             return await self._admit(
-                run_id, grant, fingerprint, operation, request_bytes=request_bytes, raw=raw
+                run_id,
+                grant,
+                fingerprint,
+                operation,
+                request_bytes=request_bytes,
+                raw=raw,
+                route=route or CODEX_ROUTE,
             )
         except AdmissionStopped as exc:
             # Admission rolled back and released its connection/run lock. Keep only
@@ -330,7 +374,10 @@ class CodexAPIRelay:
             )
             raise
 
-    async def _admit(self, run_id, grant, fingerprint, operation, *, request_bytes=0, raw=None):
+    async def _admit(
+        self, run_id, grant, fingerprint, operation, *, request_bytes=0, raw=None, route=None
+    ):
+        route = route or CODEX_ROUTE
         async with self.db.pool.acquire() as conn, conn.transaction():
             # Serialize short admissions, NOT model streaming or the activity's
             # session-long advisory lock. Stop/replacement lock the same run row.
@@ -357,6 +404,7 @@ class CodexAPIRelay:
                 or row["status"] != "started"
                 or record.get("outcome") != "running"
                 or not is_api_contract(record.get("contract"))
+                or not route.accepts(record.get("contract"))
                 or not secrets.compare_digest(record.get("grant_sha256", ""), token_hash(grant))
                 or datetime.fromisoformat(record["expires_at"]) <= datetime.now(UTC)
                 or run["status"] not in {"pending", "running"}
@@ -398,7 +446,7 @@ class CodexAPIRelay:
             if raw is not None:
                 # Validate against this run's contract before any paid intent. The
                 # HTTP body ceiling alone must not upgrade a historical v1 grant.
-                request_body(raw, operation, contract)
+                route.validate(raw, operation, contract)
             if run["started_by_clerk_user_id"] and not await conn.fetchval(
                 """SELECT EXISTS(SELECT 1 FROM project_memberships
                    WHERE project_id=$1 AND clerk_user_id=$2)""",
@@ -426,7 +474,7 @@ class CodexAPIRelay:
             ):
                 raise HTTPException(403, "Codex API execution requires its reserved credit budget")
             if enrolled:
-                if operation != "responses":
+                if operation not in route.billed_operations:
                     raise RelayRejected(422, CONTRACT_REJECTION, reason="operation_not_allowed")
                 if request_bytes > budget["request_maximum_input_bytes"]:
                     raise RelayRejected(422, CONTRACT_REJECTION, reason="request_too_large")
@@ -512,14 +560,14 @@ class CodexAPIRelay:
                 request_number = len(rows) + 1
             observation = {
                 "version": 1,
-                "execution_kind": "codex_openai_api",
+                "execution_kind": route.execution_kind,
                 "run_id": str(run_id),
                 "project_id": str(run["project_id"]),
                 "generation": run["generation"],
                 "definition_commit_sha": run["definition_commit_sha"],
-                "provider": "openai",
-                "requested_model": contract["model"],
-                "requested_service_tier": "default" if operation == "responses" else None,
+                "provider": route.provider,
+                "requested_model": route.requested_model(operation, contract),
+                "requested_service_tier": route.requested_tier(operation),
                 "protocol": contract["protocol"],
                 "contract": contract,
                 "endpoint": operation,

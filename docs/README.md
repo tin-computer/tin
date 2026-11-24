@@ -27,6 +27,8 @@ remain authoritative; older contract versions are retained for compatibility.
 - [Public ChatGPT plugin](public-plugin.md): existing-project tools, isolated OAuth resource,
   package source and public-review preparation.
 - [MCP onboarding handoff](onboarding-mcp.md): access, first results, delivery and partial setup.
+- [Agent harnesses](agent-harnesses.md): which harness and model run a procedure, and
+  Antigravity on Gemini 4 Neon beside Codex.
 - [Codex API execution](codex-api-pilot.md), [isolated runtime](isolated-codex-runtime.md),
   [Studio execution](studio-api-and-hosted-credits.md) and [worker lanes](activity-worker-lanes.md).
 - [Publication recovery](procedure-publication-recovery.md),

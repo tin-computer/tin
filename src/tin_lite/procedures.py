@@ -18,6 +18,8 @@ from tin_lite import (
     feedback_fix_plan,
     visitor_journal,
 )
+from tin_lite.agent_harness import MIN_TIMEOUT_SECONDS as AGENT_MIN_TIMEOUT_SECONDS
+from tin_lite.agent_harness import AgentSelection, parse_agent
 from tin_lite.code_storage import CodeStorage
 from tin_lite.diagram_compositions import parse_diagram_v2
 from tin_lite.domain import CODEX_PROCEDURE_EXECUTOR, MEMORY_INDEX_PATH
@@ -459,6 +461,8 @@ class CodexProcedureSpec:
     reference_repositories: bool = True
     # The pull request goes to a code repository when the project has one.
     code_repository_output: bool = False
+    # The harness and model that run it; None is Codex (agent_harness).
+    agent: AgentSelection | None = None
 
     @property
     def repository_workspace(self) -> bool:
@@ -506,6 +510,8 @@ class PinnedCodexProcedure:
     reference_repositories: bool = True
     # The pull request goes to a code repository when the project has one.
     code_repository_output: bool = False
+    # The harness and model that run it; None is Codex (agent_harness).
+    agent: AgentSelection | None = None
 
     @property
     def repository_workspace(self) -> bool:
@@ -629,6 +635,8 @@ class PinnedCodexProcedure:
             "sandbox": self.sandbox.definition(),
             "inputs": {key: value for key, value in inputs.items() if key != "project_id"},
         }
+        if self.agent is not None:
+            context["agent"] = self.agent.definition()
         if run_id is not None:
             # Code workflows read ctx["run_id"]; a procedure gets the same ID in its brief and,
             # through the sandbox, as TIN_RUN_ID for its commands.
@@ -738,6 +746,8 @@ class CodexProcedureSource:
     output_assets: AssetPolicy | None = None
     sandbox: SandboxProfile = SandboxProfile()
     identity: bool | TestIdentityPolicy = False
+    # The harness and model that run it; None is Codex (agent_harness).
+    agent: AgentSelection | None = None
 
     @property
     def identity_policy(self) -> TestIdentityPolicy:
@@ -892,6 +902,8 @@ class CodexProcedureSource:
             "sandbox": self.sandbox.definition(),
             "identity": self.identity_policy.definition(),
         }
+        if self.agent is not None:
+            procedure["agent"] = self.agent.definition()
         validate_codex_procedure_definition(
             {"key": workflow_key, "executor": CODEX_PROCEDURE_EXECUTOR, "procedure": procedure}
         )
@@ -1345,8 +1357,33 @@ def validate_codex_procedure_definition(definition: dict[str, Any]) -> CodexProc
     if collisions:
         raise ValueError("Tin and project skill names cannot collide")
 
+    agent = parse_agent(procedure.get("agent"))
     sandbox = _sandbox_profile(procedure.get("sandbox"))
+    if agent is not None:
+        # Another harness runs as the worker in the isolated image (agent_harness), with at
+        # least an hour: its time is a runaway guard, not a pace.
+        if sandbox.profile not in {DEFAULT_SANDBOX_PROFILE, ISOLATED_SANDBOX_PROFILE} or (
+            sandbox.open_egress
+        ):
+            raise ValueError(
+                "an agent harness procedure requires a fenced default or isolated profile"
+            )
+        sandbox = SandboxProfile(
+            profile=ISOLATED_SANDBOX_PROFILE,
+            timeout_seconds=max(sandbox.timeout_seconds, AGENT_MIN_TIMEOUT_SECONDS),
+            egress=FENCED_SANDBOX_EGRESS,
+        )
     identity = _identity_policy(procedure.get("identity"))
+    if agent is not None and identity.enabled:
+        raise ValueError("test identities run on Codex only")
+    if agent is not None and output_validator in {
+        "tin-diagram.reviewed.v1",
+        "tin-diagram.branded.v1",
+        "tin-diagram.branded.v2",
+        "demo-video.v1",
+    }:
+        # Their render-and-inspect loop is the Codex bridge's (diagram_review).
+        raise ValueError("diagram and video procedures run on Codex only")
     if identity.enabled and result_kind != PROJECT_ARTIFACT_RESULT:
         raise ValueError("test identities require a project artifact result")
 
@@ -1413,6 +1450,7 @@ def validate_codex_procedure_definition(definition: dict[str, Any]) -> CodexProc
         repository_input=repository_input,
         reference_repositories=repositories == "connected",
         code_repository_output=output_repository == "code",
+        agent=agent,
     )
 
 
@@ -1570,6 +1608,7 @@ async def load_pinned_codex_procedure(
         repository_input=spec.repository_input,
         reference_repositories=spec.reference_repositories,
         code_repository_output=spec.code_repository_output,
+        agent=spec.agent,
     )
 
 

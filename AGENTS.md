@@ -170,6 +170,11 @@ outside marketing, or were written without ever being run. Full rules:
   routes automatically. Never expose reusable keys in a sandbox, log or project file.
 - Keep the protected controller separate from user/agent commands. Preserve output
   bounds, result validators, worker isolation, fenced egress, TLS proxy and cleanup.
+- Codex is the default harness. A procedure may name another one in `procedure.agent`
+  (today Antigravity on Gemini 4 Neon); it runs as the worker with the run's expiring grant,
+  through Tin's relay and the same admission, ceilings and delivery. Give that agent the job
+  and its tools, not a method; its limits are runaway guards. See
+  [agent harnesses](docs/agent-harnesses.md).
 - Browser execution is a specific pinned sandbox profile, not permission for arbitrary
   private code to access the network. Isolated commands reach public addresses only through
   the run's expiring proxy grant, never directly. Rebuild and verify images when runtime

@@ -10,6 +10,7 @@ import secrets
 from dataclasses import asdict, replace
 from datetime import UTC, datetime, timedelta
 
+from tin_lite.agent_harness import is_agent_contract, is_agent_session_contract
 from tin_lite.domain import SideEffectConflictError
 
 MODE = "openai_api_v1"
@@ -109,6 +110,9 @@ def attempt_failure(record):
             f"The model relay rejected a request ({rejection['reason']}, "
             f"HTTP {int(rejection.get('status') or 0)}).",
         )
+    if is_agent_contract(record.get("contract")):
+        # The same causes, named for the harness and provider that ran.
+        reason = reason.replace("Codex", "The agent").replace("OpenAI", "Google")
     return CodexAttemptStopped(reason + " The paid attempt will not be repeated automatically.")
 
 
@@ -255,7 +259,7 @@ def current_form(value):
 
 
 def is_session_contract(value):
-    return current_form(value) in SESSION_CONTRACTS
+    return current_form(value) in SESSION_CONTRACTS or is_agent_session_contract(value)
 
 
 def api_enabled(settings, project_id):
@@ -284,11 +288,19 @@ def is_multi_tool_contract(value):
 
 
 def is_api_contract(value):
-    return current_form(value) == CONTRACT or is_procedure_contract(value)
+    """Any pinned API contract: Codex's, or another harness's (agent_harness)."""
+    return (
+        current_form(value) == CONTRACT or is_procedure_contract(value) or is_agent_contract(value)
+    )
 
 
 def execution_profile(profile, contract):
     """Protect the controller without changing the workflow's workspace/result contract."""
+    if is_agent_contract(contract):
+        # Another harness runs as the worker in the isolated image; no browser/Studio images.
+        if profile.profile not in {"default", "isolated"} or profile.egress != "fenced":
+            raise ValueError("This procedure profile is not supported by its agent harness")
+        return replace(profile, profile="isolated")
     if is_api_contract(contract):
         if profile.profile in {"browser", "studio"} and profile.egress == "open":
             return replace(profile, profile=f"{profile.profile}_api")
@@ -330,8 +342,11 @@ async def select_contract(*, db, conn, run, procedure, settings):
     )
     if procedure.sandbox.profile not in {"default", "isolated", "browser", "studio"} or not enabled:
         return {"mode": "chatgpt_oauth"}
-    if settings.luna_api_key is None:
+    agent = getattr(procedure, "agent", None)
+    if agent is None and settings.luna_api_key is None:
         raise ValueError("Codex API execution requires Tin's server-side OpenAI credential")
+    if agent is not None and getattr(settings, "gemini_api_key", None) is None:
+        raise ValueError("This procedure's agent requires Tin's server-side Gemini credential")
     # Never bypass a workspace that enrolled after an unbilled run was admitted.
     if (
         await conn.fetchval(
@@ -348,8 +363,14 @@ async def select_contract(*, db, conn, run, procedure, settings):
         contract = contract or CONTRACT
         if not is_api_contract(contract):
             raise ValueError("Unknown reserved Codex execution contract")
+    elif agent is not None:
+        from tin_lite.agent_harness import contract as agent_contract
+
+        contract = agent_contract(agent, session=False)
     else:
         contract = procedure_contract(getattr(procedure, "output_validator", None))
+    if (agent is not None) != is_agent_contract(contract):
+        raise ValueError("The reserved execution contract does not match the procedure's agent")
     execution_profile(procedure.sandbox, contract)
     return dict(contract)
 
@@ -385,6 +406,7 @@ async def run_api_attempt(*, db, conn, run, sandbox_id, run_input, call, turn_nu
         if not is_api_contract(contract) or not run_input.isolated:
             raise ValueError("Codex API requires its pinned isolated execution contract")
         grant = secrets.token_urlsafe(32)
+        from tin_lite.agent_harness import GEMINI_AGENT_CARD
         from tin_lite.codex_api_pricing import RATE_CARD
 
         terms = decode_record(
@@ -396,7 +418,9 @@ async def run_api_attempt(*, db, conn, run, sandbox_id, run_input, call, turn_nu
             terms = await api_terms_for_included(db, run.id, conn=locked) or {}
         record = {
             "version": 1,
-            "execution_kind": "codex_openai_api",
+            "execution_kind": (
+                "agent_gemini_api" if is_agent_contract(contract) else "codex_openai_api"
+            ),
             "run_id": str(run.id),
             "project_id": str(run.project_id),
             "generation": run.generation,
@@ -410,7 +434,9 @@ async def run_api_attempt(*, db, conn, run, sandbox_id, run_input, call, turn_nu
                 datetime.now(UTC) + timedelta(seconds=run_input.timeout_seconds + 60)
             ).isoformat(),
             "contract": contract,
-            "pricing": terms.get("pricing", RATE_CARD),
+            "pricing": terms.get(
+                "pricing", GEMINI_AGENT_CARD if is_agent_contract(contract) else RATE_CARD
+            ),
             "outcome": "running",
             "attempted_at": datetime.now(UTC).isoformat(),
         }
@@ -437,6 +463,12 @@ async def run_api_attempt(*, db, conn, run, sandbox_id, run_input, call, turn_nu
                 locked, key, exc, stop_reason=controller_stop.get("reason")
             )
 
+        if is_agent_contract(contract) and getattr(run_input, "api_url", None):
+            # The run's model requests go to its harness's provider route on the same relay.
+            from tin_lite.agent_harness import relay_url
+
+            public = run_input.api_url.split("/internal/", 1)[0]
+            run_input = replace(run_input, api_url=relay_url(public, run.id, contract))
         try:
             result = await call(
                 replace(
