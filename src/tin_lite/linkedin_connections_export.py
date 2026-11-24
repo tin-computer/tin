@@ -134,13 +134,17 @@ async def need_positions(conn, project_id: UUID, member: str, *, limit: int) -> 
            JOIN record_identifiers i ON i.record_id = mine.person AND i.kind = 'linkedin_member'
            LEFT JOIN record_values v ON v.record_id = mine.person AND v.field = 'position'
            WHERE v.record_id IS NULL
+              -- A position Tin only read from a headline is still read from the profile.
+              OR v.set_by = $5
               OR (v.set_by_kind = 'run' AND v.set_at < now() - make_interval(days => $3))
-           ORDER BY v.set_at IS NOT NULL, v.set_at, mine.connected DESC, i.value
+           ORDER BY (CASE WHEN v.set_by = $5 THEN NULL ELSE v.set_at END) NULLS FIRST,
+                    mine.connected DESC, i.value
            LIMIT $4""",
         project_id,
         member,
         STALE_DAYS,
         limit,
+        records.COMPANY_WRITER,
     )
     return [row["member"] for row in rows]
 
@@ -216,7 +220,7 @@ async def connections(conn, project_id: UUID, member: str) -> list[dict]:
                (SELECT jsonb_object_agg(i.kind, i.value) FROM record_identifiers i
                 WHERE i.record_id = mine.person) AS identifiers,
                (SELECT jsonb_object_agg(v.field, jsonb_build_object(
-                    'text', v.value_text, 'set_at', v.set_at))
+                    'text', v.value_text, 'set_at', v.set_at, 'set_by', v.set_by))
                 FROM record_values v WHERE v.record_id = mine.person
                   AND v.field IN ('name', 'headline', 'company', 'position', 'location'))
                    AS fields
@@ -235,7 +239,9 @@ async def connections(conn, project_id: UUID, member: str) -> list[dict]:
         first, last = detail.get("first_name") or "", detail.get("last_name") or ""
         if not first and not last:
             first, _, last = (text.get("name") or "").partition(" ")
-        read = (fields.get("position") or {}).get("set_at")
+        position = fields.get("position") or {}
+        # A position Tin only read from the headline isn't a profile read.
+        read = position.get("set_at") if position.get("set_by") != records.COMPANY_WRITER else None
         result.append(
             {
                 "first_name": first,

@@ -556,7 +556,9 @@ async def test_linkedin_objecting_to_profile_reads_keeps_the_list(collection_db)
     notes = await run_through(work(f, cloud), run_id)
     assert notes["stopped"] == "rate_limited" and notes["people"] == 3
     rows, summary = listed(f.storage)
-    assert len(rows) == 3 and not any(r["Company"] for r in rows)
+    # No profile read: a company is listed only where the headline names one.
+    assert len(rows) == 3
+    assert sorted(r["Company"] for r in rows if r["Company"]) == ["Acme", "Startup"]
     assert "LinkedIn asked Tin to slow down" in summary and "3 still to read." in summary
 
 

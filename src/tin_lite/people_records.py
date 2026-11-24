@@ -13,6 +13,7 @@ about a person; Tin reads the notes the next time it scores them.
 from __future__ import annotations
 
 import hashlib
+import html
 import json
 import math
 import re
@@ -336,6 +337,95 @@ def _whole(number):
     return int(number) if isinstance(number, float) and number.is_integer() else number
 
 
+# Company and position Tin reads from what it already has, when no source gave one: a
+# headline's "Title at Company" (or "@ Company"), else a work email's domain. Any run's write
+# of someone without a company fills it (`fill_company`); a source that names the company
+# later replaces it.
+COMPANY_WRITER = "people.company"
+_TITLE_AT = re.compile(r"^(?P<title>.{2,120}?)\s+(?:at\s+|@\s*)(?P<company>.{1,120})$", re.I)
+_HEADLINE_PARTS = re.compile(r"\s*[|·•]\s*")
+NOT_COMPANIES = (
+    "retired", "self employed", "self-employed", "freelanc", "unemployed", "seeking",
+    "looking for", "open to work", "between roles", "various", "none",
+)  # fmt: skip
+FREE_MAIL = frozenset(
+    """gmail.com googlemail.com yahoo.com yahoo.co.uk ymail.com hotmail.com hotmail.co.uk
+    outlook.com live.com msn.com icloud.com me.com mac.com aol.com proton.me protonmail.com
+    pm.me gmx.com gmx.de gmx.net web.de mail.com yandex.com yandex.ru mail.ru qq.com 163.com
+    126.com zoho.com fastmail.com hey.com tutanota.com comcast.net att.net verizon.net
+    sbcglobal.net cox.net bellsouth.net charter.net naver.com hanmail.net seznam.cz
+    libero.it orange.fr free.fr laposte.net t-online.de btinternet.com sky.com""".split()
+)
+# Values whose text arrives HTML-escaped from some sources ("Co-Owner &amp; Operator").
+UNESCAPED = frozenset({"name", "headline", "company", "position", "location"})
+
+
+def company_from_headline(headline: str | None) -> tuple[str, str] | None:
+    """(position, company) from a headline like "VP Sales at Acme | ex-Google", or None when
+    it names no company: a lowercase phrase ("building at the intersection of…"), a long
+    sentence, or a placeholder ("Retired", "Self-employed")."""
+
+    first = _HEADLINE_PARTS.split(html.unescape(headline or "").strip())[0]
+    found = _TITLE_AT.match(first)
+    if not found:
+        return None
+    title = found["title"].strip(" ,;:-")
+    company = found["company"].strip(" ,;:.")
+    if not title or not company or not (company[0].isupper() or company[0].isdigit()):
+        return None
+    if len(title.split()) > 8 or len(company.split()) > 8:
+        return None
+    if any(word in company.lower() for word in NOT_COMPANIES):
+        return None
+    return title, company
+
+
+def company_from_email(email: str | None) -> str | None:
+    """A work email's domain; None for a personal address."""
+
+    domain = (email or "").rsplit("@", 1)[-1].strip().lower() if "@" in (email or "") else ""
+    if not domain or domain in FREE_MAIL or "." not in domain:
+        return None
+    return domain
+
+
+async def fill_company(conn, project_id: UUID, record_id: UUID, *, set_by: str) -> bool:
+    """Fill a person's company (and position) from their headline or work email when no
+    source gave one; True when it did. One Tin read before follows a changed headline."""
+
+    row = await conn.fetchrow(
+        """SELECT
+               (SELECT value_text FROM record_values WHERE record_id = $1 AND field = 'company')
+                   AS company,
+               (SELECT set_by FROM record_values WHERE record_id = $1 AND field = 'company')
+                   AS company_by,
+               (SELECT value_text FROM record_values WHERE record_id = $1 AND field = 'position')
+                   AS position,
+               (SELECT set_by FROM record_values WHERE record_id = $1 AND field = 'position')
+                   AS position_by,
+               (SELECT value_text FROM record_values WHERE record_id = $1 AND field = 'headline')
+                   AS headline,
+               (SELECT value FROM record_identifiers WHERE record_id = $1 AND kind = 'email'
+                ORDER BY added_at LIMIT 1) AS email""",
+        record_id,
+    )
+    if row is None or (row["company"] and row["company_by"] != COMPANY_WRITER):
+        return False
+    values = []
+    found = company_from_headline(row["headline"])
+    if found:
+        title, company = found
+        values.append(Value("company", company, "From their headline"))
+        if not row["position"] or row["position_by"] == COMPANY_WRITER:
+            values.append(Value("position", title, "From their headline"))
+    elif domain := company_from_email(row["email"]):
+        values.append(Value("company", domain, "From their email address"))
+    if not values:
+        return False
+    await set_values(conn, project_id, record_id, values, set_by_kind="run", set_by=set_by)
+    return True
+
+
 async def set_values(
     conn,
     project_id: UUID,
@@ -352,6 +442,7 @@ async def set_values(
     A value a member set is never replaced by a run, and a write that changes nothing (same
     value, reason and definition) leaves the earlier one, with its time, in place, unless
     `refresh` asks for a new time: a score made again after a note, even unchanged, is current.
+    A run's write of someone with no company fills it from what Tin has (`fill_company`).
     """
 
     if set_by_kind not in SET_BY or not set_by:
@@ -370,7 +461,10 @@ async def set_values(
     for item in values:
         if item.field not in fields:
             raise RecordError("unknown_field")
-        text, number = _typed(fields[item.field], item.value)
+        value = item.value
+        if item.field in UNESCAPED and isinstance(value, str):
+            value = html.unescape(value)
+        text, number = _typed(fields[item.field], value)
         written = await conn.fetchval(
             """INSERT INTO record_values (project_id, record_id, field, value_text, value_number,
                    reason, set_by_kind, set_by, definition)
@@ -407,6 +501,13 @@ async def set_values(
             refresh,
         )
         changed += bool(written)
+    if (
+        changed
+        and set_by_kind == "run"
+        and not any(item.field == "company" for item in values)
+        and "company" in fields
+    ):
+        await fill_company(conn, project_id, target, set_by=COMPANY_WRITER)
     return changed
 
 
@@ -752,6 +853,7 @@ COMPANY_VISIT = "rb2b_company"
 
 # Short names for the workflows that write records, shown beside a value as who set it.
 WRITERS = {
+    COMPANY_WRITER: "Tin",
     "social.linkedin_engagers": "engagers",
     "social.linkedin_profile_viewers": "profile viewers",
     "social.linkedin_connections": "connections",
