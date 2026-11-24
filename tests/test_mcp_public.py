@@ -656,6 +656,8 @@ def test_reviewed_public_catalog_coverage_and_explicit_exclusions():
         "social.linkedin_requests",
         # Tin starts it for each visitor RB2B posts to a project's webhook.
         "people.rb2b_visitor",
+        # Started on request to rate a project's earlier people.
+        "people.rate",
         "project.task",
         "growth.onboarding",
         "growth.onboarding_plan",
