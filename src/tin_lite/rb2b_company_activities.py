@@ -73,7 +73,7 @@ class RB2BCompanyActivities(RB2BActivities):
             )
         )
 
-    async def _keep(self, run, values: dict) -> None:
+    async def _keep_company(self, run, values: dict) -> None:
         await self.db.pool.execute(
             """UPDATE rb2b_visits SET company = COALESCE(company, '{}'::jsonb) || $3::jsonb
                WHERE id = $1 AND project_id = $2""",
@@ -253,12 +253,12 @@ class RB2BCompanyActivities(RB2BActivities):
             # The same company again within the week: its verdict and people stand, nothing
             # is bought again and nothing is posted again.
             kept = {key: earlier[key] for key in rb2b_company.REUSED if key in earlier}
-            await self._keep(run, {**about, **kept, "repeat_of": earlier["visit_id"]})
+            await self._keep_company(run, {**about, **kept, "repeat_of": earlier["visit_id"]})
             return {"worth": False}
         project = await self.db.get_project(run.project_id)
         icp = await people_icp.read_icp(self.storage, project)
         if not people_rating.available(self.router) or not icp.get("profiles"):
-            await self._keep(run, about)
+            await self._keep_company(run, about)
             return {"worth": False}
         text = await people_rating.icp_text(self.storage, project, icp)
         async with self.db.pool.acquire() as conn:
@@ -282,7 +282,7 @@ class RB2BCompanyActivities(RB2BActivities):
             ),
         )
         judged = rb2b_company.verdict(output, icp["profiles"])
-        await self._keep(run, {**about, **(judged or {}), "judged": judged is not None})
+        await self._keep_company(run, {**about, **(judged or {}), "judged": judged is not None})
         return {"worth": bool(judged and judged["worth"])}
 
     @activity.defn(name="rb2b_company_find")
@@ -306,7 +306,9 @@ class RB2BCompanyActivities(RB2BActivities):
         ):
             why = "daily_limit"
         if why:
-            await self._keep(run, {"people": [], "found": 0, "spent_usd": 0, "not_looked": why})
+            await self._keep_company(
+                run, {"people": [], "found": 0, "spent_usd": 0, "not_looked": why}
+            )
             return {"people": 0}
         titles = company["titles"]
         listed, spent = await self._hire(
@@ -382,7 +384,7 @@ class RB2BCompanyActivities(RB2BActivities):
                 continue  # their profile shows they left
             kept.append({**person, **(read or {}), "checked": read is not None})
         ids = await self._people(run, company, kept)
-        await self._keep(
+        await self._keep_company(
             run,
             {
                 "people": [str(record_id) for record_id in ids],
