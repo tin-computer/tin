@@ -56,14 +56,15 @@ MAX_TEXT = 4000
 ENRICH_BELOW = 280
 METHOD_NAMES = ("rss", "google_news", "html_links", "sitemap", "crossref")
 GOOGLE_NEWS = "news.google.com"
-# Runaway guards for untrusted configs: pattern length, links or sitemap entries matched per
-# source, child sitemaps followed per source, the matching deadline and a source's whole read.
-MAX_PATTERN = 200
+# Runaway guards for untrusted configs: path globs per source and their length, links or
+# sitemap entries matched per source, and child sitemaps followed per source. A source's whole
+# read is bounded by run_sources' per-source deadline.
+MAX_GLOBS = 20
+MAX_GLOB = 200
 MAX_CANDIDATES = 2000
 MAX_CHILD_SITEMAPS = 30
 MAX_SITEMAP_ENTRIES = 5000
-MATCH_SECONDS = 5
-SOURCE_SECONDS = 300
+REGEX_GONE = "regex patterns are no longer supported; use url_paths / link_paths"
 
 
 def in_window(d: datetime | None, window: Window) -> bool:
@@ -212,7 +213,7 @@ async def m_html_links(src: dict, window: Window, ctx: dict) -> list[Item]:
             if len(url) <= 2000
         )
     )
-    links = await matching(src["link_pattern"], urls)
+    links = matching(src["link_paths"], urls)
     links = links[: src.get("max_links", 20)]
     ctx["seen"] = len(links)
     pages = await asyncio.gather(
@@ -278,7 +279,7 @@ async def m_sitemap(src: dict, window: Window, ctx: dict) -> list[Item]:
     ctx["http"] = 200
     floor = window.since - timedelta(days=src.get("lastmod_slack_days", 1))
     recent = {loc: lastmod for loc, lastmod in entries if lastmod and lastmod >= floor}
-    matched = set(await matching(src["url_pattern"], list(recent)))
+    matched = set(matching(src["url_paths"], list(recent)))
     candidates = sorted(
         [(lastmod, loc) for loc, lastmod in recent.items() if loc in matched], reverse=True
     )[: src.get("max_pages", 25)]
@@ -347,104 +348,89 @@ async def m_crossref(src: dict, window: Window, ctx: dict) -> list[Item]:
     return await _finish(src, ctx, found)
 
 
-def bounded(method, seconds: float):
-    """A method under a per-source deadline: a slow or endless source fails alone."""
-
-    async def run(src: dict, window: Window, ctx: dict) -> list[Item]:
-        async with asyncio.timeout(seconds):
-            return await method(src, window, ctx)
-
-    run.__name__ = method.__name__
-    return run
-
-
 METHODS = {
-    name: bounded(method, SOURCE_SECONDS)
-    for name, method in {
-        "rss": m_rss,
-        "google_news": m_google_news,
-        "html_links": m_html_links,
-        "sitemap": m_sitemap,
-        "crossref": m_crossref,
-    }.items()
+    "rss": m_rss,
+    "google_news": m_google_news,
+    "html_links": m_html_links,
+    "sitemap": m_sitemap,
+    "crossref": m_crossref,
 }
 
 
 _ISSN = re.compile(r"^[0-9]{4}-[0-9]{3}[0-9Xx]$")
-_QUANTIFIER = re.compile(r"[*+]|\{\d*,?\d*\}")
-_BACKREFERENCE = re.compile(r"\\[1-9]|\(\?P=|\\k<|\(\?\(")
 
 
 def _url(value: object) -> bool:
     return isinstance(value, str) and PublicReader.allowed(value)
 
 
-def nested_quantifier(pattern: str) -> bool:
-    """Whether a quantified group holds a quantifier or an alternation itself, like (a+)+,
-    (x*y)* or (a|aa)+: the shapes that backtrack catastrophically. Escapes and character
-    classes are skipped."""
-    stack: list[bool] = []
-    i = 0
-    while i < len(pattern):
-        c = pattern[i]
-        if c == "\\":
-            i += 2
-            continue
-        if c == "[":
-            j = i + 1
-            if j < len(pattern) and pattern[j] == "]":
-                j += 1
-            while j < len(pattern) and pattern[j] != "]":
-                j += 2 if pattern[j] == "\\" else 1
-            i = j + 1
-            continue
-        if c == "(":
-            stack.append(False)
-        elif c == ")":
-            inner = stack.pop() if stack else False
-            follows = _QUANTIFIER.match(pattern, i + 1)
-            if follows and inner:
-                return True
-            if stack and (inner or follows):
-                stack[-1] = True
-        elif (c == "|" or _QUANTIFIER.match(pattern, i)) and stack:
-            # A repeated alternation, like (a|aa)+, backtracks the same way.
-            stack[-1] = True
-        i += 1
-    return False
+# Path globs: which links or sitemap pages a source reads. Configs are project files any
+# member can edit, so there is no regex here: a glob is matched segment by segment in linear
+# time. "vendor.example/blog/*" is the host (with or without "www.") then literal segments;
+# "*" is exactly one non-empty segment and "**", only as the last part, one or more. A trailing
+# slash is optional; the scheme, query and fragment are ignored.
 
 
-def safe_pattern(value: object) -> str | None:
-    """Why a config's URL pattern can't run on Tin's worker, or None. Project files are
-    untrusted: patterns are short, compile, and have no backreferences or nested quantifiers."""
-    if not isinstance(value, str) or not 0 < len(value) <= MAX_PATTERN:
-        return f"is missing or longer than {MAX_PATTERN} characters"
-    if _BACKREFERENCE.search(value):
-        return "uses a backreference or conditional"
-    if nested_quantifier(value):
-        return "repeats a group that itself repeats or alternates, like (a+)+ or (a|b)+"
-    try:
-        re.compile(value)
-    except re.error:
-        return "is not a valid pattern"
+def _host(value: str) -> str:
+    value = value.lower()
+    return value[4:] if value.startswith("www.") else value
+
+
+def _segments(path: str) -> list[str]:
+    path = path.strip("/")
+    return path.split("/") if path else []
+
+
+def glob_problem(value: object) -> str | None:
+    """Why one path glob can't be used, or None."""
+    if not isinstance(value, str) or not 0 < len(value) <= MAX_GLOB:
+        return f"is missing or longer than {MAX_GLOB} characters"
+    host, _, rest = value.partition("/")
+    if not host or any(c in host for c in "*:@") or any(c in value for c in " ?#\\"):
+        return "must be a host and a path, like vendor.example/blog/*"
+    parts = _segments(rest)
+    for index, part in enumerate(parts):
+        if part == "**" and index != len(parts) - 1:
+            return "may use ** only as its last part"
+        if "*" in part and part not in {"*", "**"}:
+            return "uses * only as a whole segment"
+        if not part:
+            return "has an empty segment"
     return None
 
 
-def _match_all(pattern: str, candidates: list[str]) -> list[str]:
-    compiled = re.compile(pattern)
-    return [value for value in candidates if compiled.search(value)]
+def globs_problem(value: object) -> str | None:
+    if not isinstance(value, list) or not 0 < len(value) <= MAX_GLOBS:
+        return f"must list 1 to {MAX_GLOBS} path globs"
+    for glob in value:
+        if reason := glob_problem(glob):
+            return f"has a glob that {reason}"
+    return None
 
 
-async def matching(pattern: str, candidates: list[str]) -> list[str]:
-    """The candidates a config's pattern matches, off the event loop and under a deadline, so
-    a pattern that slipped past the checks fails its source instead of stalling the worker."""
+def glob_match(glob: str, url: str) -> bool:
+    """Whether `url` is a page `glob` names. Linear in the URL's length."""
     try:
-        return await asyncio.wait_for(
-            asyncio.to_thread(_match_all, pattern, candidates[:MAX_CANDIDATES]),
-            timeout=MATCH_SECONDS,
-        )
-    except TimeoutError as exc:
-        raise FetchError("the source's URL pattern took too long to match; simplify it") from exc
+        parts = urllib.parse.urlsplit(url)
+    except ValueError:
+        return False
+    host, _, rest = glob.partition("/")
+    if _host(parts.hostname or "") != _host(host):
+        return False
+    want, have = _segments(rest), _segments(parts.path)
+    for index, part in enumerate(want):
+        if part == "**":
+            return len(have) > index and all(have[index:])
+        if index >= len(have) or not have[index]:
+            return False
+        if part != "*" and have[index] != part:
+            return False
+    return len(have) == len(want)
+
+
+def matching(globs: list[str], candidates: list[str]) -> list[str]:
+    """The candidates any glob names, at most MAX_CANDIDATES of them checked."""
+    return [url for url in candidates[:MAX_CANDIDATES] if any(glob_match(g, url) for g in globs)]
 
 
 def _int(source: dict, name: str, default: int, low: int, high: int) -> bool:
@@ -461,14 +447,18 @@ def check(source: dict) -> str | None:
         query = source.get("query")
         if not isinstance(query, str) or not 0 < len(query.strip()) <= 500:
             return "its query is missing or longer than 500 characters"
+    if method in {"html_links", "sitemap"} and (
+        "link_pattern" in source or "url_pattern" in source
+    ):
+        return REGEX_GONE
     if method == "html_links":
-        if reason := safe_pattern(source.get("link_pattern")):
-            return f"its link_pattern {reason}"
+        if reason := globs_problem(source.get("link_paths")):
+            return f"its link_paths {reason}"
         if not _int(source, "max_links", 20, 1, 100):
             return "its max_links is out of range (1 to 100)"
     if method == "sitemap":
-        if reason := safe_pattern(source.get("url_pattern")):
-            return f"its url_pattern {reason}"
+        if reason := globs_problem(source.get("url_paths")):
+            return f"its url_paths {reason}"
         if not _int(source, "max_pages", 25, 1, 100):
             return "its max_pages is out of range (1 to 100)"
         if not _int(source, "lastmod_slack_days", 1, 0, 30):
