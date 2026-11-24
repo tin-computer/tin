@@ -38,6 +38,7 @@ SAYS = {
         422,
         f"A tag is a short label of 1 to {records.TAG_LENGTH} characters, such as a group's name.",
     ),
+    "too_many_tags": (422, f"A person can have up to {records.TAGS_PER_PERSON} tags."),
 }
 # People one add_people call keeps, and people one tag_people call changes.
 ADD_LIMIT = 1000
@@ -47,6 +48,7 @@ NOT_ADDED = {
     "invalid_identifier": "no LinkedIn profile link or email Tin can read",
     "invalid_tag": f"a tag isn't a label of 1 to {records.TAG_LENGTH} characters",
     "invalid_value": "a field isn't text",
+    "too_many_tags": f"more than {records.TAGS_PER_PERSON} tags",
 }
 # What a request's status says for comparing groups.
 WENT_OUT = ("sent", "accepted", "not_pending")
@@ -471,6 +473,8 @@ def _tags(value: Any) -> list[str]:
     if value is None:
         return []
     items = value if isinstance(value, list | tuple) else [value]
+    if len(items) > records.TAGS_PER_PERSON:
+        raise _refused(records.RecordError("too_many_tags"))
     try:
         return list(dict.fromkeys(records.clean_tag(item) for item in items))
     except records.RecordError as error:

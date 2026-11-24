@@ -1314,7 +1314,9 @@ async def add_person(
     (People lists them under Connections until they do something). Returns their ID, whether
     they're new, or that they were forgotten."""
 
-    tags = [clean_tag(tag) for tag in tags]
+    tags = list(dict.fromkeys(clean_tag(tag) for tag in tags))
+    if len(tags) > TAGS_PER_PERSON:
+        raise RecordError("too_many_tags")
     identifiers: dict[str, str] = {}
     link = person.get("linkedin_url") or person.get("linkedin")
     if link:
@@ -1377,27 +1379,34 @@ async def add_tags(
     TAGS_PER_PERSON."""
 
     cleaned = list(dict.fromkeys(clean_tag(tag) for tag in tags))
+    if len(cleaned) > TAGS_PER_PERSON:
+        raise RecordError("too_many_tags")
+    if not cleaned:
+        return 0
     added = 0
     for record_id in record_ids:
         target = await current(conn, project_id, record_id)
         if target is None:
             continue
-        for tag in cleaned:
-            added += (
-                await conn.fetchval(
-                    """WITH counted AS (SELECT count(*) AS n FROM record_tags WHERE record_id = $2)
-                   INSERT INTO record_tags (project_id, record_id, tag, added_by)
-                   SELECT $1, $2, $3, $4 FROM counted WHERE counted.n < $5
-                   ON CONFLICT (record_id, tag) DO NOTHING
-                   RETURNING 1""",
-                    project_id,
-                    target,
-                    tag,
-                    member,
-                    TAGS_PER_PERSON,
-                )
-                or 0
-            )
+        # One statement a person: the new tags, as many as still fit under TAGS_PER_PERSON.
+        added += await conn.fetchval(
+            """WITH have AS (SELECT tag FROM record_tags WHERE record_id = $2),
+                    fresh AS (SELECT t, n FROM unnest($3::text[]) WITH ORDINALITY AS u(t, n)
+                              WHERE t NOT IN (SELECT tag FROM have)),
+                    put AS (
+                        INSERT INTO record_tags (project_id, record_id, tag, added_by)
+                        SELECT $1, $2, f.t, $4 FROM fresh f
+                        WHERE (SELECT count(*) FROM fresh g WHERE g.n <= f.n)
+                              <= $5 - (SELECT count(*) FROM have)
+                        ON CONFLICT (record_id, tag) DO NOTHING
+                        RETURNING 1)
+               SELECT count(*) FROM put""",
+            project_id,
+            target,
+            cleaned,
+            member,
+            TAGS_PER_PERSON,
+        )
     return added
 
 
@@ -1405,6 +1414,8 @@ async def remove_tags(conn, project_id: UUID, record_ids: list[UUID], tags: list
     """Take tags off people; returns how many came off."""
 
     cleaned = list(dict.fromkeys(clean_tag(tag) for tag in tags))
+    if len(cleaned) > TAGS_PER_PERSON:
+        raise RecordError("too_many_tags")
     targets = [t for t in [await current(conn, project_id, r) for r in record_ids] if t]
     result = await conn.execute(
         """DELETE FROM record_tags WHERE project_id = $1 AND record_id = ANY($2::uuid[])

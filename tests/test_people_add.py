@@ -307,3 +307,80 @@ async def test_a_request_to_someone_known_by_their_link_looks_up_their_id_first(
             "acceptance_rate": 1.0,
         }
     ]
+
+
+async def test_tags_are_capped_per_call_and_per_person(collection_db, monkeypatch):
+    f = await fixture(collection_db)
+    server = mcp(f, monkeypatch)
+    project = str(f.project.id)
+    many = [f"t{i}" for i in range(records.TAGS_PER_PERSON + 1)]
+    with pytest.raises(ToolError, match="up to 20 tags"):
+        await server.call_tool(
+            "add_people",
+            {"project_id": project, "people": [{"email": "a@acme.dev"}], "tags": many},
+        )
+    added = structured(
+        await server.call_tool(
+            "add_people",
+            {"project_id": project, "people": [{"email": "a@acme.dev", "tags": many}]},
+        )
+    )
+    assert added["skipped"] == [{"index": 0, "reason": "more than 20 tags"}]
+    one = structured(
+        await server.call_tool(
+            "add_people",
+            {"project_id": project, "people": [{"email": "a@acme.dev"}], "tags": many[:15]},
+        )
+    )["person_ids"][0]
+    # Ten more fit only five: a person keeps at most 20.
+    changed = structured(
+        await server.call_tool(
+            "tag_people", {"project_id": project, "person_ids": [one], "add": many[10:]}
+        )
+    )
+    assert changed == {"added": 5, "removed": 0}
+    assert await f.db.pool.fetchval("SELECT count(*) FROM record_tags") == 20
+
+
+async def test_a_lookup_that_finds_a_customer_sends_nothing(collection_db, monkeypatch):
+    f = await fixture(collection_db)
+    await ran(f, [person(3, headline="Designer")])
+    async with client(f) as http:
+        await turn_on(http, f)
+    server = mcp(f, monkeypatch)
+    project = str(f.project.id)
+    # A customer Tin knows by their profile ID, and the same person added again by link.
+    async with f.db.pool.acquire() as conn:
+        customer = await records.upsert_person(
+            conn, f.project.id, {"linkedin_member": member(8)}, source=records.ADD_SOURCE
+        )
+        await records.set_by_member(
+            conn, f.project.id, customer, [records.Value("customer", "yes")], member=USER
+        )
+    added = structured(
+        await server.call_tool(
+            "add_people",
+            {"project_id": project, "people": [{"linkedin_url": "linkedin.com/in/same-one"}]},
+        )
+    )
+    sent = structured(
+        await server.call_tool(
+            "send_connection_requests",
+            {
+                "project_id": project,
+                "person_ids": added["person_ids"],
+                "request_id": str(uuid4()),
+            },
+        )
+    )
+    monkeypatch.setattr(linkedin_requests_activities, "datetime", Clock(MONDAY)())
+    cloud = LinkCloud(f.db, ids={"same-one": member(8)})
+    acts = sender(f, cloud)
+    run_id = await requests_run(f, sent["batch_id"])
+    await acts.prepare(run_id)
+    step = await acts.next(run_id)
+    answer = await acts.send({"run_id": run_id, "request_id": step["request_id"]})
+    # The lookup merged them with the customer: nothing is sent.
+    assert answer["outcome"] == "skip"
+    assert [c["kind"] for c in cloud.calls] == ["linkedin_profile_ids"]
+    assert await f.db.pool.fetchval("SELECT status FROM linkedin_requests") == "declined"

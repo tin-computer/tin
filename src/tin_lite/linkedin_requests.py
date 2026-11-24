@@ -767,6 +767,48 @@ async def reserve(conn, request_id: UUID, now: datetime) -> dict:
     return details
 
 
+async def still_askable(conn, request_id: UUID) -> str | None:
+    """Checked again once a profile ID lookup may have merged the person with someone Tin
+    already knew: None to send, "skip" (they're gone, a customer, or someone on the project
+    already asked them; the request reads as declined), or "connected" / "invited" (the
+    member's own relationship with them says so)."""
+
+    request = await conn.fetchrow("SELECT * FROM linkedin_requests WHERE id = $1", request_id)
+    person = await records.current(conn, request["project_id"], request["record_id"])
+    reason = None
+    if person is None:
+        reason = "skip"
+    else:
+        state = await conn.fetchval(
+            "SELECT state FROM record_relationships WHERE record_id = $1 AND member = $2",
+            person,
+            request["member"],
+        )
+        if state in ("connected", "pending"):
+            return "connected" if state == "connected" else "invited"
+        if await conn.fetchval(
+            """SELECT EXISTS (SELECT 1 FROM record_values WHERE record_id = $1
+                              AND field = 'customer' AND value_text = 'yes')
+                   OR EXISTS (SELECT 1 FROM linkedin_requests q JOIN records m
+                              ON m.id = q.record_id
+                              WHERE q.project_id = $2 AND q.id <> $3
+                                AND COALESCE(m.merged_into, m.id) = $1
+                                AND q.status NOT IN ('proposed', 'declined', 'lapsed',
+                                                     'not_sent'))""",
+            person,
+            request["project_id"],
+            request_id,
+        ):
+            reason = "skip"
+    if reason:
+        await conn.execute(
+            """UPDATE linkedin_requests SET status = 'declined', settled_at = now()
+               WHERE id = $1 AND status IN ('queued', 'sending')""",
+            request_id,
+        )
+    return reason
+
+
 async def cancel(conn, project_id: UUID, member: str, person_id: UUID) -> int:
     """Take the member's request to this person out of the queue before it goes. It reads as
     declined, so they can be chosen again; one LinkedIn is being asked right now can't be."""

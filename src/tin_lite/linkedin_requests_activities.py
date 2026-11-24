@@ -153,6 +153,13 @@ class LinkedInRequestsActivities:
                 # Nothing reached LinkedIn's invitation: the request waits its turn again.
                 await self._settle(run, request_id, "rate_limited")
                 return {"outcome": "wait", "wait": 3600}
+            if found is None:
+                # The lookup may have merged them with someone Tin knew: ask again whether
+                # they can be asked.
+                async with self.db.pool.acquire() as conn, conn.transaction():
+                    found = await requests.still_askable(conn, request_id)
+                if found == "skip":
+                    return {"outcome": "skip", "skip": True}
             if found is not None:
                 status = await self._settle(run, request_id, found)
                 if found in STOPPING:
@@ -235,18 +242,22 @@ class LinkedInRequestsActivities:
                 target = person.member
                 outcome = person.state if person.state in ("connected", "invited") else None
                 async with conn.transaction():
-                    await records.upsert_person(
+                    kept = await records.upsert_person(
                         conn,
                         request["project_id"],
                         {"linkedin_member": target, "linkedin_slug": request["slug"]},
                         source=requests.KEY,
                         run_id=run.id,
                     )
-                    await conn.execute(
-                        "UPDATE linkedin_requests SET target = $2 WHERE id = $1",
-                        request["id"],
-                        target,
-                    )
+                    if kept is None:
+                        # That profile is someone the project forgot: never asked.
+                        target, outcome = None, "unknown_person"
+                    else:
+                        await conn.execute(
+                            "UPDATE linkedin_requests SET target = $2 WHERE id = $1",
+                            request["id"],
+                            target,
+                        )
             await self.db.complete_effect(
                 conn, execution_key=key, result={"target": target, "outcome": outcome}
             )
