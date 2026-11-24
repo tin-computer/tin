@@ -139,50 +139,60 @@ async def rate_unrated(
     heartbeat: Callable[[dict], None] = lambda detail: None,
 ) -> int:
     """Rate everyone (or `only` that person) without a current rating, a few at once, until
-    nobody is left, the run's guard is reached or its time is up. Returns how many it tried."""
+    nobody is left, the run's guard is reached or its time is up. Returns how many it tried.
+
+    A new person starts as soon as one finishes, so one slow rating doesn't hold up the rest."""
 
     tried: list[UUID] = []
     loop = asyncio.get_running_loop()
     stop = loop.time() + people_icp.SCORE_SECONDS
-    while len(tried) < people_icp.MAX_SCORED and loop.time() < stop:
-        async with db.pool.acquire() as conn:
-            batch = await people_icp.unscored(
-                conn,
-                run.project_id,
-                definition,
-                limit=people_icp.PARALLEL,
-                skip=tried,
-                only=only,
-            )
-        if not batch:
-            break
-        tried += [person["id"] for person in batch]
+    running: set[asyncio.Task] = set()
+    failed: BaseException | None = None
+    exhausted = False
 
-        async def beat(rated: int) -> None:
-            # A rating that searches can take minutes; the heartbeat says the activity lives.
-            while True:
-                heartbeat({"rated": rated})
-                await asyncio.sleep(30)
+    async def beat() -> None:
+        # A rating that searches can take minutes; the heartbeat says the activity lives.
+        while True:
+            heartbeat({"rated": len(tried)})
+            await asyncio.sleep(30)
 
-        beating = asyncio.create_task(beat(len(tried)))
-        try:
-            await asyncio.gather(
-                *(
-                    rate(
-                        db,
-                        router,
-                        run,
-                        person,
-                        text=text,
-                        profiles=profiles,
-                        definition=definition,
-                        operation=operation,
-                        step=step,
+    beating = asyncio.create_task(beat())
+    try:
+        while True:
+            room = min(people_icp.PARALLEL - len(running), people_icp.MAX_SCORED - len(tried))
+            if room > 0 and not (exhausted or failed) and loop.time() < stop:
+                async with db.pool.acquire() as conn:
+                    batch = await people_icp.unscored(
+                        conn, run.project_id, definition, limit=room, skip=tried, only=only
+                    )
+                exhausted = len(batch) < room
+                tried += [person["id"] for person in batch]
+                running |= {
+                    asyncio.create_task(
+                        rate(
+                            db,
+                            router,
+                            run,
+                            person,
+                            text=text,
+                            profiles=profiles,
+                            definition=definition,
+                            operation=operation,
+                            step=step,
+                        )
                     )
                     for person in batch
-                )
-            )
-        finally:
-            beating.cancel()
-        heartbeat({"rated": len(tried)})
+                }
+            if not running:
+                break
+            done, running = await asyncio.wait(running, return_when=asyncio.FIRST_COMPLETED)
+            for task in done:
+                # Ratings already under way finish (they're paid for); nothing new starts.
+                if task.exception() is not None and failed is None:
+                    failed = task.exception()
+    finally:
+        beating.cancel()
+    if failed is not None:
+        raise failed
+    heartbeat({"rated": len(tried)})
     return len(tried)

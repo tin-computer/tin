@@ -74,7 +74,7 @@ MAX_OUTPUT_TOKENS = 24000
 # Per run: how many people, how many at once, and when to stop starting new ones (the rest are
 # rated by the next run).
 MAX_SCORED = 600
-PARALLEL = 6
+PARALLEL = 10
 SCORE_SECONDS = 15 * 60
 # What the model reads about one person.
 NOTES_READ = 5
@@ -314,9 +314,9 @@ async def unscored(
     only: UUID | None = None,
 ) -> list[dict]:
     """People who did something worth rating and have no current rating, leaving out those
-    this run already tried, oldest first. A rating is current under the ICP definition and
-    newer than the person's notes and what they did; a rating a member set is never
-    replaced. `only` limits it to one person."""
+    this run already tried: site visitors first, then oldest first. A rating is current under
+    the ICP definition and newer than the person's notes and what they did; a rating a member
+    set is never replaced. `only` limits it to one person."""
 
     rows = await conn.fetch(
         """SELECT r.id,
@@ -351,7 +351,9 @@ async def unscored(
                                  '-infinity'))
              AND NOT (r.id = ANY($4::uuid[]))
              AND ($9::uuid IS NULL OR r.id = $9)
-           ORDER BY r.created_at, r.id
+           ORDER BY EXISTS (SELECT 1 FROM record_events e WHERE e.project_id = $1
+                            AND e.record_id = r.id AND e.kind = 'visited') DESC,
+                    r.created_at, r.id
            LIMIT $3""",
         project_id,
         records.rubric(definition),

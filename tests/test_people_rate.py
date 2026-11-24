@@ -187,3 +187,22 @@ async def test_a_second_run_while_one_is_going_or_past_the_days_guard_rates_nobo
     third = await rate_run(f)
     counts = await work.score(third)
     assert counts["held"] == "daily" and not router.requests
+
+
+async def test_site_visitors_are_rated_before_older_people_who_only_engaged(
+    collection_db, monkeypatch
+):
+    from tin_lite import people_icp
+
+    f = await fixture(collection_db)
+    engaged = await person(f, "Eve Older", "Founder at Older", event="reacted")
+    visitor = await person(f, "Vic Newer", "Founder at Newer")
+    monkeypatch.setattr(people_icp, "MAX_SCORED", 1)
+    router = Router()
+    work = PeopleRateActivities(database=f.db, storage=f.storage, router=router)
+
+    counts = await through(work, await rate_run(f))
+    assert counts["rated"] == 1 and counts["left"] == 1
+    people = {p["id"]: p for p in await records.people(f.db.pool, f.project.id)}
+    assert people[visitor]["fields"]["icp_fit"]["number"] == 4
+    assert people[engaged]["fields"].get("icp_fit", {}).get("number") is None
