@@ -699,3 +699,17 @@ class _Doc:
         self.id, self.project_id = run_id, project_id
         self.artifact_path, self.canonical_commit_sha = path, revision
         self.status = "succeeded"
+
+
+def activities_of(instance: IntelDailyActivities) -> list:
+    return [
+        instance.prepare,
+        instance.fetch,
+        instance.load,
+        instance.judge_start,
+        instance.judge_collect,
+        instance.publish,
+        instance.post,
+        instance.finish,
+        instance.failure,
+    ]
