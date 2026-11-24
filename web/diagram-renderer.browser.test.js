@@ -29,7 +29,9 @@ const brandFixtures = [
 
 const studies = await Promise.all(JSON.parse(await fs.readFile("docs/diagram-studies/index.json", "utf8")).map(async (item) => ({ ...item, source: await fs.readFile(`docs/diagram-studies/${item.file}`, "utf8") })));
 
-test("catalog and varied diagrams keep balanced typography and clear routes across product surfaces", async () => {
+// Audits the whole catalog on twelve theme, width and surface combinations: minutes on a loaded
+// machine, so it gets more than the suite's default per-test timeout.
+test("catalog and varied diagrams keep balanced typography and clear routes across product surfaces", {timeout: 600000}, async () => {
   const server = http.createServer(async (request, response) => {
     const url = new URL(request.url, "http://localhost");
     if (url.pathname === "/") {
@@ -69,6 +71,9 @@ test("catalog and varied diagrams keep balanced typography and clear routes acro
             document.documentElement.dataset.theme = theme;
             const root = document.getElementById("diagrams");
             root.replaceChildren();
+            // Rendering is pure: an SVG takes its theme and surface from CSS around it, not from
+            // the layout. Render each diagram once and audit the same markup on every surface.
+            const rendered = (window.renderedCatalog ||= []);
             for (const [index, item] of catalog.entries()) {
               const section = document.createElement("section");
               section.id = item.id || `catalog-${index}`;
@@ -76,7 +81,8 @@ test("catalog and varied diagrams keep balanced typography and clear routes acro
               heading.textContent = item.title;
               const stage = document.createElement("div");
               stage.className = `tin-diagram ${surface}`;
-              stage.innerHTML = item.source ? await window.TinDiagramRenderer.renderSource(item.source) : (await window.TinDiagramRenderer.renderFlow(item.flow)).svg;
+              rendered[index] ??= item.source ? await window.TinDiagramRenderer.renderSource(item.source) : (await window.TinDiagramRenderer.renderFlow(item.flow)).svg;
+              stage.innerHTML = rendered[index];
               section.append(heading, stage); root.append(section);
             }
           }, { catalog: [...catalog, ...diagramFixtures, ...routingFixtures, ...studies, ...brandFixtures, ...brandShapeFixtures], theme, surface });

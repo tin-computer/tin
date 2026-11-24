@@ -88,12 +88,15 @@ jobs:
           TEST_SHARD: ${{ matrix.shard }}
 
   # The browser tests in parallel: the web tests in three shards (node --test-shard splits the
-  # files), and the extension's suites on their own.
+  # files), and the extension's suites on their own. Nothing here installs from apt: the
+  # runner image already has Chromium's libraries, and a slow Ubuntu mirror stalled apt past
+  # the job limit (main, 0c3569fc, both attempts). A test that hangs fails by name after the
+  # per-test timeout in package.json.
   browser:
     needs: changes
     if: needs.changes.outputs.browser == 'true'
     runs-on: ubuntu-latest
-    timeout-minutes: 15
+    timeout-minutes: 10
     strategy:
       fail-fast: false
       matrix:
@@ -105,22 +108,46 @@ jobs:
       - uses: astral-sh/setup-uv@v10.0.1
         with:
           enable-cache: true
+      # Node 24 times out a hung test by name; Node 22 applies --test-timeout to a whole file.
       - uses: actions/setup-node@v6
         with:
-          node-version: 22
+          node-version: 24
           cache: npm
       - run: uv python install 3.12
       - run: uv sync --frozen
       - run: npm ci --ignore-scripts --no-audit --no-fund
-      - run: npm run check:diagrams
-      - run: npm run check:comparison
+      # The bundle checks run once, beside the extension's suites, the shortest part.
+      - if: matrix.part == 'extension'
+        run: npm run check:diagrams
+      - if: matrix.part == 'extension'
+        run: npm run check:comparison
       - uses: actions/cache@v6.1.0
         with:
           path: ~/.cache/ms-playwright
           key: playwright-${{ runner.os }}-${{ hashFiles('package-lock.json') }}
-      - run: npx playwright install --with-deps chromium
-      # The film kit's sketches and takes encode with ffmpeg.
-      - run: sudo apt-get install -y --no-install-recommends ffmpeg
+      - run: npx playwright install chromium
+        timeout-minutes: 3
+      # The film kit's sketches and takes encode with ffmpeg: a pinned static build from a
+      # GitHub release, checked against its digest.
+      - if: matrix.part != 'extension'
+        uses: actions/cache@v6.1.0
+        with:
+          path: ~/.cache/ffmpeg-static
+          key: ffmpeg-static-b6.0-linux-x64
+      - if: matrix.part != 'extension'
+        timeout-minutes: 2
+        run: |
+          dir="$HOME/.cache/ffmpeg-static"
+          if [ ! -x "$dir/ffmpeg" ]; then
+            mkdir -p "$dir"
+            curl -fsSL --retry 3 --max-time 60 -o "$dir/ffmpeg.gz" \
+              https://github.com/eugeneware/ffmpeg-static/releases/download/b6.0/ffmpeg-linux-x64.gz
+            echo "17c1ae10b52ac499180679fe6ba77e17642390c4eedb0f1e3b0ac045da55128f  $dir/ffmpeg.gz" | sha256sum -c -
+            gunzip "$dir/ffmpeg.gz"
+            chmod +x "$dir/ffmpeg"
+          fi
+          echo "$dir" >> "$GITHUB_PATH"
+          "$dir/ffmpeg" -hide_banner -version | head -1
       - if: matrix.part != 'extension'
         run: npm run test:web
         env:

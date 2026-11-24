@@ -90,13 +90,16 @@ function assertFits(value, label) {
   assert.deepEqual(value.obstructedControls, [], `${label}: controls unobstructed`);
 }
 
-test("Files diagrams fit the available screen in both themes across aspect ratios", async () => {
+// Opens every fixture at four sizes in both themes: minutes on a loaded machine, so it gets more
+// than the suite's default per-test timeout.
+test("Files diagrams fit the available screen in both themes across aspect ratios", {timeout: 600000}, async () => {
   const { server, base, writes } = await startServer();
   const browser = await chromium.launch({ headless: true });
   const screenshots = process.env.TIN_VIEWPORT_SCREENSHOTS;
   if (screenshots) await fs.mkdir(screenshots, { recursive: true });
   try {
-    for (const theme of ["light", "dark"]) {
+    // The two themes run side by side, each in its own browser context.
+    await Promise.all(["light", "dark"].map(async (theme) => {
       const context = await browser.newContext({ viewport: { width: 1440, height: 900 } });
       await context.route("**/*", (route) => route.request().url().startsWith(base) ? route.continue() : route.abort());
       await context.addInitScript((value) => {
@@ -210,7 +213,7 @@ test("Files diagrams fit the available screen in both themes across aspect ratio
       assertFits(await page.evaluate(measure), `${theme}: cached file opens as diagram again`);
       assert.deepEqual(errors, []);
       await context.close();
-    }
+    }));
     assert.deepEqual(writes, [], "view navigation never mutates project state or approves a run");
   } finally { await browser.close(); await new Promise((resolve) => server.close(resolve)); }
 });
