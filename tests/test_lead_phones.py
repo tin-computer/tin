@@ -132,12 +132,18 @@ async def test_delegate_refusing_the_input_ends_the_lookup(collection_db):
     assert await field(f, ada, "phone") is None
 
 
-@pytest.mark.parametrize("refuse", [("delegate_refused", 502), ("price_above_max", 0)])
+@pytest.mark.parametrize(
+    "refuse",
+    [("delegate_refused", 502), ("price_above_max", 0), ("insufficient_escrow", 402)],
+)
 async def test_a_refusal_that_may_change_leaves_the_lead_for_a_later_run(collection_db, refuse):
     f = await fixture(collection_db)
     await rated(f, "Ada Byron", 4)
     counts = await look(f, Delegate({}, refuse=refuse))
     assert counts["looked_up"] == 0 and counts["later"] == 1 and counts["left"] == 1
+    # Nothing was bought, so nothing counts toward the day's guard.
+    async with f.db.pool.acquire() as conn:
+        assert await lead_phones.spent_today(conn, f.project.id) == 0
     # Delegate answers again: the lead is looked up.
     delegate = Delegate({"ada-byron": ["+1 314 555 0101"]})
     assert (await look(f, delegate))["found"] == 1

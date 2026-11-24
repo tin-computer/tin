@@ -174,7 +174,11 @@ async def look_up(db, delegate, project_id: UUID, person: dict, *, run_id: UUID)
             except DelegateError as error:
                 if error.status not in DEFINITE:
                     # No answer, or one that may change (funds, price, a 5xx): the receipt
-                    # stays open with its reservation, and a later run asks again.
+                    # stays open and a later run asks again. Only a missing answer may hide a
+                    # placed order and keeps its reservation; a refusal bought nothing, so it
+                    # doesn't count toward the day's guard.
+                    if error.code != "unavailable":
+                        await db.save_effect_progress(conn, execution_key=execution_key, result={})
                     return "later"
                 await db.complete_effect(
                     conn,
