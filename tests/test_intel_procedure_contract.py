@@ -51,13 +51,13 @@ def changed(edit):
         (lambda d, p: p["output"].update(path_template="reports/{run_id}.md"), "run-owned"),
         (
             lambda d, p: p.update(identity={"create": True}),
-            "",
+            "Codex only",
         ),
         (
             lambda d, p: p.update(
                 sandbox={"profile": "studio", "timeout_seconds": 5400, "egress": "fenced"}
             ),
-            "",
+            "fenced default or isolated",
         ),
     ],
 )
