@@ -421,7 +421,7 @@ test("Visitors opens first, with each person's company and intent, sorted hot fi
     assert.deepEqual(await names(), ["Rosa Alvarez", "Omar Haddad"]);
     // LinkedIn has no column of its own: the name is the way there.
     const headers = await page.locator(".people-table thead th").allInnerTexts();
-    assert.deepEqual(headers.map(text => text.trim()), ["Name", "Company", "Headline", "ICP", "ICP fit", "Intent", "Came from", "Last touch"]);
+    assert.deepEqual(headers.map(text => text.trim()), ["Name", "Company", "Headline", "ICP", "Fit", "Intent", "Came from", "Last touch"]);
     assert.equal(await page.locator(".people-table th.is-linkedin").count(), 0);
     const rosa = page.getByRole("row", {name: "Rosa Alvarez"});
     assert.equal(await rosa.locator("td.is-company").innerText(), "Valley Bank");

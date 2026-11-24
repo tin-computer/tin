@@ -366,7 +366,7 @@ window.TinPeople = (() => {
             ${header("company", "Company")}
             <th class="is-headline" scope="col">Headline</th>
             <th class="is-icp" scope="col">ICP</th>
-            ${header("fit", "ICP fit")}
+            ${header("fit", "Fit")}
             ${header("intent", "Intent")}
             ${sources ? header("source", "Came from") : ""}
             ${header("touch", "Last touch")}
