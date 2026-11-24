@@ -144,9 +144,10 @@ def icp_profiles(text: str) -> list[str]:
 async def read_icp(storage, project) -> dict:
     """The ICP file at the project's head: its path, revision, profiles and definition.
 
-    The definition names the file, a digest of its words and the scorer's version, so scores
-    go stale when the words or the scoring change, not on every commit. Empty when the project
-    has no ICP with profiles.
+    The definition names the file, a digest of its words and the scorer's version. Only the
+    file and the version decide whether a rating is current (`people_records.rubric`): small
+    edits to the ICP file never mark ratings old. Empty when the project has no ICP with
+    profiles.
     """
 
     repo = await storage.get_repo(project.state_repo_id)
@@ -340,7 +341,8 @@ async def unscored(
              AND NOT EXISTS (SELECT 1 FROM record_values v WHERE v.record_id = r.id
                              AND v.field = 'icp_fit' AND v.set_by_kind = 'member')
              AND NOT EXISTS (SELECT 1 FROM record_values v WHERE v.record_id = r.id
-                             AND v.field = 'icp_fit' AND v.definition = $2
+                             AND v.field = 'icp_fit'
+                             AND regexp_replace(v.definition, '@[^:]*', '') = $2
                              AND v.set_at >= GREATEST(
                                  (SELECT max(n.updated_at) FROM record_notes n
                                   WHERE n.record_id = r.id),
@@ -352,7 +354,7 @@ async def unscored(
            ORDER BY r.created_at, r.id
            LIMIT $3""",
         project_id,
-        definition,
+        records.rubric(definition),
         limit,
         list(skip),
         NOTES_READ,
