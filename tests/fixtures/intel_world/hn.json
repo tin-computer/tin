@@ -1,0 +1,154 @@
+{
+ "topstories": [
+  103,
+  101,
+  104,
+  105
+ ],
+ "beststories": [
+  101,
+  103
+ ],
+ "front_page": {
+  "hits": [
+   {
+    "objectID": "102"
+   }
+  ]
+ },
+ "points": {
+  "hits": [
+   {
+    "objectID": "101"
+   },
+   {
+    "objectID": "103"
+   }
+  ]
+ },
+ "items": {
+  "101": {
+   "id": 101,
+   "type": "story",
+   "by": "user101",
+   "time": 1795420800,
+   "title": "Show HN: A tiny SQLite FTS search engine",
+   "score": 412,
+   "descendants": 120,
+   "kids": [
+    1011,
+    1012,
+    1013,
+    1014,
+    1015
+   ],
+   "url": "https://example.org/fts"
+  },
+  "102": {
+   "id": 102,
+   "type": "story",
+   "by": "user102",
+   "time": 1795424400,
+   "title": "Ask HN: How do you read the news?",
+   "score": 95,
+   "descendants": 40,
+   "kids": [
+    1021
+   ],
+   "text": "I use RSS and <i>a few</i> newsletters.<p>What about you?"
+  },
+  "103": {
+   "id": 103,
+   "type": "story",
+   "by": "user103",
+   "time": 1795428000,
+   "title": "Rust 2.0 is announced",
+   "score": 880,
+   "descendants": 300,
+   "kids": [
+    1031,
+    1032
+   ],
+   "url": "https://blog.rust-lang.example/2"
+  },
+  "104": {
+   "id": 104,
+   "type": "story",
+   "by": "user104",
+   "time": 1794556800,
+   "title": "Old story outside the window",
+   "score": 900,
+   "descendants": 10,
+   "kids": [],
+   "url": "https://old.example/x"
+  },
+  "105": {
+   "id": 105,
+   "type": "story",
+   "by": "user105",
+   "time": 1795435200,
+   "title": "Low points, not on the front page",
+   "score": 20,
+   "descendants": 2,
+   "kids": [],
+   "url": "https://low.example/y"
+  },
+  "1011": {
+   "id": 1011,
+   "type": "comment",
+   "by": "c1011",
+   "text": "Comment 1011 with <a href=\"https://x.example\">a link</a> &amp; entity",
+   "time": 1795420800
+  },
+  "1012": {
+   "id": 1012,
+   "type": "comment",
+   "by": "c1012",
+   "text": "Comment 1012 with <a href=\"https://x.example\">a link</a> &amp; entity",
+   "time": 1795420800
+  },
+  "1013": {
+   "id": 1013,
+   "type": "comment",
+   "by": "c1013",
+   "text": "Comment 1013 with <a href=\"https://x.example\">a link</a> &amp; entity",
+   "time": 1795420800,
+   "deleted": true
+  },
+  "1014": {
+   "id": 1014,
+   "type": "comment",
+   "by": "c1014",
+   "text": "Comment 1014 with <a href=\"https://x.example\">a link</a> &amp; entity",
+   "time": 1795420800
+  },
+  "1015": {
+   "id": 1015,
+   "type": "comment",
+   "by": "c1015",
+   "text": "Comment 1015 with <a href=\"https://x.example\">a link</a> &amp; entity",
+   "time": 1795420800
+  },
+  "1021": {
+   "id": 1021,
+   "type": "comment",
+   "by": "c1021",
+   "text": "Comment 1021 with <a href=\"https://x.example\">a link</a> &amp; entity",
+   "time": 1795420800
+  },
+  "1031": {
+   "id": 1031,
+   "type": "comment",
+   "by": "c1031",
+   "text": "Comment 1031 with <a href=\"https://x.example\">a link</a> &amp; entity",
+   "time": 1795420800
+  },
+  "1032": {
+   "id": 1032,
+   "type": "comment",
+   "by": "c1032",
+   "text": "Comment 1032 with <a href=\"https://x.example\">a link</a> &amp; entity",
+   "time": 1795420800
+  }
+ }
+}

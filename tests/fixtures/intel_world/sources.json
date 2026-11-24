@@ -1,0 +1,54 @@
+{
+ "max_text_chars": 6000,
+ "sources": [
+  {
+   "id": "bbc_world",
+   "name": "BBC News (world)",
+   "method": "rss",
+   "url": "https://feeds.bbci.co.uk/news/world/rss.xml"
+  },
+  {
+   "id": "gn_us_business",
+   "name": "Google News US business",
+   "method": "google_news_rss",
+   "url": "https://news.google.com/rss/headlines/section/topic/BUSINESS?hl=en-US&gl=US&ceid=US:en"
+  },
+  {
+   "id": "trends_us",
+   "name": "Google Trends daily US",
+   "method": "google_trends_rss",
+   "geo": "US",
+   "url": "https://trends.google.com/trending/rss?geo=US"
+  },
+  {
+   "id": "techmeme_river",
+   "name": "Techmeme",
+   "method": "techmeme_river",
+   "url": "https://www.techmeme.com/river",
+   "utc_offset_hours": 5
+  },
+  {
+   "id": "hn_front_page",
+   "name": "Hacker News",
+   "method": "hn_front_page",
+   "url": "https://hacker-news.firebaseio.com/v0/topstories.json",
+   "topstories_limit": 150,
+   "beststories_limit": 200,
+   "points_floor": 100,
+   "comments_per_story": 4
+  },
+  {
+   "id": "wiki_en",
+   "name": "Wikipedia most viewed (en)",
+   "method": "wikimedia_top",
+   "project": "en.wikipedia",
+   "limit": 10
+  },
+  {
+   "id": "gdelt",
+   "name": "GDELT",
+   "method": "gdelt_doc",
+   "url": "https://api.gdeltproject.org/api/v2/doc/doc?query=x&mode=artlist&format=json"
+  }
+ ]
+}

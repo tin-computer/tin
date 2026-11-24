@@ -295,7 +295,7 @@ async def m_techmeme_river(src: dict, win: Window, ctx: dict) -> list[Item]:
             continue
         if not day:
             continue
-        ctx["seen"] += 1
+        ctx["seen"] = ctx.get("seen", 0) + 1
         try:
             local_dt = datetime.strptime(day + " " + m.group(2).strip(), "%B %d, %Y %I:%M %p")  # noqa: DTZ007
         except ValueError:
@@ -525,7 +525,12 @@ GROUP_NAMES = tuple(GROUP_METHODS)
 
 
 def settings(config: dict, now: datetime) -> dict:
-    return {"now": iso(now), "max_text": int(config.get("max_text_chars", DEFAULT_MAX_TEXT))}
+    return {
+        "now": iso(now),
+        "max_text": int(config.get("max_text_chars", DEFAULT_MAX_TEXT)),
+        # Google News feeds wait their paced turn (1.5 s each, and 429 pauses) behind each other.
+        "method_timeouts": {"google_news_rss": 900, "hn_front_page": 600},
+    }
 
 
 def _selector(methods: set[str]):

@@ -1,0 +1,49 @@
+<?xml version="1.0" encoding="UTF-8"?><rss xmlns:dc="http://purl.org/dc/elements/1.1/" xmlns:content="http://purl.org/rss/1.0/modules/content/" xmlns:atom="http://www.w3.org/2005/Atom" version="2.0" xmlns:media="http://search.yahoo.com/mrss/">
+    <channel>
+        <title><![CDATA[BBC News]]></title>
+        <description><![CDATA[BBC News - World]]></description>
+        <link>https://www.bbc.co.uk/news/world</link>
+        <image>
+            <url>https://news.bbcimg.co.uk/nol/shared/img/bbc_news_120x60.gif</url>
+            <title>BBC News</title>
+            <link>https://www.bbc.co.uk/news/world</link>
+        </image>
+        <generator>RSS for Node</generator>
+        <lastBuildDate>Tue, 24 Nov 2026 20:52:08 GMT</lastBuildDate>
+        <atom:link href="https://feeds.bbci.co.uk/news/world/rss.xml" rel="self" type="application/rss+xml"/>
+        <copyright><![CDATA[Copyright: (C) British Broadcasting Corporation, see https://www.bbc.co.uk/usingthebbc/terms-of-use/#15metadataandrssfeeds for terms and conditions of reuse.]]></copyright>
+        <language><![CDATA[en-gb]]></language>
+        <ttl>15</ttl>
+        <item>
+            <title><![CDATA[US attorney general dodges questions about Nvidia investigation]]></title>
+            <description><![CDATA[Nvidia's share price have fallen 7% as lawmakers demand answers about President Donald Trump's involvement in Huang's reinstatement.]]></description>
+            <link>https://www.bbc.co.uk/news/articles/crpdw1qx7jgxo?at_medium=RSS&amp;at_campaign=rss</link>
+            <guid isPermaLink="false">https://www.bbc.co.uk/news/articles/crpdw1qx7jgxo#0</guid>
+            <pubDate>Tue, 24 Nov 2026 18:55:59 GMT</pubDate>
+            <media:thumbnail width="240" height="135" url="https://ichef.bbci.co.uk/ace/standard/240/cpsprodpb/067a/live/dc6baca0-e839-11f1-a094-5fdc692f3e33.png"/>
+        </item>
+        <item>
+            <title><![CDATA[French ex-President Sarkozy and wife Carla Bruni to face trial]]></title>
+            <description><![CDATA[It is the latest case involving Nicolas Sarkozy who became the first French ex-president to go to jail last year.]]></description>
+            <link>https://www.bbc.co.uk/news/articles/c65y17pwv1z7o?at_medium=RSS&amp;at_campaign=rss</link>
+            <guid isPermaLink="false">https://www.bbc.co.uk/news/articles/c65y17pwv1z7o#0</guid>
+            <pubDate>Tue, 24 Nov 2026 16:49:07 GMT</pubDate>
+            <media:thumbnail width="240" height="135" url="https://ichef.bbci.co.uk/ace/standard/240/cpsprodpb/84cb/live/68cc7a10-e81e-11f1-ab42-55d8d8278025.jpg"/>
+        </item>
+        <item>
+            <title><![CDATA[Indian government has 'lost the plot', says 'cockroach' leader barred from UK flight]]></title>
+            <description><![CDATA[Saurav Das says immigration authorities at Delhi airport told him his passport had been flagged.]]></description>
+            <link>https://www.bbc.co.uk/news/articles/cm5y1ezx2gqyo?at_medium=RSS&amp;at_campaign=rss</link>
+            <guid isPermaLink="false">https://www.bbc.co.uk/news/articles/cm5y1ezx2gqyo#0</guid>
+            <pubDate>Tue, 24 Nov 2026 18:07:46 GMT</pubDate>
+            <media:thumbnail width="240" height="134" url="https://ichef.bbci.co.uk/ace/standard/240/cpsprodpb/e165/live/ec246c40-e825-11f1-93d4-6d580946ad80.jpg"/>
+        </item>
+        <item>
+            <title><![CDATA[Huawei found guilty of stealing trade secrets but acquitted of racketeering]]></title>
+            <description><![CDATA[The verdict follows a months-long trial in New York.]]></description>
+            <link>https://www.bbc.co.uk/news/articles/cmy49ngydqzpo?at_medium=RSS&amp;at_campaign=rss</link>
+            <guid isPermaLink="false">https://www.bbc.co.uk/news/articles/cmy49ngydqzpo#0</guid>
+            <pubDate>Tue, 24 Nov 2026 20:41:54 GMT</pubDate>
+            <media:thumbnail width="240" height="135" url="https://ichef.bbci.co.uk/ace/standard/240/cpsprodpb/1a2d/live/537ff930-6139-11ee-b101-6f93d6dfbcc2.png"/>
+        </item></channel>
+</rss>
