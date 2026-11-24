@@ -48,6 +48,19 @@ def escape(text: Any) -> str:
     return str(text or "").replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;")
 
 
+ZWSP = "\u200b"
+_SCHEME = re.compile(r"://")
+_DOMAIN = re.compile(r"\b(?:[\w-]+\.)+[A-Za-z][\w-]+\b")
+
+
+def plain(text: Any) -> str:
+    """Text Slack shows as written: escaped, and with nothing it could auto-link. Slack links
+    bare URLs and domains itself, so a zero-width space breaks every "://" and the dots of
+    anything shaped like a domain; only Tin's own checked links stay links."""
+    value = _SCHEME.sub(":" + ZWSP + "//", escape(text))
+    return _DOMAIN.sub(lambda match: match.group(0).replace(".", "." + ZWSP), value)
+
+
 def cut(text: str, limit: int) -> str:
     return text if len(text) <= limit else text[: limit - 1].rstrip() + "…"
 
@@ -55,8 +68,8 @@ def cut(text: str, limit: int) -> str:
 def link(url: str, words: str) -> str:
     """A Slack link; the URL is checked by the caller and must not break the markup."""
     if not url.startswith(("https://", "http://")) or any(c in url for c in "<>| \n"):
-        return escape(words)
-    return f"<{url}|{escape(words)}>"
+        return plain(words)
+    return f"<{url}|{plain(words)}>"
 
 
 def mrkdwn(text: str, links: dict[str, str] | None = None) -> str:
@@ -66,11 +79,11 @@ def mrkdwn(text: str, links: dict[str, str] | None = None) -> str:
     out = []
     last = 0
     for match in LINK.finditer(text or ""):
-        out.append(escape(text[last : match.start()]))
+        out.append(plain(text[last : match.start()]))
         url = links.get(match.group(2), match.group(2))
         out.append(link(url, match.group(1)))
         last = match.end()
-    out.append(escape((text or "")[last:]))
+    out.append(plain((text or "")[last:]))
     return "".join(out)
 
 
@@ -132,7 +145,7 @@ def world_message(
     headline = brief.get("headline") or ""
     blocks: list[dict] = [
         header(f"The world today · {day_title(day)}"),
-        section(escape(headline)),
+        section(plain(headline)),
         context(
             f"{items:,} items · {sources:,} sources · {story_count:,} stories, {high_count:,} high"
         ),
@@ -149,7 +162,7 @@ def world_message(
             if story.get("sensitive"):
                 mark, any_sensitive = f"{SENSITIVE} ", True
             url = default_link(story, links)
-            title = link(url, story["title"]) if url else escape(story["title"])
+            title = link(url, story["title"]) if url else plain(story["title"])
             line = mrkdwn(entry.get("line") or "", links)
             lines.append(cut(f"• {mark}{title}: {line}", 900))
         if lines:
@@ -160,11 +173,11 @@ def world_message(
     if stories_url:
         footer.append(link(stories_url, f"All {story_count:,} stories"))
     if brief.get("note"):
-        footer.append(escape(brief["note"]))
+        footer.append(plain(brief["note"]))
     if footer:
         blocks.append(context(" · ".join(footer)))
     text = cut(f"The world today, {day_short(day)}: {headline}", TEXT_LIMIT)
-    return {"text": escape(text), "blocks": blocks[:MAX_BLOCKS]}
+    return {"text": plain(text), "blocks": blocks[:MAX_BLOCKS]}
 
 
 def group_order() -> tuple[str, ...]:
