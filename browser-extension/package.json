@@ -4,9 +4,9 @@
   "private": true,
   "description": "Tin extension with project-bound connection collection",
   "scripts": {
-    "test": "node --test tests/*.test.cjs",
+    "test": "node --test --test-force-exit --test-timeout=180000 tests/*.test.cjs",
     "package:store": "python3 scripts/package_store.py",
-    "test:collection": "node --test tests/collection/*.test.mjs"
+    "test:collection": "node --test --test-force-exit --test-timeout=180000 tests/collection/*.test.mjs"
   },
   "engines": {
     "node": ">=20"

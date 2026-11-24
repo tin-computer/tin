@@ -90,7 +90,9 @@ function assertFits(value, label) {
   assert.deepEqual(value.obstructedControls, [], `${label}: controls unobstructed`);
 }
 
-test("Files diagrams fit the available screen in both themes across aspect ratios", async () => {
+// Renders the whole catalog many times over: minutes on a loaded machine, so it gets more than
+// the suite's default per-test timeout.
+test("Files diagrams fit the available screen in both themes across aspect ratios", {timeout: 600000}, async () => {
   const { server, base, writes } = await startServer();
   const browser = await chromium.launch({ headless: true });
   const screenshots = process.env.TIN_VIEWPORT_SCREENSHOTS;

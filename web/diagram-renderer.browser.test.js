@@ -29,7 +29,9 @@ const brandFixtures = [
 
 const studies = await Promise.all(JSON.parse(await fs.readFile("docs/diagram-studies/index.json", "utf8")).map(async (item) => ({ ...item, source: await fs.readFile(`docs/diagram-studies/${item.file}`, "utf8") })));
 
-test("catalog and varied diagrams keep balanced typography and clear routes across product surfaces", async () => {
+// Renders the whole catalog many times over: minutes on a loaded machine, so it gets more than
+// the suite's default per-test timeout.
+test("catalog and varied diagrams keep balanced typography and clear routes across product surfaces", {timeout: 600000}, async () => {
   const server = http.createServer(async (request, response) => {
     const url = new URL(request.url, "http://localhost");
     if (url.pathname === "/") {
