@@ -87,7 +87,9 @@ KINDS = ("competitor", "platform", "buyer", "regulation", "market", "world", "ot
 MAX_TAGS = 12
 
 LINK = re.compile(r"\[([^\]\n]{1,200})\]\(([^()\s]{1,2000})\)")
-BARE_URL = re.compile(r"(?<![(\w])https?://[^\s)\]>]+")
+# Anything outside a checked [words](url) link that a reader's client could turn into a link:
+# a scheme URL anywhere (even glued to a word or a bracket), or a domain with a path.
+BARE_URL = re.compile(r"[A-Za-z][A-Za-z0-9+.-]*://[^\s<>]*|\b[\w-]+(?:\.[\w-]+)+/[^\s<>]*")
 
 
 class BriefError(ValueError):
@@ -148,18 +150,21 @@ def check_links(text: str, links: LinkIndex, *, where: str) -> tuple[str, list[s
 
     text = LINK.sub(keep, text)
     # A URL outside [words](url) would post unchecked: Slack links bare URLs itself.
-    without = LINK.sub("", text)
-    if BARE_URL.search(without):
+    parts: list[str] = []
+    last = 0
+    removed = False
+    for match in [*LINK.finditer(text), None]:
+        end = match.start() if match else len(text)
+        plain, count = BARE_URL.subn("", text[last:end])
+        removed = removed or bool(count)
+        parts.append(plain)
+        if match:
+            parts.append(match.group(0))
+            last = match.end()
+    if removed:
         warnings.append(
             f"{where}: write links as [a few words](https://...); Tin removed the bare URL."
         )
-        parts = []
-        last = 0
-        for match in LINK.finditer(text):
-            parts.append(BARE_URL.sub("", text[last : match.start()]))
-            parts.append(match.group(0))
-            last = match.end()
-        parts.append(BARE_URL.sub("", text[last:]))
         text = re.sub(r"[ \t]{2,}", " ", "".join(parts)).strip()
     return text, warnings
 
