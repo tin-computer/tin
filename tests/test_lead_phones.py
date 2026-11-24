@@ -175,6 +175,9 @@ async def test_any_linkedin_identity_gets_a_lookup(collection_db):
             conn, f.project.id, only_member, [Value("icp_fit", 3, "r")],
             set_by_kind="run", set_by="test",
         )  # fmt: skip
+        await records.add_event(
+            conn, f.project.id, only_member, kind="reacted", event_key="reacted:m", detail={}
+        )
     delegate = Delegate({"çağla-öz": ["+90 212 555 0101"], member: ["+1 314 555 0102"]})
     assert (await look(f, delegate))["found"] == 2
     assert "%C3%A7a%C4%9Fla" in " ".join(delegate.orders)

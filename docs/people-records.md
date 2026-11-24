@@ -144,9 +144,14 @@ tools share `people_service.People`.
   - The segments are Visitors (anyone with a `visited` event or an "On the site" value, which
     includes people found for a visit only their company made), Hot (intent hot), Social
     (reacted, commented, viewed a member's profile or starred the project's repository), all
-    people, ICP fit (3 or more) and not connected yet, plus Invited once a
-    [connection request](linkedin-requests.md) went out and From ads. Visitors, Hot and Social
-    show only when someone is in them. The page opens on Visitors when anyone has visited, else on
+    people, Connections, ICP fit (3 or more) and not connected yet, plus Invited once a
+    [connection request](linkedin-requests.md) went out and From ads. Visitors, Hot, Social and
+    Connections show only when someone is in them.
+  - Connections holds a member's LinkedIn connections brought in by a bulk import (the
+    connections export workflow or a CSV, `records.BULK_SOURCES`) who haven't done anything Tin
+    saw (a visit, a reaction, a comment, a profile view, a star): `imported` on the directory.
+    Every other segment, All people included, leaves them out, and Tin buys nothing for them
+    (no phone lookup). Once one does something, they move out of Connections. The page opens on Visitors when anyone has visited, else on
     all people.
   - With the viewer's own LinkedIn reading on the project, a tick lane before the name lets
     them choose people to ask to connect (Paper REQ-A). Only people they can ask get a box:

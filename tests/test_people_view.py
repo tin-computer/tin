@@ -497,3 +497,22 @@ def test_a_rating_is_current_under_any_edit_of_the_same_file_and_scorer():
     assert records.rubric(a) == records.rubric("strategy/ICP.md@ba9876543210:v3")
     assert records.rubric(a) != records.rubric("strategy/ICP.md@0123456789ab:v2")
     assert records.rubric(a) != records.rubric("context/ICP.md@0123456789ab:v3")
+
+
+async def test_bulk_imported_connections_are_marked_until_they_do_something(collection_db):
+    from test_connection_collection import USER
+
+    f = await fixture(collection_db)
+    async with f.db.pool.acquire() as conn:
+        await records.ensure_fields(conn, f.project.id)
+        quiet = await records.upsert_person(
+            conn, f.project.id, {"linkedin_slug": "quiet"}, source="social.linkedin_connections"
+        )
+        active = await records.upsert_person(
+            conn, f.project.id, {"linkedin_slug": "active"}, source="people.import"
+        )
+        await records.add_event(
+            conn, f.project.id, active, kind="reacted", event_key="reacted:active", detail={}
+        )
+        listed = {p["id"]: p for p in await records.directory(conn, f.project.id, viewer=USER)}
+    assert listed[quiet]["imported"] is True and listed[active]["imported"] is False

@@ -558,11 +558,12 @@ test("a teammate's connection is named, not called yours", {timeout: 120000}, as
   }
 });
 
-// Ten thousand imported connections: the grid shows fifty at a time and stays quick to sort and search.
+// Ten thousand imported connections: they wait under Connections, out of All people, and the grid
+// shows fifty at a time and stays quick to sort and search.
 test("a list of ten thousand people stays paged and quick", {timeout: 120000}, async () => {
   const people = syntheticPeople();
   for (let index = 0; index < 10500; index++) {
-    people.push({...structuredClone(people[4]), id: `p-conn-${index}`, name: `Connection ${String(index).padStart(5, "0")}`, company: `Company ${index % 700}`, fields: {}, last_touch: {kind: "connected", at: "2026-11-20T10:00:00Z", who: "you"}});
+    people.push({...structuredClone(people[4]), id: `p-conn-${index}`, name: `Connection ${String(index).padStart(5, "0")}`, company: `Company ${index % 700}`, fields: {}, imported: true, last_touch: {kind: "connected", at: "2026-11-20T10:00:00Z", who: "you"}});
   }
   const {server, base} = await serveApp({engagers: true, people: [...people, ...visitorPeople()]});
   const browser = await chromium.launch({headless: true});
@@ -571,10 +572,11 @@ test("a list of ten thousand people stays paged and quick", {timeout: 120000}, a
     await page.locator(".people-table").waitFor();
     // Visitors still open first, ahead of the connections.
     assert.deepEqual(await page.locator(".people-table tbody td.is-name").allInnerTexts(), ["Rosa Alvarez", "Omar Haddad"]);
-    await page.getByRole("tab", {name: /^All people/}).click();
-    assert.equal(await page.getByRole("tab", {name: /^All people/}).textContent(), "All people 10,509");
+    assert.equal(await page.getByRole("tab", {name: /^All people/}).textContent(), "All people 9");
+    await page.getByRole("tab", {name: /^Connections/}).click();
+    assert.equal(await page.getByRole("tab", {name: /^Connections/}).textContent(), "Connections 10,500");
     assert.equal(await page.locator(".people-table tbody tr[data-person]").count(), 50);
-    assert.equal(await page.locator(".people-pager code").textContent(), "1–50 of 10,509");
+    assert.equal(await page.locator(".people-pager code").textContent(), "1–50 of 10,500");
     const started = Date.now();
     await page.getByRole("button", {name: "Company"}).click();
     await page.getByRole("button", {name: "Next page"}).click();
