@@ -141,9 +141,11 @@ async def test_a_refusal_that_may_change_leaves_the_lead_for_a_later_run(collect
     await rated(f, "Ada Byron", 4)
     counts = await look(f, Delegate({}, refuse=refuse))
     assert counts["looked_up"] == 0 and counts["later"] == 1 and counts["left"] == 1
-    # Nothing was bought, so nothing counts toward the day's guard.
+    # A refusal before any order bought nothing and drops its reservation; a 5xx may hide a
+    # placed order, so its reservation keeps counting toward the day's guard.
     async with f.db.pool.acquire() as conn:
-        assert await lead_phones.spent_today(conn, f.project.id) == 0
+        spent = await lead_phones.spent_today(conn, f.project.id)
+    assert spent == (lead_phones.MAX_USD if refuse[1] == 502 else 0)
     # Delegate answers again: the lead is looked up.
     delegate = Delegate({"ada-byron": ["+1 314 555 0101"]})
     assert (await look(f, delegate))["found"] == 1
