@@ -1,0 +1,107 @@
+{
+ "health-weekly": {
+  "status": "ok",
+  "items_seen": 4,
+  "excluded_outlets": 0,
+  "items": [
+   {
+    "url": "https://press.example/2026/11/warehouse-move?id=7",
+    "title": "Hospital group moves its warehouse to the lakehouse",
+    "author": "Ana Ruiz",
+    "published_at": "2026-11-23T18:30:00Z",
+    "text": "A regional hospital group said on Monday it will move its reporting warehouse to a lakehouse over the next year, citing the cost of keeping two copies of clinical data in sync. The chief data officer said the project starts with finance and staffing reports before clinical analytics follow in the spring.\n Vendors were not named.",
+    "source": "Health Data Weekly",
+    "source_url": "https://feeds.example/health.xml",
+    "rank": 1
+   },
+   {
+    "url": "https://press.example/2026/11/payer-rule",
+    "title": "Short note on a payer rule",
+    "author": "Lee Park",
+    "published_at": "2026-11-24T08:05:00Z",
+    "text": "A new payer data rule takes effect.\nPayers must expose claims data through a new API by January.\nThe rule requires payers to expose claims and encounter data to providers through a standard API, with the first deadline in January and penalties after a grace period.\nProviders have asked for this for years, and analysts expect warehouse vendors to market connectors for it within weeks.",
+    "source": "Health Data Weekly",
+    "source_url": "https://feeds.example/health.xml",
+    "rank": 2
+   },
+   {
+    "url": "https://press.example/2026/11/undated-feature",
+    "title": "An undated feature",
+    "author": "Sam Ode",
+    "published_at": "2026-11-24T02:00:00Z",
+    "text": "Feature text without a date in the feed.\nThe feature explains how analysts in mid-sized hospitals stitch together HR and clinical reports with spreadsheets every month.",
+    "source": "Health Data Weekly",
+    "source_url": "https://feeds.example/health.xml",
+    "rank": 3
+   }
+  ]
+ },
+ "gn-lakehouse": {
+  "status": "ok",
+  "items_seen": 4,
+  "excluded_outlets": 2,
+  "items": [
+   {
+    "url": "https://news.google.com/rss/articles/CBMiAAAexampleArticleOne0001",
+    "title": "Vendor adds on-demand billing to its warehouse",
+    "author": null,
+    "published_at": "2026-11-24T07:00:00Z",
+    "text": "Vendor adds on-demand billing to its warehouse",
+    "source": "Tech Daily",
+    "source_url": "https://news.google.com/rss/search?q=lakehouse%20when%3A1d&hl=en-US&gl=US&ceid=US:en",
+    "rank": 1
+   }
+  ]
+ },
+ "vendor-newsroom": {
+  "status": "ok",
+  "items_seen": 2,
+  "excluded_outlets": 0,
+  "items": [
+   {
+    "url": "https://vendor.example/newsroom/post/one-launch",
+    "title": "Vendor launches a connector",
+    "author": null,
+    "published_at": "2026-11-24T05:00:00Z",
+    "text": "The vendor launched a connector for staffing data today, available to every customer at no extra cost and supported in its cloud regions.",
+    "source": "Vendor newsroom",
+    "source_url": "https://vendor.example/newsroom",
+    "rank": 1
+   }
+  ]
+ },
+ "vendor-blog": {
+  "status": "ok",
+  "items_seen": 1,
+  "excluded_outlets": 0,
+  "items": [
+   {
+    "url": "https://blog.example/blog/governed-answers",
+    "title": "Governed answers, generally available",
+    "author": null,
+    "published_at": "2026-11-24T09:00:00Z",
+    "text": "Every answer now shows the query behind it.\nStarting today every answer in the product shows the query and the tables behind each number, and admins can require review before an answer is shared.",
+    "source": "Vendor blog",
+    "source_url": "https://blog.example/sitemap.xml",
+    "rank": 1
+   }
+  ]
+ },
+ "jx-crossref": {
+  "status": "ok",
+  "items_seen": 2,
+  "excluded_outlets": 0,
+  "items": [
+   {
+    "url": "https://doi.org/10.1000/jx.2026.1",
+    "title": "Warehouse latency in clinical reporting",
+    "author": "Mia Chen, Raj Iyer",
+    "published_at": "2026-11-23T20:00:00Z",
+    "text": "We measured reporting latency across 12 hospitals.",
+    "source": "Journal X (Crossref)",
+    "source_url": "https://api.crossref.org/journals/1234-5678/works?filter=from-created-date:2026-11-23,until-created-date:2026-11-24&rows=100&sort=created&order=desc",
+    "rank": 1
+   }
+  ]
+ }
+}

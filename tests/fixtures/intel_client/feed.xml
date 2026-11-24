@@ -1,0 +1,18 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<rss version="2.0" xmlns:dc="http://purl.org/dc/elements/1.1/" xmlns:content="http://purl.org/rss/1.0/modules/content/">
+<channel><title>Health Data Weekly</title>
+<item><title>Hospital group moves its warehouse to the lakehouse</title>
+<link>https://press.example/2026/11/warehouse-move?utm_source=rss&amp;id=7</link>
+<pubDate>Mon, 23 Nov 2026 18:30:00 GMT</pubDate><dc:creator>Ana Ruiz</dc:creator>
+<content:encoded><![CDATA[<p>A regional hospital group said on Monday it will move its reporting warehouse to a lakehouse over the next year, citing the cost of keeping two copies of clinical data in sync. The chief data officer said the project starts with finance and staffing reports before clinical analytics follow in the spring.</p><p>Vendors were not named.</p>]]></content:encoded></item>
+<item><title>Short note on a payer rule</title>
+<link>https://press.example/2026/11/payer-rule</link>
+<pubDate>Tue, 24 Nov 2026 08:05:00 +0000</pubDate>
+<description>A new payer data rule takes effect.</description></item>
+<item><title>Last week's roundup</title>
+<link>https://press.example/2026/11/roundup</link>
+<pubDate>Tue, 17 Nov 2026 08:00:00 GMT</pubDate><description>Old news.</description></item>
+<item><title>An undated feature</title>
+<link>https://press.example/2026/11/undated-feature</link>
+<description>Feature text without a date in the feed.</description></item>
+</channel></rss>

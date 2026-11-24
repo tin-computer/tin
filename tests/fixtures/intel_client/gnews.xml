@@ -1,0 +1,20 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<rss version="2.0"><channel><title>"lakehouse" - Google News</title>
+<item><title>Vendor adds on-demand billing to its warehouse - Tech Daily</title>
+<link>https://news.google.com/rss/articles/CBMiAAAexampleArticleOne0001?oc=5</link>
+<pubDate>Tue, 24 Nov 2026 07:00:00 GMT</pubDate>
+<description>&lt;a href="https://news.google.com/rss/articles/CBMiAAAexampleArticleOne0001"&gt;Vendor adds on-demand billing&lt;/a&gt;</description>
+<source url="https://techdaily.example">Tech Daily</source></item>
+<item><title>VEND stock falls 3% - MarketBeat</title>
+<link>https://news.google.com/rss/articles/CBMiAAAexampleArticleTwo0002?oc=5</link>
+<pubDate>Tue, 24 Nov 2026 06:00:00 GMT</pubDate>
+<source url="https://www.marketbeat.com">MarketBeat</source></item>
+<item><title>Press release mill item - Wire Mill</title>
+<link>https://news.google.com/rss/articles/CBMiAAAexampleArticleThree003?oc=5</link>
+<pubDate>Tue, 24 Nov 2026 05:00:00 GMT</pubDate>
+<source url="https://openpr.com">Wire Mill</source></item>
+<item><title>Old coverage - Tech Daily</title>
+<link>https://news.google.com/rss/articles/CBMiAAAexampleArticleFour004?oc=5</link>
+<pubDate>Fri, 20 Nov 2026 07:00:00 GMT</pubDate>
+<source url="https://techdaily.example">Tech Daily</source></item>
+</channel></rss>

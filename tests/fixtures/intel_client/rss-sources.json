@@ -1,0 +1,10 @@
+{"enrich_text_below_chars": 280,
+ "exclude_outlets": ["MarketBeat"],
+ "exclude_domains": ["openpr.com"],
+ "sources": [
+  {"id": "health-weekly", "name": "Health Data Weekly", "method": "rss", "url": "https://feeds.example/health.xml"},
+  {"id": "gn-lakehouse", "name": "Lakehouse (via Google News)", "method": "google_news", "query": "lakehouse"},
+  {"id": "vendor-newsroom", "name": "Vendor newsroom", "method": "html_links", "url": "https://vendor.example/newsroom", "link_pattern": "^https://vendor\\.example/newsroom/post/[^/]+/?$", "max_links": 20, "text_date_fallback": true},
+  {"id": "vendor-blog", "name": "Vendor blog", "method": "sitemap", "url": "https://blog.example/sitemap.xml", "url_pattern": "blog\\.example/blog/[^/]+/?$", "max_pages": 25},
+  {"id": "jx-crossref", "name": "Journal X (Crossref)", "method": "crossref", "issn": "1234-5678", "enrich_text_below_chars": 0}
+ ]}
