@@ -43,12 +43,13 @@ export const profiles = ["ICP 1: founders who need growth done", "ICP 2: technic
 // People as the People API returns them: a fit, an old score, someone not scored, and a note.
 export function syntheticPeople() {
   const at = "2026-10-15T09:00:00Z";
-  const person = (id, name, headline, icp, fit, relationship, {stale = false, reason = "Runs a small B2B team with no marketing lead.", notes = [], touch = {kind: "reacted", at: "2026-10-13T08:00:00Z", who: "you"}} = {}) => ({
-    id, name, headline, profile_url: `https://www.linkedin.com/in/${id}`,
+  const person = (id, name, headline, icp, fit, relationship, {stale = false, reason = "Runs a small B2B team with no marketing lead.", notes = [], touch = {kind: "reacted", at: "2026-10-13T08:00:00Z", who: "you"}, company = "", intent = null} = {}) => ({
+    id, name, headline, company, profile_url: `https://www.linkedin.com/in/${id}`,
     fields: {
       icp: {value: icp, reason, by: "engagers", at, stale, stale_reason: stale ? "definition" : null, definition: "strategy/ICP.md", previous: null},
       icp_fit: {value: fit, reason, by: "engagers", at, stale, stale_reason: stale ? "definition" : null, definition: "strategy/ICP.md", previous: null},
       linkedin_relationship: {value: relationship, reason: "", by: "engagers", at, stale: false, stale_reason: null, definition: "", previous: null},
+      ...(intent ? {intent: {value: intent, reason: "Reacted twice this week.", by: "engagers", at, stale, stale_reason: null, definition: "strategy/ICP.md", previous: null}} : {}),
     },
     // Who was behind it, for the viewer: "you" or a teammate's first name.
     last_touch: touch,
@@ -59,13 +60,13 @@ export function syntheticPeople() {
     request: null,
   });
   return [
-    person("p-maya", "Maya Lindqvist", "Founder, payroll for remote teams", "ICP 1: founders who need growth done", 4, "connected"),
-    person("p-daniel", "Daniel Okafor", "Co-founder, Fieldline", "ICP 2: technical founders running their own marketing", 3, "none", {notes: [
+    person("p-maya", "Maya Lindqvist", "Founder, payroll for remote teams", "ICP 1: founders who need growth done", 4, "connected", {company: "Paywise", intent: "hot"}),
+    person("p-daniel", "Daniel Okafor", "Co-founder, Fieldline", "ICP 2: technical founders running their own marketing", 3, "none", {company: "Fieldline", intent: "cold", notes: [
       {id: "n-daniel-2", body: "Interned with us in 2024 before founding Fieldline.\nA friend of the team.", by: "you", mine: true, at: "2026-10-15T10:00:00Z", edited: false},
       {id: "n-daniel-1", body: "Met at a founder dinner in Berlin.", by: "a teammate", who: "Mira", mine: false, at: "2026-10-14T10:00:00Z", edited: false},
     ], touch: {kind: "invited", at: "2026-10-16T08:00:00Z", who: "Mira"}}),
-    person("p-sofia", "Sofia Marchetti", "Founder & CEO, Patchbay", "ICP 1: founders who need growth done", 3, "connected", {stale: true}),
-    person("p-lea", "Lea Fischer", "Head of Marketing, Quanta Labs", "none", 1, "none"),
+    person("p-sofia", "Sofia Marchetti", "Founder & CEO, Patchbay", "ICP 1: founders who need growth done", 3, "connected", {stale: true, company: "Patchbay", intent: "warm"}),
+    person("p-lea", "Lea Fischer", "Head of Marketing, Quanta Labs", "none", 1, "none", {company: "Quanta Labs"}),
     person("p-hannah", "Hannah Kim", "Building something new", null, null, "none", {reason: "Tin couldn't score this person this time; the next run tries again.", touch: {kind: "viewed", at: "2026-10-17T08:00:00Z", who: "Mira"}}),
   ];
 }
@@ -93,8 +94,59 @@ export function visitorPerson() {
   };
 }
 
+// People RB2B named on the site, with the team's ways in: a hot visitor from an ad whose company a
+// teammate knows someone at, one found for a visit only their company made, and two of the team's
+// connections (one a teammate Tin can name, one it can't). The detail adds `way_in`, position and
+// location, as the person API does.
+export function visitorPeople() {
+  const at = "2026-10-20T09:00:00Z";
+  const by = (value, reason = "", extra = {}) => ({value, reason, by: "rb2b", at, stale: false, stale_reason: null, definition: "", previous: null, ...extra});
+  const base = ({id, name, headline, company, position = "", location = "", fields = {}, touch, events = [], visited = false, company_visit = false, way_in = null}) => ({
+    id, name, headline, company, position, location, profile_url: `https://www.linkedin.com/in/${id}`, email: "",
+    fields, last_touch: touch, added: {at, by: visited ? "rb2b" : "connections"}, notes: [], events,
+    visited, company_visit, way_in, requestable: false, request: null,
+  });
+  return [
+    base({
+      id: "p-rosa", name: "Rosa Alvarez", headline: "Head of Treasury, Valley Bank", company: "Valley Bank",
+      position: "Head of Treasury", location: "Austin, Texas", visited: true,
+      way_in: "🤝 Emre knows Mira Chen (Treasury) at Valley Bank",
+      fields: {
+        icp_fit: by(4, "Runs treasury at a regional bank.", {definition: "strategy/ICP.md"}),
+        intent: by("hot", "Read pricing twice after an ad click.", {definition: "strategy/ICP.md"}),
+        web_tier: by("lead", "/pricing"),
+        web_source: by("ad", "Google Ads, keyword “treasury reporting”"),
+      },
+      touch: {kind: "visited", at: "2026-10-20T08:40:00Z"},
+      events: [{kind: "visited", at: "2026-10-20T08:40:00Z", tier: "lead", summary: "Read pricing twice after an ad click.", stopped_at: "/pricing", action: "", replay_url: "", post_url: "", yours: null}],
+    }),
+    base({
+      id: "p-omar", name: "Omar Haddad", headline: "CFO at Northwind Freight", company: "Northwind Freight",
+      position: "CFO", location: "Chicago, Illinois", visited: true, company_visit: true,
+      fields: {
+        icp_fit: by(3, "Finance lead at a mid-size logistics company.", {definition: "strategy/ICP.md"}),
+        intent: by("warm", "His company read the pricing page.", {definition: "strategy/ICP.md"}),
+      },
+      touch: {kind: "visited", at: "2026-10-19T15:00:00Z", company_visit: true},
+      events: [{kind: "visited", at: "2026-10-19T15:00:00Z", tier: "", summary: "Someone at Northwind Freight visited /pricing; the visit was matched to the company, not to this person", stopped_at: "", action: "", replay_url: "", post_url: "", yours: null}],
+    }),
+    base({
+      id: "p-ines", name: "Inês Costa", headline: "Product lead, Lumen", company: "Lumen", location: "Lisbon",
+      way_in: "🤝 Emre is already connected",
+      touch: {kind: "connected", at: "2026-10-02T10:00:00Z", who: "Emre"},
+      events: [{kind: "connected", at: "2026-10-02T10:00:00Z", who: "Emre", post_url: "", yours: false}],
+    }),
+    base({
+      id: "p-tom", name: "Tom Becker", headline: "Engineer", company: "", way_in: "🤝 Your team is already connected",
+      touch: {kind: "connected", at: "2026-09-28T10:00:00Z", who: "a teammate"},
+      events: [{kind: "connected", at: "2026-09-28T10:00:00Z", who: "a teammate", post_url: "", yours: false}],
+    }),
+  ];
+}
+
 // The list carries each person's newest note; one person carries every note and the timeline.
-function listed({notes, ...person}) {
+// Position, location and the way in come only with one person, as from the person API.
+function listed({notes, position, location, way_in, ...person}) {
   return {
     ...person,
     note: notes[0] ? {body: notes[0].body, by: notes[0].by, at: notes[0].at, count: notes.length} : null,

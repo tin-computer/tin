@@ -89,15 +89,23 @@ async def at_company(
     wanted = company_key(company)
     if not wanted:
         return []
+    return (await _by_company(conn, project_id, besides=besides)).get(wanted, [])
+
+
+async def _by_company(
+    conn, project_id: UUID, *, besides: UUID | None = None
+) -> dict[str, list[dict[str, Any]]]:
+    """The members' first-degree connections with a current company, by its matching key, most
+    recently read first: one read for any number of companies."""
+
     rows = await conn.fetch(
-        """SELECT r.id, rel.member, c.value_text AS company,
-                  (SELECT value_text FROM record_values
-                    WHERE record_id = r.id AND field = 'name') AS name,
-                  (SELECT value_text FROM record_values
-                    WHERE record_id = r.id AND field = 'position') AS position
+        """SELECT r.id, rel.member, c.value_text AS company, n.value_text AS name,
+                  p.value_text AS position
            FROM record_relationships rel
            JOIN records r ON r.project_id = rel.project_id AND r.id = rel.record_id
            JOIN record_values c ON c.record_id = r.id AND c.field = 'company'
+           LEFT JOIN record_values n ON n.record_id = r.id AND n.field = 'name'
+           LEFT JOIN record_values p ON p.record_id = r.id AND p.field = 'position'
            WHERE rel.project_id = $1 AND rel.state = 'connected'
              AND r.id IS DISTINCT FROM $2
              AND r.merged_into IS NULL AND c.value_text IS NOT NULL
@@ -106,12 +114,13 @@ async def at_company(
         besides,
     )
     seen: set[UUID] = set()
-    people: list[dict[str, Any]] = []
+    found: dict[str, list[dict[str, Any]]] = {}
     for row in rows:
-        if row["id"] in seen or not row["name"] or company_key(row["company"]) != wanted:
+        key = company_key(row["company"])
+        if row["id"] in seen or not row["name"] or not key:
             continue
         seen.add(row["id"])
-        people.append(
+        found.setdefault(key, []).append(
             {
                 "record_id": str(row["id"]),
                 "member": row["member"],
@@ -119,7 +128,36 @@ async def at_company(
                 "position": row["position"] or "",
             }
         )
-    return people
+    return found
+
+
+async def known_many(
+    conn, project_id: UUID, people: list[tuple[UUID, str | None]]
+) -> dict[UUID, Known]:
+    """Tier 1 for many people at once, as `known` finds it for each: `people` pairs a record
+    with its company. Two reads, however many people."""
+
+    if not people:
+        return {}
+    ids = [record_id for record_id, _ in people]
+    connected: dict[UUID, list[str]] = {}
+    for row in await conn.fetch(
+        """SELECT record_id, member FROM record_relationships
+           WHERE project_id = $1 AND record_id = ANY($2::uuid[]) AND state = 'connected'
+           ORDER BY set_at""",
+        project_id,
+        ids,
+    ):
+        connected.setdefault(row["record_id"], []).append(row["member"])
+    companies = await _by_company(conn, project_id)
+    found: dict[UUID, Known] = {}
+    for record_id, company in people:
+        there = companies.get(company_key(company), []) if company_key(company) else []
+        found[record_id] = Known(
+            connected=connected.get(record_id, []),
+            at_company=[p for p in there if p["record_id"] != str(record_id)],
+        )
+    return found
 
 
 def _slug(url: str | None) -> str:
@@ -157,19 +195,30 @@ def line(
     second: dict[str, Any] | None,
     names: dict[str, str],
     company: str | None,
+    you: str | None = None,
 ) -> str | None:
-    """The one 🤝 line for Slack, or None when there's no path. `names` maps members to first
-    names; a member without one is "Your team"."""
+    """The one 🤝 line for Slack and People, or None when there's no path. `names` maps members
+    to first names; members without one are "Your team". `you` is the member reading it in
+    People, who reads as "You"."""
 
-    def who(members: list[str]) -> str:
-        first = [names[m] for m in members if names.get(m)]
-        if not first:
-            return "Your team"
-        return first[0] if len(first) == 1 else f"{', '.join(first[:-1])} and {first[-1]}"
+    def who(members: list[str]) -> tuple[str, bool]:
+        """Who, and whether they take a plural verb ("are", "know")."""
+
+        shown = [
+            "You" if member == you else names[member]
+            for member in members
+            if member == you or names.get(member)
+        ]
+        shown = sorted(dict.fromkeys(shown), key=lambda name: name != "You")
+        if not shown:
+            return "Your team", False
+        text = shown[0] if len(shown) == 1 else f"{', '.join(shown[:-1])} and {shown[-1]}"
+        return text, len(shown) > 1 or shown[0] == "You"
 
     known = known or {}
     if known.get("connected"):
-        return f"🤝 {who(known['connected'])} is already connected"
+        members, plural = who(known["connected"])
+        return f"🤝 {members} {'are' if plural else 'is'} already connected"
     if second and second.get("mutual_count"):
         shown = [n for n in second.get("mutual_names") or [] if n][:NAMED]
         rest = int(second["mutual_count"]) - len(shown)
@@ -186,6 +235,7 @@ def line(
         rest = len(people) - len(shown)
         tail = f" + {rest} more" if rest > 0 else ""
         at = f" at {company}" if company else ""
-        verb = "knows" if len(members) == 1 and names.get(members[0]) else "know"
-        return f"🤝 {who(members)} {verb} {', '.join(shown)}{tail}{at}"
+        team, plural = who(members)
+        verb = "know" if plural or team == "Your team" else "knows"
+        return f"🤝 {team} {verb} {', '.join(shown)}{tail}{at}"
     return None

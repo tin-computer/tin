@@ -42,7 +42,7 @@ test("a take is the same frame for frame, with no outside requests", {timeout: 1
 test("the cursor can't reach outside the frame, and a film needs its poster", {timeout: 180000}, async () => {
   const report = await take(short(async f => {
     await f.camera('.people-table tr[data-person="p-daniel"] td.is-name', {cut: true, text: true, pad: 8});
-    await f.move('.people-table tr[data-person="p-ben"] td.is-linkedin', {to: [0.9, 0.5]});
+    await f.move('.people-table tr[data-person="p-ben"] td.is-intent', {to: [0.9, 0.5]});
   }));
   assert.ok(report.issues.errors.some(line => /The cursor reaches .*p-ben.* outside the 4:5 frame/.test(line)), report.issues.errors);
   assert.ok(report.issues.errors.includes("The film never marks its poster."));
@@ -75,7 +75,7 @@ test("the page sees the pointer only where the hand stops", {timeout: 180000}, a
       return false;
     });
     // Across Daniel's score to the far end of his row: nothing opens on the way.
-    await f.move(`${row} td.is-linkedin`);
+    await f.move(`${row} td.is-intent`);
     await f.hold(0.3);
     const passing = crossed;
     // Onto the score: its card opens.
@@ -98,15 +98,15 @@ test("a change shown in place rolls the word that changed, with no cut", {timeou
     from = f.n;
     done = await f.morph(async () => {
       const chloe = f.world.people.find(item => item.id === "p-chloe");
-      chloe.fields.linkedin_relationship.value = "connected";
-      chloe.requestable = false;
+      // A new score that keeps her place in the list.
+      chloe.fields.icp_fit.value = 0.6;
       // Wait for the new answer itself: the row is already there from before the reload.
-      await f.open("/people", {ready: '.people-table tr[data-person="p-chloe"] td.is-linkedin span:text-is("Connected")'});
+      await f.open("/people", {ready: '.people-table tr[data-person="p-chloe"] td.is-fit span:text-is("0.6")'});
     });
     await f.hold(0.8);
     await f.mark("poster");
   }));
-  assert.ok(done.rolled.includes("Not connected -> Connected"), JSON.stringify(done));
+  assert.ok(done.rolled.includes("0.58 -> 0.6"), JSON.stringify(done));
   // It moves over several frames rather than swapping in one, and nothing fades to the backdrop.
   const changing = report.hashes.slice(from, from + 12);
   assert.ok(new Set(changing).size >= 8, `${new Set(changing).size} distinct frames`);

@@ -7,6 +7,7 @@ Tin's own workflows write the rest (#435). Anyone outside the project gets "proj
 from __future__ import annotations
 
 import asyncio
+import json
 import logging
 import time
 from datetime import UTC, datetime
@@ -14,11 +15,13 @@ from typing import Any
 from uuid import UUID
 
 from tin_lite import linkedin_requests as requests
-from tin_lite import people_icp
+from tin_lite import people_icp, warm_paths
 from tin_lite import people_records as records
 
 logger = logging.getLogger(__name__)
-LIMIT = 5000
+# A runaway guard well above a big LinkedIn network: a member's ten thousand imported
+# connections list in full. Past it, the people with a score, a visit or a note come first.
+LIMIT = 30000
 GONE = "This person is no longer in this project."
 # Fields a member's rating replaces, and what "Use Tin's score" gives back. Earlier members
 # picked a profile too, so giving Tin's score back restores both.
@@ -96,6 +99,39 @@ async def first_names(profiles, members: set[str]) -> dict[str, str]:
     if profiles is not None and members:
         await asyncio.gather(*(name(member) for member in sorted(members)))
     return found
+
+
+async def _second_degree(conn, project_id: UUID, record_id: UUID) -> dict | None:
+    """The newest second-degree path an RB2B run of this project found for the person, from the
+    run's warm-path receipt; only a path with mutual connections."""
+
+    row = await conn.fetchrow(
+        """SELECT er.result->'second' AS second FROM effect_receipts er
+           WHERE er.status = 'completed' AND er.execution_key IN (
+               SELECT e.run_id::text || ':rb2b:warm'
+               FROM record_events e
+               JOIN records r ON r.id = e.record_id
+               JOIN workflow_runs w ON w.id = e.run_id AND w.project_id = e.project_id
+               WHERE e.project_id = $1 AND (r.id = $2 OR r.merged_into = $2)
+                 AND e.kind = 'visited')
+             AND jsonb_typeof(er.result->'second') = 'object'
+           ORDER BY er.updated_at DESC
+           LIMIT 1""",
+        project_id,
+        record_id,
+    )
+    if row is None:
+        return None
+    second = row["second"]
+    second = json.loads(second) if isinstance(second, str) else second
+    if not isinstance(second, dict) or not second.get("member"):
+        return None
+    try:
+        count = int(second.get("mutual_count") or 0)
+    except (TypeError, ValueError):
+        return None
+    names = [n for n in second.get("mutual_names") or [] if isinstance(n, str) and n]
+    return {"member": str(second["member"]), "mutual_count": count, "mutual_names": names[:3]}
 
 
 class People:
@@ -190,10 +226,45 @@ class People:
                     found["queued"] = await requests.queued(
                         conn, project.id, viewer, found["id"], datetime.now(UTC)
                     )
+            if found is not None:
+                found["way_in"] = await self._way_in(conn, project.id, found, viewer)
         if found is None:
             raise PeopleError(404, GONE)
         await self._named(viewer, [found])
         return found
+
+    async def _way_in(self, conn, project_id: UUID, person: dict, viewer: str) -> str | None:
+        """The 🤝 line Slack posts for a visitor, read for the viewer from People alone: who on
+        the team is connected to them or knows someone at their company, or a second-degree
+        path an RB2B run of this project already found. Never a LinkedIn read."""
+
+        found = await warm_paths.known_many(conn, project_id, [(person["id"], person["company"])])
+        known = found[person["id"]]
+        second = await _second_degree(conn, project_id, person["id"])
+        return await self._line(known, second, person["company"], viewer)
+
+    async def _line(self, known, second, company, viewer: str) -> str | None:
+        members = set(known.connected) | {p["member"] for p in known.at_company}
+        if second:
+            members.add(second["member"])
+        names = await first_names(self.profiles, members - {viewer})
+        return warm_paths.line(
+            known=known.as_dict(), second=second, names=names, company=company, you=viewer
+        )
+
+    async def ways_in(self, project_id: UUID, viewer: str, people: list[dict]) -> dict[str, Any]:
+        """Each listed person's 🤝 line, for MCP's list: two reads for the whole list."""
+
+        project = await self._project(project_id, viewer)
+        async with self.db.pool.acquire() as conn:
+            known = await warm_paths.known_many(
+                conn, project.id, [(UUID(str(p["id"])), p.get("company")) for p in people]
+            )
+        ways = {}
+        for person in people:
+            found = known[UUID(str(person["id"]))]
+            ways[str(person["id"])] = await self._line(found, None, person.get("company"), viewer)
+        return ways
 
     async def update(
         self,

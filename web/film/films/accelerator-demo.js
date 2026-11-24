@@ -235,7 +235,8 @@ export const scenes = [
     {say: "People ranks everyone who engaged with your LinkedIn posts by how well they fit your ICP.", brisk: true},
     {wait: [1.6, 1.0]},
     {when: "full", beats: [
-      {click: "@danielName"},
+      // Past his name, which opens LinkedIn: the row opens him here.
+      {click: "@danielName", to: [0.9, 0.5]},
       {ready: ".person-panel"},
       {say: "Each score comes with its reason, taken from your ICP file and the person's profile."},
       {wait: 2.6},
