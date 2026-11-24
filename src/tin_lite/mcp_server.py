@@ -1284,6 +1284,8 @@ def create_mcp_app(
             "phone": value("phone"),
             # Reacted, commented, viewed a member's profile or starred the project's repository.
             "social": bool(person.get("social")),
+            # Known only from a bulk import of connections, nothing done Tin saw.
+            "imported": bool(person.get("imported")),
             # Named for a visit Tin read (RB2B or a visitor journeys run); company_visit when
             # only their company's visit was seen and Tin found them there.
             "visited": bool(person.get("visited") or value("web_tier")),
@@ -1325,6 +1327,8 @@ def create_mcp_app(
         segment: "all", "visitors" (anyone RB2B or a visitor journeys run named, including
         people found for a visit only their company made: company_visit), "hot" (intent hot),
         "social" (reacted, commented, viewed a member's profile or starred the repository),
+        "connections" (a member's LinkedIn connections from a bulk import who haven't done
+        anything Tin saw; every other segment, "all" included, leaves them out),
         "icp_fit" (rated fit_shown or more), "not_connected" (not connected on LinkedIn),
         "on_the_site" (named by a visitor journeys run, with their email, tier and last visit)
         or "from_ads" (their last visit came from an ad click). came_from is how the last visit
@@ -1334,8 +1338,8 @@ def create_mcp_app(
         """
         parsed, viewer, people = await people_service(project_id, "list_people")
         segments = (
-            "all", "visitors", "hot", "social", "icp_fit", "not_connected", "on_the_site",
-            "from_ads",
+            "all", "visitors", "hot", "social", "connections", "icp_fit", "not_connected",
+            "on_the_site", "from_ads",
         )  # fmt: skip
         if segment not in segments:
             raise ToolError(
@@ -1345,6 +1349,10 @@ def create_mcp_app(
             )
         listed = await people_result(people.list(parsed, viewer))
         rows = [person_row(person) for person in listed["people"]]
+        if segment == "connections":
+            rows = [r for r in rows if r["imported"]]
+        else:
+            rows = [r for r in rows if not r["imported"]]
         if segment == "visitors":
             rows = [r for r in rows if r["visited"]]
         elif segment == "hot":

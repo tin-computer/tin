@@ -23,6 +23,9 @@ window.TinPeople = (() => {
     // Whoever reacted, commented, viewed a member's profile or starred the project's repository.
     { key: "social", label: "Social" },
     { key: "all", label: "All people" },
+    // A member's LinkedIn connections, brought in by the export workflow or a CSV, who haven't
+    // done anything Tin saw. They stay out of every other segment until they do.
+    { key: "connections", label: "Connections" },
     { key: "fit", label: "ICP fit" },
     { key: "new", label: "Not connected yet" },
     // Shown once someone has been sent a connection request (#450).
@@ -31,7 +34,7 @@ window.TinPeople = (() => {
     { key: "ads", label: "From ads" },
   ];
   // Segments that show only while someone is in them (or they're open).
-  const WHEN_ANY = ["visitors", "hot", "social", "invited", "ads"];
+  const WHEN_ANY = ["visitors", "hot", "social", "connections", "invited", "ads"];
   // How much interest a person shows now, as the ICP rating judged it; sorted hot first.
   const INTENT = { hot: ["🔥", "hot"], warm: ["🌤", "warm"], cold: ["🧊", "cold"] };
   const INTENT_RANK = { hot: 3, warm: 2, cold: 1 };
@@ -223,7 +226,9 @@ window.TinPeople = (() => {
   }
 
   function segmentPeople(key) {
-    const people = view.people || [];
+    const everyone = view.people || [];
+    if (key === "connections") return everyone.filter((person) => person.imported);
+    const people = everyone.filter((person) => !person.imported);
     if (key === "visitors") return people.filter(isVisitor);
     if (key === "hot") return people.filter((person) => field(person, "intent")?.value === "hot");
     if (key === "social") return people.filter((person) => person.social);

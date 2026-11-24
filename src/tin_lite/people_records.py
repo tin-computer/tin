@@ -55,6 +55,10 @@ INTENTS = ("hot", "warm", "cold")
 HOT_DAYS = 7
 WARM_DAYS = 30
 ACTIVE = (*SOCIAL, "visited")
+# Sources that bring in a member's LinkedIn connections in bulk: the connections export workflow
+# and a CSV import. Someone known only from one, who hasn't done anything Tin saw (ACTIVE), is a
+# connection, not a lead: People lists them under Connections, and Tin buys nothing for them.
+BULK_SOURCES = ("social.linkedin_connections", "people.import")
 
 
 def cooled_intent(intent: str | None, active_at: datetime | None, now: datetime) -> str | None:
@@ -1105,6 +1109,8 @@ async def directory(
                 "previous": None,
             }
         visited = visits.get(person["id"], set())
+        # Only a bulk import knows them, and they've done nothing Tin saw: the Connections tab.
+        imported = person["source"] in BULK_SOURCES and person["id"] not in active
         result.append(
             {
                 "id": person["id"],
@@ -1123,6 +1129,7 @@ async def directory(
                 "last_touch": touches.get(person["id"]),
                 "invited_at": invited.get(person["id"]),
                 "added": {"at": person["created_at"], "by": writer(person["source"])},
+                "imported": imported,
                 # The newest note for the grid, and every note's words for search.
                 "note": (
                     {

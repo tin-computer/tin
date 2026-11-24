@@ -147,8 +147,9 @@ there."). Without `DELEGATE_API_KEY` a company is still judged and posted, with 
 
 ## Phone numbers for leads
 
-A person rated a good or strong fit (3 or 4) with a LinkedIn profile, no phone and no
-`customer: yes` gets one lookup (`lead_phones`): Delegate's `contactout-linkedin-phone`
+A person rated a good or strong fit (3 or 4) who did something Tin saw (a visit, a reaction, a
+comment, a profile view or a star; someone known only from a bulk import of connections never
+counts), with a LinkedIn profile, no phone and no `customer: yes`, gets one lookup (`lead_phones`): Delegate's `contactout-linkedin-phone`
 ($0.15, not billed when ContactOut has no number). It runs right after the rating in
 `rb2b_rate` and `rb2b_company_rate`, and in `people.rate` after its rounds, so earlier leads are
 looked up too. The numbers go into the person's `phone` value, shown as a Phone row in People's

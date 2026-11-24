@@ -1,10 +1,11 @@
 """Phone numbers for a project's good and strong leads, from ContactOut through Delegate.
 
-Anyone rated a good or strong fit (`people_icp.FIT_SHOWN` or higher) with a LinkedIn profile
-and no phone yet gets one lookup: Delegate's `contactout-linkedin-phone`, which returns the
-numbers ContactOut has on file for the profile and isn't billed when it has none. The numbers
-land in the person's `phone` value, shown in People's panel; a member's own phone is never
-replaced and customers are left out.
+Anyone rated a good or strong fit (`people_icp.FIT_SHOWN` or higher) who did something Tin saw
+(a visit, a reaction, a comment, a profile view or a star), with a LinkedIn profile and no phone
+yet, gets one lookup: Delegate's `contactout-linkedin-phone`, which returns the numbers
+ContactOut has on file for the profile and isn't billed when it has none. Someone known only
+from a bulk import of connections never does. The numbers land in the person's `phone` value,
+shown in People's panel; a member's own phone is never replaced and customers are left out.
 
 Each person is looked up once, ever: the lookup's receipt is keyed by project and person, so a
 retry, a later run or another flow finds it and pays nothing. The receipt holds the order and
@@ -88,6 +89,13 @@ async def wanted(
            WHERE r.project_id = $1
              AND EXISTS (SELECT 1 FROM record_identifiers i WHERE i.record_id = r.id
                          AND i.kind IN ('linkedin_slug', 'linkedin_member'))
+             -- A lead did something Tin saw: a visit, a reaction, a comment, a profile view or
+             -- a star. Someone known only from a bulk import of connections, however rated,
+             -- gets no lookup.
+             AND EXISTS (SELECT 1 FROM record_events e WHERE e.project_id = $1
+                         AND (e.record_id = r.id OR e.record_id IN
+                              (SELECT m.id FROM records m WHERE m.merged_into = r.id))
+                         AND e.kind = ANY($6::text[]))
              AND r.merged_into IS NULL AND f.value_number >= $2
              AND ($3::uuid IS NULL OR r.id = $3)
              AND NOT (r.id = ANY($5::uuid[]))
@@ -105,6 +113,7 @@ async def wanted(
         only,
         limit,
         list(skip),
+        list(records.ACTIVE),
     )
     people = []
     for row in rows:
