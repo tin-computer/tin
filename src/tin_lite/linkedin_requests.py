@@ -334,18 +334,23 @@ async def _asks_lock(conn, project_id: UUID) -> None:
 
 async def pickable(
     conn, project_id: UUID, member: str, *, only: list[UUID] | None = None
-) -> dict[UUID, str]:
-    """The people the member can ask now, with each one's LinkedIn profile ID: someone Tin can
-    name on LinkedIn, not a customer, not the member's connection or invitee as far as Tin
-    knows, and not asked by anyone on the project before. A request lapsed, declined or never
-    sent doesn't count."""
+) -> dict[UUID, dict[str, str | None]]:
+    """The people the member can ask now, with how a request names each: their LinkedIn
+    profile ID (`target`), else their profile link's slug, whose ID the sending run looks up
+    right before it sends. Someone Tin can name on LinkedIn, not a customer, not the member's
+    connection or invitee as far as Tin knows, and not asked by anyone on the project before.
+    A request lapsed, declined or never sent doesn't count."""
 
     rows = await conn.fetch(
-        """SELECT r.id, min(i.value) AS target FROM records r
-           JOIN record_identifiers i ON i.record_id = r.id AND i.kind = 'linkedin_member'
+        """SELECT r.id,
+               min(i.value) FILTER (WHERE i.kind = 'linkedin_member'
+                                    AND i.value ~ '^ACo[A-Za-z0-9_-]{20,80}$') AS target,
+               min(i.value) FILTER (WHERE i.kind = 'linkedin_slug') AS slug
+           FROM records r
+           JOIN record_identifiers i ON i.record_id = r.id
+               AND i.kind IN ('linkedin_member', 'linkedin_slug')
            WHERE r.project_id = $1 AND r.merged_into IS NULL AND r.type = 'person'
              AND ($3::uuid[] IS NULL OR r.id = ANY($3::uuid[]))
-             AND i.value ~ '^ACo[A-Za-z0-9_-]{20,80}$'
              AND NOT EXISTS (SELECT 1 FROM record_values v WHERE v.record_id = r.id
                              AND v.field = 'customer' AND v.value_text = 'yes')
              AND NOT EXISTS (SELECT 1 FROM record_relationships x WHERE x.record_id = r.id
@@ -359,7 +364,11 @@ async def pickable(
         member,
         only,
     )
-    return {row["id"]: row["target"] for row in rows}
+    return {
+        row["id"]: {"target": row["target"], "slug": None if row["target"] else row["slug"]}
+        for row in rows
+        if row["target"] or row["slug"]
+    }
 
 
 async def waiting(conn, project_id: UUID, member: str) -> set[UUID]:
@@ -413,7 +422,9 @@ async def queue(conn, project_id: UUID, member: str, *, run_id: UUID) -> dict | 
         )
         candidates = [row["id"] for row in rows]
         targets = await pickable(conn, project_id, member, only=candidates) if candidates else {}
-        chosen = [person for person in candidates if person in targets]
+        # Tin asks on its own only people whose profile ID a read found; a member's own choice
+        # (pick) may name someone by their profile link alone.
+        chosen = [person for person in candidates if (targets.get(person) or {}).get("target")]
         if not chosen:
             return None
         return await _new_batch(
@@ -474,7 +485,7 @@ async def _new_batch(
     project_id: UUID,
     member: str,
     chosen: list[UUID],
-    targets: dict[UUID, str],
+    targets: dict[UUID, dict[str, str | None]],
     *,
     request_id: UUID,
     run_id: UUID | None = None,
@@ -512,14 +523,15 @@ async def _new_batch(
         if not moved:
             await conn.execute(
                 """INSERT INTO linkedin_requests (id, project_id, batch_id, record_id,
-                       member, target, status, queued_at)
-                   VALUES ($1, $2, $3, $4, $5, $6, 'queued', $7)""",
+                       member, target, slug, status, queued_at)
+                   VALUES ($1, $2, $3, $4, $5, $6, $7, 'queued', $8)""",
                 uuid4(),
                 project_id,
                 batch_id,
                 record_id,
                 member,
-                targets[record_id],
+                targets[record_id]["target"],
+                targets[record_id]["slug"],
                 queued_at,
             )
     return {"status": "approved", "batch_id": batch_id, "queued": len(chosen), "repeated": False}
@@ -878,6 +890,51 @@ async def settle(
             run_id=run_id,
         )
     return status
+
+
+async def awaiting_answer(conn, project_id: UUID, member: str) -> set[UUID]:
+    """The people a request of the member's went out to and who haven't answered as far as
+    Tin knows."""
+
+    rows = await conn.fetch(
+        """SELECT DISTINCT COALESCE(m.merged_into, m.id) AS person
+           FROM linkedin_requests q JOIN records m ON m.id = q.record_id
+           WHERE q.project_id = $1 AND q.member = $2 AND q.status IN ('sent', 'uncertain')""",
+        project_id,
+        member,
+    )
+    return {row["person"] for row in rows}
+
+
+async def connected_now(
+    conn, project_id: UUID, member: str, record_id: UUID, *, run_id: UUID
+) -> int:
+    """The member's connections list shows this person: a request of theirs that went out to
+    them was accepted, however long ago it went. Returns how many requests that settles."""
+
+    rows = await conn.fetch(
+        """UPDATE linkedin_requests q SET status = 'accepted', settled_at = now(),
+               sent_at = COALESCE(q.sent_at, q.attempted_at)
+           FROM records m
+           WHERE m.id = q.record_id AND q.project_id = $1 AND q.member = $2
+             AND COALESCE(m.merged_into, m.id) = $3 AND q.status IN ('sent', 'uncertain')
+           RETURNING q.id, q.record_id""",
+        project_id,
+        member,
+        record_id,
+    )
+    for row in rows:
+        await records.add_event(
+            conn,
+            project_id,
+            record_id,
+            kind="accepted",
+            event_key=f"linkedin:accepted:{row['id']}",
+            occurred_at=datetime.now(UTC),
+            detail={"member": member},
+            run_id=run_id,
+        )
+    return len(rows)
 
 
 async def _relationship(conn, request, value: str, run_id: UUID) -> None:

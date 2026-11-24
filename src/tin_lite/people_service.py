@@ -34,7 +34,24 @@ SAYS = {
     "not_author": (403, "Only the note's author can change it."),
     "empty_note": (422, "Write something first."),
     "note_too_long": (422, f"A note can be up to {records.NOTE_LIMIT:,} characters."),
+    "invalid_tag": (
+        422,
+        f"A tag is a short label of 1 to {records.TAG_LENGTH} characters, such as a group's name.",
+    ),
 }
+# People one add_people call keeps, and people one tag_people call changes.
+ADD_LIMIT = 1000
+TAG_LIMIT = 1000
+# Why a person on a list wasn't added, by the record error behind it.
+NOT_ADDED = {
+    "invalid_identifier": "no LinkedIn profile link or email Tin can read",
+    "invalid_tag": f"a tag isn't a label of 1 to {records.TAG_LENGTH} characters",
+    "invalid_value": "a field isn't text",
+}
+# What a request's status says for comparing groups.
+WENT_OUT = ("sent", "accepted", "not_pending")
+WAITING = ("queued", "sending")
+NOT_ASKED = ("connected", "invited", "unknown_person", "refused", "not_sent", "lapsed")
 
 
 class PeopleError(Exception):
@@ -337,3 +354,124 @@ class People:
         async with self.db.pool.acquire() as conn:
             if not await records.forget(conn, project.id, person_id):
                 raise PeopleError(404, GONE)
+
+    async def add_people(
+        self,
+        project_id: UUID,
+        viewer: str,
+        people: Any,
+        *,
+        tags: Any = (),
+        connections: bool = False,
+    ) -> dict[str, Any]:
+        """Keep a list of people the member brought, each by their LinkedIn profile link, email
+        or both, with any tags. Someone already in People is matched, not duplicated."""
+
+        project = await self._project(project_id, viewer)
+        if not isinstance(people, list) or not 0 < len(people) <= ADD_LIMIT:
+            raise PeopleError(422, f"Add 1 to {ADD_LIMIT:,} people at a time.")
+        shared = _tags(tags)
+        counts = {"added": 0, "matched": 0, "forgotten": 0}
+        skipped, ids = [], []
+        async with self.db.pool.acquire() as conn:
+            await records.ensure_fields(conn, project.id)
+            for index, item in enumerate(people):
+                if not isinstance(item, dict):
+                    skipped.append({"index": index, "reason": NOT_ADDED["invalid_identifier"]})
+                    continue
+                try:
+                    own = item.get("tags") or []
+                    found = await records.add_person(
+                        conn,
+                        project.id,
+                        viewer,
+                        item,
+                        connection=connections,
+                        tags=[*shared, *(own if isinstance(own, list) else [own])],
+                    )
+                except records.RecordError as error:
+                    reason = NOT_ADDED.get(error.code, "Tin couldn't keep this person")
+                    skipped.append({"index": index, "reason": reason})
+                    continue
+                if found["forgotten"]:
+                    counts["forgotten"] += 1
+                    continue
+                counts["added" if found["new"] else "matched"] += 1
+                ids.append(str(found["id"]))
+        return {**counts, "skipped": skipped, "person_ids": ids}
+
+    async def tag(
+        self, project_id: UUID, viewer: str, person_ids: list[UUID], *, add: Any, remove: Any
+    ) -> dict[str, Any]:
+        project = await self._project(project_id, viewer)
+        if not 0 < len(person_ids) <= TAG_LIMIT:
+            raise PeopleError(422, f"Tag 1 to {TAG_LIMIT:,} people at a time.")
+        adding, removing = _tags(add), _tags(remove)
+        if not adding and not removing:
+            raise PeopleError(422, "Name a tag to add or remove.")
+        async with self.db.pool.acquire() as conn, conn.transaction():
+            removed = await records.remove_tags(conn, project.id, person_ids, removing)
+            added = await records.add_tags(conn, project.id, person_ids, adding, member=viewer)
+        return {"added": added, "removed": removed}
+
+    async def request_results(
+        self, project_id: UUID, viewer: str, tag: str | None = None
+    ) -> dict[str, Any]:
+        """The project's connection requests by tag: how many wait, went out, were accepted or
+        weren't asked, and the share of those that went out that were accepted. Someone with
+        two tags counts in both; people without a tag are under "" (untagged)."""
+
+        project = await self._project(project_id, viewer)
+        only = _tags([tag])[0] if tag else None
+        rows = await self.db.pool.fetch(
+            """SELECT COALESCE(t.tag, '') AS tag, q.status, count(*) AS n
+               FROM linkedin_requests q
+               JOIN records m ON m.id = q.record_id
+               LEFT JOIN record_tags t ON t.record_id = COALESCE(m.merged_into, m.id)
+               WHERE q.project_id = $1 AND q.status NOT IN ('proposed', 'declined')
+                 AND ($2::text IS NULL OR t.tag = $2)
+               GROUP BY 1, 2""",
+            project.id,
+            only,
+        )
+        groups: dict[str, dict[str, int]] = {}
+        for row in rows:
+            group = groups.setdefault(
+                row["tag"],
+                {"waiting": 0, "went_out": 0, "accepted": 0, "pending": 0, "not_asked": 0,
+                 "uncertain": 0},
+            )  # fmt: skip
+            status, n = row["status"], row["n"]
+            if status in WAITING:
+                group["waiting"] += n
+            elif status in WENT_OUT:
+                group["went_out"] += n
+                group["accepted"] += n if status == "accepted" else 0
+                group["pending"] += n if status == "sent" else 0
+            elif status in NOT_ASKED:
+                group["not_asked"] += n
+            else:
+                group["uncertain"] += n
+        result = [
+            {
+                "tag": name or None,
+                **counts,
+                "acceptance_rate": (
+                    round(counts["accepted"] / counts["went_out"], 3)
+                    if counts["went_out"]
+                    else None
+                ),
+            }
+            for name, counts in sorted(groups.items(), key=lambda item: (item[0] == "", item[0]))
+        ]
+        return {"groups": result}
+
+
+def _tags(value: Any) -> list[str]:
+    if value is None:
+        return []
+    items = value if isinstance(value, list | tuple) else [value]
+    try:
+        return list(dict.fromkeys(records.clean_tag(item) for item in items))
+    except records.RecordError as error:
+        raise _refused(error) from None

@@ -105,6 +105,24 @@ again. A fit a member set is never sent to the model. Editing the ICP file doesn
 scorer version or another ICP file marks ratings old (`people_records.rubric`), so routine
 edits never rate everyone again.
 
+## Adding people and tags
+
+A member brings people in over MCP with `add_people` (up to 1,000 a call), each by a LinkedIn
+profile link (with or without https://, on a country subdomain, with a query; or an ACo… ID),
+an email, or both, with name, headline, company, position, location and tags
+(`people_records.add_person`). Someone already in People is matched on their link or email and
+keeps what Tin has: only empty fields are filled, written as `people.import` ("import"), never
+as the member's own. New people have the source `people.added` and are listed in All people;
+nothing is rated or bought for them until they do something Tin sees. With `connections`, the
+list is the member's own LinkedIn connections: the source is `people.import` (a bulk source, so
+they go under Connections) and the member's relationship is `connected`.
+
+`record_tags` holds the team's labels on people, such as the outreach group someone was added
+in: up to 60 characters each, 20 per person, with who added each. `add_people` tags everyone in
+the call; `tag_people` adds and removes tags. A merge joins both records' tags, forgetting
+removes them, and `list_people` filters by one (`tag`) and searches them. People's panel shows
+them as Tags, and its search matches them.
+
 ## Events
 
 Events are only added. Each has an `event_key` that is unique per project: an engagement

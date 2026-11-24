@@ -38,6 +38,7 @@ from typing import Any
 from uuid import UUID
 
 from tin_lite import linkedin_engagers as engagers
+from tin_lite import linkedin_requests as requests
 from tin_lite import people_records as records
 from tin_lite.domain import LINKEDIN_CONNECTIONS_WORKFLOW_NAME
 from tin_lite.linkedin_connections import PAGE_SIZE, PAGES_PER_READ, PROFILES_PER_READ
@@ -115,6 +116,7 @@ async def record_connections(
 
     counts = {"people": 0, "new": 0, "forgotten": 0, "joined": 0, "known": 0}
     baseline = (await list_state(conn, project_id, member))["baseline_at"]
+    asked = await requests.awaiting_answer(conn, project_id, member)
     for connection in connections:
         identifiers = {"linkedin_member": connection["member"]}
         if connection.get("slug"):
@@ -166,6 +168,9 @@ async def record_connections(
         )
         counts["new"] += added
         counts["known"] += not added
+        if target in asked:
+            # Someone the member asked to connect is in their list now: they accepted.
+            await requests.connected_now(conn, project_id, member, target, run_id=run_id)
         if baseline is not None and connected_at > baseline:
             counts["joined"] += await records.add_event(
                 conn,

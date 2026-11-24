@@ -57,9 +57,18 @@ INTENTS = ("hot", "warm", "cold")
 HOT_DAYS = 7
 WARM_DAYS = 30
 ACTIVE = (*SOCIAL, "visited")
+# Who added people through Tin's MCP (`add_people`): a list a member brought, such as people to
+# ask to connect. Their values are written as this writer, never as a member's own.
+ADD_SOURCE = "people.added"
+IMPORT_SOURCE = "people.import"
+IMPORT_WRITER = "people.import"
+# Tags: a member's short labels on people, such as the outreach group they were added in.
+TAG_LENGTH = 60
+TAGS_PER_PERSON = 20
 # Sources that bring in a member's LinkedIn connections in bulk: the connections export workflow
-# and a CSV import. Someone known only from one, who hasn't done anything Tin saw (ACTIVE), is a
-# connection, not a lead: People lists them under Connections, and Tin buys nothing for them.
+# and a CSV import (`add_people` with `connections`). Someone known only from one, who hasn't
+# done anything Tin saw (ACTIVE), is a connection, not a lead: People lists them under
+# Connections, and Tin buys nothing for them.
 BULK_SOURCES = ("social.linkedin_connections", "people.import")
 
 
@@ -317,6 +326,15 @@ async def _merge(conn, survivor: UUID, others: list[UUID]) -> None:
     await conn.execute(
         "UPDATE record_notes SET record_id = $2 WHERE record_id = ANY($1::uuid[])", others, survivor
     )
+    # Tags join the survivor's.
+    await conn.execute(
+        """UPDATE record_tags t SET record_id = $2 WHERE t.record_id = ANY($1::uuid[])
+             AND NOT EXISTS (SELECT 1 FROM record_tags s WHERE s.record_id = $2
+                             AND s.tag = t.tag)""",
+        others,
+        survivor,
+    )
+    await conn.execute("DELETE FROM record_tags WHERE record_id = ANY($1::uuid[])", others)
 
 
 def _typed(spec: tuple[str, tuple[str, ...] | None], value) -> tuple[str | None, float | None]:
@@ -768,6 +786,7 @@ async def forget(conn, project_id: UUID, record_id: UUID) -> bool:
         )
         await conn.execute("DELETE FROM record_events WHERE record_id = ANY($1::uuid[])", ids)
         await conn.execute("DELETE FROM record_notes WHERE record_id = ANY($1::uuid[])", ids)
+        await conn.execute("DELETE FROM record_tags WHERE record_id = ANY($1::uuid[])", ids)
         await conn.execute(
             "DELETE FROM record_relationships WHERE record_id = ANY($1::uuid[])", ids
         )
@@ -797,7 +816,8 @@ async def people(
                             WHERE e.record_id = r.id AND e.kind <> 'connected')
                     OR EXISTS (SELECT 1 FROM record_values v
                                WHERE v.record_id = r.id AND v.field = ANY($5::text[]))
-                    OR EXISTS (SELECT 1 FROM record_notes n WHERE n.record_id = r.id)) AS engaged
+                    OR EXISTS (SELECT 1 FROM record_notes n WHERE n.record_id = r.id)
+                    OR EXISTS (SELECT 1 FROM record_tags t WHERE t.record_id = r.id)) AS engaged
                FROM records r
                WHERE r.project_id = $1 AND r.type = $2 AND r.merged_into IS NULL
                  AND ($4::uuid IS NULL OR r.id = $4)
@@ -811,7 +831,9 @@ async def people(
                SELECT m.id, m.merged_into FROM records m
                WHERE m.project_id = $1 AND m.merged_into IN (SELECT id FROM chosen)
            )
-           SELECT c.id, c.source, c.created_at, c.updated_at, i.identifiers, v.fields, k.events
+           SELECT c.id, c.source, c.created_at, c.updated_at, i.identifiers, v.fields, k.events,
+               (SELECT array_agg(t.tag ORDER BY t.tag) FROM record_tags t
+                WHERE t.record_id = c.id) AS tags
            FROM chosen c
            LEFT JOIN (
                SELECT record_id, jsonb_object_agg(kind, value) AS identifiers
@@ -851,6 +873,7 @@ async def people(
                 "profile_url": profile_link(identifiers),
                 "fields": fields,
                 "events": json.loads(row["events"]) if row["events"] else {},
+                "tags": list(row["tags"] or []),
                 "source": row["source"],
                 "created_at": row["created_at"],
                 "updated_at": row["updated_at"],
@@ -867,6 +890,8 @@ COMPANY_VISIT = "rb2b_company"
 # Short names for the workflows that write records, shown beside a value as who set it.
 WRITERS = {
     COMPANY_WRITER: "Tin",
+    IMPORT_WRITER: "import",
+    ADD_SOURCE: "added",
     "github_star": "GitHub stars",
     "social.linkedin_engagers": "engagers",
     "social.linkedin_profile_viewers": "profile viewers",
@@ -957,7 +982,9 @@ def _fields(
         member = value["set_by_kind"] == "member"
         by = _member(value["set_by"], viewer) if member else None
         if not member:
-            by = (runs.get(value["set_by"]) or {}).get("by") or "Tin"
+            by = (
+                (runs.get(value["set_by"]) or {}).get("by") or WRITERS.get(value["set_by"]) or "Tin"
+            )
         stale = ""
         if key in DEFINED_FIELDS and not member:
             if (
@@ -1132,6 +1159,8 @@ async def directory(
                 "invited_at": invited.get(person["id"]),
                 "added": {"at": person["created_at"], "by": writer(person["source"])},
                 "imported": imported,
+                # A member's labels on them, such as the outreach group they were added in.
+                "tags": person.get("tags", []),
                 # The newest note for the grid, and every note's words for search.
                 "note": (
                     {
@@ -1231,3 +1260,157 @@ async def person(
         for row in (await _notes(conn, project_id, target)).get(target, [])
     ]
     return {**found[0], "events": events, "notes": notes}
+
+
+# Adding people and tagging them, as a member does through Tin's MCP.
+
+
+def clean_tag(value) -> str:
+    """A tag as kept: its words single-spaced, at most TAG_LENGTH characters."""
+
+    if not isinstance(value, str):
+        raise RecordError("invalid_tag")
+    tag = " ".join(value.split())
+    if not 0 < len(tag) <= TAG_LENGTH or any(ord(c) < 32 for c in tag):
+        raise RecordError("invalid_tag")
+    return tag
+
+
+def linkedin_link(value: str) -> dict[str, str]:
+    """A profile link as people paste it: without https://, over http, on a country subdomain
+    (tr.linkedin.com), with a query or a trailing slash. A profile ID or URN also works."""
+
+    text = (value or "").strip()
+    if text.startswith("urn:li:") or MEMBER_ID.fullmatch(text):
+        return linkedin_identifiers(
+            text if text.startswith("urn:") else f"urn:li:fsd_profile:{text}"
+        )
+    if "://" not in text:
+        text = "https://" + text
+    parsed = urlsplit(text)
+    host = (parsed.hostname or "").lower()
+    if parsed.scheme not in ("http", "https") or not (
+        host == "linkedin.com" or host.endswith(".linkedin.com")
+    ):
+        raise RecordError("invalid_identifier")
+    return linkedin_identifiers(f"https://www.linkedin.com{parsed.path}")
+
+
+ADDED_FIELDS = ("name", "headline", "company", "position", "location")
+
+
+async def add_person(
+    conn,
+    project_id: UUID,
+    member: str,
+    person: dict[str, Any],
+    *,
+    connection: bool = False,
+    tags: list[str] = (),
+) -> dict[str, Any]:
+    """Keep one person a member brought, by their LinkedIn profile link, their email or both,
+    with what the member knows of them. A field Tin already has stays as it is: a list is
+    older than what Tin read. `connection` says they're the member's own LinkedIn connection
+    (People lists them under Connections until they do something). Returns their ID, whether
+    they're new, or that they were forgotten."""
+
+    tags = [clean_tag(tag) for tag in tags]
+    identifiers: dict[str, str] = {}
+    link = person.get("linkedin_url") or person.get("linkedin")
+    if link:
+        identifiers.update(linkedin_link(str(link)))
+    email = str(person.get("email") or "").strip().lower()
+    if email:
+        if not EMAIL.fullmatch(email):
+            raise RecordError("invalid_identifier")
+        identifiers["email"] = email
+    if not identifiers:
+        raise RecordError("invalid_identifier")
+    pairs = _pairs(identifiers)
+    known = await conn.fetchval(
+        """SELECT EXISTS (SELECT 1 FROM record_identifiers WHERE project_id = $1
+               AND (kind, value) IN (SELECT * FROM unnest($2::text[], $3::text[])))""",
+        project_id,
+        [k for k, _ in pairs],
+        [v for _, v in pairs],
+    )
+    record_id = await upsert_person(
+        conn, project_id, identifiers, source=IMPORT_SOURCE if connection else ADD_SOURCE
+    )
+    if record_id is None:
+        return {"id": None, "new": False, "forgotten": True}
+    target = await current(conn, project_id, record_id)
+    have = {
+        row["field"]
+        for row in await conn.fetch(
+            "SELECT field FROM record_values WHERE record_id = $1 AND field = ANY($2::text[])",
+            target,
+            list(ADDED_FIELDS),
+        )
+    }
+    values = []
+    for field in ADDED_FIELDS:
+        text = person.get(field)
+        if field not in have and isinstance(text, str) and text.strip():
+            values.append(Value(field, text, "From the list a member added"))
+    if values:
+        await set_values(conn, project_id, target, values, set_by_kind="run", set_by=IMPORT_WRITER)
+    if connection:
+        await set_relationship(
+            conn,
+            project_id,
+            target,
+            member,
+            "connected",
+            set_by=IMPORT_WRITER,
+            reason="In your LinkedIn connections, from your list",
+        )
+    if tags:
+        await add_tags(conn, project_id, [target], tags, member=member)
+    return {"id": target, "new": not known, "forgotten": False}
+
+
+async def add_tags(
+    conn, project_id: UUID, record_ids: list[UUID], tags: list[str], *, member: str
+) -> int:
+    """Tag each current person; returns how many tags were new. A person keeps at most
+    TAGS_PER_PERSON."""
+
+    cleaned = list(dict.fromkeys(clean_tag(tag) for tag in tags))
+    added = 0
+    for record_id in record_ids:
+        target = await current(conn, project_id, record_id)
+        if target is None:
+            continue
+        for tag in cleaned:
+            added += (
+                await conn.fetchval(
+                    """WITH counted AS (SELECT count(*) AS n FROM record_tags WHERE record_id = $2)
+                   INSERT INTO record_tags (project_id, record_id, tag, added_by)
+                   SELECT $1, $2, $3, $4 FROM counted WHERE counted.n < $5
+                   ON CONFLICT (record_id, tag) DO NOTHING
+                   RETURNING 1""",
+                    project_id,
+                    target,
+                    tag,
+                    member,
+                    TAGS_PER_PERSON,
+                )
+                or 0
+            )
+    return added
+
+
+async def remove_tags(conn, project_id: UUID, record_ids: list[UUID], tags: list[str]) -> int:
+    """Take tags off people; returns how many came off."""
+
+    cleaned = list(dict.fromkeys(clean_tag(tag) for tag in tags))
+    targets = [t for t in [await current(conn, project_id, r) for r in record_ids] if t]
+    result = await conn.execute(
+        """DELETE FROM record_tags WHERE project_id = $1 AND record_id = ANY($2::uuid[])
+             AND tag = ANY($3::text[])""",
+        project_id,
+        targets,
+        cleaned,
+    )
+    return int(result.split()[-1])
