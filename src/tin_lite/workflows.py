@@ -2049,14 +2049,27 @@ class PeopleRateWorkflow:
     async def run(self, run_id: str) -> None:
         policy = RetryPolicy(initial_interval=timedelta(seconds=30), maximum_attempts=3)
         try:
-            counts = await workflow.execute_activity(
-                "people_rate_score",
-                run_id,
-                # Up to fifteen minutes of rating, then the count of who is left.
-                start_to_close_timeout=timedelta(minutes=25),
-                heartbeat_timeout=timedelta(minutes=2),
-                retry_policy=policy,
-            )
+
+            async def score() -> dict:
+                # One round: up to people_icp.SCORE_SECONDS of rating, then the count of who
+                # is left.
+                return await workflow.execute_activity(
+                    "people_rate_score",
+                    run_id,
+                    start_to_close_timeout=timedelta(minutes=25),
+                    heartbeat_timeout=timedelta(minutes=2),
+                    retry_policy=policy,
+                )
+
+            counts = await score()
+            if workflow.patched("people-rate-rounds-v1"):
+                # Round after round until nobody is left, a round settles nobody (the model
+                # failing for everyone it tried), or the project's daily guard holds it.
+                rated = counts["rated"]
+                while counts["left"] and counts.get("settled") and not counts["held"]:
+                    counts = await score()
+                    rated += counts["rated"]
+                counts = {**counts, "rated": rated}
             await workflow.execute_activity(
                 "people_rate_publish",
                 {"run_id": run_id, **counts},

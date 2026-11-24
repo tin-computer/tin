@@ -76,6 +76,7 @@ class PeopleRateActivities:
             return {**counts, "held": "daily"}
         await self._progress(run, "rate", 1, "Rating your people against your ICP")
         definition = people_rating.definition_for(icp)
+        before = await settled(self.db.pool, run.id)
         counts["rated"] = await people_rating.rate_unrated(
             self.db,
             self.router,
@@ -92,6 +93,8 @@ class PeopleRateActivities:
                 conn, run.project_id, definition, limit=people_icp.MAX_SCORED
             )
         counts["left"] = len(left)
+        # Whom this round gave a current rating; a round that settles nobody ends the run.
+        counts["settled"] = await settled(self.db.pool, run.id) - before
         return counts
 
     @activity.defn(name="people_rate_publish")
@@ -173,6 +176,16 @@ class PeopleRateActivities:
         if not run or run.executor != KEY:
             return
         await self.db.project_failure(run_id=run.id, **failure_projection(passed, FALLBACK))
+
+
+async def settled(pool, run_id: UUID) -> int:
+    """How many people this run has given a rating it won't retry: an answer, not a failure."""
+
+    return await pool.fetchval(
+        """SELECT count(*) FROM record_values
+           WHERE field = 'icp_fit' AND set_by_kind = 'run' AND set_by = $1 AND definition <> ''""",
+        str(run_id),
+    )
 
 
 async def rated_by(conn, project_id: UUID, run_id: UUID) -> list[dict]:

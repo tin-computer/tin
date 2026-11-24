@@ -5,6 +5,7 @@ from __future__ import annotations
 import json
 from uuid import UUID, uuid4
 
+import pytest
 from test_connection_collection import collection_db as collection_db
 from test_linkedin_engagers import Router, fixture
 
@@ -283,3 +284,71 @@ async def test_a_person_neither_call_rates_is_tried_again_by_the_next_run(collec
     assert len(router.requests) == 3
     people = {p["id"]: p for p in await records.people(f.db.pool, f.project.id)}
     assert people[ada]["fields"]["icp_fit"]["number"] == 4
+
+
+# The Temporal workflow: rounds until nobody is left.
+
+
+def round_(rated, left, settled=None, held=""):
+    return {
+        "rated": rated,
+        "left": left,
+        "settled": rated if settled is None else settled,
+        "available": True,
+        "has_icp": True,
+        "held": held,
+    }
+
+
+@pytest.mark.parametrize(
+    ("rounds", "expected_rounds", "rated"),
+    [
+        # A backlog is rated round after round until nobody is left.
+        ([round_(100, 250), round_(100, 150), round_(100, 50), round_(50, 0)], 4, 350),
+        # A round that settles nobody (the model failing everyone) ends the run.
+        ([round_(100, 250), round_(40, 210, settled=0), round_(100, 110)], 2, 140),
+        # The daily guard ends it.
+        ([round_(100, 250), round_(0, 250, held="daily")], 2, 100),
+        # Nothing left after the first round: one round.
+        ([round_(12, 0)], 1, 12),
+    ],
+)
+async def test_the_workflow_rates_in_rounds_until_nobody_is_left(rounds, expected_rounds, rated):
+    from temporalio import activity
+    from temporalio.testing import WorkflowEnvironment
+    from temporalio.worker import Replayer, Worker
+
+    from tin_lite.workflows import PeopleRateWorkflow
+
+    calls, published = [], []
+
+    @activity.defn(name="people_rate_score")
+    async def score(run_id):
+        calls.append(run_id)
+        return rounds[len(calls) - 1]
+
+    @activity.defn(name="people_rate_publish")
+    async def publish(control):
+        published.append(control)
+
+    @activity.defn(name="people_rate_failure")
+    async def failure(argument):
+        raise AssertionError("The run must not fail")
+
+    async with await WorkflowEnvironment.start_time_skipping() as env:
+        queue, run_id = f"rate-{uuid4()}", str(uuid4())
+        async with Worker(
+            env.client,
+            task_queue=queue,
+            workflows=[PeopleRateWorkflow],
+            activities=[score, publish, failure],
+        ):
+            handle = await env.client.start_workflow(
+                PeopleRateWorkflow.run, run_id, id=f"{people_rate.KEY}:{run_id}", task_queue=queue
+            )
+            await handle.result()
+            history = await handle.fetch_history()
+    await Replayer(workflows=[PeopleRateWorkflow]).replay_workflow(history)
+    assert len(calls) == expected_rounds
+    assert published[0]["rated"] == rated
+    assert published[0]["left"] == rounds[expected_rounds - 1]["left"]

@@ -8,8 +8,9 @@ changes. Imported
 connections with nothing but a `connected` event are never picked up. A member's own rating is
 never replaced.
 
-One run rates up to `people_icp.MAX_SCORED` people; a larger backlog takes a few runs. The run
-lists whom it rated in people/ratings.md. Only counts pass through Temporal.
+A run rates in rounds that each fit one activity, and keeps going until nobody is left, a round
+gives nobody a rating (the model failing for everyone it tried) or the project's daily guard
+holds it. The run lists whom it rated in people/ratings.md. Only counts pass through Temporal.
 """
 
 from __future__ import annotations
@@ -65,7 +66,7 @@ def report(people: list[dict], *, rated: int, left: int) -> str:
         if len(people) > LISTED:
             lines += ["", f"And {len(people) - LISTED} more, in People."]
     if left:
-        lines += ["", f"{left} more still need a rating; the next run continues with them."]
+        lines += ["", f"{left} more still need a rating; starting it again continues with them."]
     return "\n".join(lines) + "\n"
 
 
