@@ -16,7 +16,7 @@ from uuid import UUID
 from temporalio import activity
 from temporalio.exceptions import ApplicationError
 
-from tin_lite import people_icp, people_rating, rb2b, rb2b_slack, warm_paths
+from tin_lite import lead_phones, people_icp, people_rating, rb2b, rb2b_slack, warm_paths
 from tin_lite import people_records as records
 from tin_lite.connection_collection import CollectionError
 from tin_lite.failures import failure_projection, split_failure_input
@@ -33,6 +33,8 @@ from tin_lite.product_urls import dashboard_url
 logger = logging.getLogger(__name__)
 
 KEY = rb2b.KEY
+# How long a visit's phone lookups may take, inside the rate step's twenty minutes.
+PHONE_SECONDS = 4 * 60
 FALLBACK = "Tin couldn't finish reading this visitor. The next visitor RB2B posts tries again."
 STEPS = 6
 # The receipt of a warm path's one LinkedIn search, counted per project per day.
@@ -283,6 +285,16 @@ class RB2BActivities:
             definition=people_rating.definition_for(icp),
             operation=KEY,
             step="rb2b",
+            only=record_id,
+            heartbeat=_heartbeat,
+        )
+        # A good or strong fit gets their phone numbers on file, once (lead_phones).
+        await lead_phones.look_up_wanted(
+            self.db,
+            getattr(self, "delegate", None),
+            run.project_id,
+            run_id=run.id,
+            seconds=PHONE_SECONDS,
             only=record_id,
             heartbeat=_heartbeat,
         )

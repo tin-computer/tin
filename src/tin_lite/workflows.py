@@ -2070,6 +2070,22 @@ class PeopleRateWorkflow:
                     counts = await score()
                     rated += counts["rated"]
                 counts = {**counts, "rated": rated}
+            if workflow.patched("people-rate-phones-v1"):
+                # Phone numbers for the good and strong leads, step after step until nobody is
+                # left, a step looks nobody up, or the project's daily guard holds it.
+                found = 0
+                while True:
+                    phones = await workflow.execute_activity(
+                        "people_rate_phones",
+                        run_id,
+                        start_to_close_timeout=timedelta(minutes=20),
+                        heartbeat_timeout=timedelta(minutes=2),
+                        retry_policy=policy,
+                    )
+                    found += phones["found"]
+                    if not (phones["left"] and phones["looked_up"]) or phones["held"]:
+                        break
+                counts = {**counts, "phones": found}
             await workflow.execute_activity(
                 "people_rate_publish",
                 {"run_id": run_id, **counts},

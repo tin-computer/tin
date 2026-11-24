@@ -11,7 +11,7 @@ from test_connection_collection import collection_db as collection_db
 from test_rb2b import SEEN, client, payload, rb2b_fixture, set_up
 from test_rb2b_slack import POSTER, Slack, settings
 
-from tin_lite import people_icp, rb2b, rb2b_company, rb2b_slack
+from tin_lite import lead_phones, people_icp, rb2b, rb2b_company, rb2b_slack
 from tin_lite import people_records as records
 from tin_lite.rb2b_company_activities import RB2BCompanyActivities
 
@@ -445,7 +445,7 @@ class FakeDelegate:
         self.orders.append(
             {"service": service, "input": task_input, "key": idempotency_key, "id": conversation}
         )
-        price = {rb2b_company.PROFILES: 0.008}.get(service, 0.0)
+        price = {rb2b_company.PROFILES: 0.008, lead_phones.SERVICE: 0.15}.get(service, 0.0)
         return {"conversation_id": conversation, "order_id": "o", "price_usd": price}
 
     async def result(self, conversation_id, *, wait=30):
@@ -454,6 +454,9 @@ class FakeDelegate:
             return {"state": "delivered", "result": self.finder, "error": None}
         if service == rb2b_company.SEARCH:
             return {"state": "delivered", "result": {"artifacts": {"profiles": []}}, "error": None}
+        if service == lead_phones.SERVICE:
+            phones = {"artifacts": {"phones": ["+1 415 555 0142"]}}
+            return {"state": "delivered", "result": phones, "error": None}
         return {
             "state": "delivered",
             "result": profiles_answer(
@@ -520,7 +523,7 @@ async def test_a_company_worth_chasing_finds_checks_keeps_rates_and_posts(
         await work.find(run_id)
         await work.rate_people(run_id)
         await work.notify_company(run_id)
-        assert len(router.requests) == calls and len(delegate.orders) == 2
+        assert len(router.requests) == calls and len(delegate.orders) == 3
         assert len(slack.posts) == 1
         assert len(await records.people(f.db.pool, f.project.id)) == 1
 
@@ -532,7 +535,13 @@ async def test_a_company_worth_chasing_finds_checks_keeps_rates_and_posts(
     assert judge.web_search_calls and "RB2B" not in judge.messages[0].content
     assert json.loads(judge.messages[0].content)["visit"]["page"] == "/pricing"
     # The free finder by domain and the model's titles, then a profile read of the two picked.
-    assert [o["service"] for o in delegate.orders] == [rb2b_company.FINDER, rb2b_company.PROFILES]
+    # Then Rob, a strong fit, gets the phone numbers on file for his profile.
+    assert [o["service"] for o in delegate.orders] == [
+        rb2b_company.FINDER,
+        rb2b_company.PROFILES,
+        lead_phones.SERVICE,
+    ]
+    assert delegate.orders[2]["input"] == {"linkedin_url": "https://www.linkedin.com/in/robtonk"}
     assert delegate.orders[0]["input"]["company_url"]["include"] == ["acme.test"]
     assert delegate.orders[0]["input"]["title"]["include"] == ["Chief Financial Officer", "CFO"]
     assert delegate.orders[1]["input"]["profile_urls"] == [
@@ -546,6 +555,7 @@ async def test_a_company_worth_chasing_finds_checks_keeps_rates_and_posts(
     assert rob["profile_url"] == "https://www.linkedin.com/in/robtonk"
     assert rob["fields"]["position"]["text"] == "Chief Financial Officer"
     assert rob["fields"]["icp_fit"]["number"] == 4
+    assert rob["fields"]["phone"]["text"] == "+1 415 555 0142"
     assert rob["events"] == {"visited": 1}
     event = await f.db.pool.fetchval("SELECT detail FROM record_events")
     event = json.loads(event) if isinstance(event, str) else event
@@ -707,13 +717,13 @@ async def test_a_day_over_the_delegate_guard_judges_but_buys_nothing(collection_
     first = await company_run(f, monkeypatch)
     router, delegate, slack = CompanyRouter(), FakeDelegate(), Slack(f.db)
     await through(work_for(f, router, delegate, slack), first)
-    assert len(delegate.orders) == 2  # $0.008 ordered today
+    assert len(delegate.orders) == 3  # $0.008 ordered today, and Rob's phone lookup
     # The next company would pass the day's guard: judged, posted, nobody looked up.
     monkeypatch.setattr(rb2b_company, "DELEGATE_USD_PER_DAY", rb2b_company.MOST_PER_COMPANY + 0.005)
     other = {"Website": "other.test", "Company Name": "Other", "Captured URL": "https://o.test/"}
     second = await company_run(f, monkeypatch, **other)
     _, judged = await through(work_for(f, router, delegate, slack), second)
-    assert judged == {"worth": True} and len(delegate.orders) == 2
+    assert judged == {"worth": True} and len(delegate.orders) == 3
     company = await f.db.pool.fetchval(
         "SELECT company FROM rb2b_visits WHERE run_id = $1", UUID(second)
     )

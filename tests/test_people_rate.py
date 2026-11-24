@@ -327,6 +327,10 @@ async def test_the_workflow_rates_in_rounds_until_nobody_is_left(rounds, expecte
         calls.append(run_id)
         return rounds[len(calls) - 1]
 
+    @activity.defn(name="people_rate_phones")
+    async def phones(run_id):
+        return {"looked_up": 0, "found": 0, "left": 0, "held": False}
+
     @activity.defn(name="people_rate_publish")
     async def publish(control):
         published.append(control)
@@ -341,7 +345,7 @@ async def test_the_workflow_rates_in_rounds_until_nobody_is_left(rounds, expecte
             env.client,
             task_queue=queue,
             workflows=[PeopleRateWorkflow],
-            activities=[score, publish, failure],
+            activities=[score, phones, publish, failure],
         ):
             handle = await env.client.start_workflow(
                 PeopleRateWorkflow.run, run_id, id=f"{people_rate.KEY}:{run_id}", task_queue=queue
@@ -352,3 +356,64 @@ async def test_the_workflow_rates_in_rounds_until_nobody_is_left(rounds, expecte
     assert len(calls) == expected_rounds
     assert published[0]["rated"] == rated
     assert published[0]["left"] == rounds[expected_rounds - 1]["left"]
+
+
+@pytest.mark.parametrize(
+    ("steps", "expected_steps", "found"),
+    [
+        # Phones are looked up step after step until no lead is left without one.
+        ([(5, 5, 20), (5, 4, 15), (5, 3, 0)], 3, 12),
+        # A step that looks nobody up (Delegate refusing everyone) ends it.
+        ([(5, 2, 20), (0, 0, 20)], 2, 2),
+        # The daily guard ends it.
+        ([(5, 5, 20, True)], 1, 5),
+    ],
+)
+async def test_the_workflow_finds_phones_for_leads_after_rating(steps, expected_steps, found):
+    from temporalio import activity
+    from temporalio.testing import WorkflowEnvironment
+    from temporalio.worker import Replayer, Worker
+
+    from tin_lite.workflows import PeopleRateWorkflow
+
+    calls, published = [], []
+
+    @activity.defn(name="people_rate_score")
+    async def score(run_id):
+        return round_(3, 0)
+
+    @activity.defn(name="people_rate_phones")
+    async def phones(run_id):
+        calls.append(run_id)
+        looked, got, left, *held = steps[len(calls) - 1]
+        return {"looked_up": looked, "found": got, "left": left, "held": bool(held)}
+
+    @activity.defn(name="people_rate_publish")
+    async def publish(control):
+        published.append(control)
+
+    @activity.defn(name="people_rate_failure")
+    async def failure(argument):
+        raise AssertionError("The run must not fail")
+
+    async with await WorkflowEnvironment.start_time_skipping() as env:
+        queue, run_id = f"rate-{uuid4()}", str(uuid4())
+        async with Worker(
+            env.client,
+            task_queue=queue,
+            workflows=[PeopleRateWorkflow],
+            activities=[score, phones, publish, failure],
+        ):
+            handle = await env.client.start_workflow(
+                PeopleRateWorkflow.run, run_id, id=f"{people_rate.KEY}:{run_id}", task_queue=queue
+            )
+            await handle.result()
+            history = await handle.fetch_history()
+    await Replayer(workflows=[PeopleRateWorkflow]).replay_workflow(history)
+    assert len(calls) == expected_steps
+    assert published[0]["phones"] == found
+
+
+def test_the_summary_says_how_many_leads_got_phones():
+    said = people_rate.summary(rated=4, good=2, left=0, available=True, has_icp=True, phones=2)
+    assert said == "Rated 4 people, 2 a good or strong fit. Found phone numbers for 2 leads."

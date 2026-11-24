@@ -237,7 +237,7 @@ window.TinPeople = (() => {
   function shown() {
     const query = view.query.trim().toLowerCase();
     const people = segmentPeople(view.segment).filter((person) => !query ||
-      [person.name, person.headline, person.company, person.email, field(person, "web_summary")?.value, sourceText(field(person, "web_source")), field(person, "icp")?.value, person.notes_text].some((text) => (text || "").toLowerCase().includes(query)));
+      [person.name, person.headline, person.company, person.email, field(person, "phone")?.value, field(person, "web_summary")?.value, sourceText(field(person, "web_source")), field(person, "icp")?.value, person.notes_text].some((text) => (text || "").toLowerCase().includes(query)));
     const compare = SORTS[view.sort.key];
     return [...people].sort((a, b) => {
       const order = view.sort.descending ? compare(b, a) : compare(a, b);
@@ -694,6 +694,17 @@ window.TinPeople = (() => {
     }
     // Who on the team can introduce them, as Slack says it: read from People, never LinkedIn.
     if (person.way_in) rows.push(fieldRow("Way in", `<strong class="person-way-in">${escape(person.way_in)}</strong>`, ""));
+    // Numbers on file for a good or strong lead, each one a call away.
+    const phone = field(person, "phone");
+    if (phone?.value) {
+      const numbers = phone.value.split(",").map((number) => number.trim()).filter(Boolean);
+      rows.push(fieldRow(
+        "Phone",
+        `<span class="person-phones">${numbers.map((number) => `<a href="tel:${escape(number.replace(/[^+\d]/g, ""))}">${escape(number)}</a>`).join("")}</span>`,
+        lineage(phone),
+        phone.reason ? `<div class="person-field-notes"><p>${escape(phone.reason)}</p></div>` : "",
+      ));
+    }
     const web = field(person, "web_tier");
     if (web) {
       const summary = field(person, "web_summary");

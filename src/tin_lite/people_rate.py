@@ -71,7 +71,14 @@ def report(people: list[dict], *, rated: int, left: int) -> str:
 
 
 def summary(
-    *, rated: int, good: int, left: int, available: bool, has_icp: bool, held: str = ""
+    *,
+    rated: int,
+    good: int,
+    left: int,
+    available: bool,
+    has_icp: bool,
+    held: str = "",
+    phones: int = 0,
 ) -> str:
     if held == "running":
         return "Another rating run for this project is still going, so this one rated nobody."
@@ -81,8 +88,11 @@ def summary(
         return "Rating isn't available on this deployment, so nobody was rated."
     if not has_icp:
         return "Add strategy/ICP.md so Tin can rate people against it."
+    found = (
+        f" Found phone numbers for {phones} {'lead' if phones == 1 else 'leads'}." if phones else ""
+    )
     if not rated:
-        return "Everyone who did something already has a current rating."
+        return "Everyone who did something already has a current rating." + found
     said = f"Rated {rated} {'person' if rated == 1 else 'people'}"
     said += f", {good} a good or strong fit" if good else ", none a good or strong fit"
-    return said + (f"; {left} still to rate." if left else ".")
+    return said + (f"; {left} still to rate." if left else ".") + found

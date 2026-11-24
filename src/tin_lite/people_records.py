@@ -87,6 +87,8 @@ FIELDS: dict[str, tuple[str, str, tuple[str, ...] | None]] = {
     "web_tier": ("choice", "On the site", WEB_TIERS),
     "web_summary": ("text", "Last visit", None),
     "web_source": ("choice", "Came from", WEB_SOURCES),
+    # Numbers on file for a good or strong lead (lead_phones), comma-separated.
+    "phone": ("text", "Phone", None),
 }
 SET_BY = ("run", "member")
 TEXT_LIMIT = 2000

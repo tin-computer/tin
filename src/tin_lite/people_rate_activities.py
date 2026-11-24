@@ -8,12 +8,14 @@ from uuid import UUID
 from temporalio import activity
 from temporalio.exceptions import ApplicationError
 
-from tin_lite import people_icp, people_rate, people_rating
+from tin_lite import lead_phones, people_icp, people_rate, people_rating
 from tin_lite.failures import failure_projection, split_failure_input
 from tin_lite.organic_audit_publication import publish_artifacts
 
 KEY = people_rate.KEY
-STEPS = 2
+STEPS = 3
+# How long one phones step looks numbers up, inside its activity's twenty minutes.
+PHONE_SECONDS = 12 * 60
 FALLBACK = "Tin couldn't finish rating your people. Starting it again continues where it stopped."
 
 
@@ -23,8 +25,9 @@ def _heartbeat(detail) -> None:
 
 
 class PeopleRateActivities:
-    def __init__(self, *, database, storage, router):
+    def __init__(self, *, database, storage, router, delegate=None):
         self.db, self.storage, self.router = database, storage, router
+        self.delegate = delegate
 
     async def _active(self, run_id, *, conn=None):
         run = await self.db.get_run(UUID(str(run_id)), conn=conn)
@@ -97,12 +100,28 @@ class PeopleRateActivities:
         counts["settled"] = await settled(self.db.pool, run.id) - before
         return counts
 
+    @activity.defn(name="people_rate_phones")
+    async def phones(self, run_id: str) -> dict:
+        """Phone numbers for the project's good and strong leads who have none yet (lead_phones),
+        for up to PHONE_SECONDS. Returns counts."""
+
+        run = await self._active(run_id)
+        await self._progress(run, "phones", 2, "Finding phone numbers for your best leads")
+        return await lead_phones.look_up_wanted(
+            self.db,
+            self.delegate,
+            run.project_id,
+            run_id=run.id,
+            seconds=PHONE_SECONDS,
+            heartbeat=_heartbeat,
+        )
+
     @activity.defn(name="people_rate_publish")
     async def publish(self, control: dict) -> None:
         """people/ratings.md and the run's one line."""
 
         run = await self._active(control["run_id"])
-        await self._progress(run, "publish", 2, "Listing whom Tin rated")
+        await self._progress(run, "publish", 3, "Listing whom Tin rated")
         project = await self.db.get_project(run.project_id)
         key = f"{run.id}:people_rate:files"
         async with self.db.effect_lock(key, KEY) as (conn, receipt):
@@ -120,6 +139,7 @@ class PeopleRateActivities:
                     available=bool(control.get("available")),
                     has_icp=bool(control.get("has_icp")),
                     held=str(control.get("held") or ""),
+                    phones=int(control.get("phones") or 0),
                 )
                 document = people_rate.report(
                     people, rated=len(people), left=int(control.get("left") or 0)
