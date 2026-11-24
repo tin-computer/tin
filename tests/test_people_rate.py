@@ -159,3 +159,31 @@ def test_the_report_lists_best_first_and_says_who_is_left():
     assert "| A / B | CFO | 4 · Strong fit | hot | Fits. |" in text
     assert "3 more still need a rating" in text
     assert json.dumps(people_rate.INPUT_SCHEMA)
+
+
+async def test_a_second_run_while_one_is_going_or_past_the_days_guard_rates_nobody(
+    collection_db, monkeypatch
+):
+    f = await fixture(collection_db)
+    await person(f, "Ada Byron", "Founder at Acme")
+    router = Router()
+    work = PeopleRateActivities(database=f.db, storage=f.storage, router=router)
+    first = await rate_run(f)
+    second = await rate_run(f)
+    await f.db.pool.execute(
+        "UPDATE workflow_runs SET created_at = now() - interval '1 minute' WHERE id=$1",
+        UUID(first),
+    )
+    counts = await work.score(second)
+    assert counts["held"] == "running" and not router.requests
+    await work.publish({"run_id": second, **counts})
+    summary = await f.db.pool.fetchval(
+        "SELECT result_summary FROM workflow_runs WHERE id=$1", UUID(second)
+    )
+    assert summary.startswith("Another rating run for this project is still going")
+
+    await f.db.pool.execute("UPDATE workflow_runs SET status='succeeded' WHERE id=$1", UUID(first))
+    monkeypatch.setattr(people_rate, "RATED_PER_DAY", 0)
+    third = await rate_run(f)
+    counts = await work.score(third)
+    assert counts["held"] == "daily" and not router.requests

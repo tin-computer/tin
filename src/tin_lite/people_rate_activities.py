@@ -48,9 +48,32 @@ class PeopleRateActivities:
         project = await self.db.get_project(run.project_id)
         icp = await people_icp.read_icp(self.storage, project)
         has_icp = bool(icp.get("profiles"))
-        counts = {"rated": 0, "left": 0, "available": available, "has_icp": has_icp}
+        counts = {"rated": 0, "left": 0, "available": available, "has_icp": has_icp, "held": ""}
         if not (available and has_icp):
             return counts
+        # Runaway guards, as Tin pays: one run at a time, and a day's ratings per project.
+        async with self.db.pool.acquire() as conn:
+            others = await conn.fetchval(
+                """SELECT count(*) FROM workflow_runs
+                   WHERE project_id = $1 AND executor = $2 AND id <> $3
+                     AND status IN ('pending', 'running') AND created_at < $4""",
+                run.project_id,
+                KEY,
+                run.id,
+                run.created_at,
+            )
+            today = await conn.fetchval(
+                """SELECT count(*) FROM record_values v
+                   JOIN workflow_runs w ON w.id::text = v.set_by
+                   WHERE w.project_id = $1 AND w.executor = $2 AND v.field = 'icp_fit'
+                     AND v.set_by_kind = 'run' AND v.set_at > now() - interval '1 day'""",
+                run.project_id,
+                KEY,
+            )
+        if others:
+            return {**counts, "held": "running"}
+        if today >= people_rate.RATED_PER_DAY:
+            return {**counts, "held": "daily"}
         await self._progress(run, "rate", 1, "Rating your people against your ICP")
         definition = people_rating.definition_for(icp)
         counts["rated"] = await people_rating.rate_unrated(
@@ -93,6 +116,7 @@ class PeopleRateActivities:
                     left=int(control.get("left") or 0),
                     available=bool(control.get("available")),
                     has_icp=bool(control.get("has_icp")),
+                    held=str(control.get("held") or ""),
                 )
                 document = people_rate.report(
                     people, rated=len(people), left=int(control.get("left") or 0)

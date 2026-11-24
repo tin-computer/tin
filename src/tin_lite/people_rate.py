@@ -32,6 +32,8 @@ PATHS = {"ratings.md": PATH}
 LIMITS = {"ratings.md": 400_000}
 # People listed in the file, best fit first; the rest are counted.
 LISTED = 400
+# Ratings these runs make per project per day: a runaway guard well above a backfill.
+RATED_PER_DAY = 1500
 
 
 def _cell(value: Any) -> str:
@@ -66,7 +68,13 @@ def report(people: list[dict], *, rated: int, left: int) -> str:
     return "\n".join(lines) + "\n"
 
 
-def summary(*, rated: int, good: int, left: int, available: bool, has_icp: bool) -> str:
+def summary(
+    *, rated: int, good: int, left: int, available: bool, has_icp: bool, held: str = ""
+) -> str:
+    if held == "running":
+        return "Another rating run for this project is still going, so this one rated nobody."
+    if held == "daily":
+        return "Tin has rated as many people as it does in a day here; start it again tomorrow."
     if not available:
         return "Rating isn't available on this deployment, so nobody was rated."
     if not has_icp:
