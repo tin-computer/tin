@@ -111,8 +111,19 @@ CONTENT_REFRESH_VALIDATOR = "content-refresh.v1"
 # content.plan_research's portfolio (content_plan_agent): one validator, one run-owned path.
 CONTENT_PORTFOLIO_VALIDATOR = "content-plan-portfolio.v1"
 CONTENT_PORTFOLIO_PATH_TEMPLATE = "reports/content-plan/{run_id}/PORTFOLIO.md"
+# Daily intelligence's judges (intel_judge): each writes one lenient Markdown file at its
+# run-owned path, and its stories and brief go to Postgres through its intel grant.
+INTEL_NOTES_VALIDATOR = "intel-notes.v1"
+INTEL_REPORT_VALIDATOR = "intel-report.v1"
+INTEL_SCOPES = {
+    "world": ("intel.world_judge", INTEL_NOTES_VALIDATOR, "intel/world/runs/{run_folder}/NOTES.md"),
+    "client": ("intel.client_judge", INTEL_REPORT_VALIDATOR, "intel/runs/{run_folder}/report.md"),
+}
+INTEL_MAX_BYTES = {INTEL_NOTES_VALIDATOR: 20_000, INTEL_REPORT_VALIDATOR: 200_000}
 ARTIFACT_VALIDATORS = frozenset(
     {
+        INTEL_NOTES_VALIDATOR,
+        INTEL_REPORT_VALIDATOR,
         CONTENT_PORTFOLIO_VALIDATOR,
         "brand-design-capture.v1",
         ANALYTICS_BRIEF_VALIDATOR,
@@ -463,6 +474,8 @@ class CodexProcedureSpec:
     code_repository_output: bool = False
     # The harness and model that run it; None is Codex (agent_harness).
     agent: AgentSelection | None = None
+    # Daily intelligence's judges: "world" or "client" (intel_judge).
+    intel_scope: str | None = None
 
     @property
     def repository_workspace(self) -> bool:
@@ -512,6 +525,8 @@ class PinnedCodexProcedure:
     code_repository_output: bool = False
     # The harness and model that run it; None is Codex (agent_harness).
     agent: AgentSelection | None = None
+    # Daily intelligence's judges: "world" or "client" (intel_judge).
+    intel_scope: str | None = None
 
     @property
     def repository_workspace(self) -> bool:
@@ -637,6 +652,8 @@ class PinnedCodexProcedure:
         }
         if self.agent is not None:
             context["agent"] = self.agent.definition()
+        if self.intel_scope is not None:
+            context["intel"] = {"scope": self.intel_scope}
         if run_id is not None:
             # Code workflows read ctx["run_id"]; a procedure gets the same ID in its brief and,
             # through the sandbox, as TIN_RUN_ID for its commands.
@@ -748,6 +765,8 @@ class CodexProcedureSource:
     identity: bool | TestIdentityPolicy = False
     # The harness and model that run it; None is Codex (agent_harness).
     agent: AgentSelection | None = None
+    # Daily intelligence's judges: "world" or "client" (intel_judge).
+    intel_scope: str | None = None
 
     @property
     def identity_policy(self) -> TestIdentityPolicy:
@@ -904,6 +923,8 @@ class CodexProcedureSource:
         }
         if self.agent is not None:
             procedure["agent"] = self.agent.definition()
+        if self.intel_scope is not None:
+            procedure["intel"] = {"scope": self.intel_scope}
         validate_codex_procedure_definition(
             {"key": workflow_key, "executor": CODEX_PROCEDURE_EXECUTOR, "procedure": procedure}
         )
@@ -1067,7 +1088,7 @@ def validate_codex_procedure_definition(definition: dict[str, Any]) -> CodexProc
             if (
                 placeholders == ["{run_folder}"]
                 and not documents
-                and output_validator != CONTENT_REFRESH_VALIDATOR
+                and output_validator not in {CONTENT_REFRESH_VALIDATOR, *INTEL_MAX_BYTES}
             ):
                 raise ValueError("readable run folders are reserved for reviewed documents")
             if placeholders in (["{run_id}"], ["{run_folder}"]):
@@ -1087,6 +1108,7 @@ def validate_codex_procedure_definition(definition: dict[str, Any]) -> CodexProc
                         BLOG_INDEX_PLAN_VALIDATOR,
                         FEEDBACK_FIX_PLAN_VALIDATOR,
                         CONTENT_PORTFOLIO_VALIDATOR,
+                        *INTEL_MAX_BYTES,
                     }
                 ):
                     raise ValueError("run-owned paths require a plain report or draft validation")
@@ -1169,6 +1191,19 @@ def validate_codex_procedure_definition(definition: dict[str, Any]) -> CodexProc
             or workspace_kind != PROJECT_STATE_WORKSPACE
         ):
             raise ValueError("A content portfolio is content.plan_research's PORTFOLIO.md.")
+        if output_validator in INTEL_MAX_BYTES and not any(
+            definition.get("key") == key
+            and output_validator == validator
+            and output_path_template == template
+            for key, validator, template in INTEL_SCOPES.values()
+        ):
+            raise ValueError("Intelligence notes and reports are their judge's run-owned file.")
+        if output_validator in INTEL_MAX_BYTES and (
+            output_media_type != "text/markdown"
+            or workspace_kind != PROJECT_STATE_WORKSPACE
+            or output_max_bytes > INTEL_MAX_BYTES[output_validator]
+        ):
+            raise ValueError("Intelligence notes and reports are bounded Markdown in Files.")
         if output_validator == CONTENT_REFRESH_VALIDATOR and (
             definition.get("key") != "content.refresh"
             or output_path_template != "content/refreshes/{run_folder}.md"
@@ -1420,6 +1455,19 @@ def validate_codex_procedure_definition(definition: dict[str, Any]) -> CodexProc
                 "workflow.code packages, not procedures"
             )
 
+    intel_scope = _intel_scope(
+        procedure.get("intel"),
+        definition=definition,
+        agent=agent,
+        result_kind=result_kind,
+        workspace_kind=workspace_kind,
+        output_validator=output_validator,
+        output_path_template=output_path_template,
+        services=services,
+        sandbox=sandbox,
+        identity=identity,
+    )
+
     return CodexProcedureSpec(
         prompt_path=prompt_path,
         skills_path=skills_path,
@@ -1451,7 +1499,65 @@ def validate_codex_procedure_definition(definition: dict[str, Any]) -> CodexProc
         reference_repositories=repositories == "connected",
         code_repository_output=output_repository == "code",
         agent=agent,
+        intel_scope=intel_scope,
     )
+
+
+def _intel_scope(
+    value: object,
+    *,
+    definition: dict[str, Any],
+    agent: AgentSelection | None,
+    result_kind: str,
+    workspace_kind: str,
+    output_validator: str | None,
+    output_path_template: str | None,
+    services: tuple,
+    sandbox: SandboxProfile,
+    identity: TestIdentityPolicy,
+) -> str | None:
+    """A judge reads the day's snapshot and writes its stories and brief through the run's one
+    intel grant: only Antigravity in the isolated sandbox, a Markdown artifact on the project
+    state, and no other run tools (one sandbox carries exactly one run-tool grant)."""
+    if value is None:
+        if output_validator in INTEL_MAX_BYTES:
+            raise ValueError("Intelligence notes and reports belong to an intel judge.")
+        return None
+    if not isinstance(value, dict) or set(value) != {"scope"} or value["scope"] not in INTEL_SCOPES:
+        raise ValueError('procedure intel must be {"scope": "world"} or {"scope": "client"}')
+    scope = value["scope"]
+    key, validator, template = INTEL_SCOPES[scope]
+    if (
+        agent is None
+        or agent.harness != "antigravity"
+        or sandbox.profile != ISOLATED_SANDBOX_PROFILE
+        or sandbox.open_egress
+    ):
+        raise ValueError("intel judges run on Antigravity in the isolated sandbox")
+    if result_kind != PROJECT_ARTIFACT_RESULT or workspace_kind != PROJECT_STATE_WORKSPACE:
+        raise ValueError("intel judges write one project artifact from the project state")
+    if services or sandbox.studio or sandbox.browser or identity.enabled:
+        raise ValueError("intel judges carry no services, Studio, browser or test identity")
+    if (
+        definition.get("key") != key
+        or output_validator != validator
+        or output_path_template != template
+    ):
+        raise ValueError(f"the {scope} intel judge is {key}, writing {template}")
+    return scope
+
+
+def validate_intel_markdown(content: bytes, *, limit: int) -> None:
+    """Lenient: some UTF-8 text under the cap, and no credential shape in it."""
+    from tin_lite.redaction import redact_token_shapes
+
+    if not content.strip() or len(content) > limit:
+        raise ValueError(f"The judge's Markdown must hold 1 to {limit} bytes.")
+    text = content.decode("utf-8")
+    if "\x00" in text:
+        raise ValueError("The judge's Markdown contains a NUL character.")
+    if redact_token_shapes(text)[1]:
+        raise ValueError("The judge's Markdown contains what looks like a credential.")
 
 
 def _identity_policy(value: object) -> TestIdentityPolicy:
@@ -1609,6 +1715,7 @@ async def load_pinned_codex_procedure(
         reference_repositories=spec.reference_repositories,
         code_repository_output=spec.code_repository_output,
         agent=spec.agent,
+        intel_scope=spec.intel_scope,
     )
 
 
@@ -1689,6 +1796,8 @@ def validate_procedure_artifact(
         from tin_lite import content_plan_agent
 
         content_plan_agent.validate(text)
+    elif spec.output_validator in INTEL_MAX_BYTES:
+        validate_intel_markdown(content, limit=INTEL_MAX_BYTES[spec.output_validator])
 
 
 def signup_walkthrough_activation(content: str) -> bool:
