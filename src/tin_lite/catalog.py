@@ -1577,7 +1577,7 @@ BUILTIN_WORKFLOWS = (
         description=(
             "Read your own LinkedIn posts from the last 90 days and everyone who reacted to "
             "them, keep each person in People with whether you're already connected, rate "
-            "them 1 to 5 against strategy/ICP.md, and list them best fit first in "
+            "them 1 to 4 against strategy/ICP.md, and list them best fit first in "
             "people/linkedin-engagers.csv. People who fit and aren't connected get a connection "
             "request from you, a few each weekday. Reads with your saved LinkedIn session."
         ),
@@ -1613,7 +1613,7 @@ BUILTIN_WORKFLOWS = (
                 DiagramNode(
                     "score",
                     "step",
-                    "Rate against your ICP, 1 to 5",
+                    "Rate against your ICP, 1 to 4",
                     "from what Tin knows, your notes and a web search",
                 ),
                 DiagramNode(
@@ -1663,7 +1663,7 @@ BUILTIN_WORKFLOWS = (
         title="People who viewed your LinkedIn profile",
         description=(
             "Read who viewed your LinkedIn profile, newest first, keep each person in People "
-            "with whether you're already connected, rate them 1 to 5 against strategy/ICP.md, "
+            "with whether you're already connected, rate them 1 to 4 against strategy/ICP.md, "
             "and list them best fit first in people/linkedin-profile-viewers.csv. People who fit "
             "and aren't connected get a connection request from you, a few each weekday. Reads "
             "with your saved LinkedIn session."
@@ -1694,7 +1694,7 @@ BUILTIN_WORKFLOWS = (
                 DiagramNode(
                     "score",
                     "step",
-                    "Rate against your ICP, 1 to 5",
+                    "Rate against your ICP, 1 to 4",
                     "from what Tin knows, your notes and a web search",
                 ),
                 DiagramNode(

@@ -81,3 +81,34 @@ async def test_people_show_the_cooled_intent_and_what_was_rated(collection_db):
     assert week["value"] == "warm" and week["rated"] == "hot" and week["active_at"]
     month = listed["Month Old"]["fields"]["intent"]
     assert month["value"] == "cold" and month["rated"] == "warm"
+
+
+async def test_a_reaction_to_an_old_post_counts_from_when_tin_saw_it(collection_db):
+    # LinkedIn gives no time for a reaction: it is dated by the post. Someone reacting today to
+    # a 35-day-old post is warm today, as the rater saw them, not cold.
+    f = await fixture(collection_db)
+    async with f.db.pool.acquire() as conn:
+        await records.ensure_fields(conn, f.project.id)
+        record_id = await records.upsert_person(
+            conn, f.project.id, {"linkedin_slug": "late-reactor"}, source="test"
+        )
+        await records.set_values(
+            conn,
+            f.project.id,
+            record_id,
+            [Value("name", "Late Reactor"), Value("intent", "warm", "Reacted.")],
+            set_by_kind="run",
+            set_by="test",
+        )
+        posted = (datetime.now(UTC) - timedelta(days=35)).isoformat()
+        await records.add_event(
+            conn,
+            f.project.id,
+            record_id,
+            kind="reacted",
+            event_key=f"reacted:{record_id}",
+            detail={"posted_at": posted},
+        )
+        listed = {p["name"]: p for p in await records.directory(conn, f.project.id, viewer=USER)}
+    intent = listed["Late Reactor"]["fields"]["intent"]
+    assert intent["value"] == "warm" and "rated" not in intent

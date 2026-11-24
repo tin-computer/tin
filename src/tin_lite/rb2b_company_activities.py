@@ -133,7 +133,8 @@ class RB2BCompanyActivities(RB2BActivities):
         or an earlier call's answer never came."""
 
         key = f"{run.id}:rb2b:company:{step}"
-        async with self.db.effect_lock(key, KEY) as (conn, saved):
+        # A slot first: the call holds its connection to its end (people_rating.model_slot).
+        async with people_rating.model_slot(), self.db.effect_lock(key, KEY) as (conn, saved):
             if saved and saved.status == "completed":
                 return (saved.result or {}).get("output")
             if saved:
@@ -543,7 +544,7 @@ class RB2BCompanyActivities(RB2BActivities):
         if body is None:
             return
         await self._progress(run, "notify", 5, "Posting the company in Slack")
-        await rb2b_slack.send(
+        outcome = await rb2b_slack.send(
             self.db,
             self.integrations.slack,
             project_id=run.project_id,
@@ -551,3 +552,4 @@ class RB2BCompanyActivities(RB2BActivities):
             place=place,
             body=body,
         )
+        rb2b_slack.retry_refused(outcome)

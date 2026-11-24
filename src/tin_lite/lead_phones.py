@@ -15,6 +15,8 @@ guard per project well above a day's leads.
 from __future__ import annotations
 
 import asyncio
+import json
+import logging
 import re
 from collections.abc import Callable
 from uuid import UUID
@@ -22,6 +24,8 @@ from uuid import UUID
 from tin_lite import people_icp
 from tin_lite import people_records as records
 from tin_lite.delegate import DelegateError
+
+logger = logging.getLogger(__name__)
 
 SERVICE = "contactout-linkedin-phone"
 OPERATION = "people.phones"
@@ -36,7 +40,9 @@ PARALLEL = 5
 # Numbers kept per person, as ContactOut lists them.
 NUMBERS = 10
 PHONE = re.compile(r"\+?\(?[0-9][0-9 ().-]{5,24}[0-9]")
-SLUG = re.compile(r"[A-Za-z0-9\-_%.]{2,200}")
+# Delegate statuses that are its answer about the input itself: the lookup is done. Anything
+# else (a 5xx, out of funds, a changed price, no answer) leaves it for a later run.
+DEFINITE = frozenset({400, 404, 422})
 
 
 def key(project_id: UUID, record_id: UUID) -> str:
@@ -65,14 +71,20 @@ def reason(found: list[str]) -> str:
 async def wanted(
     conn, project_id: UUID, *, limit: int, only: UUID | None = None, skip: list[UUID] = ()
 ) -> list[dict]:
-    """Good and strong leads with a LinkedIn profile, no phone and no lookup yet, best first."""
+    """Good and strong leads with a LinkedIn profile (its public address, else LinkedIn's member
+    ID), no phone and no finished lookup, best first."""
 
     rows = await conn.fetch(
-        """SELECT r.id, i.value AS slug
+        """SELECT r.id,
+               (SELECT jsonb_object_agg(i.kind, i.value) FROM record_identifiers i
+                WHERE i.record_id = r.id AND i.kind IN ('linkedin_slug', 'linkedin_member'))
+                   AS identifiers
            FROM records r
            JOIN record_values f ON f.record_id = r.id AND f.field = 'icp_fit'
-           JOIN record_identifiers i ON i.record_id = r.id AND i.kind = 'linkedin_slug'
-           WHERE r.project_id = $1 AND r.merged_into IS NULL AND f.value_number >= $2
+           WHERE r.project_id = $1
+             AND EXISTS (SELECT 1 FROM record_identifiers i WHERE i.record_id = r.id
+                         AND i.kind IN ('linkedin_slug', 'linkedin_member'))
+             AND r.merged_into IS NULL AND f.value_number >= $2
              AND ($3::uuid IS NULL OR r.id = $3)
              AND NOT (r.id = ANY($5::uuid[]))
              AND NOT EXISTS (SELECT 1 FROM record_values v WHERE v.record_id = r.id
@@ -90,12 +102,13 @@ async def wanted(
         limit,
         list(skip),
     )
-    seen: set[UUID] = set()
     people = []
     for row in rows:
-        if row["id"] not in seen and SLUG.fullmatch(row["slug"] or ""):
-            seen.add(row["id"])
-            people.append({"id": row["id"], "slug": row["slug"]})
+        identifiers = row["identifiers"]
+        identifiers = json.loads(identifiers) if isinstance(identifiers, str) else identifiers
+        url = records.profile_link(identifiers or {})
+        if url:
+            people.append({"id": row["id"], "url": url})
     return people
 
 
@@ -129,7 +142,10 @@ async def _reserve(db, conn, project_id: UUID, execution_key: str) -> bool:
 
 
 async def look_up(db, delegate, project_id: UUID, person: dict, *, run_id: UUID) -> str:
-    """One person's lookup under its receipt; what happened: found, none, held or failed."""
+    """One person's lookup under its receipt; what happened: found or none (done), failed
+    (Delegate refused the input: done), held (the day's guard) or later (Delegate didn't
+    answer: left open for a later run). Never raises a Delegate error: a phone lookup is
+    extra, and never fails the run around it."""
 
     execution_key = key(project_id, person["id"])
     async with db.effect_lock(execution_key, OPERATION) as (conn, saved):
@@ -148,16 +164,18 @@ async def look_up(db, delegate, project_id: UUID, person: dict, *, run_id: UUID)
                 return "held"
             try:
                 # The receipt's key is the order's idempotency key: placing it again after a
-                # crash returns the same order.
+                # crash or a missing answer returns the same order.
                 placed = await delegate.order(
                     SERVICE,
-                    {"linkedin_url": f"https://www.linkedin.com/in/{person['slug']}"},
+                    {"linkedin_url": person["url"]},
                     max_usd=MAX_USD,
                     idempotency_key=execution_key,
                 )
             except DelegateError as error:
-                if error.code == "unavailable":
-                    raise  # no answer: the order may exist, and the retry finds it
+                if error.status not in DEFINITE:
+                    # No answer, or one that may change (funds, price, a 5xx): the receipt
+                    # stays open with its reservation, and a later run asks again.
+                    return "later"
                 await db.complete_effect(
                     conn,
                     execution_key=execution_key,
@@ -167,8 +185,12 @@ async def look_up(db, delegate, project_id: UUID, person: dict, *, run_id: UUID)
             await db.save_effect_progress(conn, execution_key=execution_key, result=placed)
     view = {"state": "running"}
     deadline = asyncio.get_running_loop().time() + JOB_SECONDS
-    while view["state"] == "running" and asyncio.get_running_loop().time() < deadline:
-        view = await delegate.result(placed["conversation_id"], wait=30)
+    try:
+        while view["state"] == "running" and asyncio.get_running_loop().time() < deadline:
+            view = await delegate.result(placed["conversation_id"], wait=30)
+    except DelegateError:
+        # The order is placed and saved on the receipt; a later run reads its answer.
+        return "later"
     found = numbers(view.get("result")) if view["state"] == "delivered" else []
     async with db.effect_lock(execution_key, OPERATION) as (conn, saved):
         if saved and saved.status == "completed":
@@ -220,7 +242,7 @@ async def look_up_wanted(
     """Look up everyone wanted (or `only` that person), a few at once, until nobody is left, the
     day's guard holds or `seconds` are up. Returns counts."""
 
-    counts = {"looked_up": 0, "found": 0, "left": 0, "held": False}
+    counts = {"looked_up": 0, "found": 0, "left": 0, "held": False, "later": 0}
     if delegate is None:
         return counts
     loop = asyncio.get_running_loop()
@@ -242,13 +264,22 @@ async def look_up_wanted(
         beating = asyncio.create_task(beat())
         try:
             outcomes = await asyncio.gather(
-                *(look_up(db, delegate, project_id, person, run_id=run_id) for person in batch)
+                *(look_up(db, delegate, project_id, person, run_id=run_id) for person in batch),
+                return_exceptions=True,
             )
         finally:
             beating.cancel()
-        counts["looked_up"] += sum(1 for outcome in outcomes if outcome != "held")
+        for outcome in outcomes:
+            if isinstance(outcome, BaseException):
+                # Never the run's failure: the person is looked up by a later run.
+                logger.warning("Phone lookup ended without an answer: %s", type(outcome).__name__)
+        outcomes = ["later" if isinstance(o, BaseException) else o for o in outcomes]
+        counts["looked_up"] += sum(1 for o in outcomes if o in ("found", "none", "failed"))
         counts["found"] += outcomes.count("found")
+        counts["later"] += outcomes.count("later")
         counts["held"] = "held" in outcomes
+        if all(outcome == "later" for outcome in outcomes):
+            break  # Delegate isn't answering; a later run goes on
         heartbeat({"phones": counts["looked_up"]})
     async with db.pool.acquire() as conn:
         counts["left"] = len(await wanted(conn, project_id, limit=1000, only=only))

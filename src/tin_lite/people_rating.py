@@ -12,6 +12,7 @@ from __future__ import annotations
 import asyncio
 import hashlib
 import logging
+import weakref
 from collections.abc import Callable
 from uuid import UUID
 
@@ -46,6 +47,22 @@ async def icp_text(storage, project, icp: dict) -> str:
         repo_id=project.state_repo_id, commit_sha=icp["revision"], path=icp["path"]
     )
     return (raw or b"")[: people_icp.ICP_BYTES].decode("utf-8", "replace")
+
+
+# Model calls a process makes at once, each holding a connection for minutes: half the pool
+# (db_pool_max, 10), leaving the rest to the web server and everything else.
+MODEL_SLOTS = 5
+_slots: weakref.WeakKeyDictionary = weakref.WeakKeyDictionary()
+
+
+def model_slot() -> asyncio.Semaphore:
+    """The running loop's model-call slots (one semaphore per event loop)."""
+
+    loop = asyncio.get_running_loop()
+    slots = _slots.get(loop)
+    if slots is None:
+        slots = _slots[loop] = asyncio.Semaphore(MODEL_SLOTS)
+    return slots
 
 
 async def answer(db, router, run, person, *, text, profiles, definition, operation, step):
@@ -94,7 +111,9 @@ async def _ask(
     call whose receipt was started but never settled is uncertain: no output, not failed, so
     it isn't bought again."""
 
-    async with db.effect_lock(key, operation) as (conn, saved):
+    # A call holds a database connection to its end (its receipt and usage record): a slot
+    # first, so model calls never take the pool the web server needs.
+    async with model_slot(), db.effect_lock(key, operation) as (conn, saved):
         if saved and saved.status == "completed":
             output = (saved.result or {}).get("output")
             return output, output is None

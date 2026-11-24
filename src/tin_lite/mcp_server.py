@@ -1278,7 +1278,12 @@ def create_mcp_app(
             "name": person["name"],
             "headline": person["headline"],
             "company": person.get("company") or None,
+            "position": value("position"),
             "profile_url": person["profile_url"],
+            # Numbers ContactOut has on file for a good or strong lead, comma-separated.
+            "phone": value("phone"),
+            # Reacted, commented, viewed a member's profile or starred the project's repository.
+            "social": bool(person.get("social")),
             # Named for a visit Tin read (RB2B or a visitor journeys run); company_visit when
             # only their company's visit was seen and Tin found them there.
             "visited": bool(person.get("visited") or value("web_tier")),
@@ -1319,14 +1324,19 @@ def create_mcp_app(
 
         segment: "all", "visitors" (anyone RB2B or a visitor journeys run named, including
         people found for a visit only their company made: company_visit), "hot" (intent hot),
+        "social" (reacted, commented, viewed a member's profile or starred the repository),
         "icp_fit" (rated fit_shown or more), "not_connected" (not connected on LinkedIn),
         "on_the_site" (named by a visitor journeys run, with their email, tier and last visit)
         or "from_ads" (their last visit came from an ad click). came_from is how the last visit
-        arrived (ad, organic, ai, social, referral, direct). query matches name, headline,
-        company, email, last visit, ICP and notes. `profiles` are the ICP file's profiles.
+        arrived (ad, organic, ai, social, referral, direct). phone is the numbers on file for
+        a good or strong lead. query matches name, headline, company, email, phone, last visit,
+        ICP and notes. `profiles` are the ICP file's profiles.
         """
         parsed, viewer, people = await people_service(project_id, "list_people")
-        segments = ("all", "visitors", "hot", "icp_fit", "not_connected", "on_the_site", "from_ads")
+        segments = (
+            "all", "visitors", "hot", "social", "icp_fit", "not_connected", "on_the_site",
+            "from_ads",
+        )  # fmt: skip
         if segment not in segments:
             raise ToolError(
                 "invalid: segment is "
@@ -1339,6 +1349,8 @@ def create_mcp_app(
             rows = [r for r in rows if r["visited"]]
         elif segment == "hot":
             rows = [r for r in rows if r["intent"] == "hot"]
+        elif segment == "social":
+            rows = [r for r in rows if r["social"]]
         elif segment == "icp_fit":
             rows = [r for r in rows if (r["icp_fit"] or 0) >= listed["fit_shown"]]
         elif segment == "not_connected":
@@ -1360,6 +1372,7 @@ def create_mcp_app(
                         r["headline"],
                         r["company"] or "",
                         r["email"] or "",
+                        r["phone"] or "",
                         r["last_visit"] or "",
                         r["came_from_detail"] or "",
                         r["icp"] or "",

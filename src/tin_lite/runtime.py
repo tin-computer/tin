@@ -119,15 +119,18 @@ async def build_runtime(settings: Settings) -> RuntimeServices:
         private_key=settings.code_storage_api_key.get_secret_value(),
         repo_prefix=settings.code_storage_repo_prefix,
     )
-    system_wiki = await sync_system_wiki(
-        storage=storage,
-        source_root=ROOT / "system_wiki",
-    )
-    await sync_builtin_workflows(
-        database=database,
-        storage=storage,
-        system_wiki=system_wiki,
-    )
+    # The main process publishes the catalog and the system wiki; the web-only webhook intake
+    # only serves requests, so its restarts (or a crash loop) never rewrite them.
+    if not getattr(settings, "web_only", False):
+        system_wiki = await sync_system_wiki(
+            storage=storage,
+            source_root=ROOT / "system_wiki",
+        )
+        await sync_builtin_workflows(
+            database=database,
+            storage=storage,
+            system_wiki=system_wiki,
+        )
     sandboxes = E2BRuntime(
         api_key=settings.e2b_api_key.get_secret_value(),
         template=settings.e2b_template,

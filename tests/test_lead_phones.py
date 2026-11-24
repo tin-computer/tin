@@ -2,8 +2,10 @@
 
 from __future__ import annotations
 
+from urllib.parse import unquote
 from uuid import uuid4
 
+import pytest
 from test_connection_collection import collection_db as collection_db
 from test_linkedin_engagers import fixture
 from test_people_rate import person
@@ -17,19 +19,23 @@ from tin_lite.people_records import Value
 class Delegate:
     """Delegate's ContactOut lookup: the numbers on file for each profile handle."""
 
-    def __init__(self, on_file, *, refuse=None):
+    def __init__(self, on_file, *, refuse=None, down=False):
         self.on_file, self.refuse, self.orders, self.jobs = on_file, refuse, [], {}
+        self.down = down
 
     async def order(self, service, task_input, *, max_usd, idempotency_key, scope=None):
         assert service == lead_phones.SERVICE and max_usd == lead_phones.MAX_USD
         if self.refuse:
-            raise DelegateError("refused", code=self.refuse)
+            code, status = self.refuse
+            raise DelegateError("refused", code=code, status=status)
         self.orders.append(task_input["linkedin_url"])
         job = str(uuid4())
-        self.jobs[job] = task_input["linkedin_url"].rsplit("/", 1)[-1]
+        self.jobs[job] = unquote(task_input["linkedin_url"].rsplit("/", 1)[-1])
         return {"conversation_id": job, "order_id": "o", "price_usd": 0.15}
 
     async def result(self, conversation_id, *, wait=30):
+        if self.down:
+            raise DelegateError("Delegate didn't answer", code="unavailable")
         phones = self.on_file.get(self.jobs[conversation_id], [])
         return {"state": "delivered", "result": {"artifacts": {"phones": phones}}}
 
@@ -73,7 +79,7 @@ async def test_good_and_strong_leads_get_their_numbers_once(collection_db):
         "https://www.linkedin.com/in/ada-byron",
         "https://www.linkedin.com/in/bob-stone",
     ]
-    assert counts == {"looked_up": 2, "found": 1, "left": 0, "held": False}
+    assert counts == {"looked_up": 2, "found": 1, "left": 0, "held": False, "later": 0}
     phone = await field(f, strong, "phone")
     # The same number twice is kept once.
     assert phone["text"] == "+1 314 555 0101, (314) 555-0199"
@@ -118,13 +124,53 @@ async def test_the_daily_guard_holds_lookups_for_a_later_run(collection_db, monk
     assert len(delegate.orders) == 1
 
 
-async def test_a_refused_order_buys_nothing_and_isnt_retried(collection_db):
+async def test_delegate_refusing_the_input_ends_the_lookup(collection_db):
     f = await fixture(collection_db)
     ada = await rated(f, "Ada Byron", 4)
-    delegate = Delegate({}, refuse="price_above_max")
-    counts = await look(f, delegate)
-    assert counts == {"looked_up": 1, "found": 0, "left": 0, "held": False}
+    counts = await look(f, Delegate({}, refuse=("invalid_input", 422)))
+    assert counts["looked_up"] == 1 and counts["left"] == 0
     assert await field(f, ada, "phone") is None
+
+
+@pytest.mark.parametrize("refuse", [("delegate_refused", 502), ("price_above_max", 0)])
+async def test_a_refusal_that_may_change_leaves_the_lead_for_a_later_run(collection_db, refuse):
+    f = await fixture(collection_db)
+    await rated(f, "Ada Byron", 4)
+    counts = await look(f, Delegate({}, refuse=refuse))
+    assert counts["looked_up"] == 0 and counts["later"] == 1 and counts["left"] == 1
+    # Delegate answers again: the lead is looked up.
+    delegate = Delegate({"ada-byron": ["+1 314 555 0101"]})
+    assert (await look(f, delegate))["found"] == 1
+
+
+async def test_delegate_down_never_fails_the_run_and_the_order_is_read_later(collection_db):
+    f = await fixture(collection_db)
+    ada = await rated(f, "Ada Byron", 4)
+    delegate = Delegate({"ada-byron": ["+1 314 555 0101"]}, down=True)
+    counts = await look(f, delegate)
+    assert counts["later"] == 1 and counts["left"] == 1 and len(delegate.orders) == 1
+    delegate.down = False
+    # The same order is read, not placed again.
+    assert (await look(f, delegate))["found"] == 1 and len(delegate.orders) == 1
+    assert (await field(f, ada, "phone"))["text"] == "+1 314 555 0101"
+
+
+async def test_any_linkedin_identity_gets_a_lookup(collection_db):
+    f = await fixture(collection_db)
+    accented = await rated(f, "Çağla Öz", 4)
+    member = "ACoAAB" + "x" * 30
+    async with f.db.pool.acquire() as conn:
+        only_member = await records.upsert_person(
+            conn, f.project.id, {"linkedin_member": member}, source="test"
+        )
+        await records.set_values(
+            conn, f.project.id, only_member, [Value("icp_fit", 3, "r")],
+            set_by_kind="run", set_by="test",
+        )  # fmt: skip
+    delegate = Delegate({"çağla-öz": ["+90 212 555 0101"], member: ["+1 314 555 0102"]})
+    assert (await look(f, delegate))["found"] == 2
+    assert "%C3%A7a%C4%9Fla" in " ".join(delegate.orders)
+    assert (await field(f, accented, "phone"))["text"] == "+90 212 555 0101"
 
 
 async def test_without_delegate_nothing_is_looked_up(collection_db):

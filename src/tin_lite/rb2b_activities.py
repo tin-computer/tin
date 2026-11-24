@@ -486,7 +486,7 @@ class RB2BActivities:
         if body is None:
             return
         await self._progress(run, "notify", 5, "Posting the visitor in Slack")
-        await rb2b_slack.send(
+        outcome = await rb2b_slack.send(
             self.db,
             self.integrations.slack,
             project_id=run.project_id,
@@ -494,6 +494,7 @@ class RB2BActivities:
             place=place,
             body=body,
         )
+        rb2b_slack.retry_refused(outcome)
 
     @activity.defn(name="rb2b_publish")
     async def publish(self, control: dict) -> None:
