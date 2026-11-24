@@ -1,0 +1,124 @@
+{
+ "text": "Acme Data market brief, Tue 24 Nov: Fabric got cheaper to start, and &lt;analysts&gt; keep asking for HR data",
+ "blocks": [
+  {
+   "type": "header",
+   "text": {
+    "type": "plain_text",
+    "text": "Acme Data · Tuesday 24 November"
+   }
+  },
+  {
+   "type": "section",
+   "text": {
+    "type": "mrkdwn",
+    "text": "*Fabric got cheaper to start, and &lt;analysts&gt; keep asking for HR data*"
+   }
+  },
+  {
+   "type": "context",
+   "elements": [
+    {
+     "type": "mrkdwn",
+     "text": "822 items from 214 sources · 3 developments · X List, trade press and Reddit"
+    }
+   ]
+  },
+  {
+   "type": "divider"
+  },
+  {
+   "type": "section",
+   "text": {
+    "type": "mrkdwn",
+    "text": "⚔️  *Fabric got cheaper to start*\nMicrosoft added on-demand billing, <https://blog.fabric.example/on-demand|per its announcement>. That weakens a point on our Fabric comparison page."
+   }
+  },
+  {
+   "type": "context",
+   "elements": [
+    {
+     "type": "mrkdwn",
+     "text": "<https://blog.fabric.example/on-demand|Microsoft Fabric blog> · <https://x.com/someone/status/1|@someone>"
+    }
+   ]
+  },
+  {
+   "type": "section",
+   "text": {
+    "type": "mrkdwn",
+    "text": "🧩  *A model vendor's beta may exclude regulated accounts*\nOnly <https://cryptodaily.example/beta|one secondary report> says so; see vendor.​example/docs too."
+   }
+  },
+  {
+   "type": "context",
+   "elements": [
+    {
+     "type": "mrkdwn",
+     "text": "🔎 To verify: One secondary report; check the vendor's docs. · <https://cryptodaily.example/beta|Crypto Daily>"
+    }
+   ]
+  },
+  {
+   "type": "section",
+   "text": {
+    "type": "mrkdwn",
+    "text": "🗣️  *Analysts want HR data next to clinical data*\nTwo threads asked how to join them without a custom pipeline."
+   }
+  },
+  {
+   "type": "context",
+   "elements": [
+    {
+     "type": "mrkdwn",
+     "text": "<https://www.reddit.com/r/healthIT/comments/p1/x/|r/healthIT> · <https://example.com/world|Tin's world feed>"
+    }
+   ]
+  },
+  {
+   "type": "context",
+   "elements": [
+    {
+     "type": "mrkdwn",
+     "text": "World stories unavailable today · Quiet day on Reddit."
+    }
+   ]
+  },
+  {
+   "type": "divider"
+  },
+  {
+   "type": "actions",
+   "elements": [
+    {
+     "type": "button",
+     "text": {
+      "type": "plain_text",
+      "text": "Read the full report"
+     },
+     "url": "https://app.example/document/r1?project=p1",
+     "action_id": "report",
+     "style": "primary"
+    },
+    {
+     "type": "button",
+     "text": {
+      "type": "plain_text",
+      "text": "Sources today"
+     },
+     "url": "https://app.example/file?project=p1&path=intel%2Freports%2Fsources.json",
+     "action_id": "sources"
+    }
+   ]
+  },
+  {
+   "type": "context",
+   "elements": [
+    {
+     "type": "mrkdwn",
+     "text": "Acme Data · Tin daily intelligence"
+    }
+   ]
+  }
+ ]
+}
