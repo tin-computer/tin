@@ -38,7 +38,7 @@ INPUT_SCHEMA: dict[str, Any] = {
     "properties": {
         "project_id": {"type": "string", "format": "uuid"},
         "post_brief": {"type": "boolean", "default": True},
-        "x_list_id": {"type": ["string", "null"], "pattern": "^[0-9]{1,19}$"},
+        "x_list_id": {"type": "string", "pattern": "^[0-9]{1,19}$"},
         "x_keep_retweets": {"type": "boolean", "default": False},
         "lookback_hours": {"type": "integer", "minimum": 12, "maximum": 72, "default": 24},
     },

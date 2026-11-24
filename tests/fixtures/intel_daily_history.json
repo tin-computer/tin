@@ -1,0 +1,1416 @@
+{
+  "events": [
+    {
+      "eventId": "1",
+      "eventTime": "2026-11-24T20:59:35.098Z",
+      "eventType": "EVENT_TYPE_WORKFLOW_EXECUTION_STARTED",
+      "workflowExecutionStartedEventAttributes": {
+        "workflowType": {
+          "name": "intel.daily"
+        },
+        "taskQueue": {
+          "name": "intel-daily-9226671c-b361-4b56-87e8-3d1a70d6f804"
+        },
+        "input": {
+          "payloads": [
+            {
+              "metadata": {
+                "encoding": "anNvbi9wbGFpbg=="
+              },
+              "data": "IjZmMGM0YTUyLTFlM2ItNGQ3YS05YzJlLThiNWYxYTNkN2U5MCI="
+            }
+          ]
+        },
+        "workflowExecutionTimeout": "315360000s",
+        "workflowRunTimeout": "315360000s",
+        "workflowTaskTimeout": "10s",
+        "originalExecutionRunId": "c042957b-663f-4f5f-b3d7-b873eb1f82e9",
+        "identity": "1234880@egede-dev.us-west1-b.c.pericortex.internal",
+        "firstExecutionRunId": "c042957b-663f-4f5f-b3d7-b873eb1f82e9",
+        "attempt": 1,
+        "firstWorkflowTaskBackoff": "0s",
+        "priority": {}
+      }
+    },
+    {
+      "eventId": "2",
+      "eventTime": "2026-11-24T20:59:35.098Z",
+      "eventType": "EVENT_TYPE_WORKFLOW_TASK_SCHEDULED",
+      "workflowTaskScheduledEventAttributes": {
+        "taskQueue": {
+          "name": "intel-daily-9226671c-b361-4b56-87e8-3d1a70d6f804"
+        },
+        "startToCloseTimeout": "10s",
+        "attempt": 1
+      }
+    },
+    {
+      "eventId": "3",
+      "eventTime": "2026-11-24T20:59:35.098Z",
+      "eventType": "EVENT_TYPE_WORKFLOW_TASK_STARTED",
+      "workflowTaskStartedEventAttributes": {
+        "scheduledEventId": "2",
+        "identity": "1234880@egede-dev.us-west1-b.c.pericortex.internal",
+        "historySizeBytes": "390"
+      }
+    },
+    {
+      "eventId": "4",
+      "eventTime": "2026-11-24T20:59:35.207Z",
+      "eventType": "EVENT_TYPE_WORKFLOW_TASK_COMPLETED",
+      "workflowTaskCompletedEventAttributes": {
+        "scheduledEventId": "2",
+        "identity": "1234880@egede-dev.us-west1-b.c.pericortex.internal",
+        "binaryChecksum": "476c062c421a96d5ad240f68d029db46",
+        "sdkMetadata": {
+          "coreUsedFlags": [
+            3,
+            2,
+            1
+          ],
+          "sdkName": "temporal-python",
+          "sdkVersion": "1.32.0"
+        },
+        "meteringMetadata": {}
+      }
+    },
+    {
+      "eventId": "5",
+      "eventTime": "2026-11-24T20:59:35.207Z",
+      "eventType": "EVENT_TYPE_ACTIVITY_TASK_SCHEDULED",
+      "activityTaskScheduledEventAttributes": {
+        "activityId": "1",
+        "activityType": {
+          "name": "intel_daily_prepare"
+        },
+        "taskQueue": {
+          "name": "intel-daily-9226671c-b361-4b56-87e8-3d1a70d6f804",
+          "kind": "TASK_QUEUE_KIND_NORMAL"
+        },
+        "header": {},
+        "input": {
+          "payloads": [
+            {
+              "metadata": {
+                "encoding": "anNvbi9wbGFpbg=="
+              },
+              "data": "IjZmMGM0YTUyLTFlM2ItNGQ3YS05YzJlLThiNWYxYTNkN2U5MCI="
+            }
+          ]
+        },
+        "scheduleToCloseTimeout": "315360000s",
+        "scheduleToStartTimeout": "315360000s",
+        "startToCloseTimeout": "300s",
+        "heartbeatTimeout": "0s",
+        "workflowTaskCompletedEventId": "3",
+        "retryPolicy": {
+          "initialInterval": "30s",
+          "backoffCoefficient": 2.0,
+          "maximumInterval": "3000s",
+          "maximumAttempts": 3,
+          "nonRetryableErrorTypes": [
+            "IntegrationAuthorizationError",
+            "WorkflowInputError",
+            "BillingError"
+          ]
+        },
+        "priority": {}
+      }
+    },
+    {
+      "eventId": "6",
+      "eventTime": "2026-11-24T20:59:35.208Z",
+      "eventType": "EVENT_TYPE_ACTIVITY_TASK_STARTED",
+      "activityTaskStartedEventAttributes": {
+        "scheduledEventId": "5",
+        "identity": "1234880@egede-dev.us-west1-b.c.pericortex.internal",
+        "attempt": 1
+      }
+    },
+    {
+      "eventId": "7",
+      "eventTime": "2026-11-24T20:59:35.213Z",
+      "eventType": "EVENT_TYPE_ACTIVITY_TASK_COMPLETED",
+      "activityTaskCompletedEventAttributes": {
+        "result": {
+          "payloads": [
+            {
+              "metadata": {
+                "encoding": "anNvbi9wbGFpbg=="
+              },
+              "data": "eyJncm91cHMiOlsicnNzIiwiZ25ld3MiLCJyZWRkaXQiLCJ4Il19"
+            }
+          ]
+        },
+        "scheduledEventId": "5",
+        "startedEventId": "6",
+        "identity": "1234880@egede-dev.us-west1-b.c.pericortex.internal"
+      }
+    },
+    {
+      "eventId": "8",
+      "eventTime": "2026-11-24T20:59:35.213Z",
+      "eventType": "EVENT_TYPE_WORKFLOW_TASK_SCHEDULED",
+      "workflowTaskScheduledEventAttributes": {
+        "taskQueue": {
+          "name": "intel-daily-9226671c-b361-4b56-87e8-3d1a70d6f804"
+        },
+        "startToCloseTimeout": "10s",
+        "attempt": 1
+      }
+    },
+    {
+      "eventId": "9",
+      "eventTime": "2026-11-24T20:59:35.213Z",
+      "eventType": "EVENT_TYPE_WORKFLOW_TASK_STARTED",
+      "workflowTaskStartedEventAttributes": {
+        "scheduledEventId": "8",
+        "identity": "1234880@egede-dev.us-west1-b.c.pericortex.internal",
+        "historySizeBytes": "1189"
+      }
+    },
+    {
+      "eventId": "10",
+      "eventTime": "2026-11-24T20:59:35.222Z",
+      "eventType": "EVENT_TYPE_WORKFLOW_TASK_COMPLETED",
+      "workflowTaskCompletedEventAttributes": {
+        "scheduledEventId": "8",
+        "identity": "1234880@egede-dev.us-west1-b.c.pericortex.internal",
+        "binaryChecksum": "476c062c421a96d5ad240f68d029db46",
+        "sdkMetadata": {},
+        "meteringMetadata": {}
+      }
+    },
+    {
+      "eventId": "11",
+      "eventTime": "2026-11-24T20:59:35.222Z",
+      "eventType": "EVENT_TYPE_ACTIVITY_TASK_SCHEDULED",
+      "activityTaskScheduledEventAttributes": {
+        "activityId": "2",
+        "activityType": {
+          "name": "intel_daily_fetch"
+        },
+        "taskQueue": {
+          "name": "intel-daily-9226671c-b361-4b56-87e8-3d1a70d6f804",
+          "kind": "TASK_QUEUE_KIND_NORMAL"
+        },
+        "header": {},
+        "input": {
+          "payloads": [
+            {
+              "metadata": {
+                "encoding": "anNvbi9wbGFpbg=="
+              },
+              "data": "eyJncm91cCI6InJzcyIsInJ1bl9pZCI6IjZmMGM0YTUyLTFlM2ItNGQ3YS05YzJlLThiNWYxYTNkN2U5MCJ9"
+            }
+          ]
+        },
+        "scheduleToCloseTimeout": "315360000s",
+        "scheduleToStartTimeout": "315360000s",
+        "startToCloseTimeout": "1500s",
+        "heartbeatTimeout": "90s",
+        "workflowTaskCompletedEventId": "9",
+        "retryPolicy": {
+          "initialInterval": "30s",
+          "backoffCoefficient": 2.0,
+          "maximumInterval": "3000s",
+          "maximumAttempts": 2,
+          "nonRetryableErrorTypes": [
+            "IntegrationAuthorizationError",
+            "WorkflowInputError",
+            "BillingError"
+          ]
+        },
+        "priority": {}
+      }
+    },
+    {
+      "eventId": "12",
+      "eventTime": "2026-11-24T20:59:35.222Z",
+      "eventType": "EVENT_TYPE_ACTIVITY_TASK_STARTED",
+      "activityTaskStartedEventAttributes": {
+        "scheduledEventId": "11",
+        "identity": "1234880@egede-dev.us-west1-b.c.pericortex.internal",
+        "attempt": 1
+      }
+    },
+    {
+      "eventId": "13",
+      "eventTime": "2026-11-24T20:59:35.224Z",
+      "eventType": "EVENT_TYPE_ACTIVITY_TASK_COMPLETED",
+      "activityTaskCompletedEventAttributes": {
+        "result": {
+          "payloads": [
+            {
+              "metadata": {
+                "encoding": "anNvbi9wbGFpbg=="
+              },
+              "data": "eyJmYWlsZWQiOjAsIml0ZW1zIjoxMCwic291cmNlcyI6M30="
+            }
+          ]
+        },
+        "scheduledEventId": "11",
+        "startedEventId": "12",
+        "identity": "1234880@egede-dev.us-west1-b.c.pericortex.internal"
+      }
+    },
+    {
+      "eventId": "14",
+      "eventTime": "2026-11-24T20:59:35.224Z",
+      "eventType": "EVENT_TYPE_WORKFLOW_TASK_SCHEDULED",
+      "workflowTaskScheduledEventAttributes": {
+        "taskQueue": {
+          "name": "intel-daily-9226671c-b361-4b56-87e8-3d1a70d6f804"
+        },
+        "startToCloseTimeout": "10s",
+        "attempt": 1
+      }
+    },
+    {
+      "eventId": "15",
+      "eventTime": "2026-11-24T20:59:35.225Z",
+      "eventType": "EVENT_TYPE_WORKFLOW_TASK_STARTED",
+      "workflowTaskStartedEventAttributes": {
+        "scheduledEventId": "14",
+        "identity": "1234880@egede-dev.us-west1-b.c.pericortex.internal",
+        "historySizeBytes": "1979"
+      }
+    },
+    {
+      "eventId": "16",
+      "eventTime": "2026-11-24T20:59:35.232Z",
+      "eventType": "EVENT_TYPE_WORKFLOW_TASK_COMPLETED",
+      "workflowTaskCompletedEventAttributes": {
+        "scheduledEventId": "14",
+        "identity": "1234880@egede-dev.us-west1-b.c.pericortex.internal",
+        "binaryChecksum": "476c062c421a96d5ad240f68d029db46",
+        "sdkMetadata": {},
+        "meteringMetadata": {}
+      }
+    },
+    {
+      "eventId": "17",
+      "eventTime": "2026-11-24T20:59:35.232Z",
+      "eventType": "EVENT_TYPE_ACTIVITY_TASK_SCHEDULED",
+      "activityTaskScheduledEventAttributes": {
+        "activityId": "3",
+        "activityType": {
+          "name": "intel_daily_fetch"
+        },
+        "taskQueue": {
+          "name": "intel-daily-9226671c-b361-4b56-87e8-3d1a70d6f804",
+          "kind": "TASK_QUEUE_KIND_NORMAL"
+        },
+        "header": {},
+        "input": {
+          "payloads": [
+            {
+              "metadata": {
+                "encoding": "anNvbi9wbGFpbg=="
+              },
+              "data": "eyJncm91cCI6ImduZXdzIiwicnVuX2lkIjoiNmYwYzRhNTItMWUzYi00ZDdhLTljMmUtOGI1ZjFhM2Q3ZTkwIn0="
+            }
+          ]
+        },
+        "scheduleToCloseTimeout": "315360000s",
+        "scheduleToStartTimeout": "315360000s",
+        "startToCloseTimeout": "1500s",
+        "heartbeatTimeout": "90s",
+        "workflowTaskCompletedEventId": "15",
+        "retryPolicy": {
+          "initialInterval": "30s",
+          "backoffCoefficient": 2.0,
+          "maximumInterval": "3000s",
+          "maximumAttempts": 2,
+          "nonRetryableErrorTypes": [
+            "IntegrationAuthorizationError",
+            "WorkflowInputError",
+            "BillingError"
+          ]
+        },
+        "priority": {}
+      }
+    },
+    {
+      "eventId": "18",
+      "eventTime": "2026-11-24T20:59:35.232Z",
+      "eventType": "EVENT_TYPE_ACTIVITY_TASK_STARTED",
+      "activityTaskStartedEventAttributes": {
+        "scheduledEventId": "17",
+        "identity": "1234880@egede-dev.us-west1-b.c.pericortex.internal",
+        "attempt": 1
+      }
+    },
+    {
+      "eventId": "19",
+      "eventTime": "2026-11-24T20:59:35.234Z",
+      "eventType": "EVENT_TYPE_ACTIVITY_TASK_COMPLETED",
+      "activityTaskCompletedEventAttributes": {
+        "result": {
+          "payloads": [
+            {
+              "metadata": {
+                "encoding": "anNvbi9wbGFpbg=="
+              },
+              "data": "eyJmYWlsZWQiOjAsIml0ZW1zIjoxMCwic291cmNlcyI6M30="
+            }
+          ]
+        },
+        "scheduledEventId": "17",
+        "startedEventId": "18",
+        "identity": "1234880@egede-dev.us-west1-b.c.pericortex.internal"
+      }
+    },
+    {
+      "eventId": "20",
+      "eventTime": "2026-11-24T20:59:35.234Z",
+      "eventType": "EVENT_TYPE_WORKFLOW_TASK_SCHEDULED",
+      "workflowTaskScheduledEventAttributes": {
+        "taskQueue": {
+          "name": "intel-daily-9226671c-b361-4b56-87e8-3d1a70d6f804"
+        },
+        "startToCloseTimeout": "10s",
+        "attempt": 1
+      }
+    },
+    {
+      "eventId": "21",
+      "eventTime": "2026-11-24T20:59:35.234Z",
+      "eventType": "EVENT_TYPE_WORKFLOW_TASK_STARTED",
+      "workflowTaskStartedEventAttributes": {
+        "scheduledEventId": "20",
+        "identity": "1234880@egede-dev.us-west1-b.c.pericortex.internal",
+        "historySizeBytes": "2771"
+      }
+    },
+    {
+      "eventId": "22",
+      "eventTime": "2026-11-24T20:59:35.240Z",
+      "eventType": "EVENT_TYPE_WORKFLOW_TASK_COMPLETED",
+      "workflowTaskCompletedEventAttributes": {
+        "scheduledEventId": "20",
+        "identity": "1234880@egede-dev.us-west1-b.c.pericortex.internal",
+        "binaryChecksum": "476c062c421a96d5ad240f68d029db46",
+        "sdkMetadata": {},
+        "meteringMetadata": {}
+      }
+    },
+    {
+      "eventId": "23",
+      "eventTime": "2026-11-24T20:59:35.240Z",
+      "eventType": "EVENT_TYPE_ACTIVITY_TASK_SCHEDULED",
+      "activityTaskScheduledEventAttributes": {
+        "activityId": "4",
+        "activityType": {
+          "name": "intel_daily_fetch"
+        },
+        "taskQueue": {
+          "name": "intel-daily-9226671c-b361-4b56-87e8-3d1a70d6f804",
+          "kind": "TASK_QUEUE_KIND_NORMAL"
+        },
+        "header": {},
+        "input": {
+          "payloads": [
+            {
+              "metadata": {
+                "encoding": "anNvbi9wbGFpbg=="
+              },
+              "data": "eyJncm91cCI6InJlZGRpdCIsInJ1bl9pZCI6IjZmMGM0YTUyLTFlM2ItNGQ3YS05YzJlLThiNWYxYTNkN2U5MCJ9"
+            }
+          ]
+        },
+        "scheduleToCloseTimeout": "315360000s",
+        "scheduleToStartTimeout": "315360000s",
+        "startToCloseTimeout": "1500s",
+        "heartbeatTimeout": "90s",
+        "workflowTaskCompletedEventId": "21",
+        "retryPolicy": {
+          "initialInterval": "30s",
+          "backoffCoefficient": 2.0,
+          "maximumInterval": "3000s",
+          "maximumAttempts": 2,
+          "nonRetryableErrorTypes": [
+            "IntegrationAuthorizationError",
+            "WorkflowInputError",
+            "BillingError"
+          ]
+        },
+        "priority": {}
+      }
+    },
+    {
+      "eventId": "24",
+      "eventTime": "2026-11-24T20:59:35.240Z",
+      "eventType": "EVENT_TYPE_ACTIVITY_TASK_STARTED",
+      "activityTaskStartedEventAttributes": {
+        "scheduledEventId": "23",
+        "identity": "1234880@egede-dev.us-west1-b.c.pericortex.internal",
+        "attempt": 1
+      }
+    },
+    {
+      "eventId": "25",
+      "eventTime": "2026-11-24T20:59:35.243Z",
+      "eventType": "EVENT_TYPE_ACTIVITY_TASK_COMPLETED",
+      "activityTaskCompletedEventAttributes": {
+        "result": {
+          "payloads": [
+            {
+              "metadata": {
+                "encoding": "anNvbi9wbGFpbg=="
+              },
+              "data": "eyJmYWlsZWQiOjAsIml0ZW1zIjoxMCwic291cmNlcyI6M30="
+            }
+          ]
+        },
+        "scheduledEventId": "23",
+        "startedEventId": "24",
+        "identity": "1234880@egede-dev.us-west1-b.c.pericortex.internal"
+      }
+    },
+    {
+      "eventId": "26",
+      "eventTime": "2026-11-24T20:59:35.243Z",
+      "eventType": "EVENT_TYPE_WORKFLOW_TASK_SCHEDULED",
+      "workflowTaskScheduledEventAttributes": {
+        "taskQueue": {
+          "name": "intel-daily-9226671c-b361-4b56-87e8-3d1a70d6f804"
+        },
+        "startToCloseTimeout": "10s",
+        "attempt": 1
+      }
+    },
+    {
+      "eventId": "27",
+      "eventTime": "2026-11-24T20:59:35.243Z",
+      "eventType": "EVENT_TYPE_WORKFLOW_TASK_STARTED",
+      "workflowTaskStartedEventAttributes": {
+        "scheduledEventId": "26",
+        "identity": "1234880@egede-dev.us-west1-b.c.pericortex.internal",
+        "historySizeBytes": "3564"
+      }
+    },
+    {
+      "eventId": "28",
+      "eventTime": "2026-11-24T20:59:35.248Z",
+      "eventType": "EVENT_TYPE_WORKFLOW_TASK_COMPLETED",
+      "workflowTaskCompletedEventAttributes": {
+        "scheduledEventId": "26",
+        "identity": "1234880@egede-dev.us-west1-b.c.pericortex.internal",
+        "binaryChecksum": "476c062c421a96d5ad240f68d029db46",
+        "sdkMetadata": {},
+        "meteringMetadata": {}
+      }
+    },
+    {
+      "eventId": "29",
+      "eventTime": "2026-11-24T20:59:35.248Z",
+      "eventType": "EVENT_TYPE_ACTIVITY_TASK_SCHEDULED",
+      "activityTaskScheduledEventAttributes": {
+        "activityId": "5",
+        "activityType": {
+          "name": "intel_daily_fetch"
+        },
+        "taskQueue": {
+          "name": "intel-daily-9226671c-b361-4b56-87e8-3d1a70d6f804",
+          "kind": "TASK_QUEUE_KIND_NORMAL"
+        },
+        "header": {},
+        "input": {
+          "payloads": [
+            {
+              "metadata": {
+                "encoding": "anNvbi9wbGFpbg=="
+              },
+              "data": "eyJncm91cCI6IngiLCJydW5faWQiOiI2ZjBjNGE1Mi0xZTNiLTRkN2EtOWMyZS04YjVmMWEzZDdlOTAifQ=="
+            }
+          ]
+        },
+        "scheduleToCloseTimeout": "315360000s",
+        "scheduleToStartTimeout": "315360000s",
+        "startToCloseTimeout": "1500s",
+        "heartbeatTimeout": "90s",
+        "workflowTaskCompletedEventId": "27",
+        "retryPolicy": {
+          "initialInterval": "30s",
+          "backoffCoefficient": 2.0,
+          "maximumInterval": "3000s",
+          "maximumAttempts": 2,
+          "nonRetryableErrorTypes": [
+            "IntegrationAuthorizationError",
+            "WorkflowInputError",
+            "BillingError"
+          ]
+        },
+        "priority": {}
+      }
+    },
+    {
+      "eventId": "30",
+      "eventTime": "2026-11-24T20:59:35.248Z",
+      "eventType": "EVENT_TYPE_ACTIVITY_TASK_STARTED",
+      "activityTaskStartedEventAttributes": {
+        "scheduledEventId": "29",
+        "identity": "1234880@egede-dev.us-west1-b.c.pericortex.internal",
+        "attempt": 1
+      }
+    },
+    {
+      "eventId": "31",
+      "eventTime": "2026-11-24T20:59:35.250Z",
+      "eventType": "EVENT_TYPE_ACTIVITY_TASK_COMPLETED",
+      "activityTaskCompletedEventAttributes": {
+        "result": {
+          "payloads": [
+            {
+              "metadata": {
+                "encoding": "anNvbi9wbGFpbg=="
+              },
+              "data": "eyJpdGVtcyI6MCwic291cmNlcyI6MSwieCI6InhfbWVtYmVyIn0="
+            }
+          ]
+        },
+        "scheduledEventId": "29",
+        "startedEventId": "30",
+        "identity": "1234880@egede-dev.us-west1-b.c.pericortex.internal"
+      }
+    },
+    {
+      "eventId": "32",
+      "eventTime": "2026-11-24T20:59:35.250Z",
+      "eventType": "EVENT_TYPE_WORKFLOW_TASK_SCHEDULED",
+      "workflowTaskScheduledEventAttributes": {
+        "taskQueue": {
+          "name": "intel-daily-9226671c-b361-4b56-87e8-3d1a70d6f804"
+        },
+        "startToCloseTimeout": "10s",
+        "attempt": 1
+      }
+    },
+    {
+      "eventId": "33",
+      "eventTime": "2026-11-24T20:59:35.250Z",
+      "eventType": "EVENT_TYPE_WORKFLOW_TASK_STARTED",
+      "workflowTaskStartedEventAttributes": {
+        "scheduledEventId": "32",
+        "identity": "1234880@egede-dev.us-west1-b.c.pericortex.internal",
+        "historySizeBytes": "4355"
+      }
+    },
+    {
+      "eventId": "34",
+      "eventTime": "2026-11-24T20:59:35.256Z",
+      "eventType": "EVENT_TYPE_WORKFLOW_TASK_COMPLETED",
+      "workflowTaskCompletedEventAttributes": {
+        "scheduledEventId": "32",
+        "identity": "1234880@egede-dev.us-west1-b.c.pericortex.internal",
+        "binaryChecksum": "476c062c421a96d5ad240f68d029db46",
+        "sdkMetadata": {},
+        "meteringMetadata": {}
+      }
+    },
+    {
+      "eventId": "35",
+      "eventTime": "2026-11-24T20:59:35.256Z",
+      "eventType": "EVENT_TYPE_ACTIVITY_TASK_SCHEDULED",
+      "activityTaskScheduledEventAttributes": {
+        "activityId": "6",
+        "activityType": {
+          "name": "intel_daily_load"
+        },
+        "taskQueue": {
+          "name": "intel-daily-9226671c-b361-4b56-87e8-3d1a70d6f804",
+          "kind": "TASK_QUEUE_KIND_NORMAL"
+        },
+        "header": {},
+        "input": {
+          "payloads": [
+            {
+              "metadata": {
+                "encoding": "anNvbi9wbGFpbg=="
+              },
+              "data": "IjZmMGM0YTUyLTFlM2ItNGQ3YS05YzJlLThiNWYxYTNkN2U5MCI="
+            }
+          ]
+        },
+        "scheduleToCloseTimeout": "315360000s",
+        "scheduleToStartTimeout": "315360000s",
+        "startToCloseTimeout": "600s",
+        "heartbeatTimeout": "0s",
+        "workflowTaskCompletedEventId": "33",
+        "retryPolicy": {
+          "initialInterval": "30s",
+          "backoffCoefficient": 2.0,
+          "maximumInterval": "3000s",
+          "maximumAttempts": 3,
+          "nonRetryableErrorTypes": [
+            "IntegrationAuthorizationError",
+            "WorkflowInputError",
+            "BillingError"
+          ]
+        },
+        "priority": {}
+      }
+    },
+    {
+      "eventId": "36",
+      "eventTime": "2026-11-24T20:59:35.256Z",
+      "eventType": "EVENT_TYPE_ACTIVITY_TASK_STARTED",
+      "activityTaskStartedEventAttributes": {
+        "scheduledEventId": "35",
+        "identity": "1234880@egede-dev.us-west1-b.c.pericortex.internal",
+        "attempt": 1
+      }
+    },
+    {
+      "eventId": "37",
+      "eventTime": "2026-11-24T20:59:35.259Z",
+      "eventType": "EVENT_TYPE_ACTIVITY_TASK_COMPLETED",
+      "activityTaskCompletedEventAttributes": {
+        "result": {
+          "payloads": [
+            {
+              "metadata": {
+                "encoding": "anNvbi9wbGFpbg=="
+              },
+              "data": "eyJpdGVtcyI6MzAsIndvcmxkIjoibWlzc2luZyJ9"
+            }
+          ]
+        },
+        "scheduledEventId": "35",
+        "startedEventId": "36",
+        "identity": "1234880@egede-dev.us-west1-b.c.pericortex.internal"
+      }
+    },
+    {
+      "eventId": "38",
+      "eventTime": "2026-11-24T20:59:35.259Z",
+      "eventType": "EVENT_TYPE_WORKFLOW_TASK_SCHEDULED",
+      "workflowTaskScheduledEventAttributes": {
+        "taskQueue": {
+          "name": "intel-daily-9226671c-b361-4b56-87e8-3d1a70d6f804"
+        },
+        "startToCloseTimeout": "10s",
+        "attempt": 1
+      }
+    },
+    {
+      "eventId": "39",
+      "eventTime": "2026-11-24T20:59:35.259Z",
+      "eventType": "EVENT_TYPE_WORKFLOW_TASK_STARTED",
+      "workflowTaskStartedEventAttributes": {
+        "scheduledEventId": "38",
+        "identity": "1234880@egede-dev.us-west1-b.c.pericortex.internal",
+        "historySizeBytes": "5112"
+      }
+    },
+    {
+      "eventId": "40",
+      "eventTime": "2026-11-24T20:59:35.265Z",
+      "eventType": "EVENT_TYPE_WORKFLOW_TASK_COMPLETED",
+      "workflowTaskCompletedEventAttributes": {
+        "scheduledEventId": "38",
+        "identity": "1234880@egede-dev.us-west1-b.c.pericortex.internal",
+        "binaryChecksum": "476c062c421a96d5ad240f68d029db46",
+        "sdkMetadata": {},
+        "meteringMetadata": {}
+      }
+    },
+    {
+      "eventId": "41",
+      "eventTime": "2026-11-24T20:59:35.265Z",
+      "eventType": "EVENT_TYPE_ACTIVITY_TASK_SCHEDULED",
+      "activityTaskScheduledEventAttributes": {
+        "activityId": "7",
+        "activityType": {
+          "name": "intel_daily_judge_start"
+        },
+        "taskQueue": {
+          "name": "intel-daily-9226671c-b361-4b56-87e8-3d1a70d6f804",
+          "kind": "TASK_QUEUE_KIND_NORMAL"
+        },
+        "header": {},
+        "input": {
+          "payloads": [
+            {
+              "metadata": {
+                "encoding": "anNvbi9wbGFpbg=="
+              },
+              "data": "IjZmMGM0YTUyLTFlM2ItNGQ3YS05YzJlLThiNWYxYTNkN2U5MCI="
+            }
+          ]
+        },
+        "scheduleToCloseTimeout": "315360000s",
+        "scheduleToStartTimeout": "315360000s",
+        "startToCloseTimeout": "600s",
+        "heartbeatTimeout": "0s",
+        "workflowTaskCompletedEventId": "39",
+        "retryPolicy": {
+          "initialInterval": "30s",
+          "backoffCoefficient": 2.0,
+          "maximumInterval": "3000s",
+          "maximumAttempts": 3,
+          "nonRetryableErrorTypes": [
+            "IntegrationAuthorizationError",
+            "WorkflowInputError",
+            "BillingError"
+          ]
+        },
+        "priority": {}
+      }
+    },
+    {
+      "eventId": "42",
+      "eventTime": "2026-11-24T20:59:35.265Z",
+      "eventType": "EVENT_TYPE_ACTIVITY_TASK_STARTED",
+      "activityTaskStartedEventAttributes": {
+        "scheduledEventId": "41",
+        "identity": "1234880@egede-dev.us-west1-b.c.pericortex.internal",
+        "attempt": 1
+      }
+    },
+    {
+      "eventId": "43",
+      "eventTime": "2026-11-24T20:59:35.268Z",
+      "eventType": "EVENT_TYPE_ACTIVITY_TASK_COMPLETED",
+      "activityTaskCompletedEventAttributes": {
+        "result": {
+          "payloads": [
+            {
+              "metadata": {
+                "encoding": "anNvbi9wbGFpbg=="
+              },
+              "data": "eyJleGVjdXRvciI6ImNvZGV4LnByb2NlZHVyZSIsInJ1bl9pZCI6Im9rLTQ0ODlkOWU1LTA0OWEtNDgwZi1hOWM2LTE2YmJhMTE4NjMxNiIsInRlbXBvcmFsX3dvcmtmbG93X2lkIjoib2stNDQ4OWQ5ZTUtMDQ5YS00ODBmLWE5YzYtMTZiYmExMTg2MzE2In0="
+            }
+          ]
+        },
+        "scheduledEventId": "41",
+        "startedEventId": "42",
+        "identity": "1234880@egede-dev.us-west1-b.c.pericortex.internal"
+      }
+    },
+    {
+      "eventId": "44",
+      "eventTime": "2026-11-24T20:59:35.268Z",
+      "eventType": "EVENT_TYPE_WORKFLOW_TASK_SCHEDULED",
+      "workflowTaskScheduledEventAttributes": {
+        "taskQueue": {
+          "name": "intel-daily-9226671c-b361-4b56-87e8-3d1a70d6f804"
+        },
+        "startToCloseTimeout": "10s",
+        "attempt": 1
+      }
+    },
+    {
+      "eventId": "45",
+      "eventTime": "2026-11-24T20:59:35.268Z",
+      "eventType": "EVENT_TYPE_WORKFLOW_TASK_STARTED",
+      "workflowTaskStartedEventAttributes": {
+        "scheduledEventId": "44",
+        "identity": "1234880@egede-dev.us-west1-b.c.pericortex.internal",
+        "historySizeBytes": "5996"
+      }
+    },
+    {
+      "eventId": "46",
+      "eventTime": "2026-11-24T20:59:35.278Z",
+      "eventType": "EVENT_TYPE_WORKFLOW_TASK_COMPLETED",
+      "workflowTaskCompletedEventAttributes": {
+        "scheduledEventId": "44",
+        "identity": "1234880@egede-dev.us-west1-b.c.pericortex.internal",
+        "binaryChecksum": "476c062c421a96d5ad240f68d029db46",
+        "sdkMetadata": {},
+        "meteringMetadata": {}
+      }
+    },
+    {
+      "eventId": "47",
+      "eventTime": "2026-11-24T20:59:35.278Z",
+      "eventType": "EVENT_TYPE_START_CHILD_WORKFLOW_EXECUTION_INITIATED",
+      "startChildWorkflowExecutionInitiatedEventAttributes": {
+        "namespace": "default",
+        "workflowId": "ok-4489d9e5-049a-480f-a9c6-16bba1186316",
+        "workflowType": {
+          "name": "codex.procedure"
+        },
+        "taskQueue": {
+          "name": "intel-daily-9226671c-b361-4b56-87e8-3d1a70d6f804",
+          "kind": "TASK_QUEUE_KIND_NORMAL"
+        },
+        "input": {
+          "payloads": [
+            {
+              "metadata": {
+                "encoding": "anNvbi9wbGFpbg=="
+              },
+              "data": "Im9rLTQ0ODlkOWU1LTA0OWEtNDgwZi1hOWM2LTE2YmJhMTE4NjMxNiI="
+            }
+          ]
+        },
+        "workflowExecutionTimeout": "0s",
+        "workflowRunTimeout": "0s",
+        "workflowTaskTimeout": "10s",
+        "parentClosePolicy": "PARENT_CLOSE_POLICY_ABANDON",
+        "workflowTaskCompletedEventId": "45",
+        "workflowIdReusePolicy": "WORKFLOW_ID_REUSE_POLICY_ALLOW_DUPLICATE",
+        "header": {},
+        "memo": {},
+        "priority": {}
+      }
+    },
+    {
+      "eventId": "48",
+      "eventTime": "2026-11-24T20:59:35.282Z",
+      "eventType": "EVENT_TYPE_CHILD_WORKFLOW_EXECUTION_STARTED",
+      "childWorkflowExecutionStartedEventAttributes": {
+        "namespace": "default",
+        "initiatedEventId": "47",
+        "workflowExecution": {
+          "workflowId": "ok-4489d9e5-049a-480f-a9c6-16bba1186316",
+          "runId": "849ca656-24fc-46e7-8f0c-b04634ff1551"
+        },
+        "workflowType": {
+          "name": "codex.procedure"
+        }
+      }
+    },
+    {
+      "eventId": "49",
+      "eventTime": "2026-11-24T20:59:35.282Z",
+      "eventType": "EVENT_TYPE_WORKFLOW_TASK_SCHEDULED",
+      "workflowTaskScheduledEventAttributes": {
+        "taskQueue": {
+          "name": "intel-daily-9226671c-b361-4b56-87e8-3d1a70d6f804"
+        },
+        "startToCloseTimeout": "10s",
+        "attempt": 1
+      }
+    },
+    {
+      "eventId": "50",
+      "eventTime": "2026-11-24T20:59:35.282Z",
+      "eventType": "EVENT_TYPE_WORKFLOW_TASK_STARTED",
+      "workflowTaskStartedEventAttributes": {
+        "scheduledEventId": "49",
+        "identity": "1234880@egede-dev.us-west1-b.c.pericortex.internal",
+        "historySizeBytes": "6632"
+      }
+    },
+    {
+      "eventId": "51",
+      "eventTime": "2026-11-24T20:59:35.541Z",
+      "eventType": "EVENT_TYPE_WORKFLOW_TASK_COMPLETED",
+      "workflowTaskCompletedEventAttributes": {
+        "scheduledEventId": "49",
+        "identity": "1234880@egede-dev.us-west1-b.c.pericortex.internal",
+        "binaryChecksum": "476c062c421a96d5ad240f68d029db46",
+        "sdkMetadata": {},
+        "meteringMetadata": {}
+      }
+    },
+    {
+      "eventId": "52",
+      "eventTime": "2026-11-24T20:59:35.542Z",
+      "eventType": "EVENT_TYPE_CHILD_WORKFLOW_EXECUTION_COMPLETED",
+      "childWorkflowExecutionCompletedEventAttributes": {
+        "result": {
+          "payloads": [
+            {
+              "metadata": {
+                "encoding": "YmluYXJ5L251bGw="
+              }
+            }
+          ]
+        },
+        "namespace": "default",
+        "workflowExecution": {
+          "workflowId": "ok-4489d9e5-049a-480f-a9c6-16bba1186316",
+          "runId": "849ca656-24fc-46e7-8f0c-b04634ff1551"
+        },
+        "workflowType": {
+          "name": "codex.procedure"
+        },
+        "initiatedEventId": "47",
+        "startedEventId": "48"
+      }
+    },
+    {
+      "eventId": "53",
+      "eventTime": "2026-11-24T20:59:35.542Z",
+      "eventType": "EVENT_TYPE_WORKFLOW_TASK_SCHEDULED",
+      "workflowTaskScheduledEventAttributes": {
+        "taskQueue": {
+          "name": "intel-daily-9226671c-b361-4b56-87e8-3d1a70d6f804"
+        },
+        "startToCloseTimeout": "10s",
+        "attempt": 1
+      }
+    },
+    {
+      "eventId": "54",
+      "eventTime": "2026-11-24T20:59:35.542Z",
+      "eventType": "EVENT_TYPE_WORKFLOW_TASK_STARTED",
+      "workflowTaskStartedEventAttributes": {
+        "scheduledEventId": "53",
+        "identity": "1234880@egede-dev.us-west1-b.c.pericortex.internal",
+        "historySizeBytes": "7063"
+      }
+    },
+    {
+      "eventId": "55",
+      "eventTime": "2026-11-24T20:59:35.548Z",
+      "eventType": "EVENT_TYPE_WORKFLOW_TASK_COMPLETED",
+      "workflowTaskCompletedEventAttributes": {
+        "scheduledEventId": "53",
+        "identity": "1234880@egede-dev.us-west1-b.c.pericortex.internal",
+        "binaryChecksum": "476c062c421a96d5ad240f68d029db46",
+        "sdkMetadata": {},
+        "meteringMetadata": {}
+      }
+    },
+    {
+      "eventId": "56",
+      "eventTime": "2026-11-24T20:59:35.548Z",
+      "eventType": "EVENT_TYPE_ACTIVITY_TASK_SCHEDULED",
+      "activityTaskScheduledEventAttributes": {
+        "activityId": "8",
+        "activityType": {
+          "name": "intel_daily_judge_collect"
+        },
+        "taskQueue": {
+          "name": "intel-daily-9226671c-b361-4b56-87e8-3d1a70d6f804",
+          "kind": "TASK_QUEUE_KIND_NORMAL"
+        },
+        "header": {},
+        "input": {
+          "payloads": [
+            {
+              "metadata": {
+                "encoding": "anNvbi9wbGFpbg=="
+              },
+              "data": "IjZmMGM0YTUyLTFlM2ItNGQ3YS05YzJlLThiNWYxYTNkN2U5MCI="
+            }
+          ]
+        },
+        "scheduleToCloseTimeout": "315360000s",
+        "scheduleToStartTimeout": "315360000s",
+        "startToCloseTimeout": "300s",
+        "heartbeatTimeout": "0s",
+        "workflowTaskCompletedEventId": "54",
+        "retryPolicy": {
+          "initialInterval": "30s",
+          "backoffCoefficient": 2.0,
+          "maximumInterval": "3000s",
+          "maximumAttempts": 3,
+          "nonRetryableErrorTypes": [
+            "IntegrationAuthorizationError",
+            "WorkflowInputError",
+            "BillingError"
+          ]
+        },
+        "priority": {}
+      }
+    },
+    {
+      "eventId": "57",
+      "eventTime": "2026-11-24T20:59:35.548Z",
+      "eventType": "EVENT_TYPE_ACTIVITY_TASK_STARTED",
+      "activityTaskStartedEventAttributes": {
+        "scheduledEventId": "56",
+        "identity": "1234880@egede-dev.us-west1-b.c.pericortex.internal",
+        "attempt": 1
+      }
+    },
+    {
+      "eventId": "58",
+      "eventTime": "2026-11-24T20:59:35.551Z",
+      "eventType": "EVENT_TYPE_ACTIVITY_TASK_COMPLETED",
+      "activityTaskCompletedEventAttributes": {
+        "result": {
+          "payloads": [
+            {
+              "metadata": {
+                "encoding": "anNvbi9wbGFpbg=="
+              },
+              "data": "eyJicmllZiI6Imp1ZGdlIiwic3RvcmllcyI6MTJ9"
+            }
+          ]
+        },
+        "scheduledEventId": "56",
+        "startedEventId": "57",
+        "identity": "1234880@egede-dev.us-west1-b.c.pericortex.internal"
+      }
+    },
+    {
+      "eventId": "59",
+      "eventTime": "2026-11-24T20:59:35.551Z",
+      "eventType": "EVENT_TYPE_WORKFLOW_TASK_SCHEDULED",
+      "workflowTaskScheduledEventAttributes": {
+        "taskQueue": {
+          "name": "intel-daily-9226671c-b361-4b56-87e8-3d1a70d6f804"
+        },
+        "startToCloseTimeout": "10s",
+        "attempt": 1
+      }
+    },
+    {
+      "eventId": "60",
+      "eventTime": "2026-11-24T20:59:35.551Z",
+      "eventType": "EVENT_TYPE_WORKFLOW_TASK_STARTED",
+      "workflowTaskStartedEventAttributes": {
+        "scheduledEventId": "59",
+        "identity": "1234880@egede-dev.us-west1-b.c.pericortex.internal",
+        "historySizeBytes": "7835"
+      }
+    },
+    {
+      "eventId": "61",
+      "eventTime": "2026-11-24T20:59:35.557Z",
+      "eventType": "EVENT_TYPE_WORKFLOW_TASK_COMPLETED",
+      "workflowTaskCompletedEventAttributes": {
+        "scheduledEventId": "59",
+        "identity": "1234880@egede-dev.us-west1-b.c.pericortex.internal",
+        "binaryChecksum": "476c062c421a96d5ad240f68d029db46",
+        "sdkMetadata": {},
+        "meteringMetadata": {}
+      }
+    },
+    {
+      "eventId": "62",
+      "eventTime": "2026-11-24T20:59:35.557Z",
+      "eventType": "EVENT_TYPE_ACTIVITY_TASK_SCHEDULED",
+      "activityTaskScheduledEventAttributes": {
+        "activityId": "9",
+        "activityType": {
+          "name": "intel_daily_publish"
+        },
+        "taskQueue": {
+          "name": "intel-daily-9226671c-b361-4b56-87e8-3d1a70d6f804",
+          "kind": "TASK_QUEUE_KIND_NORMAL"
+        },
+        "header": {},
+        "input": {
+          "payloads": [
+            {
+              "metadata": {
+                "encoding": "anNvbi9wbGFpbg=="
+              },
+              "data": "IjZmMGM0YTUyLTFlM2ItNGQ3YS05YzJlLThiNWYxYTNkN2U5MCI="
+            }
+          ]
+        },
+        "scheduleToCloseTimeout": "315360000s",
+        "scheduleToStartTimeout": "315360000s",
+        "startToCloseTimeout": "900s",
+        "heartbeatTimeout": "0s",
+        "workflowTaskCompletedEventId": "60",
+        "retryPolicy": {
+          "initialInterval": "30s",
+          "backoffCoefficient": 2.0,
+          "maximumInterval": "3000s",
+          "maximumAttempts": 3,
+          "nonRetryableErrorTypes": [
+            "IntegrationAuthorizationError",
+            "WorkflowInputError",
+            "BillingError"
+          ]
+        },
+        "priority": {}
+      }
+    },
+    {
+      "eventId": "63",
+      "eventTime": "2026-11-24T20:59:35.558Z",
+      "eventType": "EVENT_TYPE_ACTIVITY_TASK_STARTED",
+      "activityTaskStartedEventAttributes": {
+        "scheduledEventId": "62",
+        "identity": "1234880@egede-dev.us-west1-b.c.pericortex.internal",
+        "attempt": 1
+      }
+    },
+    {
+      "eventId": "64",
+      "eventTime": "2026-11-24T20:59:35.560Z",
+      "eventType": "EVENT_TYPE_ACTIVITY_TASK_COMPLETED",
+      "activityTaskCompletedEventAttributes": {
+        "result": {
+          "payloads": [
+            {
+              "metadata": {
+                "encoding": "anNvbi9wbGFpbg=="
+              },
+              "data": "eyJsaW5rcyI6M30="
+            }
+          ]
+        },
+        "scheduledEventId": "62",
+        "startedEventId": "63",
+        "identity": "1234880@egede-dev.us-west1-b.c.pericortex.internal"
+      }
+    },
+    {
+      "eventId": "65",
+      "eventTime": "2026-11-24T20:59:35.560Z",
+      "eventType": "EVENT_TYPE_WORKFLOW_TASK_SCHEDULED",
+      "workflowTaskScheduledEventAttributes": {
+        "taskQueue": {
+          "name": "intel-daily-9226671c-b361-4b56-87e8-3d1a70d6f804"
+        },
+        "startToCloseTimeout": "10s",
+        "attempt": 1
+      }
+    },
+    {
+      "eventId": "66",
+      "eventTime": "2026-11-24T20:59:35.560Z",
+      "eventType": "EVENT_TYPE_WORKFLOW_TASK_STARTED",
+      "workflowTaskStartedEventAttributes": {
+        "scheduledEventId": "65",
+        "identity": "1234880@egede-dev.us-west1-b.c.pericortex.internal",
+        "historySizeBytes": "8582"
+      }
+    },
+    {
+      "eventId": "67",
+      "eventTime": "2026-11-24T20:59:35.565Z",
+      "eventType": "EVENT_TYPE_WORKFLOW_TASK_COMPLETED",
+      "workflowTaskCompletedEventAttributes": {
+        "scheduledEventId": "65",
+        "identity": "1234880@egede-dev.us-west1-b.c.pericortex.internal",
+        "binaryChecksum": "476c062c421a96d5ad240f68d029db46",
+        "sdkMetadata": {},
+        "meteringMetadata": {}
+      }
+    },
+    {
+      "eventId": "68",
+      "eventTime": "2026-11-24T20:59:35.565Z",
+      "eventType": "EVENT_TYPE_ACTIVITY_TASK_SCHEDULED",
+      "activityTaskScheduledEventAttributes": {
+        "activityId": "10",
+        "activityType": {
+          "name": "intel_daily_post"
+        },
+        "taskQueue": {
+          "name": "intel-daily-9226671c-b361-4b56-87e8-3d1a70d6f804",
+          "kind": "TASK_QUEUE_KIND_NORMAL"
+        },
+        "header": {},
+        "input": {
+          "payloads": [
+            {
+              "metadata": {
+                "encoding": "anNvbi9wbGFpbg=="
+              },
+              "data": "IjZmMGM0YTUyLTFlM2ItNGQ3YS05YzJlLThiNWYxYTNkN2U5MCI="
+            }
+          ]
+        },
+        "scheduleToCloseTimeout": "315360000s",
+        "scheduleToStartTimeout": "315360000s",
+        "startToCloseTimeout": "300s",
+        "heartbeatTimeout": "0s",
+        "workflowTaskCompletedEventId": "66",
+        "retryPolicy": {
+          "initialInterval": "30s",
+          "backoffCoefficient": 2.0,
+          "maximumInterval": "3000s",
+          "maximumAttempts": 3,
+          "nonRetryableErrorTypes": [
+            "IntegrationAuthorizationError",
+            "WorkflowInputError",
+            "BillingError"
+          ]
+        },
+        "priority": {}
+      }
+    },
+    {
+      "eventId": "69",
+      "eventTime": "2026-11-24T20:59:35.565Z",
+      "eventType": "EVENT_TYPE_ACTIVITY_TASK_STARTED",
+      "activityTaskStartedEventAttributes": {
+        "scheduledEventId": "68",
+        "identity": "1234880@egede-dev.us-west1-b.c.pericortex.internal",
+        "attempt": 1
+      }
+    },
+    {
+      "eventId": "70",
+      "eventTime": "2026-11-24T20:59:35.568Z",
+      "eventType": "EVENT_TYPE_ACTIVITY_TASK_COMPLETED",
+      "activityTaskCompletedEventAttributes": {
+        "result": {
+          "payloads": [
+            {
+              "metadata": {
+                "encoding": "anNvbi9wbGFpbg=="
+              },
+              "data": "eyJvdXRjb21lIjoic2VudCJ9"
+            }
+          ]
+        },
+        "scheduledEventId": "68",
+        "startedEventId": "69",
+        "identity": "1234880@egede-dev.us-west1-b.c.pericortex.internal"
+      }
+    },
+    {
+      "eventId": "71",
+      "eventTime": "2026-11-24T20:59:35.568Z",
+      "eventType": "EVENT_TYPE_WORKFLOW_TASK_SCHEDULED",
+      "workflowTaskScheduledEventAttributes": {
+        "taskQueue": {
+          "name": "intel-daily-9226671c-b361-4b56-87e8-3d1a70d6f804"
+        },
+        "startToCloseTimeout": "10s",
+        "attempt": 1
+      }
+    },
+    {
+      "eventId": "72",
+      "eventTime": "2026-11-24T20:59:35.568Z",
+      "eventType": "EVENT_TYPE_WORKFLOW_TASK_STARTED",
+      "workflowTaskStartedEventAttributes": {
+        "scheduledEventId": "71",
+        "identity": "1234880@egede-dev.us-west1-b.c.pericortex.internal",
+        "historySizeBytes": "9334"
+      }
+    },
+    {
+      "eventId": "73",
+      "eventTime": "2026-11-24T20:59:35.574Z",
+      "eventType": "EVENT_TYPE_WORKFLOW_TASK_COMPLETED",
+      "workflowTaskCompletedEventAttributes": {
+        "scheduledEventId": "71",
+        "identity": "1234880@egede-dev.us-west1-b.c.pericortex.internal",
+        "binaryChecksum": "476c062c421a96d5ad240f68d029db46",
+        "sdkMetadata": {},
+        "meteringMetadata": {}
+      }
+    },
+    {
+      "eventId": "74",
+      "eventTime": "2026-11-24T20:59:35.574Z",
+      "eventType": "EVENT_TYPE_ACTIVITY_TASK_SCHEDULED",
+      "activityTaskScheduledEventAttributes": {
+        "activityId": "11",
+        "activityType": {
+          "name": "intel_daily_finish"
+        },
+        "taskQueue": {
+          "name": "intel-daily-9226671c-b361-4b56-87e8-3d1a70d6f804",
+          "kind": "TASK_QUEUE_KIND_NORMAL"
+        },
+        "header": {},
+        "input": {
+          "payloads": [
+            {
+              "metadata": {
+                "encoding": "anNvbi9wbGFpbg=="
+              },
+              "data": "IjZmMGM0YTUyLTFlM2ItNGQ3YS05YzJlLThiNWYxYTNkN2U5MCI="
+            }
+          ]
+        },
+        "scheduleToCloseTimeout": "315360000s",
+        "scheduleToStartTimeout": "315360000s",
+        "startToCloseTimeout": "300s",
+        "heartbeatTimeout": "0s",
+        "workflowTaskCompletedEventId": "72",
+        "retryPolicy": {
+          "initialInterval": "30s",
+          "backoffCoefficient": 2.0,
+          "maximumInterval": "3000s",
+          "maximumAttempts": 3,
+          "nonRetryableErrorTypes": [
+            "IntegrationAuthorizationError",
+            "WorkflowInputError",
+            "BillingError"
+          ]
+        },
+        "priority": {}
+      }
+    },
+    {
+      "eventId": "75",
+      "eventTime": "2026-11-24T20:59:35.574Z",
+      "eventType": "EVENT_TYPE_ACTIVITY_TASK_STARTED",
+      "activityTaskStartedEventAttributes": {
+        "scheduledEventId": "74",
+        "identity": "1234880@egede-dev.us-west1-b.c.pericortex.internal",
+        "attempt": 1
+      }
+    },
+    {
+      "eventId": "76",
+      "eventTime": "2026-11-24T20:59:35.576Z",
+      "eventType": "EVENT_TYPE_ACTIVITY_TASK_COMPLETED",
+      "activityTaskCompletedEventAttributes": {
+        "result": {
+          "payloads": [
+            {
+              "metadata": {
+                "encoding": "YmluYXJ5L251bGw="
+              }
+            }
+          ]
+        },
+        "scheduledEventId": "74",
+        "startedEventId": "75",
+        "identity": "1234880@egede-dev.us-west1-b.c.pericortex.internal"
+      }
+    },
+    {
+      "eventId": "77",
+      "eventTime": "2026-11-24T20:59:35.576Z",
+      "eventType": "EVENT_TYPE_WORKFLOW_TASK_SCHEDULED",
+      "workflowTaskScheduledEventAttributes": {
+        "taskQueue": {
+          "name": "intel-daily-9226671c-b361-4b56-87e8-3d1a70d6f804"
+        },
+        "startToCloseTimeout": "10s",
+        "attempt": 1
+      }
+    },
+    {
+      "eventId": "78",
+      "eventTime": "2026-11-24T20:59:35.577Z",
+      "eventType": "EVENT_TYPE_WORKFLOW_TASK_STARTED",
+      "workflowTaskStartedEventAttributes": {
+        "scheduledEventId": "77",
+        "identity": "1234880@egede-dev.us-west1-b.c.pericortex.internal",
+        "historySizeBytes": "10069"
+      }
+    },
+    {
+      "eventId": "79",
+      "eventTime": "2026-11-24T20:59:35.582Z",
+      "eventType": "EVENT_TYPE_WORKFLOW_TASK_COMPLETED",
+      "workflowTaskCompletedEventAttributes": {
+        "scheduledEventId": "77",
+        "identity": "1234880@egede-dev.us-west1-b.c.pericortex.internal",
+        "binaryChecksum": "476c062c421a96d5ad240f68d029db46",
+        "sdkMetadata": {},
+        "meteringMetadata": {}
+      }
+    },
+    {
+      "eventId": "80",
+      "eventTime": "2026-11-24T20:59:35.582Z",
+      "eventType": "EVENT_TYPE_WORKFLOW_EXECUTION_COMPLETED",
+      "workflowExecutionCompletedEventAttributes": {
+        "result": {
+          "payloads": [
+            {
+              "metadata": {
+                "encoding": "YmluYXJ5L251bGw="
+              }
+            }
+          ]
+        },
+        "workflowTaskCompletedEventId": "78"
+      }
+    }
+  ]
+}

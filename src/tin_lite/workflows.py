@@ -2369,6 +2369,79 @@ class IntelWorldWorkflow:
             raise
 
 
+@workflow.defn(name="intel.daily")
+class IntelDailyWorkflow:
+    """A client's day of market intelligence (intel_daily): prepare, the fetch groups, the
+    day's snapshot, the analyst as a child procedure, then the report and brief in Files and
+    Slack. History holds the run ID, group names, counts and the child's ids; items, stories,
+    the brief and messages stay in Postgres and Files. A fetch group or the Slack post failing
+    never fails the run; no items, a failed analyst or a refused start does."""
+
+    @workflow.run
+    async def run(self, run_id: str) -> None:
+        async def call(name, argument=run_id, *, minutes=5, attempts=3, heartbeat=None):
+            return await workflow.execute_activity(
+                name,
+                argument,
+                start_to_close_timeout=timedelta(minutes=minutes),
+                heartbeat_timeout=heartbeat,
+                retry_policy=RetryPolicy(
+                    initial_interval=timedelta(seconds=30),
+                    maximum_attempts=attempts,
+                    non_retryable_error_types=[
+                        "IntegrationAuthorizationError",
+                        "WorkflowInputError",
+                        "BillingError",
+                    ],
+                ),
+            )
+
+        async def fetch(group: str) -> None:
+            # A group that outruns its attempts is a gap in the day, recorded by its sources.
+            try:
+                await call(
+                    "intel_daily_fetch",
+                    {"run_id": run_id, "group": group},
+                    minutes=25,
+                    attempts=2,
+                    heartbeat=timedelta(seconds=90),
+                )
+            except ActivityError as exc:
+                if is_cancelled_exception(exc):
+                    raise
+
+        try:
+            prepared = await call("intel_daily_prepare")
+            # One group at a time: the trusted lane's few slots are shared by every workflow.
+            for group in prepared["groups"]:
+                await fetch(group)
+            await call("intel_daily_load", minutes=10)
+            child = await call("intel_daily_judge_start", minutes=10)
+            if (child or {}).get("temporal_workflow_id"):
+                # The analyst's own run records why it stopped; collect decides.
+                with contextlib.suppress(Exception):
+                    await workflow.execute_child_workflow(
+                        child["executor"],
+                        child["run_id"],
+                        id=child["temporal_workflow_id"],
+                        task_queue=workflow.info().task_queue,
+                        parent_close_policy=workflow.ParentClosePolicy.ABANDON,
+                        cancellation_type=workflow.ChildWorkflowCancellationType.ABANDON,
+                    )
+            await call("intel_daily_judge_collect")
+            await call("intel_daily_publish", minutes=15)
+            try:
+                await call("intel_daily_post")
+            except ActivityError as exc:
+                # Slack never fails the run; its outcome is recorded with the post.
+                if is_cancelled_exception(exc):
+                    raise
+            await call("intel_daily_finish")
+        except BaseException as exc:
+            await call("intel_daily_failure", failure_input(run_id, exc), minutes=1)
+            raise
+
+
 def registered_workflows() -> list[type]:
     return [
         CodeWorkflow,
@@ -2389,6 +2462,7 @@ def registered_workflows() -> list[type]:
         LinkedInRequestsWorkflow,
         RB2BVisitorWorkflow,
         IntelWorldWorkflow,
+        IntelDailyWorkflow,
         PeopleRateWorkflow,
         OrganicTrafficSystemWorkflow,
         GrowthOnboardingWorkflow,
@@ -2437,6 +2511,7 @@ def registered_workflow_implementations() -> dict[str, type]:
         LINKEDIN_REQUESTS_WORKFLOW_NAME: LinkedInRequestsWorkflow,
         RB2B_VISITOR_WORKFLOW_NAME: RB2BVisitorWorkflow,
         "intel.world": IntelWorldWorkflow,
+        "intel.daily": IntelDailyWorkflow,
         PEOPLE_RATE_WORKFLOW_NAME: PeopleRateWorkflow,
         "organic.traffic_system": OrganicTrafficSystemWorkflow,
         "growth.onboarding": GrowthOnboardingWorkflow,

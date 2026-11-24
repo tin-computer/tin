@@ -414,6 +414,8 @@ async def build_runtime(settings: Settings) -> RuntimeServices:
         cipher=integrations._cipher,
     )
     from tin_lite.delegate import Delegate
+    from tin_lite.intel_daily_activities import IntelDailyActivities
+    from tin_lite.intel_daily_activities import activities_of as intel_daily_activities_of
     from tin_lite.intel_world_activities import IntelWorldActivities
     from tin_lite.intel_world_activities import activities_of as intel_activities_of
     from tin_lite.people_rate_activities import PeopleRateActivities
@@ -442,9 +444,14 @@ async def build_runtime(settings: Settings) -> RuntimeServices:
     intel_world_activities = IntelWorldActivities(
         database=database, storage=storage, settings=settings, integrations=integrations
     )
+    # A client's daily market brief: code fetches, the analyst child judges, Tin publishes.
+    intel_daily_activities = IntelDailyActivities(
+        database=database, storage=storage, settings=settings, integrations=integrations
+    )
     code = CodeActivities(common=activity_instance, model_router=model_router)
     activities = [
         *intel_activities_of(intel_world_activities),
+        *intel_daily_activities_of(intel_daily_activities),
         collection.prepare,
         collection.poll,
         collection.publish,

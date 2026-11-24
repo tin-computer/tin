@@ -17,6 +17,7 @@ from tin_lite import (
     content_repository_delivery,
     growth_onboarding,
     growth_plan,
+    intel_daily,
     intel_judge,
     intel_world,
     linkedin_connections_export,
@@ -81,6 +82,7 @@ from tin_lite.integrations import (
     GSC_PROVIDER,
     LINKEDIN_POSTING_PROVIDER,
     STRIPE_PROVIDER,
+    X_PROVIDER,
     IntegrationRequirement,
     parse_integration_requirements,
 )
@@ -112,6 +114,7 @@ from tin_lite.procedures import (
     IDENTITY_REUSE_ACTIVE,
     INTEL_MAX_BYTES,
     INTEL_NOTES_VALIDATOR,
+    INTEL_REPORT_VALIDATOR,
     INTEL_SCOPES,
     ISOLATED_SANDBOX_PROFILE,
     MEMORY_SECTION_PARENT,
@@ -584,6 +587,8 @@ class BuiltinWorkflow:
             resources[intel_world.SOURCES_PATH] = (
                 Path(__file__).resolve().parent / "intel_sources" / "world.json"
             ).read_bytes()
+        if self.key == intel_daily.KEY:
+            definition["intel_policy"] = dict(intel_daily.POLICY)
         if self.key in intel_judge.SCOPES:
             # Only its intelligence parent starts it.
             definition["public_discovery"] = False
@@ -1918,6 +1923,45 @@ BUILTIN_WORKFLOWS = (
             sandbox=SandboxProfile(profile=ISOLATED_SANDBOX_PROFILE, timeout_seconds=3600),
             agent=AgentSelection(ANTIGRAVITY, "gemini-4-neon", "high"),
             intel_scope="world",
+        ),
+    ),
+    BuiltinWorkflow(
+        id=intel_daily.WORKFLOW_ID,
+        key=intel_daily.KEY,
+        title=intel_daily.TITLE,
+        description=intel_daily.DESCRIPTION,
+        executor=intel_daily.KEY,
+        version_label=intel_daily.VERSION_LABEL,
+        presentation=intel_daily.PRESENTATION,
+        schedule_modes=("on_demand", "daily"),
+        default_schedule=dict(intel_daily.DEFAULT_SCHEDULE),
+        agent_only=True,
+        input_schema=intel_daily.INPUT_SCHEMA,
+        # The client's X List, read as the member who connected X; without it, X is skipped.
+        integration_requirements=(
+            IntegrationRequirement(X_PROVIDER, ("x.lists.manage",), required=False),
+        ),
+    ),
+    BuiltinWorkflow(
+        id=intel_daily.JUDGE_WORKFLOW_ID,
+        key=intel_judge.CLIENT_JUDGE_KEY,
+        title=intel_daily.JUDGE_TITLE,
+        description=intel_daily.JUDGE_DESCRIPTION,
+        executor=CODEX_PROCEDURE_EXECUTOR,
+        version_label="1.0.0",
+        presentation=intel_daily.JUDGE_PRESENTATION,
+        schedule_modes=("on_demand",),
+        agent_only=True,
+        input_schema=intel_judge.JUDGE_INPUT_SCHEMA,
+        procedure=CodexProcedureSource(
+            root=Path(__file__).resolve().parents[2] / "codex_procedures" / "intel.client_judge",
+            entry_skill="client-intel",
+            output_path_template=INTEL_SCOPES["client"][2],
+            output_validator=INTEL_REPORT_VALIDATOR,
+            output_max_bytes=INTEL_MAX_BYTES[INTEL_REPORT_VALIDATOR],
+            sandbox=SandboxProfile(profile=ISOLATED_SANDBOX_PROFILE, timeout_seconds=5400),
+            agent=AgentSelection(ANTIGRAVITY, "gemini-4-neon", "high"),
+            intel_scope="client",
         ),
     ),
     BuiltinWorkflow(
@@ -4887,6 +4931,8 @@ def executor_replaced_by(builtin_key: str, executor: str) -> str | None:
 PARENT_CHILD_KEYS: dict[str, tuple[str, ...]] = {
     # The world feed starts its judge at its own pinned revision.
     intel_world.KEY: (intel_judge.WORLD_JUDGE_KEY,),
+    # A client's daily brief starts its analyst at its own pinned revision.
+    intel_daily.KEY: (intel_judge.CLIENT_JUDGE_KEY,),
     x_draft.KEY: tuple(x_draft.STEPS.values()),
     # The weekly page refresh is pinned beside the steps, so a run reads its exact definition.
     organic_system.KEY: (
