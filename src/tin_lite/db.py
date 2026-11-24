@@ -6326,7 +6326,7 @@ class Database:
     ) -> None:
         if not capabilities:
             raise ValueError("run tool grants require at least one capability")
-        if (connection_id is None) != (provider_key in {"tin.studio", "tin.services"}):
+        if (connection_id is None) != (provider_key in {"tin.studio", "tin.services", "tin.intel"}):
             raise ValueError("only internal tool grants may omit an integration connection")
         token_hash = _token_hash(token)
         expires_at = datetime.now(UTC) + timedelta(seconds=ttl_seconds)
@@ -7014,6 +7014,14 @@ class Database:
             "DELETE FROM rb2b_slack_posts WHERE project_id = $1",
             "DELETE FROM rb2b_visits WHERE project_id = $1",
             "DELETE FROM rb2b_hooks WHERE project_id = $1",
+            # Daily intelligence: the client's fetched items, stories, briefs and posts. World
+            # rows (project_id NULL) are Tin's and stay.
+            "DELETE FROM intel_slack_posts WHERE project_id = $1",
+            "DELETE FROM intel_briefs WHERE project_id = $1",
+            "DELETE FROM intel_projects WHERE project_id = $1",
+            "UPDATE intel_stories SET continues_id = NULL WHERE project_id = $1",
+            "DELETE FROM intel_stories WHERE project_id = $1",
+            "DELETE FROM intel_fetches WHERE project_id = $1",
             "DELETE FROM effect_receipts WHERE operation IN "
             "('social.linkedin_listen', 'social.linkedin_results', 'social.linkedin_engagers', "
             "'social.linkedin_profile_viewers', 'social.linkedin_connections', "
@@ -7409,6 +7417,8 @@ class Database:
             ),
             "people.rb2b_visitor": ("rb2b_visitor_ready", "Tin read a visitor RB2B identified."),
             "people.rate": ("people_rate_ready", "Tin rated your people against your ICP."),
+            "intel.world": ("intel_world_ready", "Today's world stories are ready."),
+            "intel.daily": ("intel_daily_ready", "Today's market brief is ready."),
             "social.linkedin_results": (
                 "linkedin_results_ready",
                 "Today's LinkedIn results are in.",
