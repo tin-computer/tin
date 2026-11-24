@@ -113,7 +113,8 @@ the whole list (no per-person scans), so ten thousand connections list in about 
 tools share `people_service.People`.
 
 - **Grid:** name, company, headline, ICP, ICP fit, intent ("🔥 hot", "🌤 warm", "🧊 cold";
-  sorted hot first, then people without one), notes and last touch.
+  sorted hot first, then people without one), came from and last touch. Notes live in the
+  panel and in search. A visit's last touch is its day alone; the segment and Came from say what it was.
   - The name opens the person's LinkedIn profile in a new tab, when Tin knows it; the rest of
     the row opens them in the panel. The row is one keyboard stop (Enter or Space opens the
     person) and the name link the next. Beside the name: "customer", or the viewer's request on

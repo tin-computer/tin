@@ -366,9 +366,8 @@ window.TinPeople = (() => {
             ${header("company", "Company")}
             <th class="is-headline" scope="col">Headline</th>
             <th class="is-icp" scope="col">ICP</th>
-            ${header("fit", "ICP fit")}
+            ${header("fit", "Fit")}
             ${header("intent", "Intent")}
-            <th class="is-notes" scope="col">Notes</th>
             ${sources ? header("source", "Came from") : ""}
             ${header("touch", "Last touch")}
           </tr></thead>
@@ -459,7 +458,6 @@ window.TinPeople = (() => {
     const fitClass = fitValue === null || fit.stale ? "is-muted" : fitValue >= view.fitShown ? "" : "is-secondary";
     const mark = fit?.stale && fitValue !== null ? "old" : memberSet ? setMark(fit) : "";
     const touch = person.last_touch;
-    const note = person.note;
     const picked = view.picked.has(person.id);
     const box = pick
       ? `<td class="is-pick">${person.requestable ? `<input type="checkbox" data-people-pick="${escape(person.id)}" aria-label="Ask ${escape(person.name || "this person")} to connect" ${picked ? "checked" : ""} />` : ""}</td>`
@@ -471,9 +469,8 @@ window.TinPeople = (() => {
       <td class="is-icp ${icpLabel.muted ? "is-muted" : ""}" title="${escape(icpLabel.muted ? "" : icpLabel.text)}"><span class="is-short">${escape(icpLabel.short)}</span><span class="is-full">${escape(icpLabel.text)}</span></td>
       <td class="is-fit ${fitClass}" ${fit ? `data-fit="${escape(person.id)}"` : ""}>${mark ? `<small>${mark}</small>` : ""}<span>${fitValue === null ? "—" : escape(fitValue)}</span></td>
       <td class="is-intent ${intent ? `is-${escape(intent)}` : "is-muted"}"><span>${intent ? intentHtml(intent) : "—"}</span></td>
-      <td class="is-notes" ${note ? `data-note="${escape(person.id)}"` : ""}><span>${note ? escape(note.body.split("\n")[0]) : ""}</span></td>
       ${sources ? `<td class="is-source ${source ? "" : "is-muted"}" title="${escape(sourceText(source))}"><span>${source ? `<strong>${escape(WEB_SOURCE[source.value] || source.value)}</strong>${sourcePlace(source) ? ` · ${escape(sourcePlace(source))}` : ""}` : "—"}</span></td>` : ""}
-      <td class="is-touch" title="${touch ? escape(`${day(touch.at)} · ${touchText(touch)}`) : ""}"><span>${touch ? `${escape(day(touch.at))} · ${escape(touchText(touch))}` : "—"}</span></td>
+      <td class="is-touch" title="${touch ? escape(touchLine(touch)) : ""}"><span>${touch ? escape(touchLine(touch)) : "—"}</span></td>
     </tr>`;
   }
 
@@ -534,10 +531,6 @@ window.TinPeople = (() => {
       cell.addEventListener("pointerenter", () => showHover(cell, fitHover(cell.dataset.fit)));
       cell.addEventListener("pointerleave", hideHover);
     });
-    body.querySelectorAll("td[data-note]").forEach((cell) => {
-      cell.addEventListener("pointerenter", () => showHover(cell, noteHover(cell.dataset.note)));
-      cell.addEventListener("pointerleave", hideHover);
-    });
   }
 
   // The reason behind a score, its lineage, and whether it's out of date (PEOPLE-A1 hover).
@@ -549,14 +542,6 @@ window.TinPeople = (() => {
     const line = [typeof fit.value === "number" ? ratingText(fit.value) : "", icpShort(icp?.value), day(fit.at)].filter(Boolean).join(" · ");
     const reason = memberValue(fit) ? setNote(fit) : fit.reason;
     return `${reason ? `<p>${escape(reason)}</p>` : ""}<code>${escape(line)}</code>${fit.stale ? `<small>${escape(staleNote(fit, person))}</small>` : ""}`;
-  }
-
-  // The newest note in full (PEOPLE-N1b hover).
-  function noteHover(id) {
-    const note = view.people?.find((item) => item.id === id)?.note;
-    if (!note) return "";
-    const line = [note.who || note.by, day(note.at), note.count > 1 ? `latest of ${note.count} notes` : ""].filter(Boolean).join(" · ");
-    return `<p class="is-note">${escape(note.body)}</p><code>${escape(line)}</code>`;
   }
 
   function showHover(cell, html) {
@@ -783,9 +768,15 @@ window.TinPeople = (() => {
   const whoOf = (item) => item.who || (item.yours === true ? "you" : item.yours === false ? "a teammate" : null);
   const possessive = (who) => (who === "you" ? "your" : `${who}’s`);
 
+  // A visit reads as its day alone; the Visitors segment and Came from already say it was one.
+  function touchLine(touch) {
+    const text = touchText(touch);
+    return text ? `${day(touch.at)} · ${text}` : day(touch.at);
+  }
+
   // The grid's Last touch: "reacted to you", "invited by Mira".
   function touchText(touch) {
-    if (touch.kind === "visited") return visitText(touch);
+    if (touch.kind === "visited") return "";
     const who = whoOf(touch);
     if (!who) return touch.kind;
     if (touch.kind === "reacted") return `reacted to ${who}`;
@@ -795,11 +786,6 @@ window.TinPeople = (() => {
     if (touch.kind === "accepted") return `connected with ${who}`;
     if (touch.kind === "connected") return `connected to ${who}`;
     return touch.kind;
-  }
-
-  // A visit has no member behind it: the person's own, or their company's.
-  function visitText(touch) {
-    return touch.company_visit ? "company visited" : "visited";
   }
 
   function eventText(event) {

@@ -305,27 +305,21 @@ test("a customer is marked in the panel and named in the grid", {timeout: 120000
   }
 });
 
-test("notes show in the grid and the panel, and a new one makes the score old", {timeout: 120000}, async () => {
+test("notes show in the panel and in search, and a new one makes the score old", {timeout: 120000}, async () => {
   const {server, base} = await serveApp({engagers: true});
   const browser = await chromium.launch({headless: true});
   try {
     const {page, context, errors} = await openApp(browser, base, {url: "/people", theme: "dark"});
     await page.locator(".people-table").waitFor();
-    // The grid shows the start of the newest note, and the whole note on hover.
-    const cell = page.locator('td[data-note="p-daniel"]');
-    assert.equal(await cell.innerText(), "Interned with us in 2024 before founding Fieldline.");
-    await cell.hover();
-    const hover = page.locator(".people-hover.is-visible");
-    await hover.waitFor();
-    assert.match(await hover.innerText(), /Interned with us in 2024 before founding Fieldline\.\nA friend of the team\.\s*you · oct 15 · latest of 2 notes/);
-    // Search reads every note.
+    // The grid has no Notes column; search still reads every note.
+    assert.equal(await page.locator('td[data-note]').count(), 0);
     await page.getByLabel("Search people").fill("dinner");
     assert.deepEqual(await page.locator(".people-table tbody td.is-name").allInnerTexts(), ["Daniel Okafor"]);
     await page.getByLabel("Search people").fill("");
 
     await page.getByRole("row", {name: "Maya Lindqvist"}).click();
-    // Beside the panel, the grid drops Notes like Headline, and the ICP reads in full.
-    assert.equal(await page.locator(".people-table th.is-notes").isVisible(), false);
+    // Beside the panel, the ICP reads in full.
+    assert.equal(await page.locator(".people-table th.is-notes").count(), 0);
     assert.equal(await page.locator('tr[data-person="p-maya"] td.is-icp').innerText(), "ICP 1: founders who need growth done");
     const panel = page.locator("#person-panel");
     const box = panel.getByRole("textbox", {name: "Add a note"});
@@ -338,7 +332,6 @@ test("notes show in the grid and the panel, and a new one makes the score old", 
     assert.equal(await box.inputValue(), "");
     // The score Tin made before the note is old until the next run reads it.
     assert.match(await panel.locator(".person-field").nth(1).innerText(), /old · 4 · Strong fit[\s\S]*Your note came after this rating\. The next run reads it and rates again\./);
-    assert.equal(await page.locator('td[data-note="p-maya"]').innerText(), "Customer since September; renews in March.");
 
     await panel.getByRole("button", {name: "Edit"}).click();
     await panel.getByRole("textbox", {name: "Edit note"}).fill("Customer since September.");
@@ -421,15 +414,15 @@ test("Visitors opens first, with each person's company and intent, sorted hot fi
     assert.deepEqual(await names(), ["Rosa Alvarez", "Omar Haddad"]);
     // LinkedIn has no column of its own: the name is the way there.
     const headers = await page.locator(".people-table thead th").allInnerTexts();
-    assert.deepEqual(headers.map(text => text.trim()), ["Name", "Company", "Headline", "ICP", "ICP fit", "Intent", "Notes", "Came from", "Last touch"]);
+    assert.deepEqual(headers.map(text => text.trim()), ["Name", "Company", "Headline", "ICP", "Fit", "Intent", "Came from", "Last touch"]);
     assert.equal(await page.locator(".people-table th.is-linkedin").count(), 0);
     const rosa = page.getByRole("row", {name: "Rosa Alvarez"});
     assert.equal(await rosa.locator("td.is-company").innerText(), "Valley Bank");
     assert.equal(await rosa.locator("td.is-intent").innerText(), "🔥 hot");
     // Intent has its own column; the fit cell holds only the number.
     assert.equal(await rosa.locator("td.is-fit").innerText(), "4");
-    assert.equal(await page.getByRole("row", {name: "Omar Haddad"}).locator("td.is-touch").innerText(), "oct 19 · company visited");
-    assert.equal(await rosa.locator("td.is-touch").innerText(), "oct 20 · visited");
+    assert.equal(await page.getByRole("row", {name: "Omar Haddad"}).locator("td.is-touch").innerText(), "oct 19");
+    assert.equal(await rosa.locator("td.is-touch").innerText(), "oct 20");
 
     await page.getByRole("tab", {name: "Hot 2"}).click();
     assert.deepEqual(await names(), ["Maya Lindqvist", "Rosa Alvarez"]);

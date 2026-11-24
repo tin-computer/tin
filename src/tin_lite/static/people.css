@@ -49,15 +49,15 @@
 /* The full grid names an ICP by its short label ("ICP 1"); Headline and Notes share the rest
    (PEOPLE-N1b). */
 .people-table th.is-icp { width: 88px; }
-.people-table th.is-fit { width: 84px; }
+.people-table th.is-fit { width: 56px; }
 /* Where they work now, from LinkedIn, RB2B or the people found at a visiting company. */
-.people-table th.is-company { width: 128px; }
+.people-table th.is-company { width: 176px; }
 /* "🔥 hot", sorted hot, warm, cold, then no intent. */
 .people-table th.is-intent { width: 84px; }
 /* How their last visit arrived ("Ad · Google Ads"), shown once any source is known. */
 .people-table th.is-source { width: 128px; }
 /* Last touch names who: "oct 16 · invited by Mira" (TEAM-A). */
-.people-table th.is-touch { width: 212px; }
+.people-table th.is-touch { width: 168px; }
 
 .people-table th,
 .people-table td {
@@ -137,7 +137,6 @@
 
 .people-table td.is-headline,
 .people-table td.is-company,
-.people-table td.is-notes,
 .people-table td.is-source,
 .people-table td.is-touch,
 .people-table td.is-fit.is-secondary {
@@ -433,10 +432,6 @@
 
 /* With Came from as well, a laptop-wide grid leaves Notes to the panel and gives Headline the
    room (a note still reads in search and beside the person). */
-@container view (max-width: 1240px) {
-  .people-table.has-sources .is-notes { display: none; }
-}
-
 /* Beside the person panel, or on a narrow screen: Name, ICP, fit and intent (PEOPLE-C1); the
    panel names the company. */
 @container view (max-width: 860px) {
@@ -446,7 +441,6 @@
 
   .people-table .is-headline,
   .people-table .is-company,
-  .people-table .is-notes,
   .people-table .is-source,
   .people-table .is-touch {
     display: none;
@@ -555,7 +549,6 @@
   }
 }
 
-.people-hover p.is-note { white-space: pre-wrap; }
 
 .people-hover p {
   margin: 0;
