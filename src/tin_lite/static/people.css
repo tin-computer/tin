@@ -1172,3 +1172,14 @@ a.person-event:hover svg { color: var(--ink-secondary); }
 
   body.has-person-panel .main { margin-right: 0; }
 }
+
+/* A lead's numbers on file, one per line. */
+.person-phones {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+.person-phones a {
+  color: inherit;
+  font-variant-numeric: tabular-nums;
+}

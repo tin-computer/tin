@@ -70,6 +70,9 @@ The built-in fields are:
 - `web_source` (`ad`, `organic`, `ai`, `social`, `referral` or `direct`): how their last visit
   arrived, from its UTM tags, ad click IDs and referrer, with the source as the reason
   ("Google Ads, keyword “epic data warehouse”").
+- `phone`: the numbers ContactOut has on file for a good or strong lead, comma-separated, with
+  their count as the reason (`lead_phones`, see [RB2B webhook](rb2b-webhook.md#phone-numbers-for-leads)).
+  People's panel shows each as a call link.
 
 ## LinkedIn relationships
 

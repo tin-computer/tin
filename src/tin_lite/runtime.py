@@ -411,12 +411,14 @@ async def build_runtime(settings: Settings) -> RuntimeServices:
     from tin_lite.people_rate_activities import PeopleRateActivities
     from tin_lite.rb2b_company_activities import RB2BCompanyActivities
 
-    people_rate_activities = PeopleRateActivities(
-        database=database, storage=storage, router=model_router
-    )
-
     delegate_key = getattr(settings, "delegate_api_key", None)
     delegate_key = delegate_key.get_secret_value() if delegate_key else ""
+    people_rate_activities = PeopleRateActivities(
+        database=database,
+        storage=storage,
+        router=model_router,
+        delegate=Delegate(delegate_key) if delegate_key else None,
+    )
     # One class serves every RB2B step: a person's, and a company-only visit's.
     rb2b_activities = RB2BCompanyActivities(
         database=database,
@@ -507,6 +509,7 @@ async def build_runtime(settings: Settings) -> RuntimeServices:
         rb2b_activities.publish,
         rb2b_activities.failure,
         people_rate_activities.score,
+        people_rate_activities.phones,
         people_rate_activities.publish,
         people_rate_activities.failure,
         rb2b_activities.judge,

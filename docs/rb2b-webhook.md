@@ -127,6 +127,22 @@ Delegate charged are on the visit (`rb2b_visits.company`, migration 089). The ru
 the verdict ("RB2B named only Acme: worth chasing (4 · Strong fit); 2 people to contact
 there."). Without `DELEGATE_API_KEY` a company is still judged and posted, with nobody found.
 
+## Phone numbers for leads
+
+A person rated a good or strong fit (3 or 4) with a LinkedIn profile, no phone and no
+`customer: yes` gets one lookup (`lead_phones`): Delegate's `contactout-linkedin-phone`
+($0.15, not billed when ContactOut has no number). It runs right after the rating in
+`rb2b_rate` and `rb2b_company_rate`, and in `people.rate` after its rounds, so earlier leads are
+looked up too. The numbers go into the person's `phone` value, shown as a Phone row in People's
+panel with ContactOut's count; ContactOut doesn't say which number is mobile or current. A
+member's own phone is never replaced.
+
+Each person is looked up once, ever: the receipt is keyed `phones:<project>:<person>`, and its
+key is also Delegate's idempotency key. The receipt holds the order and its price, never the
+numbers, so forgetting a person removes them. A daily guard of $20 a project
+(`lead_phones.USD_PER_DAY`) holds further lookups for a later run, reserved under a
+per-project lock like company orders. Without `DELEGATE_API_KEY` nothing is looked up.
+
 ## Slack
 
 Operator-configured, for Tin's managed clients. The posts go to the channel Tin shares with the

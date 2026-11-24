@@ -91,6 +91,7 @@ TRUSTED_ACTIVITIES = frozenset(
         "linkedin_requests_finish",
         "linkedin_requests_failure",
         "people_rate_score",
+        "people_rate_phones",
         "people_rate_publish",
         "people_rate_failure",
         "rb2b_record",

@@ -1822,11 +1822,13 @@ BUILTIN_WORKFLOWS = (
             "Rate everyone in People who visited your site or engaged with you on LinkedIn and "
             "has no rating under your current strategy/ICP.md: fit and intent, with a web "
             "search, the same rating each visitor gets. Use it once your earlier visitors are in "
-            "People, or after you change the ICP file. Your own ratings are kept. Lists whom it "
-            "rated in people/ratings.md."
+            "People, or after you change the ICP file. Your own ratings are kept. It goes on until "
+            "everyone is rated, then finds the phone numbers on file for each good or strong lead "
+            "with a LinkedIn profile (ContactOut, through Delegate), shown in their People panel. "
+            "Lists whom it rated in people/ratings.md."
         ),
         executor=people_rate.KEY,
-        version_label="1.0.0",
+        version_label="1.1.0",
         presentation=WorkflowDiagram(
             direction="TD",
             nodes=(
@@ -1835,12 +1837,16 @@ BUILTIN_WORKFLOWS = (
                 DiagramNode(
                     "rate", "step", "Rate fit and intent", "each person, with a web search"
                 ),
+                DiagramNode(
+                    "phones", "step", "Find phone numbers", "good and strong leads, once each"
+                ),
                 DiagramNode("files", "receipt", "Whom Tin rated, in Files", "people/ratings.md"),
             ),
             edges=(
                 DiagramEdge("people", "rate"),
                 DiagramEdge("icp", "rate"),
-                DiagramEdge("rate", "files"),
+                DiagramEdge("rate", "phones"),
+                DiagramEdge("phones", "files"),
             ),
         ),
         schedule_modes=("on_demand",),
@@ -1863,11 +1869,12 @@ BUILTIN_WORKFLOWS = (
             "RB2B names only a company, judge with a web search whether it's worth chasing; if "
             "it is, find up to three people to contact there through Delegate, check each "
             "still works there, keep and rate them in People, and post a good or strong "
-            "company with them. Tin starts it for each visit RB2B posts to your project's "
-            "webhook, set up under Integrations."
+            "company with them. A good or strong fit with a LinkedIn profile gets the phone "
+            "numbers on file for them (ContactOut, through Delegate), shown in People. Tin starts "
+            "it for each visit RB2B posts to your project's webhook, set up under Integrations."
         ),
         executor=rb2b.KEY,
-        version_label="1.3.0",
+        version_label="1.4.0",
         presentation=WorkflowDiagram(
             direction="TD",
             nodes=(

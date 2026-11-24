@@ -18,7 +18,15 @@ from uuid import UUID
 
 from temporalio import activity
 
-from tin_lite import people_icp, people_rating, rb2b, rb2b_company, rb2b_slack, warm_paths
+from tin_lite import (
+    lead_phones,
+    people_icp,
+    people_rating,
+    rb2b,
+    rb2b_company,
+    rb2b_slack,
+    warm_paths,
+)
 from tin_lite import people_records as records
 from tin_lite.delegate import DelegateError
 from tin_lite.model_providers import (
@@ -32,7 +40,7 @@ from tin_lite.model_providers import (
 from tin_lite.model_usage import model_usage_scope
 from tin_lite.people_service import first_names
 from tin_lite.product_urls import dashboard_url
-from tin_lite.rb2b_activities import KEY, RB2BActivities, _heartbeat, _payload
+from tin_lite.rb2b_activities import KEY, PHONE_SECONDS, RB2BActivities, _heartbeat, _payload
 
 logger = logging.getLogger(__name__)
 
@@ -473,6 +481,21 @@ class RB2BCompanyActivities(RB2BActivities):
                     definition=people_rating.definition_for(icp),
                     operation=KEY,
                     step="rb2b",
+                    only=UUID(record_id),
+                    heartbeat=_heartbeat,
+                )
+                for record_id in ids
+            )
+        )
+        # The good and strong fits among them get their phone numbers on file (lead_phones).
+        await asyncio.gather(
+            *(
+                lead_phones.look_up_wanted(
+                    self.db,
+                    self.delegate,
+                    run.project_id,
+                    run_id=run.id,
+                    seconds=PHONE_SECONDS,
                     only=UUID(record_id),
                     heartbeat=_heartbeat,
                 )
