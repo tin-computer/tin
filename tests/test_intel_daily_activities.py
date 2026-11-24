@@ -8,12 +8,12 @@ from __future__ import annotations
 import json
 from datetime import UTC, date, datetime, timedelta
 from types import SimpleNamespace
-from uuid import UUID, uuid4
+from uuid import uuid4
 
 import pytest
 from disposable_db import migrated_database
 from intel_client_fakes import FIXTURES, rss_reader
-from intel_fixtures import USER, run
+from intel_fixtures import run
 from temporalio.exceptions import ApplicationError
 from test_linkedin_engagers import Storage
 
@@ -441,8 +441,7 @@ async def test_post_off_or_without_a_channel_never_posts(db):
 async def test_failure_marks_the_run_and_the_fetch(db):
     f = await setup(db)
     await f.acts.prepare(str(f.run_id))
-    await f.acts.failure({"run_id": str(f.run_id), "kind": "explained", "message": "Stopped."})
-    assert (await db.get_run(f.run_id)).status.value == "failed"
+    await f.acts.failure({"run_id": str(f.run_id), "kind": "explained", "reason": "Stopped."})
+    failed = await db.get_run(f.run_id)
+    assert failed.status.value == "failed" and failed.error_message == "Stopped."
     assert (await intel_store.get_fetch(db.pool, f.run_id))["status"] == "failed"
-    assert USER  # the run starts as the saved workflow's member
-    assert isinstance(f.run_id, UUID)

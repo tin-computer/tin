@@ -190,10 +190,10 @@ DESCRIPTION = (
 )
 JUDGE_TITLE = "Judge the client's day"
 JUDGE_DESCRIPTION = (
-    "The analyst inside the daily market brief: reads the day's items through the intel "
+    "The analyst inside Read your market every morning: reads the day's items through the intel "
     "command, decides what matters for the client against company.md and its claim rules, "
     "records the day's stories, and writes the report and the executive brief. Started by "
-    "the daily market brief, never on its own."
+    "Read your market every morning, never on its own."
 )
 
 PRESENTATION = WorkflowDiagram(
