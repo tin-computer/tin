@@ -867,3 +867,32 @@ async def test_a_company_message_says_who_on_the_team_knows_someone_there(
     text = posted(slack)
     assert "🤝 Ege knows Mira Chen (Treasury) at Acme Software" in text
     assert "Bo Park" not in text
+
+
+def test_the_company_steps_never_replace_a_persons_step():
+    """Production runs every visitor through RB2BCompanyActivities, so a method it shares a
+    name with breaks people (11-24: `_keep` did)."""
+
+    from tin_lite.rb2b_activities import RB2BActivities
+
+    shared = set(vars(RB2BCompanyActivities)) & set(vars(RB2BActivities))
+    assert shared <= {"__init__", "__doc__", "__module__", "__qualname__", "__firstlineno__",
+                      "__static_attributes__"}  # fmt: skip
+
+
+async def test_a_person_visit_runs_through_the_class_production_uses(collection_db, monkeypatch):
+    from test_rb2b_slack import Slack, settings, visitor_run
+
+    f = await rb2b_fixture(collection_db)
+    run_id = await visitor_run(f, monkeypatch)
+    work = RB2BCompanyActivities(
+        database=f.db,
+        storage=f.storage,
+        router=CompanyRouter(),
+        integrations=SimpleNamespace(slack=Slack(f.db)),
+        settings=settings(),
+    )
+    kept = await work.record(run_id)
+    assert kept["outcome"] == "person"
+    people = await records.people(f.db.pool, f.project.id)
+    assert [p["fields"]["name"]["text"] for p in people] == ["Jane Doe"]
