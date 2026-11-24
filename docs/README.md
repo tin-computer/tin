@@ -29,6 +29,8 @@ remain authoritative; older contract versions are retained for compatibility.
 - [MCP onboarding handoff](onboarding-mcp.md): access, first results, delivery and partial setup.
 - [Agent harnesses](agent-harnesses.md): which harness and model run a procedure, and
   Antigravity on Gemini 4 Neon beside Codex.
+- [Daily intelligence](daily-intelligence.md): the shared world feed and per-client briefs, the
+  judges' `intel` command, and how to operate them.
 - [Codex API execution](codex-api-pilot.md), [isolated runtime](isolated-codex-runtime.md),
   [Studio execution](studio-api-and-hosted-credits.md) and [worker lanes](activity-worker-lanes.md).
 - [Publication recovery](procedure-publication-recovery.md),
