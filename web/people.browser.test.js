@@ -305,26 +305,20 @@ test("a customer is marked in the panel and named in the grid", {timeout: 120000
   }
 });
 
-test("notes show in the grid and the panel, and a new one makes the score old", {timeout: 120000}, async () => {
+test("notes show in the panel and in search, and a new one makes the score old", {timeout: 120000}, async () => {
   const {server, base} = await serveApp({engagers: true});
   const browser = await chromium.launch({headless: true});
   try {
     const {page, context, errors} = await openApp(browser, base, {url: "/people", theme: "dark"});
     await page.locator(".people-table").waitFor();
-    // The grid shows the start of the newest note, and the whole note on hover.
-    const cell = page.locator('td[data-note="p-daniel"]');
-    assert.equal(await cell.innerText(), "Interned with us in 2024 before founding Fieldline.");
-    await cell.hover();
-    const hover = page.locator(".people-hover.is-visible");
-    await hover.waitFor();
-    assert.match(await hover.innerText(), /Interned with us in 2024 before founding Fieldline\.\nA friend of the team\.\s*you · oct 15 · latest of 2 notes/);
-    // Search reads every note.
+    // The grid has no Notes column; search still reads every note.
+    assert.equal(await page.locator('td[data-note]').count(), 0);
     await page.getByLabel("Search people").fill("dinner");
     assert.deepEqual(await page.locator(".people-table tbody td.is-name").allInnerTexts(), ["Daniel Okafor"]);
     await page.getByLabel("Search people").fill("");
 
     await page.getByRole("row", {name: "Maya Lindqvist"}).click();
-    // Beside the panel, the grid drops Notes like Headline, and the ICP reads in full.
+    // Beside the panel, the ICP reads in full.
     assert.equal(await page.locator(".people-table th.is-notes").count(), 0);
     assert.equal(await page.locator('tr[data-person="p-maya"] td.is-icp').innerText(), "ICP 1: founders who need growth done");
     const panel = page.locator("#person-panel");
