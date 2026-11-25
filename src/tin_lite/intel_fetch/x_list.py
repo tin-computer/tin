@@ -274,7 +274,7 @@ async def read_list(
                     fingerprint=hashlib.sha256(f"{list_id}|{cursor or ''}".encode()).hexdigest(),
                     execution_key=key,
                     run_id=run_id,
-                    status="ok",
+                    status="completed",
                     response_summary={
                         "posts": len(posts),
                         "est_supplier_usd": f"{X_POST_USD * len(posts):.3f}",
