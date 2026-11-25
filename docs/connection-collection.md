@@ -296,9 +296,16 @@ The same image reads who viewed the member's profile, in `linkedin_viewers.py`; 
 - `linkedin_profile_ids`: up to 20 public slugs' profile IDs and relationships, from the same
   profile read as `linkedin_relationships`.
 
-Comments aren't read from the server: the comment endpoints answer 400 to plain GETs, and the
-post page renders only the first comment. Reading them needs LinkedIn's current query ID from
-the member's browser, as search once did.
+The same image reads the member's home feed, in `linkedin_feed.py`; see
+[LinkedIn feed](linkedin-feed.md):
+- `linkedin_feed`: up to three pages of the feed (`GET /voyager/api/feed/updatesV2`, `q=feed`),
+  from a start and the pagination token the last read handed back;
+- `linkedin_feed_details`: for a few posts, the first page of comments
+  (`GET /voyager/api/feed/comments` with the post's thread as `updateId`) and the first reactor
+  pages, up to 24 requests.
+
+The dash comment endpoints answer 400 to plain GETs, but the older `feed/comments` one answers
+a plain GET with the post's thread (checked 25 November 2026), so comments need no query ID.
 
 A new image with these reads needs a new `tin-linkedin-*` build and the template setting
 changed; the search read is unchanged inside it.

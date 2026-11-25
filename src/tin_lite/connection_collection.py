@@ -412,6 +412,7 @@ SESSION_EXECUTORS = frozenset(
         "social.linkedin_engagers",
         "social.linkedin_profile_viewers",
         "social.linkedin_connections",
+        "social.linkedin_feed",
         "social.linkedin_requests",
     }
 )
@@ -427,7 +428,12 @@ def personal(workflow) -> bool:
 # Personal workflows each member saves once: they read the member's whole account, so a second
 # copy would only read it again. A collection takes profiles to read, so it can be saved more.
 ONE_PER_MEMBER = frozenset(
-    {"social.linkedin_engagers", "social.linkedin_profile_viewers", "social.linkedin_connections"}
+    {
+        "social.linkedin_engagers",
+        "social.linkedin_profile_viewers",
+        "social.linkedin_connections",
+        "social.linkedin_feed",
+    }
 )
 NOT_YOURS = (
     "This uses the LinkedIn of the member who saved it, so only they can change or run it. "

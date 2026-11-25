@@ -89,8 +89,8 @@ usage is still recorded per call.
 
 ## Not yet
 
-- **Comments:** they need LinkedIn's current query ID from the browser; see
-  [connection collection](connection-collection.md#engagement-reads).
+- **Comments:** engagers reads reactions only. Comments answer a plain GET now (the
+  [feed](linkedin-feed.md) reads them), so commenters could join later.
 - **Teammates aren't left out automatically.** Tin doesn't know their LinkedIn profile IDs.
   Forgetting a person once keeps them out of every later run.
 - **Weekly schedules** come in a later issue.

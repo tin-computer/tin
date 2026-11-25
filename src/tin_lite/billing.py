@@ -65,6 +65,8 @@ CONNECTED_ACCOUNT_EXECUTORS = {
     "social.linkedin_profile_viewers": "tin-funded-linkedin-profile-viewers-v1",
     # Tin pays the LinkedIn sandbox reads of a member's own connections and their positions.
     "social.linkedin_connections": "tin-funded-linkedin-connections-v1",
+    # Tin pays the LinkedIn sandbox reads of a member's home feed and its posts' comments.
+    "social.linkedin_feed": "tin-funded-linkedin-feed-v1",
     # Tin pays the LinkedIn sandbox calls that send approved requests and read who accepted.
     "social.linkedin_requests": "tin-funded-linkedin-requests-v1",
     # Tin pays the PostHog reads and the ICP rating of each visitor RB2B posts, as for the
