@@ -35,7 +35,14 @@ happened, records it as stories, and writes a brief. Code renders and posts the 
 3. **Load.** Give items their final ids and build the day's snapshot. With no items at all
    the run fails here, before the judge: "No items were fetched".
 4. **Judge.** Start `intel.world_judge` once, as a billed child on the parent's own registry
-   revision (start key `intel:<run>:judge`). A judge that finishes makes the day `ready`. A
+   revision (start key `intel:<run>:judge`). If that child dies on a temporary provider
+   failure (the model relay's `stream_unconfirmed`, an upstream 5xx or 429, a dropped
+   connection, a sandbox server error), Tin starts one more child (`intel:<run>:judge:2`) and
+   says so in the run's progress. The first attempt keeps its own receipts and charge, an
+   uncertain one stays uncertain, and the stories and brief it wrote stay; the second attempt
+   reads them as today's stories. Budget, limit and input refusals are never retried, and
+   there is never a third attempt. `intel.daily` does the same. A judge that finishes makes
+   the day `ready`. A
    judge that stops with at least 10 stories makes it `partial`, and the run still posts. A
    judge that stops with fewer fails the run with the judge's reason. If no usable brief
    arrived, Tin builds one from the day's high and medium stories, and the summary says Tin

@@ -1234,16 +1234,17 @@ class BillingService:
                 return False
             return step is not None and key == f"system:{parent_id}:{step}"
         if parent["executor"] in {"intel.world", "intel.daily"}:
-            # Daily intelligence's one child is its judge, at the parent's own registry
-            # revision, under the start key the parent derives from its run.
-            from tin_lite.intel_judge import PARENTS, start_key
+            # Daily intelligence's child is its judge, at the parent's own registry revision,
+            # under a start key the parent derives from its run: the first attempt's, or the
+            # one retry's after a temporary provider failure (intel_judge.retry_child).
+            from tin_lite.intel_judge import PARENTS, start_keys
 
             revision = await conn.fetchval(
                 "SELECT definition_commit_sha FROM workflow_runs WHERE id=$1", parent_id
             )
             return bool(
                 PARENTS.get(definition.get("key")) == parent["executor"]
-                and key == start_key(parent_id)
+                and key in start_keys(parent_id)
                 and revision is not None
                 and str(run["definition_commit_sha"]) == str(revision)
             )
