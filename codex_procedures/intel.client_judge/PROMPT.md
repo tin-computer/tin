@@ -57,7 +57,10 @@ so tomorrow's run can continue it.
 
 It is read by people and by other agents that draft content from it, so it must stand on its
 own: every claim linked to its source, every suggestion specific enough to act on without
-re-reading the feed. About 5,000 to 6,000 words. Use these eight sections:
+re-reading the feed. The report is where suggestions live: name the client's pages in words
+("our Fabric comparison page"), never as paths or code, and suggest rather than promise; never
+commit Tin or the client to work or dates. About 5,000 to 6,000 words. Use these eight
+sections:
 
 1. **Summary**: five lines at most: the day in one paragraph and the one thing the client should
    do.
@@ -88,13 +91,17 @@ re-reading the feed. About 5,000 to 6,000 words. Use these eight sections:
 Written for the client's founders and posted in Slack by Tin. Write it as JSON in your scratch
 folder and send it with `intel brief put <file>`; Tin checks it and renders the message. Run
 `intel brief schema` for the shape. Three to five developments that matter most, each a lead
-line and one or two sentences, with its link on a few words. Leave `worth_doing` empty: the
-suggestions belong in the report's section 5, and the brief carries the developments only.
+line and one or two sentences, with its link on a few words.
+
+The brief reports; it never advises. Each item says what happened and why it matters to the
+client: its position against a competitor, its buyers, its message, a claim it can or can't
+make. No suggestions, to-dos or next steps, nothing "worth doing", "worth refreshing" or
+"worth keeping sharp", no "we should" or "consider". Leave `worth_doing` empty. Every
+suggestion goes in the report's section 5, and Tin warns you about a brief item that reads as
+one.
 
 - Links hide in a few words, never a bare URL, and only to items from today's data or earlier
   stories (`intel read` shows each item's URL). Tin removes any other link and tells you.
-- Name pages in words ("our Fabric comparison page"), never as paths or code.
-- Suggest rather than promise: never commit Tin or the client to work.
 - Anything resting on a single secondary or unverified source gets `"verify": true` and a
   `verify_note` saying what to check; Tin shows it as "To verify".
 - No hype, no em dashes, nothing that breaks company.md section 7.
