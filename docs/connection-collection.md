@@ -176,8 +176,12 @@ before reporting cloud access ready. Every E2B page checks it again.
 with the existing integration cipher and binds it to the project, account,
 permission and paired device. Retention is at most seven days, capped by the login-cookie
 and device expiry; a session cookie without a declared expiry is kept for at most one day.
-The extension refreshes access within a day of expiry while Chrome is open. Raw credentials
-never enter chat, MCP, Temporal history or project files.
+The extension refreshes access within a day of expiry while Chrome is open. To prepare a
+refresh it may open LinkedIn's people search in a background tab, at most once a day; when
+that page shows no search contract (LinkedIn's newer, server-rendered search), it drops the
+contract it kept and saves the session without one. Before 0.4.5 a kept contract the page
+no longer showed made every 30-second check refresh again, opening that tab each time. Raw
+credentials never enter chat, MCP, Temporal history or project files.
 
 A run pins the credential generation it uses. Disposable compute cleanup does not delete
 continuing permission or a reusable session. Expired sessions, revoked devices and lost
