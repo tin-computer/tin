@@ -82,6 +82,8 @@ your own accounts before use; ordinary contributor tests need no production cred
   list read daily, each viewer in People, scored, and asked to connect when they fit.
 - [Export your LinkedIn connections](linkedin-connections.md): first-degree connections with
   their current company and position, in the columns of LinkedIn's Connections.csv.
+- [Save your LinkedIn feed](linkedin-feed.md): the home feed's posts daily, with new posts' first
+  comments and reactors, as JSON in Files for content work.
 - [Project API connections](project-api-connections.md): secure credentials and external requests.
 - [Stripe and PostHog connections](stripe-and-posthog-connections.md): the first-party read-only
   connections, their operations, projected records and offline test fakes.

@@ -4,7 +4,7 @@ RUN pip install --no-cache-dir httpx==0.28.1 pydantic==2.11.10 tinycss2==1.4.0 w
     && mkdir -m 700 /run/tin-collection \
     && mkdir -p /opt/tin-collection/tin_lite \
     && touch /opt/tin-collection/tin_lite/__init__.py
-COPY src/tin_lite/connection_collection.py src/tin_lite/linkedin_session.py src/tin_lite/linkedin_document.py src/tin_lite/linkedin_engagement.py src/tin_lite/linkedin_invitations.py src/tin_lite/linkedin_viewers.py src/tin_lite/linkedin_connections.py /opt/tin-collection/tin_lite/
+COPY src/tin_lite/connection_collection.py src/tin_lite/linkedin_session.py src/tin_lite/linkedin_document.py src/tin_lite/linkedin_engagement.py src/tin_lite/linkedin_invitations.py src/tin_lite/linkedin_viewers.py src/tin_lite/linkedin_connections.py src/tin_lite/linkedin_feed.py /opt/tin-collection/tin_lite/
 COPY sandbox/linkedin/runner.py /opt/tin-collection/runner.py
 RUN chmod -R go-rwx /opt/tin-collection
-RUN PYTHONPATH=/opt/tin-collection python -c "import tin_lite.linkedin_session, tin_lite.linkedin_document, tin_lite.linkedin_engagement, tin_lite.linkedin_invitations, tin_lite.linkedin_viewers, tin_lite.linkedin_connections"
+RUN PYTHONPATH=/opt/tin-collection python -c "import tin_lite.linkedin_session, tin_lite.linkedin_document, tin_lite.linkedin_engagement, tin_lite.linkedin_invitations, tin_lite.linkedin_viewers, tin_lite.linkedin_connections, tin_lite.linkedin_feed"

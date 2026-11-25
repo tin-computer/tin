@@ -22,6 +22,7 @@ from tin_lite import (
     intel_world,
     linkedin_connections_export,
     linkedin_engagers,
+    linkedin_feed_store,
     linkedin_listening,
     linkedin_posts,
     linkedin_profile_viewers,
@@ -1829,6 +1830,74 @@ BUILTIN_WORKFLOWS = (
         default_schedule={"cadence": "daily", "local_time": "07:00"},
         system=LINKEDIN_SYSTEM,
         input_schema=linkedin_connections_export.INPUT_SCHEMA,
+        integration_requirements=(
+            IntegrationRequirement(
+                provider_key=connection_collection.PROVIDER,
+                capabilities=(connection_collection.CAPABILITY,),
+            ),
+        ),
+    ),
+    BuiltinWorkflow(
+        id=linkedin_feed_store.WORKFLOW_ID,
+        key=linkedin_feed_store.KEY,
+        title="Save your LinkedIn feed",
+        description=(
+            "Save the posts your LinkedIn home feed shows you, for content work. Reads the first "
+            "pages of your feed with your saved LinkedIn session, ten posts a page with pauses, "
+            "and keeps each post's author, words, media, counts and why LinkedIn showed it. A "
+            "post new to the project also gets its first comments and its first reactors. Each "
+            "run writes the posts to social/linkedin/feed/ in Files as JSON, with a digest to "
+            "read."
+        ),
+        executor=linkedin_feed_store.KEY,
+        version_label="1.0.0",
+        presentation=WorkflowDiagram(
+            direction="TD",
+            nodes=(
+                DiagramNode(
+                    "session",
+                    "store",
+                    "Your saved LinkedIn session",
+                    "from Tin for Chrome, with cloud reading on",
+                ),
+                DiagramNode(
+                    "feed",
+                    "surface",
+                    "Read your home feed",
+                    "ten posts a page, with pauses",
+                ),
+                DiagramNode(
+                    "posts",
+                    "store",
+                    "Feed posts",
+                    "author, words, media, counts, why it showed",
+                ),
+                DiagramNode(
+                    "details",
+                    "surface",
+                    "Read comments and reactors",
+                    "new posts: first comments, first reactors",
+                ),
+                DiagramNode(
+                    "files",
+                    "receipt",
+                    "The run's posts in project Files",
+                    "social/linkedin/feed/, JSON and a digest",
+                ),
+            ),
+            edges=(
+                DiagramEdge("session", "feed"),
+                DiagramEdge("feed", "posts"),
+                DiagramEdge("posts", "feed", label="next pages, up to the run's pages"),
+                DiagramEdge("posts", "details"),
+                DiagramEdge("details", "posts", label="posts not read before"),
+                DiagramEdge("posts", "files"),
+            ),
+        ),
+        schedule_modes=("on_demand", "daily"),
+        default_schedule={"cadence": "daily", "local_time": "08:00"},
+        system=LINKEDIN_SYSTEM,
+        input_schema=linkedin_feed_store.INPUT_SCHEMA,
         integration_requirements=(
             IntegrationRequirement(
                 provider_key=connection_collection.PROVIDER,

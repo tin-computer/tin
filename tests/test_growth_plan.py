@@ -1085,6 +1085,7 @@ def test_definition_pins_the_contract_and_the_assets_stay_consistent():
             "social.linkedin_engagers",
             "social.linkedin_profile_viewers",
             "social.linkedin_connections",
+            "social.linkedin_feed",
             "social.linkedin_requests",
             "people.rb2b_visitor",
             "people.rate",

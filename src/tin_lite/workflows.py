@@ -26,6 +26,7 @@ from tin_lite.domain import (
     EMAIL_CAMPAIGN_WORKFLOW_NAME,
     LINKEDIN_CONNECTIONS_WORKFLOW_NAME,
     LINKEDIN_ENGAGERS_WORKFLOW_NAME,
+    LINKEDIN_FEED_WORKFLOW_NAME,
     LINKEDIN_LISTEN_CHECKPOINTS,
     LINKEDIN_LISTEN_READ_ATTEMPTS,
     LINKEDIN_LISTEN_WORKFLOW_NAME,
@@ -1990,6 +1991,71 @@ class LinkedInConnectionsWorkflow:
             raise
 
 
+@workflow.defn(name=LINKEDIN_FEED_WORKFLOW_NAME)
+class LinkedInFeedWorkflow:
+    """Read the member's LinkedIn home feed, three pages at a time, up to the run's pages; then
+    the first comments and reactors of the posts Tin hasn't read before; and write the posts to
+    Files. History holds read numbers and counts; posts and where the next read starts stay in
+    Postgres."""
+
+    # Reads per run (linkedin_feed_store.FEED_READS and DETAIL_READS).
+    feed_reads = 10
+    detail_reads = 25
+
+    @workflow.run
+    async def run(self, run_id: str) -> None:
+        async def call(name, argument=run_id, *, minutes=5):
+            return await workflow.execute_activity(
+                name,
+                argument,
+                start_to_close_timeout=timedelta(minutes=minutes),
+                heartbeat_timeout=timedelta(minutes=2) if minutes > 5 else None,
+                retry_policy=RetryPolicy(
+                    initial_interval=timedelta(seconds=30),
+                    maximum_attempts=3,
+                    non_retryable_error_types=[
+                        "IntegrationAuthorizationError",
+                        "WorkflowInputError",
+                        "BillingError",
+                    ],
+                ),
+            )
+
+        try:
+            await call("linkedin_feed_prepare")
+            notes = {"posts": 0, "new": 0, "skipped": 0, "detailed": 0}
+            for index in range(self.feed_reads):
+                read = await call(
+                    "linkedin_feed_read", {"run_id": run_id, "read": index}, minutes=8
+                )
+                notes["posts"] += read["posts"] or 0
+                notes["new"] += read["new"] or 0
+                notes["skipped"] += read["skipped"] or 0
+                if read["outcome"] == "stopped":
+                    notes["stopped"] = read["reason"]
+                    break
+                if read["outcome"] != "read":
+                    notes["unread"] = read["reason"]
+                    break
+                if not read["more"]:
+                    break
+            if not notes.get("stopped"):
+                for index in range(self.detail_reads):
+                    read = await call(
+                        "linkedin_feed_details", {"run_id": run_id, "read": index}, minutes=8
+                    )
+                    notes["detailed"] += read["detailed"] or 0
+                    if read["outcome"] == "stopped":
+                        notes["stopped"] = read["reason"]
+                        break
+                    if read["outcome"] != "read" or not read["more"]:
+                        break
+            await call("linkedin_feed_publish", {"run_id": run_id, "notes": notes})
+        except BaseException as exc:
+            await call("linkedin_feed_failure", failure_input(run_id, exc))
+            raise
+
+
 @workflow.defn(name=LINKEDIN_REQUESTS_WORKFLOW_NAME)
 class LinkedInRequestsWorkflow:
     """Send a member's queued connection requests one at a time, and finish once nothing is
@@ -2465,6 +2531,7 @@ def registered_workflows() -> list[type]:
         LinkedInEngagersWorkflow,
         LinkedInProfileViewersWorkflow,
         LinkedInConnectionsWorkflow,
+        LinkedInFeedWorkflow,
         LinkedInRequestsWorkflow,
         RB2BVisitorWorkflow,
         IntelWorldWorkflow,
@@ -2514,6 +2581,7 @@ def registered_workflow_implementations() -> dict[str, type]:
         LINKEDIN_ENGAGERS_WORKFLOW_NAME: LinkedInEngagersWorkflow,
         LINKEDIN_PROFILE_VIEWERS_WORKFLOW_NAME: LinkedInProfileViewersWorkflow,
         LINKEDIN_CONNECTIONS_WORKFLOW_NAME: LinkedInConnectionsWorkflow,
+        LINKEDIN_FEED_WORKFLOW_NAME: LinkedInFeedWorkflow,
         LINKEDIN_REQUESTS_WORKFLOW_NAME: LinkedInRequestsWorkflow,
         RB2B_VISITOR_WORKFLOW_NAME: RB2BVisitorWorkflow,
         "intel.world": IntelWorldWorkflow,

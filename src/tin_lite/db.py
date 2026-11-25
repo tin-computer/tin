@@ -7001,6 +7001,9 @@ class Database:
             "DELETE FROM linkedin_up_next WHERE project_id = $1",
             "DELETE FROM linkedin_sending WHERE project_id = $1",
             "DELETE FROM linkedin_connection_lists WHERE project_id = $1",
+            # LinkedIn feed posts: other people's posts, comments and reactors.
+            "DELETE FROM linkedin_feed_sightings WHERE project_id = $1",
+            "DELETE FROM linkedin_feed_posts WHERE project_id = $1",
             "DELETE FROM record_events WHERE project_id = $1",
             "DELETE FROM record_notes WHERE project_id = $1",
             "DELETE FROM record_tags WHERE project_id = $1",
@@ -7025,6 +7028,7 @@ class Database:
             "DELETE FROM effect_receipts WHERE operation IN "
             "('social.linkedin_listen', 'social.linkedin_results', 'social.linkedin_engagers', "
             "'social.linkedin_profile_viewers', 'social.linkedin_connections', "
+            "'social.linkedin_feed', "
             "'social.linkedin_requests', 'people.rb2b_visitor', 'people.rate', "
             "'linkedin_engagement_v1', 'linkedin_request_v1') AND "
             "split_part(execution_key, ':', 1) IN (SELECT id::text FROM workflow_runs "
@@ -7410,6 +7414,10 @@ class Database:
             "social.linkedin_connections": (
                 "linkedin_connections_ready",
                 "Your export of your LinkedIn connections is ready.",
+            ),
+            "social.linkedin_feed": (
+                "linkedin_feed_ready",
+                "Today's posts from your LinkedIn feed are in Files.",
             ),
             "social.linkedin_requests": (
                 "linkedin_requests_ready",
