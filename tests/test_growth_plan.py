@@ -1094,6 +1094,8 @@ def test_definition_pins_the_contract_and_the_assets_stay_consistent():
     hidden.add("content.plan_research")
     # Daily intelligence's world feed is operator-run on Tin's own host project.
     hidden.update({"intel.world", "intel.world_judge"})
+    # A client's daily brief is operator-configured for managed clients.
+    hidden.update({"intel.daily", "intel.client_judge"})
     # A seed post starts from material the founder's agent supplies, so the plan can't schedule it.
     hidden.add("content.seed_post")
     assert titles == {
