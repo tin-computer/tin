@@ -52,6 +52,12 @@ FORBIDDEN_KEYS = frozenset({"cachedContent", "fileUri"})
 # boundary, and agy 1.5.16 carries on when this call is refused (its Flash-Lite first pass
 # still runs), so the relay refuses it before admission and buys nothing.
 REFUSED_MODELS = frozenset({"gemini-3.8-flash"})
+# How long a Gemini stream may go without a byte. Google sends a function call's arguments in
+# one piece, so an agent writing a long file through a tool streams nothing while it
+# generates: staging 2026-11-25, an analyst writing its report went silent for over 180 s
+# (the client's default read timeout) and the relay cut it as stream_unconfirmed, twice. The
+# whole stream stays bounded by STREAM_SECONDS.
+STREAM_IDLE_SECONDS = 900
 _REFUSED_BODY = json.dumps(
     {
         "error": {
@@ -274,6 +280,9 @@ class GeminiAgentRelay(CodexAPIRelay):
                     params={"alt": "sse"} if stream else None,
                     json=body,
                     headers={"x-goog-api-key": self._api_key, "Content-Type": "application/json"},
+                    timeout=httpx.Timeout(15, read=STREAM_IDLE_SECONDS)
+                    if stream
+                    else httpx.USE_CLIENT_DEFAULT,
                 ),
                 stream=True,
             )

@@ -444,16 +444,18 @@ async def test_activity_issues_service_grant_and_publishes_synthetic_report_once
         integrations=f.runtime.integrations,
         settings=f.settings,
     )
-    monkeypatch.setattr(
-        f.storage,
-        "sandbox_remotes",
-        lambda **_: SimpleNamespace(
+    remote_ttls = []
+
+    def remotes(**values):
+        remote_ttls.append(values.get("ttl"))
+        return SimpleNamespace(
             canonical_url="https://storage.example/canonical",
             canonical_auth_header="fixture",
             ephemeral_url="https://storage.example/ephemeral",
             ephemeral_auth_header="fixture",
-        ),
-    )
+        )
+
+    monkeypatch.setattr(f.storage, "sandbox_remotes", remotes)
     computes = []
 
     async def synthetic_compute(*, run, run_input, **_):
@@ -503,6 +505,8 @@ async def test_activity_issues_service_grant_and_publishes_synthetic_report_once
     run = await f.db.get_run(f.run.id)
     assert run.status.value == "succeeded"
     assert len(computes) == 1 and len(f.requests) == 1
+    # The git token outlives the sandbox's longest session, not a fixed 15 minutes.
+    assert remote_ttls == [computes[0].timeout_seconds + 60]
     assert f.storage.repo.writes == 1
     output = await read_run_output(storage=f.storage, run=run, repo_id=f.project.state_repo_id)
     assert "Conversion: 25%" in output.content.decode()

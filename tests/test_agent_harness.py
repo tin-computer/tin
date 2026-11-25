@@ -482,6 +482,29 @@ async def test_streams_settle_usage_and_identical_bytes_are_bought_once(publicat
         await relay.close()
 
 
+async def test_a_stream_may_stay_silent_while_a_long_tool_call_generates(publication_db):
+    """Gemini sends a function call's arguments whole: the stream's idle limit is the agent
+    route's own, not the client's 180 s, and a non-stream call keeps the client's default."""
+    from tin_lite.agent_api_relay import STREAM_IDLE_SECONDS
+
+    async def handler(request):
+        if request.url.path.endswith(":generateContent"):
+            return httpx.Response(200, json=USAGE_EVENT)
+        return httpx.Response(200, content=sse(USAGE_EVENT))
+
+    run, relay, client, sent = await setup_relay(publication_db, handler)
+    try:
+        assert (await post(client, run)).status_code == 200
+        assert sent[0].extensions["timeout"]["read"] == STREAM_IDLE_SECONDS > 180
+        assert sent[0].extensions["timeout"]["connect"] == 15
+        helper = "gemini-3.1-flash-lite-preview:generateContent"
+        assert (await post(client, run, target=helper)).status_code == 200
+        assert sent[1].extensions["timeout"]["read"] == relay.client.timeout.read
+    finally:
+        await client.aclose()
+        await relay.close()
+
+
 async def test_helper_models_are_admitted_and_others_refused(publication_db):
     async def handler(request):
         return httpx.Response(

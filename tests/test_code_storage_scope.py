@@ -388,6 +388,30 @@ def test_sandbox_write_token_is_scoped_to_exact_ephemeral_branch() -> None:
     assert "@" not in remotes.ephemeral_url
 
 
+def test_sandbox_tokens_live_as_long_as_asked() -> None:
+    """A procedure's last push uses the token its sandbox started with."""
+    private_key = ec.generate_private_key(ec.SECP256R1())
+    pem = private_key.private_bytes(
+        encoding=serialization.Encoding.PEM,
+        format=serialization.PrivateFormat.PKCS8,
+        encryption_algorithm=serialization.NoEncryption(),
+    ).decode()
+    storage = CodeStorage(organization="tin", private_key=pem)
+
+    def lifetimes(remotes):
+        found = []
+        for header in (remotes.canonical_auth_header, remotes.ephemeral_auth_header):
+            basic = header.removeprefix("Authorization: Basic ")
+            _, token = base64.b64decode(basic).decode().split(":", 1)
+            claims = jwt.decode(token, options={"verify_signature": False})
+            found.append(claims["exp"] - claims["iat"])
+        return found
+
+    args = {"repo_id": "projects/demo", "branch": "generations/run-1/7", "subject": "run:run-1"}
+    assert lifetimes(storage.sandbox_remotes(**args)) == [900, 900]
+    assert lifetimes(storage.sandbox_remotes(**args, ttl=3660)) == [3660, 3660]
+
+
 def test_canonical_token_is_read_only() -> None:
     private_key = ec.generate_private_key(ec.SECP256R1())
     pem = private_key.private_bytes(
