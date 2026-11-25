@@ -1,0 +1,445 @@
+{
+ "window": [
+  "2026-11-23T00:00:00+00:00",
+  "2026-11-24T20:00:00+00:00"
+ ],
+ "now": "2026-11-24T20:00:00Z",
+ "items": {
+  "bbc_world": [
+   {
+    "source_type": "world",
+    "source": "BBC News (world)",
+    "source_id": "bbc_world",
+    "source_url": "https://feeds.bbci.co.uk/news/world/rss.xml",
+    "url": "https://www.bbc.co.uk/news/articles/crpdw1qx7jgxo",
+    "discussion_url": null,
+    "publisher_site": null,
+    "title": "US attorney general dodges questions about Nvidia investigation",
+    "author": null,
+    "published_at": "2026-11-24T18:55:59Z",
+    "text": "Nvidia's share price have fallen 7% as lawmakers demand answers about President Donald Trump's involvement in Huang's reinstatement.",
+    "engagement": {},
+    "fetched_at": "2026-11-24T20:00:00Z"
+   },
+   {
+    "source_type": "world",
+    "source": "BBC News (world)",
+    "source_id": "bbc_world",
+    "source_url": "https://feeds.bbci.co.uk/news/world/rss.xml",
+    "url": "https://www.bbc.co.uk/news/articles/c65y17pwv1z7o",
+    "discussion_url": null,
+    "publisher_site": null,
+    "title": "French ex-President Sarkozy and wife Carla Bruni to face trial",
+    "author": null,
+    "published_at": "2026-11-24T16:49:07Z",
+    "text": "It is the latest case involving Nicolas Sarkozy who became the first French ex-president to go to jail last year.",
+    "engagement": {},
+    "fetched_at": "2026-11-24T20:00:00Z"
+   },
+   {
+    "source_type": "world",
+    "source": "BBC News (world)",
+    "source_id": "bbc_world",
+    "source_url": "https://feeds.bbci.co.uk/news/world/rss.xml",
+    "url": "https://www.bbc.co.uk/news/articles/cm5y1ezx2gqyo",
+    "discussion_url": null,
+    "publisher_site": null,
+    "title": "Indian government has 'lost the plot', says 'cockroach' leader barred from UK flight",
+    "author": null,
+    "published_at": "2026-11-24T18:07:46Z",
+    "text": "Saurav Das says immigration authorities at Delhi airport told him his passport had been flagged.",
+    "engagement": {},
+    "fetched_at": "2026-11-24T20:00:00Z"
+   }
+  ],
+  "gn_us_business": [
+   {
+    "source_type": "world",
+    "source": "The New York Times",
+    "source_id": "gn_us_business",
+    "source_url": "https://news.google.com/rss/headlines/section/topic/BUSINESS?hl=en-US&gl=US&ceid=US:en",
+    "url": "https://news.google.com/rss/articles/CBMiigFBVV95cUxQNV9IMGNKck1YZzRSOHNiSVJRQ05tMkJmWmYycGxzcWZJSWtza0UyR3lDN0hVNjdGYVRpcDFfMlhmSnplWENQSjRwV1Z4RGQzWWFHZXd4dVE5b0x4XzV5bjNjVDJzWXUybURjejU3ZzdlRmltU25BZlNKRmZHTGRvaTY2eVdNUlU1d1E",
+    "discussion_url": null,
+    "publisher_site": "https://www.nytimes.com",
+    "title": "Jensen Huang Apologizes to Nvidia Employees and Says He Is in Therapy",
+    "author": null,
+    "published_at": "2026-11-24T18:34:30Z",
+    "text": "Outlet: The New York Times (https://www.nytimes.com)\nGoogle News cluster: Jensen Huang Apologizes to Nvidia Employees and Says He Is in Therapy The New York Times \n Nvidia live updates: Nvidia stock falls as exuberance fades after Jensen Huang's return as CEO Yahoo Finance \n The Frantic White House Push to Get Jensen Huang Back WSJ \n Huang’s return rattles Sacramento and Silicon Valley Politico \n Trump wanted Jensen Huang back. Now, the president is all alone in Washington CNBC",
+    "engagement": {},
+    "fetched_at": "2026-11-24T20:00:00Z"
+   },
+   {
+    "source_type": "world",
+    "source": "Ars Technica",
+    "source_id": "gn_us_business",
+    "source_url": "https://news.google.com/rss/headlines/section/topic/BUSINESS?hl=en-US&gl=US&ceid=US:en",
+    "url": "https://news.google.com/rss/articles/CBMiwAFBVV95cUxNSDU3T0dmTUp0Q3RBZFVEZGFIVzhpM1lLb1BISmlpN2R4OG00Z0c5dlhjMC1fc3F6VHRxZDFSaGdtbDNyT0hNTkIzZTB0Z0hfYXV2NkhhZFhXb2ZmQWFaWjhsTGY1ZGRwMmpKWHVFWUVpdEdYaWg0NnpxUDRUcXVkMFZ3WVhwc2VaNTFOMTNTRXlhQlp1bnZQUWxZTzBGc0RpdFdaQVUyVmtUWTJWdTB5YUlTVEpvcEpfSFFBTWZ4M3I",
+    "discussion_url": null,
+    "publisher_site": "https://arstechnica.com",
+    "title": "Kalshi makes “difficult decision” to halt Utah trading after losing court fights",
+    "author": null,
+    "published_at": "2026-11-24T18:03:58Z",
+    "text": "Outlet: Ars Technica (https://arstechnica.com)\nGoogle News cluster: Kalshi makes “difficult decision” to halt Utah trading after losing court fights Ars Technica \n Utah scores win against Kalshi as company halts operations in state CNN \n Utah drops criminal charges against Kalshi founders after company suspended operations in state CNBC \n With no legal wins so far, Kalshi blocks operations in Utah Utah News Dispatch \n Utah AG moves to dismiss charges against Kalshi after it blocks service in state KSL",
+    "engagement": {},
+    "fetched_at": "2026-11-24T20:00:00Z"
+   },
+   {
+    "source_type": "world",
+    "source": "Reuters",
+    "source_id": "gn_us_business",
+    "source_url": "https://news.google.com/rss/headlines/section/topic/BUSINESS?hl=en-US&gl=US&ceid=US:en",
+    "url": "https://news.google.com/rss/articles/CBMiwAFBVV95cUxNcWVhaTZ1VE1DODl2cm9KdXRyTWgwV1Q4cjRsSzRhOG1wU3FjLUtKajNVN2NIV1VqNU9OS0tTMkF1T1NTTFRiTEtIT1V6aXMzbDctRnR5X3ZTbVFRdEQ5NGE2ZnlOa0c4YjhzN3pRbUJzQTlUZDZwRE5SNlhOSjVzY1UxaXlZWTRDNm1RNmFHLXhZOU40Tm9UcnBKdnVfcnJTemFhT21EOEE1Y3dtNkR3VmZxV0VHTHhGSWVpYlNoSk0",
+    "discussion_url": null,
+    "publisher_site": "https://www.reuters.com",
+    "title": "What we know about Megaspeed, the Nvidia customer blacklisted by US",
+    "author": null,
+    "published_at": "2026-11-24T12:01:13Z",
+    "text": "Outlet: Reuters (https://www.reuters.com)\nGoogle News cluster: What we know about Megaspeed, the Nvidia customer blacklisted by US Reuters \n From Chinese Factory Town to the Nvidia Scandal: The Rise of Alice Huang The New York Times \n U.S. Blacklists Alibaba-Owned Company Over Chip Curbs WSJ \n US to blacklist Asian AI firm Megaspeed after Nvidia scandal BBC \n Woman at center of Nvidia scandal was in touch with China's top spy agency: Sources ABC News - Breaking News, Latest News and Videos",
+    "engagement": {},
+    "fetched_at": "2026-11-24T20:00:00Z"
+   }
+  ],
+  "trends_us": [
+   {
+    "source_type": "world",
+    "source": "Google Trends daily US",
+    "source_id": "trends_us",
+    "source_url": "https://trends.google.com/trending/rss?geo=US",
+    "url": "https://trends.google.com/trends/explore?q=rihanna&geo=US&date=now+1-d",
+    "discussion_url": null,
+    "publisher_site": null,
+    "title": "Trending in US: rihanna",
+    "author": null,
+    "published_at": "2026-11-24T16:30:00Z",
+    "text": "Trending search in US: \"rihanna\", approx 500+ searches.\nNews:\n- Rihanna Shares Adorable Behind-the-Scenes Video with All 3 Kids as They Film Savage X Fenty Holiday Campaign: ‘The Actual Gifts’ (People.com) https://people.com/rihanna-shares-behind-the-scenes-moment-with-babies-12277227\n- Rihanna Shares Adorable Behind-the-Scenes Footage of Savage X Fenty Campaign With Her Kids (Complex) https://www.complex.com/style/a/backwoodsaltar/rihanna-savage-x-fenty-kids\n- Rihanna and A$AP Rocky Are in Physical and Sartorial Lockstep (Vogue) https://www.vogue.com/article/rihanna-asap-rocky-outfit-formula-2026-11-23",
+    "engagement": {
+     "approx_traffic": "500+"
+    },
+    "fetched_at": "2026-11-24T20:00:00Z"
+   }
+  ],
+  "techmeme_river": [
+   {
+    "source_type": "world",
+    "source": "Techmeme",
+    "source_id": "techmeme_river",
+    "source_url": "https://www.techmeme.com/river",
+    "url": "https://www.cnbc.com/2026/11/24/trump-jensen-huang-nvidia.html",
+    "discussion_url": "https://www.techmeme.com/261124/p32#a261124p32",
+    "publisher_site": null,
+    "title": "President Trump finds himself isolated in DC over his moves to reinstate Jensen Huang as even some of his staunchest allies vow to probe Huang and Nvidia",
+    "author": "CNBC",
+    "published_at": "2026-11-24T19:35:00Z",
+    "text": "President Trump finds himself isolated in DC over his moves to reinstate Jensen Huang as even some of his staunchest allies vow to probe Huang and Nvidia (CNBC)",
+    "engagement": {},
+    "fetched_at": "2026-11-24T20:00:00Z"
+   },
+   {
+    "source_type": "world",
+    "source": "Techmeme",
+    "source_id": "techmeme_river",
+    "source_url": "https://www.techmeme.com/river",
+    "url": "https://thenewstack.io/aws-strands-decider-v2/",
+    "discussion_url": "https://www.techmeme.com/261123/p55#a261123p55",
+    "publisher_site": null,
+    "title": "AWS debuts Strands Decider v2, a family of five open decision models based on Google's Gemma 4, ranging from 2B to 31B parameters, under the Apache 2.0 license",
+    "author": "Frederic Lardinois / The New Stack",
+    "published_at": "2026-11-24T04:25:00Z",
+    "text": "AWS debuts Strands Decider v2, a family of five open decision models based on Google's Gemma 4, ranging from 2B to 31B parameters, under the Apache 2.0 license (Frederic Lardinois / The New Stack)",
+    "engagement": {},
+    "fetched_at": "2026-11-24T20:00:00Z"
+   },
+   {
+    "source_type": "world",
+    "source": "Techmeme",
+    "source_id": "techmeme_river",
+    "source_url": "https://www.techmeme.com/river",
+    "url": "https://siliconangle.com/2026/11/23/cisco-and-openai-launch-shirudo-an-open-source-infrastructure-shield-to-protect-against-ai-driven-cyberattacks/",
+    "discussion_url": "https://www.techmeme.com/261123/p54#a261123p54",
+    "publisher_site": null,
+    "title": "OpenAI and Cisco launch Shirudo, an open-source runtime that helps teams protect running Linux systems without a reboot while they roll out patches",
+    "author": "Mike Wheatley / SiliconANGLE",
+    "published_at": "2026-11-24T04:15:00Z",
+    "text": "OpenAI and Cisco launch Shirudo, an open-source runtime that helps teams protect running Linux systems without a reboot while they roll out patches (Mike Wheatley / SiliconANGLE)",
+    "engagement": {},
+    "fetched_at": "2026-11-24T20:00:00Z"
+   },
+   {
+    "source_type": "world",
+    "source": "Techmeme",
+    "source_id": "techmeme_river",
+    "source_url": "https://www.techmeme.com/river",
+    "url": "https://www.wired.com/story/inside-googles-failure-to-make-google-maps-work-for-palestinians/",
+    "discussion_url": "https://www.techmeme.com/261123/p53#a261123p53",
+    "publisher_site": null,
+    "title": "Sources: a Google product manager spent years updating Maps to better serve Palestinians in the West Bank, but Google retracted key parts after Israeli pressure",
+    "author": "Wired",
+    "published_at": "2026-11-24T04:00:00Z",
+    "text": "Sources: a Google product manager spent years updating Maps to better serve Palestinians in the West Bank, but Google retracted key parts after Israeli pressure (Wired)",
+    "engagement": {},
+    "fetched_at": "2026-11-24T20:00:00Z"
+   }
+  ],
+  "hn_front_page": [
+   {
+    "source_type": "world",
+    "source": "Hacker News",
+    "source_id": "hn_front_page",
+    "source_url": "https://hacker-news.firebaseio.com/v0/topstories.json",
+    "url": "https://blog.rust-lang.example/2",
+    "discussion_url": "https://news.ycombinator.com/item?id=103",
+    "publisher_site": null,
+    "title": "Rust 2.0 is announced",
+    "author": "user103",
+    "published_at": "2026-11-23T10:00:00Z",
+    "text": "[HN: 880 points, 300 comments, rank 1 at fetch]\n\nc1031: Comment 1031 with a link & entity\n\nc1032: Comment 1032 with a link & entity",
+    "engagement": {
+     "points": 880,
+     "comments": 300
+    },
+    "fetched_at": "2026-11-24T20:00:00Z"
+   },
+   {
+    "source_type": "world",
+    "source": "Hacker News",
+    "source_id": "hn_front_page",
+    "source_url": "https://hacker-news.firebaseio.com/v0/topstories.json",
+    "url": "https://example.org/fts",
+    "discussion_url": "https://news.ycombinator.com/item?id=101",
+    "publisher_site": null,
+    "title": "Show HN: A tiny SQLite FTS search engine",
+    "author": "user101",
+    "published_at": "2026-11-23T08:00:00Z",
+    "text": "[HN: 412 points, 120 comments, rank 2 at fetch]\n\nc1011: Comment 1011 with a link & entity\n\nc1012: Comment 1012 with a link & entity\n\nc1014: Comment 1014 with a link & entity",
+    "engagement": {
+     "points": 412,
+     "comments": 120
+    },
+    "fetched_at": "2026-11-24T20:00:00Z"
+   },
+   {
+    "source_type": "world",
+    "source": "Hacker News",
+    "source_id": "hn_front_page",
+    "source_url": "https://hacker-news.firebaseio.com/v0/topstories.json",
+    "url": "https://low.example/y",
+    "discussion_url": "https://news.ycombinator.com/item?id=105",
+    "publisher_site": null,
+    "title": "Low points, not on the front page",
+    "author": "user105",
+    "published_at": "2026-11-23T12:00:00Z",
+    "text": "[HN: 20 points, 2 comments, rank 4 at fetch]",
+    "engagement": {
+     "points": 20,
+     "comments": 2
+    },
+    "fetched_at": "2026-11-24T20:00:00Z"
+   },
+   {
+    "source_type": "world",
+    "source": "Hacker News",
+    "source_id": "hn_front_page",
+    "source_url": "https://hacker-news.firebaseio.com/v0/topstories.json",
+    "url": "https://news.ycombinator.com/item?id=102",
+    "discussion_url": "https://news.ycombinator.com/item?id=102",
+    "publisher_site": null,
+    "title": "Ask HN: How do you read the news?",
+    "author": "user102",
+    "published_at": "2026-11-23T09:00:00Z",
+    "text": "I use RSS and a few newsletters. What about you?\n\n[HN: 95 points, 40 comments, front_page tag]\n\nc1021: Comment 1021 with a link & entity",
+    "engagement": {
+     "points": 95,
+     "comments": 40
+    },
+    "fetched_at": "2026-11-24T20:00:00Z"
+   }
+  ],
+  "wiki_en": [
+   {
+    "source_type": "world",
+    "source": "Wikipedia most viewed (en)",
+    "source_id": "wiki_en",
+    "source_url": null,
+    "url": "https://en.wikipedia.org/wiki/Ramayana%3A_Part_1",
+    "discussion_url": null,
+    "publisher_site": null,
+    "title": "Ramayana: Part 1",
+    "author": null,
+    "published_at": "2026-11-24T00:00:00Z",
+    "text": "Most-viewed on en.wikipedia.org: 2026-11-23 365,685 views (rank 4)",
+    "engagement": {
+     "views": 365685
+    },
+    "fetched_at": "2026-11-24T20:00:00Z"
+   },
+   {
+    "source_type": "world",
+    "source": "Wikipedia most viewed (en)",
+    "source_id": "wiki_en",
+    "source_url": null,
+    "url": "https://en.wikipedia.org/wiki/Grand_Theft_Auto_VI",
+    "discussion_url": null,
+    "publisher_site": null,
+    "title": "Grand Theft Auto VI",
+    "author": null,
+    "published_at": "2026-11-24T00:00:00Z",
+    "text": "Most-viewed on en.wikipedia.org: 2026-11-23 266,240 views (rank 5)",
+    "engagement": {
+     "views": 266240
+    },
+    "fetched_at": "2026-11-24T20:00:00Z"
+   },
+   {
+    "source_type": "world",
+    "source": "Wikipedia most viewed (en)",
+    "source_id": "wiki_en",
+    "source_url": null,
+    "url": "https://en.wikipedia.org/wiki/Jensen_Huang",
+    "discussion_url": null,
+    "publisher_site": null,
+    "title": "Jensen Huang",
+    "author": null,
+    "published_at": "2026-11-24T00:00:00Z",
+    "text": "Most-viewed on en.wikipedia.org: 2026-11-23 234,343 views (rank 6)",
+    "engagement": {
+     "views": 234343
+    },
+    "fetched_at": "2026-11-24T20:00:00Z"
+   },
+   {
+    "source_type": "world",
+    "source": "Wikipedia most viewed (en)",
+    "source_id": "wiki_en",
+    "source_url": null,
+    "url": "https://en.wikipedia.org/wiki/Moon",
+    "discussion_url": null,
+    "publisher_site": null,
+    "title": "Moon",
+    "author": null,
+    "published_at": "2026-11-24T00:00:00Z",
+    "text": "Most-viewed on en.wikipedia.org: 2026-11-23 180,275 views (rank 7)",
+    "engagement": {
+     "views": 180275
+    },
+    "fetched_at": "2026-11-24T20:00:00Z"
+   },
+   {
+    "source_type": "world",
+    "source": "Wikipedia most viewed (en)",
+    "source_id": "wiki_en",
+    "source_url": null,
+    "url": "https://en.wikipedia.org/wiki/The_Hunger_Games%3A_Sunrise_on_the_Reaping",
+    "discussion_url": null,
+    "publisher_site": null,
+    "title": "The Hunger Games: Sunrise on the Reaping",
+    "author": null,
+    "published_at": "2026-11-24T00:00:00Z",
+    "text": "Most-viewed on en.wikipedia.org: 2026-11-23 180,185 views (rank 8)",
+    "engagement": {
+     "views": 180185
+    },
+    "fetched_at": "2026-11-24T20:00:00Z"
+   },
+   {
+    "source_type": "world",
+    "source": "Wikipedia most viewed (en)",
+    "source_id": "wiki_en",
+    "source_url": null,
+    "url": "https://en.wikipedia.org/wiki/Linux",
+    "discussion_url": null,
+    "publisher_site": null,
+    "title": "Linux",
+    "author": null,
+    "published_at": "2026-11-24T00:00:00Z",
+    "text": "Most-viewed on en.wikipedia.org: 2026-11-23 177,023 views (rank 9)",
+    "engagement": {
+     "views": 177023
+    },
+    "fetched_at": "2026-11-24T20:00:00Z"
+   },
+   {
+    "source_type": "world",
+    "source": "Wikipedia most viewed (en)",
+    "source_id": "wiki_en",
+    "source_url": null,
+    "url": "https://en.wikipedia.org/wiki/Blood",
+    "discussion_url": null,
+    "publisher_site": null,
+    "title": "Blood",
+    "author": null,
+    "published_at": "2026-11-24T00:00:00Z",
+    "text": "Most-viewed on en.wikipedia.org: 2026-11-23 174,912 views (rank 10)",
+    "engagement": {
+     "views": 174912
+    },
+    "fetched_at": "2026-11-24T20:00:00Z"
+   },
+   {
+    "source_type": "world",
+    "source": "Wikipedia most viewed (en)",
+    "source_id": "wiki_en",
+    "source_url": null,
+    "url": "https://en.wikipedia.org/wiki/Riemann_hypothesis",
+    "discussion_url": null,
+    "publisher_site": null,
+    "title": "Riemann hypothesis",
+    "author": null,
+    "published_at": "2026-11-24T00:00:00Z",
+    "text": "Most-viewed on en.wikipedia.org: 2026-11-23 157,845 views (rank 11)",
+    "engagement": {
+     "views": 157845
+    },
+    "fetched_at": "2026-11-24T20:00:00Z"
+   },
+   {
+    "source_type": "world",
+    "source": "Wikipedia most viewed (en)",
+    "source_id": "wiki_en",
+    "source_url": null,
+    "url": "https://en.wikipedia.org/wiki/List_of_highest-grossing_Indian_films",
+    "discussion_url": null,
+    "publisher_site": null,
+    "title": "List of highest-grossing Indian films",
+    "author": null,
+    "published_at": "2026-11-24T00:00:00Z",
+    "text": "Most-viewed on en.wikipedia.org: 2026-11-23 136,937 views (rank 12)",
+    "engagement": {
+     "views": 136937
+    },
+    "fetched_at": "2026-11-24T20:00:00Z"
+   }
+  ],
+  "gdelt": [
+   {
+    "source_type": "world",
+    "source": "GDELT",
+    "source_id": "gdelt",
+    "source_url": "https://api.gdeltproject.org/api/v2/doc/doc?query=x&mode=artlist&format=json",
+    "url": "https://news.example.de/artikel-1",
+    "discussion_url": null,
+    "publisher_site": null,
+    "title": "Ein Artikel",
+    "author": "news.example.de",
+    "published_at": "2026-11-23T10:15:00Z",
+    "text": "news.example.de (Germany)",
+    "engagement": {},
+    "fetched_at": "2026-11-24T20:00:00Z"
+   },
+   {
+    "source_type": "world",
+    "source": "GDELT",
+    "source_id": "gdelt",
+    "source_url": "https://api.gdeltproject.org/api/v2/doc/doc?query=x&mode=artlist&format=json",
+    "url": "https://news.example.fr/a2",
+    "discussion_url": null,
+    "publisher_site": null,
+    "title": "Un article",
+    "author": "news.example.fr",
+    "published_at": "2026-11-23T11:15:00Z",
+    "text": "news.example.fr (France)",
+    "engagement": {},
+    "fetched_at": "2026-11-24T20:00:00Z"
+   }
+  ]
+ }
+}

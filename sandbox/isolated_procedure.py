@@ -16,6 +16,7 @@ import signal
 import stat
 import subprocess
 import sys
+import tempfile
 import time
 from pathlib import Path
 
@@ -43,6 +44,17 @@ AGENT_REQUIRED = frozenset(
 AGENT_OPTIONAL = frozenset(
     {"TIN_RUN_TOOLS_URL", "TIN_RUN_TOOLS_GRANT", "TIN_RUN_ID", "TIN_AGENT_STATE_DIR"}
 )
+# Daily intelligence's judges (Tin's intel_judge): the run's snapshot, loaded by the CLI as the
+# worker into a file only root can change, and the run's intel grant for the CLI's writes.
+INTEL_CONFIG = Path("/home/user/.tin-lite/intel-worker.json")
+INTEL_INPUT = Path("/home/user/.tin-lite/intel-input.jsonl.gz")
+INTEL_BINARY = Path("/usr/local/bin/intel")
+INTEL_DIR = Path("/opt/tin-intel")
+INTEL_DB = INTEL_DIR / "day.db"
+INTEL_VERSION = "1"
+INTEL_MAX_INPUT = 64 * 1024 * 1024
+SQLITE_SHELL = Path("/usr/bin/sqlite3")
+INTEL_KEYS = frozenset({"INTEL_DB", "INTEL_URL", "INTEL_GRANT", "INTEL_SCOPE", "INTEL_DAY"})
 # The harness's own telemetry and self-update hosts, and Gemini itself, go direct instead of
 # through the run's proxy, so the egress fence refuses them: the harness reaches Gemini only
 # through Tin's relay, reports nothing to Google and never replaces its pinned binary.
@@ -84,6 +96,112 @@ def studio_environment() -> list[str]:
     if not value["TIN_RUN_TOOLS_URL"].startswith("https://"):
         raise RuntimeError("Studio voice requires HTTPS")
     return [f"{key}={value[key]}" for key in sorted(value)]
+
+
+def intel_environment() -> list[str]:
+    """This run's intel CLI settings: the read-only day file and the run's intel grant, which
+    writes only this run's stories and brief and expires with the run."""
+    value = trusted_config(INTEL_CONFIG, "intel")
+    if value is None:
+        return []
+    if (
+        set(value) != INTEL_KEYS
+        or value["INTEL_DB"] != str(INTEL_DB)
+        or not value["INTEL_URL"].startswith("https://")
+        or not value["INTEL_URL"].rstrip("/").endswith("/internal/run-tools/intel")
+        or value["INTEL_SCOPE"] not in {"world", "client"}
+        or len(value["INTEL_DAY"]) != 10
+        or not value["INTEL_DAY"].replace("-", "").isdecimal()
+    ):
+        raise RuntimeError("invalid intel configuration")
+    return [f"{key}={value[key]}" for key in sorted(value)]
+
+
+def intel_load() -> None:
+    """Load the run's snapshot into /opt/tin-intel/day.db, root:root 0444.
+
+    The CLI parses the controller's file as the worker, with no network settings, from a
+    private copy; root then installs the result where the worker can read and not change it.
+    """
+    info = INTEL_INPUT.lstat()
+    if (
+        not stat.S_ISREG(info.st_mode)
+        or info.st_nlink != 1
+        or info.st_uid != pwd.getpwnam(CONTROLLER).pw_uid
+        or not 0 < info.st_size <= INTEL_MAX_INPUT
+    ):
+        raise RuntimeError("invalid intel input")
+    worker = pwd.getpwnam(WORKER)
+    work = Path(tempfile.mkdtemp(prefix="tin-intel-"))
+    try:
+        os.chown(work, worker.pw_uid, worker.pw_gid)
+        os.chmod(work, 0o700)
+        source = work / "input.jsonl.gz"
+        shutil.copyfile(INTEL_INPUT, source, follow_symlinks=False)
+        os.chown(source, worker.pw_uid, worker.pw_gid)
+        os.chmod(source, 0o400)
+        built = work / "day.db"
+        subprocess.run(  # noqa: S603 — the fixed CLI, after setpriv, without network settings
+            [
+                "/usr/bin/setpriv",
+                f"--reuid={WORKER}",
+                f"--regid={WORKER}",
+                "--init-groups",
+                "--no-new-privs",
+                "--bounding-set=-all",
+                "/usr/bin/env",
+                "-i",
+                "PATH=/usr/local/bin:/usr/bin:/bin",
+                "LANG=C.UTF-8",
+                "HOME=/home/tin-work",
+                str(INTEL_BINARY),
+                "load",
+                "--input",
+                str(source),
+                "--db",
+                str(built),
+            ],
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
+            timeout=300,
+            check=True,
+        )
+        info = built.lstat()
+        if not stat.S_ISREG(info.st_mode) or info.st_nlink != 1 or info.st_uid != worker.pw_uid:
+            raise RuntimeError("the intel CLI did not build the day file")
+        INTEL_DIR.mkdir(mode=0o755, exist_ok=True)
+        os.chown(INTEL_DIR, 0, 0)
+        os.chmod(INTEL_DIR, 0o755)  # noqa: S103 — readable, never writable, day file
+        staged = INTEL_DIR / ".day.db.tmp"
+        staged.unlink(missing_ok=True)
+        with open(built, "rb") as reader, open(staged, "xb") as writer:
+            shutil.copyfileobj(reader, writer)
+        os.chown(staged, 0, 0)
+        os.chmod(staged, 0o444)
+        os.replace(staged, INTEL_DB)
+    finally:
+        shutil.rmtree(work, ignore_errors=True)
+
+
+def check_intel() -> str:
+    """The image carries the pinned intel CLI, SQLite with FTS5, and no sqlite3 shell."""
+    info = INTEL_BINARY.lstat()
+    if info.st_uid != 0 or not stat.S_ISREG(info.st_mode) or stat.S_IMODE(info.st_mode) != 0o755:
+        raise RuntimeError("the intel CLI is not protected")
+    version = subprocess.check_output(  # noqa: S603 — the fixed pinned CLI
+        [str(INTEL_BINARY), "--version"],
+        text=True,
+        env={"PATH": "/usr/bin:/bin", "HOME": "/root"},
+        timeout=30,
+    )
+    if version.strip() != INTEL_VERSION:
+        raise RuntimeError("isolated runtime requires the pinned intel CLI")
+    import sqlite3
+
+    sqlite3.connect(":memory:").execute("CREATE VIRTUAL TABLE t USING fts5(x)")
+    if SQLITE_SHELL.exists():
+        raise RuntimeError("the isolated image must not carry the sqlite3 shell")
+    return f"TIN_INTEL_READY_V1 {INTEL_VERSION}"
 
 
 def proxy_environment() -> list[str]:
@@ -238,6 +356,7 @@ def worker_command(*command: str, fenced_hosts: tuple[str, ...] = ()) -> list[st
             for entry in proxy_environment()
         ),
         *studio_environment(),
+        *intel_environment(),
         *command,
     ]
 
@@ -383,6 +502,11 @@ def main() -> None:
         if version.strip() != AGENT_VERSION:
             raise RuntimeError("isolated runtime requires the pinned agent harness")
         print(f"TIN_AGENT_READY_V1 antigravity {AGENT_VERSION}")
+    elif action == "check-intel" and not args:
+        protect_runtime()
+        print(check_intel())
+    elif action == "intel-load" and not args:
+        intel_load()
     elif action == "agent" and not args:
         # The whole harness runs as the worker; its stdin/stdout are the controller's pipes.
         value = agent_values()

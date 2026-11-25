@@ -70,6 +70,14 @@ class Settings(BaseSettings):
     # The project whose Slack connection posts RB2B visitors to Tin's managed clients' shared
     # channels (Tin's own workspace). Unset, nothing is posted.
     rb2b_slack_project_id: UUID | None = Field(default=None, alias="TIN_LITE_RB2B_SLACK_PROJECT_ID")
+    # Daily intelligence (docs/daily-intelligence.md): the project the shared world feed runs
+    # on, is billed to and posts through (its messaging.slack connection is Tin's own Slack
+    # app); any other project is refused. Unset, intel.world refuses every start. The world
+    # summary's channel in that Slack workspace; unset, the summary is not posted.
+    intel_host_project_id: UUID | None = Field(default=None, alias="TIN_LITE_INTEL_HOST_PROJECT_ID")
+    intel_world_slack_channel: str | None = Field(
+        default=None, alias="TIN_LITE_INTEL_WORLD_SLACK_CHANNEL", pattern=r"^[A-Z0-9]{1,32}$"
+    )
     # Delegate (dlgt.io): the people-search services an RB2B company-only visit hires to find
     # someone to contact there. Unset, those visits are judged but nobody is looked up.
     delegate_api_key: SecretStr | None = Field(default=None, alias="DELEGATE_API_KEY")

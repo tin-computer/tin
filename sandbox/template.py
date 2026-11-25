@@ -1,3 +1,4 @@
+import re
 import sys
 from pathlib import Path
 
@@ -239,6 +240,16 @@ def _diagram_layer(template):
     )
 
 
+_INTEL_CHECK = (
+    "(dpkg -s sqlite3 >/dev/null 2>&1 && apt-get purge -y sqlite3) || true; "
+    "test ! -e /usr/bin/sqlite3 && "
+    "python3 -c \"import sqlite3;sqlite3.connect(':memory:').execute("
+    "'create virtual table t using fts5(x)')\" && "
+    'test "$(/usr/local/bin/intel --version)" = 1 && '
+    "install -d -o root -g root -m 0755 /opt/tin-intel"
+)
+
+
 def isolated_template():
     # Separate alias: never silently change the existing default/browser/Studio images.
     return (
@@ -269,6 +280,11 @@ def isolated_template():
             user="root",
             mode=0o755,
         )
+        # Daily intelligence's judges: the intel CLI over a read-only SQLite day file. Python's
+        # sqlite3 must have FTS5, and the sqlite3 shell must be absent so the day file is read
+        # only through the CLI. The root helper's check-intel repeats this before any spend.
+        .copy("sandbox/intel/intel.py", "/usr/local/bin/intel", user="root", mode=0o755)
+        .run_cmd(_INTEL_CHECK, user="root")
     )
 
 
@@ -340,19 +356,34 @@ def show_build_log(entry) -> None:
 def main(argv: list[str]) -> int:
     settings = TemplateSettings()
     selected = list(TEMPLATES)
-    if len(argv) == 2 and argv[0] == "--only":
-        if argv[1] not in TEMPLATES:
-            print(f"unknown template alias: {argv[1]}", file=sys.stderr)
+    # --alias builds one template under another name, so staging can try an image without
+    # rebuilding the shared alias production runs (E2B is one account for both).
+    alias_override = None
+    usage = "usage: template.py [--only <alias> [--alias <name>]]"
+    rest = list(argv)
+    if "--alias" in rest:
+        index = rest.index("--alias")
+        if index + 1 >= len(rest) or not re.fullmatch(r"[a-z0-9][a-z0-9-]{2,62}", rest[index + 1]):
+            print(usage, file=sys.stderr)
             return 64
-        selected = [argv[1]]
-    elif argv:
-        print("usage: template.py [--only <alias>]", file=sys.stderr)
+        alias_override = rest[index + 1]
+        del rest[index : index + 2]
+    if len(rest) == 2 and rest[0] == "--only":
+        if rest[1] not in TEMPLATES:
+            print(f"unknown template alias: {rest[1]}", file=sys.stderr)
+            return 64
+        selected = [rest[1]]
+    elif rest or (alias_override and len(selected) != 1):
+        print(usage, file=sys.stderr)
+        return 64
+    if alias_override in TEMPLATES:
+        print("--alias must name a new template, not a shared one", file=sys.stderr)
         return 64
     for alias in selected:
         build, cpu_count, memory_mb = TEMPLATES[alias]
         Template.build(
             build(),
-            alias=alias,
+            alias=alias_override or alias,
             cpu_count=cpu_count,
             memory_mb=memory_mb,
             on_build_logs=show_build_log,

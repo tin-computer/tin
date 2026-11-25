@@ -129,6 +129,10 @@ PROCEDURE_MAXIMUMS = {
 PROCEDURE_KEY_MAXIMUMS: dict[str, int] = {
     key: dollars * NANOS_PER_DOLLAR
     for key, dollars in {
+        # Daily intelligence's Antigravity judges: about $2 a day observed; one Neon request
+        # reserves $2.63, so $15 leaves room for about five in flight.
+        "intel.world_judge": 15,
+        "intel.client_judge": 15,
         "product.deep_dive": 12,
         "qa.product_audit": 12,
         "research.deep_dive": 8,

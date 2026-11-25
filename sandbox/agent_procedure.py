@@ -52,6 +52,8 @@ WORKSPACE = pas.WORKSPACE
 STATE_DIR = pas.STATE_DIR
 ISOLATION_HELPER = pas.ISOLATION_HELPER
 AGENT_CONFIG = Path("/home/user/.tin-lite/agent-worker.json")
+INTEL_CONFIG = Path("/home/user/.tin-lite/intel-worker.json")
+INTEL_DB = "/opt/tin-intel/day.db"
 SCHEMA_PATH = Path("/home/user/.agents/agent-result-schema.json")
 SCRATCH = Path("/home/tin-work/scratch")
 TRANSCRIPTS = Path("/home/user/.codex/sessions")
@@ -140,6 +142,12 @@ def brief(context: dict[str, Any], output_kind: str, output_path: object) -> str
             "- The `tin-run` MCP server holds this run's connected integrations (analytics, "
             "search console, repositories and others the workflow declares). Use it for the "
             "project's own data."
+        )
+    if isinstance(context.get("intel"), dict):
+        tools.append(
+            "- The `intel` command (on your PATH) holds today's items and earlier days' stories, "
+            "and writes your stories and brief to Tin. Run `intel --help` first. Never read its "
+            "database file directly."
         )
     if commands := context.get("verification", {}).get("commands", []):
         tools.append(
@@ -255,6 +263,32 @@ def _write_agent_config(schema: dict[str, Any], model: str) -> None:
         json.dump(values, handle)
 
 
+def _prepare_intel(context: dict[str, Any]) -> None:
+    """Load the run's snapshot as the read-only day file and hand the CLI its settings."""
+    intel = context.get("intel")
+    if not isinstance(intel, dict):
+        return
+    url, grant = os.environ.get("TIN_INTEL_URL", ""), os.environ.get("TIN_INTEL_GRANT", "")
+    day = str(context.get("inputs", {}).get("day", ""))
+    if not url.startswith("https://") or not grant or intel.get("scope") not in {"world", "client"}:
+        raise RuntimeError("intel procedure lacks its snapshot grant")
+    if os.environ.get("TIN_INTEL_INPUT") != "/home/user/.tin-lite/intel-input.jsonl.gz":
+        raise RuntimeError("intel procedure lacks its snapshot")
+    subprocess.run([*ISOLATION_HELPER, "intel-load"], check=True, timeout=330)  # noqa: S603
+    values = {
+        "INTEL_DB": INTEL_DB,
+        "INTEL_URL": url,
+        "INTEL_GRANT": grant,
+        "INTEL_SCOPE": intel["scope"],
+        "INTEL_DAY": day,
+    }
+    INTEL_CONFIG.unlink(missing_ok=True)
+    fd = os.open(INTEL_CONFIG, os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW, 0o600)
+    with os.fdopen(fd, "w") as handle:
+        os.fchmod(handle.fileno(), 0o600)
+        json.dump(values, handle)
+
+
 def _contract() -> dict[str, Any]:
     contract = json.loads(os.environ.get("TIN_CODEX_API_CONTRACT", "{}"))
     if not isinstance(contract, dict) or contract.get("harness") != "antigravity":
@@ -326,6 +360,7 @@ def execute() -> int:
         raise RuntimeError("procedure artifact path is invalid")
 
     pas._install_skills(context)
+    _prepare_intel(context)
     text = brief(context, output_kind, output_path)
     _write_agent_config(_schema(context, output_kind), f"{contract['model']}-{contract['effort']}")
     proc = subprocess.Popen(  # noqa: S603 — fixed root helper drops to the worker

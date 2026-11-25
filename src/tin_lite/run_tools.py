@@ -316,4 +316,8 @@ def create_run_tools_app(
         host=host,
     )
     app.add_route("/studio/voice", studio_voice, methods=["POST"])
+    # Daily intelligence judges' stories and brief (intel_run_tools), on their own grant.
+    from tin_lite import intel_run_tools
+
+    intel_run_tools.mount(app, runtime=runtime, settings=settings)
     return server, app

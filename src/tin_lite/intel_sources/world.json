@@ -1,0 +1,838 @@
+{
+ "piece": "world",
+ "description": "World feed: big world, tech, business and culture events, not filtered for any client. Read by intel_fetch/world.py; Google News links are unwrapped after the judge, not at fetch time.",
+ "max_text_chars": 6000,
+ "sources": [
+  {
+   "id": "hn_front_page",
+   "name": "Hacker News",
+   "method": "hn_front_page",
+   "topstories_limit": 150,
+   "beststories_limit": 200,
+   "points_floor": 100,
+   "comments_per_story": 4,
+   "note": "Firebase topstories/beststories + Algolia front_page tag + Algolia stories with >=points_floor, all created in window",
+   "url": "https://hacker-news.firebaseio.com/v0/topstories.json"
+  },
+  {
+   "id": "techmeme_river",
+   "name": "Techmeme",
+   "method": "techmeme_river",
+   "url": "https://www.techmeme.com/river",
+   "utc_offset_hours": 5,
+   "note": "River page covers ~5 days; times are US Eastern (EST in Nov-Mar; set utc_offset_hours=4 in EDT)"
+  },
+  {
+   "id": "techmeme_feed",
+   "name": "Techmeme (feed)",
+   "method": "rss",
+   "url": "https://www.techmeme.com/feed.xml",
+   "enabled": false,
+   "note": "Only the last ~15 headlines; the river supersedes it"
+  },
+  {
+   "id": "gn_us_top",
+   "name": "Google News top stories (US)",
+   "method": "google_news_rss",
+   "url": "https://news.google.com/rss?hl=en-US&gl=US&ceid=US:en"
+  },
+  {
+   "id": "gn_us_world",
+   "name": "Google News World (US)",
+   "method": "google_news_rss",
+   "url": "https://news.google.com/rss/headlines/section/topic/WORLD?hl=en-US&gl=US&ceid=US:en"
+  },
+  {
+   "id": "gn_us_business",
+   "name": "Google News Business (US)",
+   "method": "google_news_rss",
+   "url": "https://news.google.com/rss/headlines/section/topic/BUSINESS?hl=en-US&gl=US&ceid=US:en"
+  },
+  {
+   "id": "gn_us_technology",
+   "name": "Google News Technology (US)",
+   "method": "google_news_rss",
+   "url": "https://news.google.com/rss/headlines/section/topic/TECHNOLOGY?hl=en-US&gl=US&ceid=US:en"
+  },
+  {
+   "id": "gn_us_science",
+   "name": "Google News Science (US)",
+   "method": "google_news_rss",
+   "url": "https://news.google.com/rss/headlines/section/topic/SCIENCE?hl=en-US&gl=US&ceid=US:en",
+   "enabled": false,
+   "disabled_reason": "2026-11-24 source review: none of the 48 h high or medium stories depended on this source (other editions and outlets carried every one), so it only added volume."
+  },
+  {
+   "id": "gn_us_health",
+   "name": "Google News Health (US)",
+   "method": "google_news_rss",
+   "url": "https://news.google.com/rss/headlines/section/topic/HEALTH?hl=en-US&gl=US&ceid=US:en"
+  },
+  {
+   "id": "gn_us_entertainment",
+   "name": "Google News Entertainment (US)",
+   "method": "google_news_rss",
+   "url": "https://news.google.com/rss/headlines/section/topic/ENTERTAINMENT?hl=en-US&gl=US&ceid=US:en"
+  },
+  {
+   "id": "gn_us_sports",
+   "name": "Google News Sports (US)",
+   "method": "google_news_rss",
+   "url": "https://news.google.com/rss/headlines/section/topic/SPORTS?hl=en-US&gl=US&ceid=US:en"
+  },
+  {
+   "id": "gn_gb_top",
+   "name": "Google News top stories (GB)",
+   "method": "google_news_rss",
+   "url": "https://news.google.com/rss?hl=en-GB&gl=GB&ceid=GB:en"
+  },
+  {
+   "id": "gn_gb_world",
+   "name": "Google News World (GB)",
+   "method": "google_news_rss",
+   "url": "https://news.google.com/rss/headlines/section/topic/WORLD?hl=en-GB&gl=GB&ceid=GB:en"
+  },
+  {
+   "id": "gn_gb_business",
+   "name": "Google News Business (GB)",
+   "method": "google_news_rss",
+   "url": "https://news.google.com/rss/headlines/section/topic/BUSINESS?hl=en-GB&gl=GB&ceid=GB:en"
+  },
+  {
+   "id": "gn_gb_technology",
+   "name": "Google News Technology (GB)",
+   "method": "google_news_rss",
+   "url": "https://news.google.com/rss/headlines/section/topic/TECHNOLOGY?hl=en-GB&gl=GB&ceid=GB:en",
+   "enabled": false,
+   "disabled_reason": "2026-11-24 source review: none of the 48 h high or medium stories depended on this source (other editions and outlets carried every one), so it only added volume."
+  },
+  {
+   "id": "gn_gb_science",
+   "name": "Google News Science (GB)",
+   "method": "google_news_rss",
+   "url": "https://news.google.com/rss/headlines/section/topic/SCIENCE?hl=en-GB&gl=GB&ceid=GB:en",
+   "enabled": false,
+   "disabled_reason": "2026-11-24 source review: none of the 48 h high or medium stories depended on this source (other editions and outlets carried every one), so it only added volume."
+  },
+  {
+   "id": "gn_gb_health",
+   "name": "Google News Health (GB)",
+   "method": "google_news_rss",
+   "url": "https://news.google.com/rss/headlines/section/topic/HEALTH?hl=en-GB&gl=GB&ceid=GB:en",
+   "enabled": false,
+   "disabled_reason": "2026-11-24 source review: none of the 48 h high or medium stories depended on this source (other editions and outlets carried every one), so it only added volume."
+  },
+  {
+   "id": "gn_gb_entertainment",
+   "name": "Google News Entertainment (GB)",
+   "method": "google_news_rss",
+   "url": "https://news.google.com/rss/headlines/section/topic/ENTERTAINMENT?hl=en-GB&gl=GB&ceid=GB:en",
+   "enabled": false,
+   "disabled_reason": "2026-11-24 source review: none of the 48 h high or medium stories depended on this source (other editions and outlets carried every one), so it only added volume."
+  },
+  {
+   "id": "gn_gb_sports",
+   "name": "Google News Sports (GB)",
+   "method": "google_news_rss",
+   "url": "https://news.google.com/rss/headlines/section/topic/SPORTS?hl=en-GB&gl=GB&ceid=GB:en",
+   "enabled": false,
+   "disabled_reason": "2026-11-24 source review: none of the 48 h high or medium stories depended on this source (other editions and outlets carried every one), so it only added volume."
+  },
+  {
+   "id": "gn_in_top",
+   "name": "Google News top stories (IN)",
+   "method": "google_news_rss",
+   "url": "https://news.google.com/rss?hl=en-IN&gl=IN&ceid=IN:en"
+  },
+  {
+   "id": "gn_in_world",
+   "name": "Google News World (IN)",
+   "method": "google_news_rss",
+   "url": "https://news.google.com/rss/headlines/section/topic/WORLD?hl=en-IN&gl=IN&ceid=IN:en"
+  },
+  {
+   "id": "gn_in_business",
+   "name": "Google News Business (IN)",
+   "method": "google_news_rss",
+   "url": "https://news.google.com/rss/headlines/section/topic/BUSINESS?hl=en-IN&gl=IN&ceid=IN:en"
+  },
+  {
+   "id": "gn_in_technology",
+   "name": "Google News Technology (IN)",
+   "method": "google_news_rss",
+   "url": "https://news.google.com/rss/headlines/section/topic/TECHNOLOGY?hl=en-IN&gl=IN&ceid=IN:en",
+   "enabled": false,
+   "disabled_reason": "2026-11-24 source review: none of the 48 h high or medium stories depended on this source (other editions and outlets carried every one), so it only added volume."
+  },
+  {
+   "id": "gn_in_science",
+   "name": "Google News Science (IN)",
+   "method": "google_news_rss",
+   "url": "https://news.google.com/rss/headlines/section/topic/SCIENCE?hl=en-IN&gl=IN&ceid=IN:en",
+   "enabled": false,
+   "disabled_reason": "2026-11-24 source review: none of the 48 h high or medium stories depended on this source (other editions and outlets carried every one), so it only added volume."
+  },
+  {
+   "id": "gn_in_health",
+   "name": "Google News Health (IN)",
+   "method": "google_news_rss",
+   "url": "https://news.google.com/rss/headlines/section/topic/HEALTH?hl=en-IN&gl=IN&ceid=IN:en",
+   "enabled": false,
+   "disabled_reason": "2026-11-24 source review: none of the 48 h high or medium stories depended on this source (other editions and outlets carried every one), so it only added volume."
+  },
+  {
+   "id": "gn_in_entertainment",
+   "name": "Google News Entertainment (IN)",
+   "method": "google_news_rss",
+   "url": "https://news.google.com/rss/headlines/section/topic/ENTERTAINMENT?hl=en-IN&gl=IN&ceid=IN:en",
+   "enabled": false,
+   "disabled_reason": "2026-11-24 source review: none of the 48 h high or medium stories depended on this source (other editions and outlets carried every one), so it only added volume."
+  },
+  {
+   "id": "gn_in_sports",
+   "name": "Google News Sports (IN)",
+   "method": "google_news_rss",
+   "url": "https://news.google.com/rss/headlines/section/topic/SPORTS?hl=en-IN&gl=IN&ceid=IN:en",
+   "enabled": false,
+   "disabled_reason": "2026-11-24 source review: none of the 48 h high or medium stories depended on this source (other editions and outlets carried every one), so it only added volume."
+  },
+  {
+   "id": "gn_au_top",
+   "name": "Google News top stories (AU)",
+   "method": "google_news_rss",
+   "url": "https://news.google.com/rss?hl=en-AU&gl=AU&ceid=AU:en",
+   "enabled": false,
+   "disabled_reason": "2026-11-24 source review: none of the 48 h high or medium stories depended on this source (other editions and outlets carried every one), so it only added volume."
+  },
+  {
+   "id": "gn_au_business",
+   "name": "Google News Business (AU)",
+   "method": "google_news_rss",
+   "url": "https://news.google.com/rss/headlines/section/topic/BUSINESS?hl=en-AU&gl=AU&ceid=AU:en",
+   "enabled": false,
+   "disabled_reason": "2026-11-24 source review: none of the 48 h high or medium stories depended on this source (other editions and outlets carried every one), so it only added volume."
+  },
+  {
+   "id": "gn_au_technology",
+   "name": "Google News Technology (AU)",
+   "method": "google_news_rss",
+   "url": "https://news.google.com/rss/headlines/section/topic/TECHNOLOGY?hl=en-AU&gl=AU&ceid=AU:en",
+   "enabled": false,
+   "disabled_reason": "2026-11-24 source review: none of the 48 h high or medium stories depended on this source (other editions and outlets carried every one), so it only added volume."
+  },
+  {
+   "id": "gn_ca_top",
+   "name": "Google News top stories (CA)",
+   "method": "google_news_rss",
+   "url": "https://news.google.com/rss?hl=en-CA&gl=CA&ceid=CA:en",
+   "enabled": false,
+   "disabled_reason": "2026-11-24 source review: none of the 48 h high or medium stories depended on this source (other editions and outlets carried every one), so it only added volume."
+  },
+  {
+   "id": "gn_ca_business",
+   "name": "Google News Business (CA)",
+   "method": "google_news_rss",
+   "url": "https://news.google.com/rss/headlines/section/topic/BUSINESS?hl=en-CA&gl=CA&ceid=CA:en",
+   "enabled": false,
+   "disabled_reason": "2026-11-24 source review: none of the 48 h high or medium stories depended on this source (other editions and outlets carried every one), so it only added volume."
+  },
+  {
+   "id": "gn_ca_technology",
+   "name": "Google News Technology (CA)",
+   "method": "google_news_rss",
+   "url": "https://news.google.com/rss/headlines/section/topic/TECHNOLOGY?hl=en-CA&gl=CA&ceid=CA:en",
+   "enabled": false,
+   "disabled_reason": "2026-11-24 source review: none of the 48 h high or medium stories depended on this source (other editions and outlets carried every one), so it only added volume."
+  },
+  {
+   "id": "gn_de_top",
+   "name": "Google News top stories (DE)",
+   "method": "google_news_rss",
+   "url": "https://news.google.com/rss?hl=de&gl=DE&ceid=DE:de"
+  },
+  {
+   "id": "gn_de_business",
+   "name": "Google News Business (DE)",
+   "method": "google_news_rss",
+   "url": "https://news.google.com/rss/headlines/section/topic/BUSINESS?hl=de&gl=DE&ceid=DE:de",
+   "enabled": false,
+   "disabled_reason": "2026-11-24 source review: none of the 48 h high or medium stories depended on this source (other editions and outlets carried every one), so it only added volume."
+  },
+  {
+   "id": "gn_de_technology",
+   "name": "Google News Technology (DE)",
+   "method": "google_news_rss",
+   "url": "https://news.google.com/rss/headlines/section/topic/TECHNOLOGY?hl=de&gl=DE&ceid=DE:de",
+   "enabled": false,
+   "disabled_reason": "2026-11-24 source review: none of the 48 h high or medium stories depended on this source (other editions and outlets carried every one), so it only added volume."
+  },
+  {
+   "id": "gn_fr_top",
+   "name": "Google News top stories (FR)",
+   "method": "google_news_rss",
+   "url": "https://news.google.com/rss?hl=fr&gl=FR&ceid=FR:fr",
+   "enabled": false,
+   "disabled_reason": "2026-11-24 source review: none of the 48 h high or medium stories depended on this source (other editions and outlets carried every one), so it only added volume."
+  },
+  {
+   "id": "gn_fr_business",
+   "name": "Google News Business (FR)",
+   "method": "google_news_rss",
+   "url": "https://news.google.com/rss/headlines/section/topic/BUSINESS?hl=fr&gl=FR&ceid=FR:fr",
+   "enabled": false,
+   "disabled_reason": "2026-11-24 source review: none of the 48 h high or medium stories depended on this source (other editions and outlets carried every one), so it only added volume."
+  },
+  {
+   "id": "gn_fr_technology",
+   "name": "Google News Technology (FR)",
+   "method": "google_news_rss",
+   "url": "https://news.google.com/rss/headlines/section/topic/TECHNOLOGY?hl=fr&gl=FR&ceid=FR:fr",
+   "enabled": false,
+   "disabled_reason": "2026-11-24 source review: none of the 48 h high or medium stories depended on this source (other editions and outlets carried every one), so it only added volume."
+  },
+  {
+   "id": "gn_tr_top",
+   "name": "Google News top stories (TR)",
+   "method": "google_news_rss",
+   "url": "https://news.google.com/rss?hl=tr&gl=TR&ceid=TR:tr"
+  },
+  {
+   "id": "gn_tr_business",
+   "name": "Google News Business (TR)",
+   "method": "google_news_rss",
+   "url": "https://news.google.com/rss/headlines/section/topic/BUSINESS?hl=tr&gl=TR&ceid=TR:tr",
+   "enabled": false,
+   "disabled_reason": "2026-11-24 source review: none of the 48 h high or medium stories depended on this source (other editions and outlets carried every one), so it only added volume."
+  },
+  {
+   "id": "gn_tr_technology",
+   "name": "Google News Technology (TR)",
+   "method": "google_news_rss",
+   "url": "https://news.google.com/rss/headlines/section/topic/TECHNOLOGY?hl=tr&gl=TR&ceid=TR:tr",
+   "enabled": false,
+   "disabled_reason": "2026-11-24 source review: none of the 48 h high or medium stories depended on this source (other editions and outlets carried every one), so it only added volume."
+  },
+  {
+   "id": "gn_jp_top",
+   "name": "Google News top stories (JP)",
+   "method": "google_news_rss",
+   "url": "https://news.google.com/rss?hl=ja&gl=JP&ceid=JP:ja",
+   "enabled": false,
+   "disabled_reason": "2026-11-24 source review: none of the 48 h high or medium stories depended on this source (other editions and outlets carried every one), so it only added volume."
+  },
+  {
+   "id": "gn_jp_business",
+   "name": "Google News Business (JP)",
+   "method": "google_news_rss",
+   "url": "https://news.google.com/rss/headlines/section/topic/BUSINESS?hl=ja&gl=JP&ceid=JP:ja",
+   "enabled": false,
+   "disabled_reason": "2026-11-24 source review: none of the 48 h high or medium stories depended on this source (other editions and outlets carried every one), so it only added volume."
+  },
+  {
+   "id": "gn_jp_technology",
+   "name": "Google News Technology (JP)",
+   "method": "google_news_rss",
+   "url": "https://news.google.com/rss/headlines/section/topic/TECHNOLOGY?hl=ja&gl=JP&ceid=JP:ja",
+   "enabled": false,
+   "disabled_reason": "2026-11-24 source review: none of the 48 h high or medium stories depended on this source (other editions and outlets carried every one), so it only added volume."
+  },
+  {
+   "id": "gn_br_top",
+   "name": "Google News top stories (BR)",
+   "method": "google_news_rss",
+   "url": "https://news.google.com/rss?hl=pt-BR&gl=BR&ceid=BR:pt-419"
+  },
+  {
+   "id": "gn_br_business",
+   "name": "Google News Business (BR)",
+   "method": "google_news_rss",
+   "url": "https://news.google.com/rss/headlines/section/topic/BUSINESS?hl=pt-BR&gl=BR&ceid=BR:pt-419",
+   "enabled": false,
+   "disabled_reason": "2026-11-24 source review: none of the 48 h high or medium stories depended on this source (other editions and outlets carried every one), so it only added volume."
+  },
+  {
+   "id": "gn_br_technology",
+   "name": "Google News Technology (BR)",
+   "method": "google_news_rss",
+   "url": "https://news.google.com/rss/headlines/section/topic/TECHNOLOGY?hl=pt-BR&gl=BR&ceid=BR:pt-419",
+   "enabled": false,
+   "disabled_reason": "2026-11-24 source review: none of the 48 h high or medium stories depended on this source (other editions and outlets carried every one), so it only added volume."
+  },
+  {
+   "id": "gn_site_reuters",
+   "name": "Reuters via Google News",
+   "method": "google_news_rss",
+   "url": "https://news.google.com/rss/search?q=site:reuters.com+when:2d&hl=en-US&gl=US&ceid=US:en",
+   "note": "Google News search caps at 100 results; wires have no free RSS of their own"
+  },
+  {
+   "id": "gn_site_ap",
+   "name": "AP via Google News",
+   "method": "google_news_rss",
+   "url": "https://news.google.com/rss/search?q=site:apnews.com+when:2d&hl=en-US&gl=US&ceid=US:en",
+   "note": "Google News search caps at 100 results; wires have no free RSS of their own"
+  },
+  {
+   "id": "gn_site_bloomberg",
+   "name": "Bloomberg via Google News",
+   "method": "google_news_rss",
+   "url": "https://news.google.com/rss/search?q=site:bloomberg.com+when:2d&hl=en-US&gl=US&ceid=US:en",
+   "note": "Google News search caps at 100 results; wires have no free RSS of their own"
+  },
+  {
+   "id": "gn_site_financial_times",
+   "name": "Financial Times via Google News",
+   "method": "google_news_rss",
+   "url": "https://news.google.com/rss/search?q=site:ft.com+when:2d&hl=en-US&gl=US&ceid=US:en",
+   "note": "Google News search caps at 100 results; wires have no free RSS of their own"
+  },
+  {
+   "id": "gn_site_wall_street_journal",
+   "name": "Wall Street Journal via Google News",
+   "method": "google_news_rss",
+   "url": "https://news.google.com/rss/search?q=site:wsj.com+when:2d&hl=en-US&gl=US&ceid=US:en",
+   "note": "Google News search caps at 100 results; wires have no free RSS of their own"
+  },
+  {
+   "id": "gn_site_cnbc",
+   "name": "CNBC via Google News",
+   "method": "google_news_rss",
+   "url": "https://news.google.com/rss/search?q=site:cnbc.com+when:2d&hl=en-US&gl=US&ceid=US:en",
+   "note": "Google News search caps at 100 results; wires have no free RSS of their own"
+  },
+  {
+   "id": "trends_us",
+   "name": "Google Trends daily (US)",
+   "method": "google_trends_rss",
+   "url": "https://trends.google.com/trending/rss?geo=US",
+   "geo": "US",
+   "note": "Feed only holds the latest ~10 trending searches; run several times a day to cover 48 h",
+   "enabled": false,
+   "disabled_reason": "2026-11-24: the feed holds only the latest ~10 searches (about 2 hours), so one daily pull misses most of the window. Wikipedia most-viewed covers public attention instead."
+  },
+  {
+   "id": "trends_gb",
+   "name": "Google Trends daily (GB)",
+   "method": "google_trends_rss",
+   "url": "https://trends.google.com/trending/rss?geo=GB",
+   "geo": "GB",
+   "note": "Feed only holds the latest ~10 trending searches; run several times a day to cover 48 h",
+   "enabled": false,
+   "disabled_reason": "2026-11-24: the feed holds only the latest ~10 searches (about 2 hours), so one daily pull misses most of the window. Wikipedia most-viewed covers public attention instead."
+  },
+  {
+   "id": "trends_de",
+   "name": "Google Trends daily (DE)",
+   "method": "google_trends_rss",
+   "url": "https://trends.google.com/trending/rss?geo=DE",
+   "geo": "DE",
+   "note": "Feed only holds the latest ~10 trending searches; run several times a day to cover 48 h",
+   "enabled": false,
+   "disabled_reason": "2026-11-24: the feed holds only the latest ~10 searches (about 2 hours), so one daily pull misses most of the window. Wikipedia most-viewed covers public attention instead."
+  },
+  {
+   "id": "trends_tr",
+   "name": "Google Trends daily (TR)",
+   "method": "google_trends_rss",
+   "url": "https://trends.google.com/trending/rss?geo=TR",
+   "geo": "TR",
+   "note": "Feed only holds the latest ~10 trending searches; run several times a day to cover 48 h",
+   "enabled": false,
+   "disabled_reason": "2026-11-24: the feed holds only the latest ~10 searches (about 2 hours), so one daily pull misses most of the window. Wikipedia most-viewed covers public attention instead."
+  },
+  {
+   "id": "trends_in",
+   "name": "Google Trends daily (IN)",
+   "method": "google_trends_rss",
+   "url": "https://trends.google.com/trending/rss?geo=IN",
+   "geo": "IN",
+   "note": "Feed only holds the latest ~10 trending searches; run several times a day to cover 48 h",
+   "enabled": false,
+   "disabled_reason": "2026-11-24: the feed holds only the latest ~10 searches (about 2 hours), so one daily pull misses most of the window. Wikipedia most-viewed covers public attention instead."
+  },
+  {
+   "id": "trends_br",
+   "name": "Google Trends daily (BR)",
+   "method": "google_trends_rss",
+   "url": "https://trends.google.com/trending/rss?geo=BR",
+   "geo": "BR",
+   "note": "Feed only holds the latest ~10 trending searches; run several times a day to cover 48 h",
+   "enabled": false,
+   "disabled_reason": "2026-11-24: the feed holds only the latest ~10 searches (about 2 hours), so one daily pull misses most of the window. Wikipedia most-viewed covers public attention instead."
+  },
+  {
+   "id": "trends_jp",
+   "name": "Google Trends daily (JP)",
+   "method": "google_trends_rss",
+   "url": "https://trends.google.com/trending/rss?geo=JP",
+   "geo": "JP",
+   "note": "Feed only holds the latest ~10 trending searches; run several times a day to cover 48 h",
+   "enabled": false,
+   "disabled_reason": "2026-11-24: the feed holds only the latest ~10 searches (about 2 hours), so one daily pull misses most of the window. Wikipedia most-viewed covers public attention instead."
+  },
+  {
+   "id": "trends_fr",
+   "name": "Google Trends daily (FR)",
+   "method": "google_trends_rss",
+   "url": "https://trends.google.com/trending/rss?geo=FR",
+   "geo": "FR",
+   "note": "Feed only holds the latest ~10 trending searches; run several times a day to cover 48 h",
+   "enabled": false,
+   "disabled_reason": "2026-11-24: the feed holds only the latest ~10 searches (about 2 hours), so one daily pull misses most of the window. Wikipedia most-viewed covers public attention instead."
+  },
+  {
+   "id": "trends_ca",
+   "name": "Google Trends daily (CA)",
+   "method": "google_trends_rss",
+   "url": "https://trends.google.com/trending/rss?geo=CA",
+   "geo": "CA",
+   "note": "Feed only holds the latest ~10 trending searches; run several times a day to cover 48 h",
+   "enabled": false,
+   "disabled_reason": "2026-11-24: the feed holds only the latest ~10 searches (about 2 hours), so one daily pull misses most of the window. Wikipedia most-viewed covers public attention instead."
+  },
+  {
+   "id": "trends_au",
+   "name": "Google Trends daily (AU)",
+   "method": "google_trends_rss",
+   "url": "https://trends.google.com/trending/rss?geo=AU",
+   "geo": "AU",
+   "note": "Feed only holds the latest ~10 trending searches; run several times a day to cover 48 h",
+   "enabled": false,
+   "disabled_reason": "2026-11-24: the feed holds only the latest ~10 searches (about 2 hours), so one daily pull misses most of the window. Wikipedia most-viewed covers public attention instead."
+  },
+  {
+   "id": "wiki_en",
+   "name": "Wikipedia most viewed (en)",
+   "method": "wikimedia_top",
+   "url": "https://wikimedia.org/api/rest_v1/metrics/pageviews/top/",
+   "project": "en.wikipedia",
+   "limit": 60,
+   "exclude_regex": "^(Main_Page|Special:|Spezial:|Özel:|Wikipedia:|Vikipedi:|Portal:|Help:|Hilfe:|Template:|Category:|Kategorie:|File:|Datei:|Hauptseite|Anasayfa|Ana_Sayfa|-$|Undefined$|XXX|XNXX|XHamster|Pornhub|\\.xxx|Cleopatra$|Index\\.html)",
+   "note": "One item per article; days are UTC and appear ~1 day late. Exclusions are namespaces and known bot/adult noise, not topics"
+  },
+  {
+   "id": "wiki_de",
+   "name": "Wikipedia most viewed (de)",
+   "method": "wikimedia_top",
+   "url": "https://wikimedia.org/api/rest_v1/metrics/pageviews/top/",
+   "project": "de.wikipedia",
+   "limit": 25,
+   "exclude_regex": "^(Main_Page|Special:|Spezial:|Özel:|Wikipedia:|Vikipedi:|Portal:|Help:|Hilfe:|Template:|Category:|Kategorie:|File:|Datei:|Hauptseite|Anasayfa|Ana_Sayfa|-$|Undefined$|XXX|XNXX|XHamster|Pornhub|\\.xxx|Cleopatra$|Index\\.html)",
+   "note": "One item per article; days are UTC and appear ~1 day late. Exclusions are namespaces and known bot/adult noise, not topics"
+  },
+  {
+   "id": "wiki_tr",
+   "name": "Wikipedia most viewed (tr)",
+   "method": "wikimedia_top",
+   "url": "https://wikimedia.org/api/rest_v1/metrics/pageviews/top/",
+   "project": "tr.wikipedia",
+   "limit": 25,
+   "exclude_regex": "^(Main_Page|Special:|Spezial:|Özel:|Wikipedia:|Vikipedi:|Portal:|Help:|Hilfe:|Template:|Category:|Kategorie:|File:|Datei:|Hauptseite|Anasayfa|Ana_Sayfa|-$|Undefined$|XXX|XNXX|XHamster|Pornhub|\\.xxx|Cleopatra$|Index\\.html)",
+   "note": "One item per article; days are UTC and appear ~1 day late. Exclusions are namespaces and known bot/adult noise, not topics"
+  },
+  {
+   "id": "bbc_top",
+   "name": "BBC News",
+   "method": "rss",
+   "url": "https://feeds.bbci.co.uk/news/rss.xml"
+  },
+  {
+   "id": "bbc_world",
+   "name": "BBC World",
+   "method": "rss",
+   "url": "https://feeds.bbci.co.uk/news/world/rss.xml",
+   "enabled": false,
+   "disabled_reason": "2026-11-25 tuning toward tech and entertainment: world politics came in through too many feeds (58% of stories, 16 of 23 high). Reuters and AP via Google News and the US and GB top stories still bring major world events."
+  },
+  {
+   "id": "bbc_business",
+   "name": "BBC Business",
+   "method": "rss",
+   "url": "https://feeds.bbci.co.uk/news/business/rss.xml"
+  },
+  {
+   "id": "bbc_tech",
+   "name": "BBC Technology",
+   "method": "rss",
+   "url": "https://feeds.bbci.co.uk/news/technology/rss.xml"
+  },
+  {
+   "id": "bbc_ent",
+   "name": "BBC Entertainment & Arts",
+   "method": "rss",
+   "url": "https://feeds.bbci.co.uk/news/entertainment_and_arts/rss.xml"
+  },
+  {
+   "id": "bbc_health",
+   "name": "BBC Health",
+   "method": "rss",
+   "url": "https://feeds.bbci.co.uk/news/health/rss.xml"
+  },
+  {
+   "id": "bbc_sci",
+   "name": "BBC Science & Environment",
+   "method": "rss",
+   "url": "https://feeds.bbci.co.uk/news/science_and_environment/rss.xml"
+  },
+  {
+   "id": "nyt_home",
+   "name": "New York Times (home)",
+   "method": "rss",
+   "url": "https://rss.nytimes.com/services/xml/rss/nyt/HomePage.xml"
+  },
+  {
+   "id": "nyt_world",
+   "name": "New York Times World",
+   "method": "rss",
+   "url": "https://rss.nytimes.com/services/xml/rss/nyt/World.xml",
+   "enabled": false,
+   "disabled_reason": "2026-11-25 tuning toward tech and entertainment: world politics came in through too many feeds (58% of stories, 16 of 23 high). Reuters and AP via Google News and the US and GB top stories still bring major world events."
+  },
+  {
+   "id": "nyt_business",
+   "name": "New York Times Business",
+   "method": "rss",
+   "url": "https://rss.nytimes.com/services/xml/rss/nyt/Business.xml"
+  },
+  {
+   "id": "nyt_tech",
+   "name": "New York Times Technology",
+   "method": "rss",
+   "url": "https://rss.nytimes.com/services/xml/rss/nyt/Technology.xml"
+  },
+  {
+   "id": "nyt_health",
+   "name": "New York Times Health",
+   "method": "rss",
+   "url": "https://rss.nytimes.com/services/xml/rss/nyt/Health.xml"
+  },
+  {
+   "id": "guardian_intl",
+   "name": "The Guardian (international)",
+   "method": "rss",
+   "url": "https://www.theguardian.com/international/rss"
+  },
+  {
+   "id": "guardian_world",
+   "name": "The Guardian World",
+   "method": "rss",
+   "url": "https://www.theguardian.com/world/rss",
+   "enabled": false,
+   "disabled_reason": "2026-11-25 tuning toward tech and entertainment: world politics came in through too many feeds (58% of stories, 16 of 23 high). Reuters and AP via Google News and the US and GB top stories still bring major world events."
+  },
+  {
+   "id": "guardian_business",
+   "name": "The Guardian Business",
+   "method": "rss",
+   "url": "https://www.theguardian.com/uk/business/rss"
+  },
+  {
+   "id": "guardian_tech",
+   "name": "The Guardian Technology",
+   "method": "rss",
+   "url": "https://www.theguardian.com/uk/technology/rss"
+  },
+  {
+   "id": "guardian_culture",
+   "name": "The Guardian Culture",
+   "method": "rss",
+   "url": "https://www.theguardian.com/uk/culture/rss"
+  },
+  {
+   "id": "bloomberg_markets",
+   "name": "Bloomberg Markets",
+   "method": "rss",
+   "url": "https://feeds.bloomberg.com/markets/news.rss"
+  },
+  {
+   "id": "bloomberg_tech",
+   "name": "Bloomberg Technology",
+   "method": "rss",
+   "url": "https://feeds.bloomberg.com/technology/news.rss"
+  },
+  {
+   "id": "bloomberg_politics",
+   "name": "Bloomberg Politics",
+   "method": "rss",
+   "url": "https://feeds.bloomberg.com/politics/news.rss",
+   "enabled": false,
+   "disabled_reason": "2026-11-25 tuning toward tech and entertainment: world politics came in through too many feeds (58% of stories, 16 of 23 high). Reuters and AP via Google News and the US and GB top stories still bring major world events."
+  },
+  {
+   "id": "ft_home",
+   "name": "Financial Times (home)",
+   "method": "rss",
+   "url": "https://www.ft.com/rss/home"
+  },
+  {
+   "id": "ft_world",
+   "name": "Financial Times World",
+   "method": "rss",
+   "url": "https://www.ft.com/world?format=rss",
+   "enabled": false,
+   "disabled_reason": "2026-11-25 tuning toward tech and entertainment: world politics came in through too many feeds (58% of stories, 16 of 23 high). Reuters and AP via Google News and the US and GB top stories still bring major world events."
+  },
+  {
+   "id": "cnbc_top",
+   "name": "CNBC Top News",
+   "method": "rss",
+   "url": "https://search.cnbc.com/rs/search/combinedcms/view.xml?partnerId=wrss01&id=100003114"
+  },
+  {
+   "id": "cnbc_tech",
+   "name": "CNBC Technology",
+   "method": "rss",
+   "url": "https://search.cnbc.com/rs/search/combinedcms/view.xml?partnerId=wrss01&id=19854910"
+  },
+  {
+   "id": "aljazeera",
+   "name": "Al Jazeera",
+   "method": "rss",
+   "url": "https://www.aljazeera.com/xml/rss/all.xml",
+   "enabled": false,
+   "disabled_reason": "2026-11-25 tuning toward tech and entertainment: world politics came in through too many feeds (58% of stories, 16 of 23 high). Reuters and AP via Google News and the US and GB top stories still bring major world events."
+  },
+  {
+   "id": "verge",
+   "name": "The Verge",
+   "method": "rss",
+   "url": "https://www.theverge.com/rss/index.xml"
+  },
+  {
+   "id": "ars",
+   "name": "Ars Technica",
+   "method": "rss",
+   "url": "https://feeds.arstechnica.com/arstechnica/index"
+  },
+  {
+   "id": "techcrunch",
+   "name": "TechCrunch",
+   "method": "rss",
+   "url": "https://techcrunch.com/feed/"
+  },
+  {
+   "id": "wired",
+   "name": "Wired",
+   "method": "rss",
+   "url": "https://www.wired.com/feed/rss"
+  },
+  {
+   "id": "engadget",
+   "name": "Engadget",
+   "method": "rss",
+   "url": "https://www.engadget.com/rss.xml"
+  },
+  {
+   "id": "ign",
+   "name": "IGN",
+   "method": "rss",
+   "url": "https://feeds.feedburner.com/ign/all"
+  },
+  {
+   "id": "variety",
+   "name": "Variety",
+   "method": "rss",
+   "url": "https://variety.com/feed/"
+  },
+  {
+   "id": "statnews",
+   "name": "STAT News",
+   "method": "rss",
+   "url": "https://www.statnews.com/feed/"
+  },
+  {
+   "id": "producthunt",
+   "name": "Product Hunt (front page)",
+   "method": "rss",
+   "url": "https://www.producthunt.com/feed"
+  },
+  {
+   "id": "the_record",
+   "name": "The Record (Recorded Future News)",
+   "method": "rss",
+   "url": "https://therecord.media/feed",
+   "note": "Security incidents, breaches and state-linked hacking; dates are day-only. Checked 2026-11-25: 5 items in 24 h."
+  },
+  {
+   "id": "bleepingcomputer",
+   "name": "BleepingComputer",
+   "method": "rss",
+   "url": "https://www.bleepingcomputer.com/feed/",
+   "note": "Breaches, ransomware, outages. Checked 2026-11-25: 15 items in 24 h."
+  },
+  {
+   "id": "404media",
+   "name": "404 Media",
+   "method": "rss",
+   "url": "https://www.404media.co/rss/",
+   "note": "Tech accountability and internet culture; a few posts a day. Checked 2026-11-25."
+  },
+  {
+   "id": "hollywood_reporter",
+   "name": "The Hollywood Reporter",
+   "method": "rss",
+   "url": "https://www.hollywoodreporter.com/feed/",
+   "note": "Checked 2026-11-25: 10 items in 24 h."
+  },
+  {
+   "id": "deadline",
+   "name": "Deadline",
+   "method": "rss",
+   "url": "https://deadline.com/feed/",
+   "note": "Checked 2026-11-25: 12 items in 24 h."
+  },
+  {
+   "id": "polygon",
+   "name": "Polygon",
+   "method": "rss",
+   "url": "https://www.polygon.com/rss/index.xml",
+   "note": "Gaming and entertainment. Checked 2026-11-25: 10 items in 24 h."
+  },
+  {
+   "id": "kotaku",
+   "name": "Kotaku",
+   "method": "rss",
+   "url": "https://kotaku.com/rss",
+   "note": "Gaming. Checked 2026-11-25: 20 items in 24 h."
+  },
+  {
+   "id": "github_trending",
+   "name": "GitHub trending (daily)",
+   "method": "rss",
+   "url": "https://mshibanami.github.io/GitHubTrendingRSS/daily/all.xml",
+   "note": "GitHub has no trending feed of its own; this is an unofficial daily mirror (mshibanami/GitHubTrendingRSS), refreshed once a day. Checked 2026-11-25: 16 repositories."
+  },
+  {
+   "id": "wsj_world",
+   "name": "Wall Street Journal World",
+   "method": "rss",
+   "url": "https://feeds.a.dj.com/rss/RSSWorldNews.xml",
+   "enabled": false,
+   "note": "Feed frozen (newest items months old); use gn_site_wall_street_journal"
+  },
+  {
+   "id": "npr",
+   "name": "NPR News",
+   "method": "rss",
+   "url": "https://feeds.npr.org/1001/rss.xml",
+   "enabled": false,
+   "note": "403 to this machine on 2026-11-24"
+  },
+  {
+   "id": "espn",
+   "name": "ESPN",
+   "method": "rss",
+   "url": "https://www.espn.com/espn/rss/news",
+   "enabled": false,
+   "note": "Returned 202 with empty body on 2026-11-24"
+  },
+  {
+   "id": "gdelt",
+   "name": "GDELT DOC 2.0",
+   "method": "gdelt_doc",
+   "url": "https://api.gdeltproject.org/api/v2/doc/doc?query=sourcelang:english&mode=artlist&maxrecords=250&timespan=48h&sort=hybridrel&format=json",
+   "enabled": false,
+   "note": "429 at first call; asks for one call per 5 s. Adds little over Google News when it works"
+  }
+ ]
+}

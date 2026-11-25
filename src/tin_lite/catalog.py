@@ -17,6 +17,8 @@ from tin_lite import (
     content_repository_delivery,
     growth_onboarding,
     growth_plan,
+    intel_judge,
+    intel_world,
     linkedin_connections_export,
     linkedin_engagers,
     linkedin_listening,
@@ -40,6 +42,7 @@ from tin_lite import (
     x_posts,
     x_style,
 )
+from tin_lite.agent_harness import ANTIGRAVITY, AgentSelection
 from tin_lite.character_design import MODEL_ROUTE as CHARACTER_MODEL_ROUTE
 from tin_lite.code_storage import CodeStorage
 from tin_lite.db import Database
@@ -107,6 +110,10 @@ from tin_lite.procedures import (
     EMAIL_SHORTLIST_VALIDATOR,
     FEATURE_MAP_SECTION,
     IDENTITY_REUSE_ACTIVE,
+    INTEL_MAX_BYTES,
+    INTEL_NOTES_VALIDATOR,
+    INTEL_SCOPES,
+    ISOLATED_SANDBOX_PROFILE,
     MEMORY_SECTION_PARENT,
     MEMORY_SECTION_VALIDATOR,
     OPEN_SANDBOX_EGRESS,
@@ -570,6 +577,16 @@ class BuiltinWorkflow:
             definition["human_review_kinds"] = {
                 kind: policy.definition() for kind, policy in CONTENT_KIND_REVIEW_POLICIES.items()
             }
+        if self.key == intel_world.KEY:
+            # Tin's own feed on the operator's host project: never offered to founders.
+            definition["public_discovery"] = False
+            definition["intel_policy"] = dict(intel_world.POLICY)
+            resources[intel_world.SOURCES_PATH] = (
+                Path(__file__).resolve().parent / "intel_sources" / "world.json"
+            ).read_bytes()
+        if self.key in intel_judge.SCOPES:
+            # Only its intelligence parent starts it.
+            definition["public_discovery"] = False
         if self.key == content_plan_agent.RESEARCH_KEY:
             # Only content.plan starts it, as its planning step.
             definition["public_discovery"] = False
@@ -1855,6 +1872,53 @@ BUILTIN_WORKFLOWS = (
         agent_only=True,
         input_schema=people_rate.INPUT_SCHEMA,
         model_route=people_icp.ROUTE,
+    ),
+    BuiltinWorkflow(
+        id=intel_world.WORKFLOW_ID,
+        key=intel_world.KEY,
+        title="Write today's world stories",
+        description=(
+            "Tin's shared world feed for daily intelligence: once a day, pull the last day's "
+            "news from about 60 world sources (wires, Google News front pages, Techmeme, the "
+            "Hacker News front page, Wikipedia's most viewed pages), have an agent write the "
+            "day's stories with their sources, publish them to intel/world/<day>/STORIES.md and "
+            "post a short summary to Tin's Slack. Every client's daily brief reads these "
+            "stories. Runs only on Tin's own intelligence project."
+        ),
+        executor=intel_world.KEY,
+        version_label="1.0.0",
+        presentation=intel_world.PRESENTATION,
+        schedule_modes=("on_demand", "daily"),
+        agent_only=True,
+        input_schema=intel_world.INPUT_SCHEMA,
+    ),
+    BuiltinWorkflow(
+        id=intel_world.JUDGE_WORKFLOW_ID,
+        key=intel_judge.WORLD_JUDGE_KEY,
+        title="Judge today's world news",
+        description=(
+            "The agent inside Write today's world stories: searches and reads the day's items "
+            "with the intel command, records each real event as a story with the items that "
+            "cover it, sends the Slack brief as checked JSON and notes what was odd in the "
+            "data. Started by Write today's world stories, never on its own."
+        ),
+        executor=CODEX_PROCEDURE_EXECUTOR,
+        version_label="1.0.0",
+        presentation=intel_world.JUDGE_PRESENTATION,
+        schedule_modes=("on_demand",),
+        agent_only=True,
+        input_schema=intel_judge.JUDGE_INPUT_SCHEMA,
+        procedure=CodexProcedureSource(
+            root=Path(__file__).resolve().parents[2] / "codex_procedures" / "intel.world_judge",
+            entry_skill="world-stories",
+            output_path_template=INTEL_SCOPES["world"][2],
+            output_validator=INTEL_NOTES_VALIDATOR,
+            output_max_bytes=INTEL_MAX_BYTES[INTEL_NOTES_VALIDATOR],
+            # E2B refuses a sandbox over one hour; the judge takes 10 to 25 minutes.
+            sandbox=SandboxProfile(profile=ISOLATED_SANDBOX_PROFILE, timeout_seconds=3600),
+            agent=AgentSelection(ANTIGRAVITY, "gemini-4-neon", "high"),
+            intel_scope="world",
+        ),
     ),
     BuiltinWorkflow(
         id=rb2b.WORKFLOW_ID,
@@ -4821,6 +4885,8 @@ def executor_replaced_by(builtin_key: str, executor: str) -> str | None:
 
 
 PARENT_CHILD_KEYS: dict[str, tuple[str, ...]] = {
+    # The world feed starts its judge at its own pinned revision.
+    intel_world.KEY: (intel_judge.WORLD_JUDGE_KEY,),
     x_draft.KEY: tuple(x_draft.STEPS.values()),
     # The weekly page refresh is pinned beside the steps, so a run reads its exact definition.
     organic_system.KEY: (

@@ -661,6 +661,9 @@ def test_reviewed_public_catalog_coverage_and_explicit_exclusions():
         "project.task",
         "growth.onboarding",
         "growth.onboarding_plan",
+        # Daily intelligence's world feed runs on Tin's own host project, with its judge.
+        "intel.world",
+        "intel.world_judge",
         # content.plan's planning agent; only content.plan starts it.
         "content.plan_research",
     }

@@ -181,6 +181,7 @@ def test_concrete_procedure_packages_are_pinned_and_ui_renderable() -> None:
         "content.generate",
         "content.refresh",
         "content.plan_research",
+        "intel.world_judge",
         RESEARCH_DEEP_DIVE_WORKFLOW_NAME,
         SITE_HEALTH_WORKFLOW_NAME,
         EMAIL_SHORTLIST_WORKFLOW_NAME,

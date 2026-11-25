@@ -15,6 +15,7 @@ from tin_lite.workflows import (
     CodexProcedureWorkflow,
     ConnectionCollectionWorkflow,
     DesignMdWorkflow,
+    IntelWorldWorkflow,
     KeywordPlanWorkflow,
     LinkedInEngagersWorkflow,
     LinkedInProfileViewersWorkflow,
@@ -132,6 +133,13 @@ ACCEPTED_HISTORIES = (
         LinkedInEngagersWorkflow,
         "social.linkedin_engagers:3f2b9c1e-7a4d-4e8b-9c6f-1d2e3f4a5b6c",
         FIXTURES / "linkedin_engagers_history.json",
+    ),
+    # Recorded locally by tests/test_intel_world_workflow.py (TIN_RECORD_INTEL_HISTORY=1): a
+    # world day whose special group failed and whose judge finished.
+    (
+        IntelWorldWorkflow,
+        "intel.world:819e0e43-6eef-4c77-bdf0-e6813c638875",
+        FIXTURES / "intel_world_history.json",
     ),
     (
         LinkedInProfileViewersWorkflow,

@@ -414,6 +414,8 @@ async def build_runtime(settings: Settings) -> RuntimeServices:
         cipher=integrations._cipher,
     )
     from tin_lite.delegate import Delegate
+    from tin_lite.intel_world_activities import IntelWorldActivities
+    from tin_lite.intel_world_activities import activities_of as intel_activities_of
     from tin_lite.people_rate_activities import PeopleRateActivities
     from tin_lite.rb2b_company_activities import RB2BCompanyActivities
 
@@ -437,8 +439,12 @@ async def build_runtime(settings: Settings) -> RuntimeServices:
         profiles=_member_profiles(settings),
         delegate=Delegate(delegate_key) if delegate_key else None,
     )
+    intel_world_activities = IntelWorldActivities(
+        database=database, storage=storage, settings=settings, integrations=integrations
+    )
     code = CodeActivities(common=activity_instance, model_router=model_router)
     activities = [
+        *intel_activities_of(intel_world_activities),
         collection.prepare,
         collection.poll,
         collection.publish,

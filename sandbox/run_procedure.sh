@@ -210,7 +210,8 @@ cleanup() {
   trap - EXIT
   rm -f "${result_file}" \
     /home/user/.tin-lite/procedure-workspace.tar.gz \
-    /home/user/.tin-lite/open-pull-requests.json
+    /home/user/.tin-lite/open-pull-requests.json \
+    /home/user/.tin-lite/intel-input.jsonl.gz /home/user/.tin-lite/intel-worker.json
   exit "${exit_code}"
 }
 trap cleanup EXIT
