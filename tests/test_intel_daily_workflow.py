@@ -30,7 +30,9 @@ class Analyst:
             raise ApplicationError("Synthetic analyst failure", non_retryable=True)
 
 
-def stubs(calls: list, *, judge_fails=False, broken_group=None, slack_breaks=False):
+def stubs(calls: list, *, judge_fails=False, broken_group=None, slack_breaks=False, retry=None):
+    """`retry`: None (no retry due), "ok" or "fail" (the second analyst's outcome)."""
+
     def note(name, value):
         calls.append((name, value))
 
@@ -59,10 +61,29 @@ def stubs(calls: list, *, judge_fails=False, broken_group=None, slack_breaks=Fal
         child = f"{'fail' if judge_fails else 'ok'}-{uuid4()}"
         return {"run_id": child, "executor": "codex.procedure", "temporal_workflow_id": child}
 
+    @activity.defn(name="intel_daily_judge_retry")
+    async def judge_retry(run_id):
+        note("judge_retry", run_id)
+        if retry is None:
+            return {}
+        child = f"{retry}-{uuid4()}"
+        return {
+            "run_id": child,
+            "executor": "codex.procedure",
+            "temporal_workflow_id": child,
+            "attempt": 2,
+        }
+
     @activity.defn(name="intel_daily_judge_collect")
     async def judge_collect(run_id):
         note("judge_collect", run_id)
-        if judge_fails:
+        if retry == "fail":
+            raise ApplicationError(
+                "The agent execution failed before a completed result was recovered.",
+                {"tin_failure": {"kind": "explained", "message": "The analyst failed twice."}},
+                non_retryable=True,
+            )
+        if judge_fails and retry is None:
             raise ApplicationError(
                 "Your Tin credits ran out. Add credits in Billing, then retry.",
                 {"tin_failure": {"kind": "needs_you", "message": "Your Tin credits ran out."}},
@@ -90,7 +111,18 @@ def stubs(calls: list, *, judge_fails=False, broken_group=None, slack_breaks=Fal
     async def failure(argument):
         note("failure", argument)
 
-    return [prepare, fetch, load, judge_start, judge_collect, publish, post, finish, failure]
+    return [
+        prepare,
+        fetch,
+        load,
+        judge_start,
+        judge_retry,
+        judge_collect,
+        publish,
+        post,
+        finish,
+        failure,
+    ]
 
 
 async def execute(run_id: str, activities, *, fails=False):
@@ -137,6 +169,7 @@ async def test_a_day_with_x_skipped_and_no_world_stories_succeeds_with_identifie
         "fetch",
         "load",
         "judge_start",
+        "judge_retry",
         "judge_collect",
         "publish",
         "post",
@@ -182,3 +215,38 @@ async def test_a_failed_analyst_fails_the_run_with_its_own_reason():
 async def test_the_recorded_history_still_replays():
     history = WorkflowHistory.from_json(FIXTURE_ID, FIXTURE.read_text())
     await Replayer(workflows=[IntelDailyWorkflow]).replay_workflow(history)
+
+
+def children(history) -> list[str]:
+    return [
+        event.start_child_workflow_execution_initiated_event_attributes.workflow_id
+        for event in history.events
+        if event.HasField("start_child_workflow_execution_initiated_event_attributes")
+    ]
+
+
+async def test_an_analyst_that_died_on_a_provider_error_runs_once_more():
+    run_id, calls = str(uuid4()), []
+    history = await execute(run_id, stubs(calls, judge_fails=True, retry="ok"))
+    names = [name for name, _ in calls]
+    started = children(history)
+    assert len(started) == 2 and started[0].startswith("fail") and started[1].startswith("ok")
+    assert names.count("judge_retry") == 1 and names[-2:] == ["post", "finish"]
+    for value in scheduled_inputs(history):
+        assert value == run_id or (isinstance(value, dict) and value.get("run_id") == run_id)
+
+
+async def test_a_second_provider_failure_ends_the_run_with_its_reason():
+    run_id, calls = str(uuid4()), []
+    history = await execute(run_id, stubs(calls, judge_fails=True, retry="fail"), fails=True)
+    names = [name for name, _ in calls]
+    assert len(children(history)) == 2 and names.count("judge_retry") == 1
+    assert "publish" not in names and names[-1] == "failure"
+    failure = calls[-1][1]
+    assert failure["kind"] == "explained" and "failed twice" in failure["reason"]
+
+
+async def test_no_retry_due_means_one_analyst():
+    run_id, calls = str(uuid4()), []
+    history = await execute(run_id, stubs(calls, judge_fails=True), fails=True)
+    assert len(children(history)) == 1

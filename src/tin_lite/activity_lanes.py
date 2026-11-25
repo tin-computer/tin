@@ -111,6 +111,7 @@ TRUSTED_ACTIVITIES = frozenset(
         "intel_daily_fetch",
         "intel_daily_load",
         "intel_daily_judge_start",
+        "intel_daily_judge_retry",
         "intel_daily_judge_collect",
         "intel_daily_publish",
         "intel_daily_post",
