@@ -7,6 +7,8 @@ come from the story rows. A link inside the brief's text must lead to an item th
 it is dropped with a warning the agent can act on. A brief that breaks the shape is refused
 with a sentence that says how to fix it. When no usable brief arrives, Tin builds one from the
 day's high stories (`fallback_world_brief`, `fallback_client_brief`), so the day still posts.
+A fallback carries no note of its own: the renderers say that Tin wrote it (the brief's
+source is "fallback").
 """
 
 from __future__ import annotations
@@ -324,25 +326,19 @@ def _client(value: dict, *, links: LinkIndex, stories) -> tuple[dict, list[str]]
         if story:
             entry["story"] = story
         kept.append(entry)
-    worth = value.get("worth_doing", [])
-    if not isinstance(worth, list) or len(worth) > 4:
-        raise BriefError("`worth_doing` lists at most 4 suggestions.")
-    kept_worth = []
-    for number, item in enumerate(worth, 1):
-        at = f"worth_doing {number}"
-        if not isinstance(item, dict) or set(item) != {"text"}:
-            raise BriefError(f'{at} must be {{"text": "..."}}.')
-        text = _text(item["text"], field=f"{at} text", limit=220)
-        text, found = check_links(text, links, where=at)
-        warnings += found + _style(text, at)
-        kept_worth.append({"text": text})
+    if value.get("worth_doing") not in (None, []):
+        # Suggestions live in report.md section 5; no brief renders them.
+        warnings.append(
+            "worth_doing: leave it empty; suggestions go in report.md section 5. Tin dropped "
+            "them from the brief."
+        )
     note = _text(value.get("note"), field="note", limit=300, required=False)
     warnings += _style(headline, "headline")
     brief = {
         "schema": CLIENT_SCHEMA,
         "headline": headline,
         "items": kept,
-        "worth_doing": kept_worth,
+        "worth_doing": [],
     }
     if note:
         brief["note"] = note
@@ -433,8 +429,9 @@ def fallback_world_brief(stories: list[dict], *, headline_hint: str | None = Non
         name = group_of(story.get("tags") or []) or "world"
         if count >= 8:
             break
-        line = _first_sentence(story.get("summary") or "", 240 - len(story["title"]) - 2)
-        chosen[name].append({"story": story["key"], "line": f"{story['title']}: {line}"[:240]})
+        # The renderers put the story's title before its line, so the line is the summary's.
+        line = _first_sentence(story.get("summary") or "", 240)
+        chosen[name].append({"story": story["key"], "line": line})
         count += 1
     if not count:
         return None
@@ -443,7 +440,6 @@ def fallback_world_brief(stories: list[dict], *, headline_hint: str | None = Non
         "schema": WORLD_SCHEMA,
         "headline": lead[:200],
         "groups": [{"group": name, "items": items} for name, items in chosen.items() if items],
-        "note": "Tin wrote this summary from the day's top stories.",
     }
 
 
@@ -482,7 +478,6 @@ def fallback_client_brief(stories: list[dict], *, headline_hint: str | None = No
         "headline": (headline_hint or picked[0]["title"])[:220],
         "items": items,
         "worth_doing": [],
-        "note": "Tin wrote this brief from the day's top stories.",
     }
 
 
@@ -534,11 +529,11 @@ CLIENT_SCHEMA_TEXT = """intel-brief/1: the client's executive brief Tin posts in
             "kind": "competitor|platform|buyer|regulation|market|world|other",
             "verify": false, "verify_note": "<at most 160, when verify is true>",
             "story": "<story key>"}],
- "worth_doing": [{"text": "<at most 220, may link [words](https://...)>"}],
+ "worth_doing": [],
  "note": "<optional, at most 300 characters>"}
 
-3 to 5 items, 0 to 4 worth-doing suggestions. Only links to items in today's data (or earlier
-stories) are kept. Mark anything resting on one secondary or unverified source verify: true and
-say what to check. Tin adds each story's outlets and renders the Slack message; send plain text,
-no Slack markup, no em dashes.
+3 to 5 items. Leave worth_doing empty: suggestions go in report.md section 5, and Tin drops
+any sent here. Only links to items in today's data (or earlier stories) are kept. Mark anything
+resting on one secondary or unverified source verify: true and say what to check. Tin adds each
+story's outlets and renders the Slack message; send plain text, no Slack markup, no em dashes.
 """

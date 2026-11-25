@@ -79,3 +79,23 @@ async def test_unwrap_is_bounded_and_survives_a_failing_reader():
 def test_article_ids():
     assert gnews.article_id(LINK) == GID
     assert gnews.article_id("https://example.com/") is None
+
+
+async def test_resolve_many_is_the_one_unwrap_loop():
+    """Only article links, each once, at most `limit`; a link that won't unwrap is left out."""
+    reader = Reader()
+    found = await gnews.resolve_many(
+        Cache(),
+        reader,
+        [
+            LINK,
+            "https://news.google.com/topics/CAAqJggKIiBDQkFTRWdvSUwyMHZNRGx6TVdZU0FtVnVHZ0pWVXlnQVAB",
+            "https://www.reuters.com/a",
+            LINK,
+            BROKEN,
+        ],
+        limit=2,
+    )
+    assert found == {LINK: PUBLISHER}
+    assert gnews.is_article(LINK) and not gnews.is_article("https://news.google.com/home")
+    assert not any("topics" in call for call in reader.calls)

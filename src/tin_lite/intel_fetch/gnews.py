@@ -4,6 +4,8 @@ Fetches keep the `news.google.com/rss/articles/<id>` links: unwrapping takes two
 requests per link, and a day's fetch holds hundreds. After the judge, code unwraps only the
 links its report and brief use (`unwrap_text`), caching every answer in `intel_link_cache`
 for all runs. A link that won't unwrap stays a Google News link, which still works.
+`is_article` is the one test of what counts as an article link, and `resolve_many` the one
+loop that unwraps a list of them (the world summary, a client's brief and report).
 """
 
 from __future__ import annotations
@@ -18,12 +20,19 @@ ARTICLE = re.compile(
     r"https://news\.google\.com/rss/articles/([A-Za-z0-9_\-]{10,600})(\?[^\s)\]>|\"']*)?"
 )
 _ID = re.compile(r"/articles/([^?/]+)")
+# Distinct links unwrapped per call: each is two paced requests to Google News.
+UNWRAP_LIMIT = 60
 BATCH = "https://news.google.com/_/DotsSplashUi/data/batchexecute"
 
 
 def article_id(link: str) -> str | None:
     match = _ID.search(link or "")
     return match.group(1) if match and len(match.group(1)) <= 600 else None
+
+
+def is_article(link: object) -> bool:
+    """A Google News article link Tin can unwrap."""
+    return isinstance(link, str) and ARTICLE.fullmatch(link) is not None
 
 
 async def link_cache_get(conn, gid: str) -> str | None:
@@ -106,25 +115,38 @@ async def resolve(conn, reader: PublicReader, link: str) -> str | None:
     return url
 
 
-async def unwrap_text(conn, reader: PublicReader, text: str, *, limit: int = 60) -> tuple[str, int]:
-    """Replace the Google News article links in `text` with publisher URLs, at most `limit`
-    distinct links. Returns the text and how many links were replaced; a link that won't
-    unwrap is left as it is."""
-    # Sentence punctuation after a link is not part of it.
-    links = list(
-        dict.fromkeys(match.group(0).rstrip(".,;:!?") for match in ARTICLE.finditer(text or ""))
-    )
-    replaced = 0
+async def resolve_many(
+    conn, reader: PublicReader, links, *, limit: int = UNWRAP_LIMIT, heartbeat=None
+) -> dict[str, str]:
+    """Publisher URLs for the Google News article links among `links`, at most `limit`
+    distinct ones, in order. A link that won't unwrap is left out and keeps working as it is.
+    `heartbeat(found)` is called after each link."""
+    wanted = [link for link in dict.fromkeys(links) if is_article(link)][:limit]
     found: dict[str, str] = {}
-    for link in links[:limit]:
+    for link in wanted:
         try:
             url = await resolve(conn, reader, link)
         except Exception:  # noqa: BLE001 — a link that won't unwrap keeps working as it is
             url = None
         if url:
             found[link] = url
+        if heartbeat is not None:
+            heartbeat(len(found))
+    return found
+
+
+async def unwrap_text(
+    conn, reader: PublicReader, text: str, *, limit: int = UNWRAP_LIMIT
+) -> tuple[str, int]:
+    """Replace the Google News article links in `text` with publisher URLs, at most `limit`
+    distinct links. Returns the text and how many links were replaced; a link that won't
+    unwrap is left as it is."""
+    # Sentence punctuation after a link is not part of it.
+    links = [match.group(0).rstrip(".,;:!?") for match in ARTICLE.finditer(text or "")]
+    found = await resolve_many(conn, reader, links, limit=limit)
     if not found:
         return text, 0
+    replaced = 0
     pattern = re.compile("|".join(re.escape(link) for link in sorted(found, key=len, reverse=True)))
 
     def swap(match: re.Match) -> str:
