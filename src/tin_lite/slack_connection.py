@@ -1,12 +1,13 @@
 """Project-owned Slack connection: post run summaries to the channels a founder picks.
 
-The founder adds Tin's Slack app to their workspace (OAuth v2, bot token). Tin asks only to list
-channels and to post; it never reads messages. It can post to any public channel, and to a
-private channel once someone adds the app to it: Slack shows a bot only the private channels it
-is in. The bot token is stored encrypted and
-never leaves the switchboard. Slack documents no idempotency key for chat.postMessage, so a
-caller must record that it is sending before calling `post` (run_summary_posts) and must never
-resend a post whose outcome is unknown.
+The founder adds Tin's Slack app to their workspace (OAuth v2, bot token). Tin asks to list
+channels, to post, and to read the history and threads of channels its app is a member of, so
+that what the founder and Tin discuss there can inform Tin's work. It never asks for direct
+messages (im:history, mpim:history). It can post to any public channel, and to a private channel
+once someone adds the app to it: Slack shows a bot only the private channels it is in. The bot
+token is stored encrypted and never leaves the switchboard. Slack documents no idempotency key
+for chat.postMessage, so a caller must record that it is sending before calling `post`
+(run_summary_posts) and must never resend a post whose outcome is unknown.
 
 Tin's Slack app must keep token rotation off: a bot token then lasts until it is revoked.
 """
@@ -37,10 +38,19 @@ from tin_lite.integrations import (
 API = "https://slack.com/api"
 AUTHORIZE = "https://slack.com/oauth/v2/authorize"
 CALLBACK = "slack"
-SCOPES = ("channels:read", "groups:read", "chat:write", "chat:write.public")
+SCOPES = (
+    "channels:read",
+    "groups:read",
+    "chat:write",
+    "chat:write.public",
+    "channels:history",
+    "groups:history",
+)
 CAPABILITY_SCOPES = {
     "slack.channels.read": {"channels:read", "groups:read"},
     "slack.messages.post": {"chat:write", "chat:write.public"},
+    # History and threads of channels the app is a member of; never direct messages.
+    "slack.messages.read": {"channels:history", "groups:history"},
 }
 MAX_BYTES = 512_000
 MAX_CHANNEL_PAGES = 10

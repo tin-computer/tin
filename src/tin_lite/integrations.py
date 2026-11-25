@@ -112,7 +112,7 @@ X_CAPABILITIES = (
 )
 # List the channels Tin can post to (public, and private ones it was added to) and post Tin's
 # messages; nothing is read from channels.
-SLACK_CAPABILITIES = ("slack.channels.read", "slack.messages.post")
+SLACK_CAPABILITIES = ("slack.channels.read", "slack.messages.post", "slack.messages.read")
 LINKEDIN_POSTING_CAPABILITIES = ("linkedin.posts.publish", "linkedin.media.upload")
 # Reads of the project's own site; the site is always the connection's.
 AGENT_TRAFFIC_CAPABILITIES = ("status.read", "reports.read")
@@ -551,10 +551,12 @@ def registered_integrations() -> tuple[IntegrationDefinition, ...]:
             name="Slack",
             badge="S",
             description=(
-                "Post a workflow's summary to the channels you pick when each run finishes. "
-                "For a private channel, add Tin's app to it first. Tin never reads messages."
+                "Post a workflow's summary to the channels you pick when each run finishes, "
+                "and let Tin read the channels its app is in, threads included, so what you "
+                "discuss there informs its work. For a private channel, add Tin's app to it "
+                "first. Tin never reads direct messages."
             ),
-            access_label="Posts only · channels you pick",
+            access_label="Posts · reads channels it's in",
             capabilities=SLACK_CAPABILITIES,
             unlocks=("Run summaries in Slack",),
         ),

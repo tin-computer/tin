@@ -240,7 +240,9 @@ class Slack:
         self.post = {"ok": True, "channel": "C1", "ts": "1729700000.000100"}
         self.post_status = 200
         self.revoked = False
-        self.scope = "channels:read,groups:read,chat:write,chat:write.public"
+        self.scope = (
+            "channels:read,groups:read,chat:write,chat:write.public,channels:history,groups:history"
+        )
         self.unreachable = False
 
     @staticmethod
@@ -322,7 +324,9 @@ async def connect(integrations, project_id):
         project_id=project_id, provider_key=SLACK_PROVIDER, clerk_user_id=USER_ID
     )
     query = parse_qs(urlsplit(start.authorization_url).query)
-    assert query["scope"] == ["channels:read,groups:read,chat:write,chat:write.public"]
+    assert query["scope"] == [
+        "channels:read,groups:read,chat:write,chat:write.public,channels:history,groups:history"
+    ]
     assert "code_challenge" not in query
     return await integrations.slack.complete(
         state=query["state"][0], code="synthetic-code", clerk_user_id=USER_ID
@@ -342,6 +346,7 @@ async def test_slack_connects_lists_channels_posts_and_disconnects(publication_d
         assert connection.configuration["granted_capabilities"] == [
             "slack.channels.read",
             "slack.messages.post",
+            "slack.messages.read",
         ]
         assert b"xoxb-synthetic" not in connection.credential_ciphertext
         channels = await integrations.slack.channels(project.id)
