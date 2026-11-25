@@ -206,6 +206,28 @@ def _style(text: str, where: str) -> list[str]:
     return [f"{where}: Tin's briefs use no em dashes; rewrite it."] if "—" in text else []
 
 
+# A client brief item that tells the client what to do ("Worth refreshing our pricing page",
+# "We should answer the thread"). Staging 2026-11-25: Databasin's brief carried these although
+# worth_doing was empty. A warning back to the analyst, never a refusal.
+SUGGESTION = re.compile(
+    r"\b(?:worth (?:doing|refreshing|updating|revisiting|adding|writing|publishing|keeping|"
+    r"checking|considering|a (?:post|reply|page|look))|(?:we|you) (?:should|could|"
+    r"ought to|might want to)|consider (?:adding|updating|refreshing|writing|"
+    r"publishing|replying)|time to (?:refresh|update|write|publish|reply)|next step)\b",
+    re.IGNORECASE,
+)
+
+
+def _suggestion(text: str, where: str) -> list[str]:
+    if SUGGESTION.search(text) is None:
+        return []
+    return [
+        f"{where} reads as a suggestion: a brief item says what happened and why it matters to "
+        "the client, nothing to do. Move the suggestion to report.md section 5 and send the "
+        "brief again."
+    ]
+
+
 def validate(
     schema: str,
     value: object,
@@ -323,7 +345,7 @@ def _client(value: dict, *, links: LinkIndex, stories) -> tuple[dict, list[str]]
         lead = _text(item.get("lead"), field=f"{at} lead", limit=120)
         body = _text(item.get("body"), field=f"{at} body", limit=450)
         body, found = check_links(body, links, where=at)
-        warnings += found + _style(lead + body, at)
+        warnings += found + _style(lead + body, at) + _suggestion(f"{lead}. {body}", at)
         kind = item.get("kind", "other")
         if kind not in KINDS:
             raise BriefError(f"{at}: `kind` must be one of {', '.join(KINDS)}.")
@@ -552,8 +574,10 @@ CLIENT_SCHEMA_TEXT = """intel-brief/1: the client's executive brief Tin posts in
  "worth_doing": [],
  "note": "<optional, at most 300 characters>"}
 
-3 to 5 items. Leave worth_doing empty: suggestions go in report.md section 5, and Tin drops
-any sent here. Only links to items in today's data (or earlier stories) are kept. Mark anything
-resting on one secondary or unverified source verify: true and say what to check. Tin adds each
-story's outlets and renders the Slack message; send plain text, no Slack markup, no em dashes.
+3 to 5 items. Each says what happened and why it matters to the client: no suggestions, no
+to-dos, no "worth doing". Leave worth_doing empty: suggestions go in report.md section 5, and
+Tin drops any sent here and warns about an item that reads as one. Only links to items in
+today's data (or earlier stories) are kept. Mark anything resting on one secondary or
+unverified source verify: true and say what to check. Tin adds each story's outlets and
+renders the Slack message; send plain text, no Slack markup, no em dashes.
 """
