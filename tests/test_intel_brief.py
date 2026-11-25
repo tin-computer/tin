@@ -109,6 +109,44 @@ def test_worth_doing_is_empty_and_suggestions_are_dropped_with_a_sentence():
     assert any("report.md section 5" in w for w in warnings)
 
 
+@pytest.mark.parametrize(
+    "body",
+    [
+        "Worth refreshing our Workday Prism comparison page with the new pricing.",
+        "Worth keeping our Snowflake comparison page sharp.",
+        "We should answer the thread before a rival does.",
+        "Consider adding a page on on-demand billing.",
+    ],
+)
+def test_a_client_item_that_reads_as_a_suggestion_is_kept_with_a_warning(body):
+    """Staging 2026-11-25: suggestions reached Databasin's brief through item bodies."""
+    value = client()
+    value["items"][1]["body"] = body
+    kept, warnings = brief.validate(brief.CLIENT_SCHEMA, value, links=LINKS)
+    assert kept["items"][1]["body"] == body
+    assert [w for w in warnings if "reads as a suggestion" in w] == [
+        "item 2 reads as a suggestion: a brief item says what happened and why it matters to "
+        "the client, nothing to do. Move the suggestion to report.md section 5 and send the "
+        "brief again."
+    ]
+
+
+def test_a_development_and_why_it_matters_raises_no_suggestion_warning():
+    value = client()
+    value["items"][0]["body"] = (
+        "Workday cut Prism's entry price, which removes the cost objection buyers raised "
+        "against it; it is worth knowing before renewals."
+    )
+    value["items"][1]["body"] = "Analysts say they could not join HR data without a pipeline."
+    _kept, warnings = brief.validate(brief.CLIENT_SCHEMA, value, links=LINKS)
+    assert warnings == []
+    # Tin's own fallback brief, from story summaries, raises none either.
+    fallback = brief.fallback_client_brief([story("talks"), story("chips", relevance="medium")])
+    fallback["items"].append(dict(fallback["items"][0]))
+    _kept, warnings = brief.validate(brief.CLIENT_SCHEMA, fallback, links=LINKS)
+    assert warnings == []
+
+
 @pytest.mark.parametrize("count", [2, 6])
 def test_a_client_brief_needs_three_to_five_items(count):
     with pytest.raises(brief.BriefError, match="3 to 5"):
