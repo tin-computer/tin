@@ -118,6 +118,16 @@ PARENT_EXECUTORS = {
 # the child's actual usage is charged once. Observed judge runs cost $2.00 to $2.30; the
 # ceiling is a runaway guard, not an estimate.
 INTEL_PARENT_USD = 15
+# X's pay-per-use price for one post returned by a read, on Tin's X app (2026-11-25). An
+# intel.daily run pins it: the client's List is read through Tin's own X connection, and the
+# client pays for each page at this price per post X returned (protected posts it counted
+# included). A price change is a new id; earlier runs keep theirs.
+X_READ_PRICING = {
+    "id": "x-pay-per-use-reads-2026-11-25-v1",
+    "provider": "x",
+    "unit": "post_returned",
+    "post_read_nanos": 5_000_000,
+}
 
 # Organic audit ceiling, from its bounded calls at the GPT-6 Luna rates above. A run makes at
 # most 28 searched calls (two research attempts, 12 questions asked twice, two brand checks) and
@@ -279,8 +289,11 @@ def service_terms(definition, *, inputs=None):
         maximum, kinds = 1 * NANOS_PER_DOLLAR, []
     elif executor == "growth.onboarding":
         maximum, kinds = 10 * NANOS_PER_DOLLAR, []
-    elif executor in {"intel.world", "intel.daily"}:
+    elif executor == "intel.world":
         maximum, kinds = INTEL_PARENT_USD * NANOS_PER_DOLLAR, []
+    elif executor == "intel.daily":
+        # The judge is its own session-funded child; the parent buys only X List pages.
+        maximum, kinds = INTEL_PARENT_USD * NANOS_PER_DOLLAR, ["tool"]
     elif executor == "growth.onboarding_plan":
         # About twenty-five bounded model steps; each reserves its conservative ceiling first.
         maximum = 8 * NANOS_PER_DOLLAR
@@ -302,9 +315,8 @@ def service_terms(definition, *, inputs=None):
         raise BillingError("invalid_budget", "The workflow spending maximum is invalid.")
     extra = {}
     if executor == "intel.daily":
-        # The client's X List reads are operator-funded, like social.x_publish; each page's
-        # receipt carries its estimated supplier cost.
-        extra["external_api_funding"] = "operator_x_credits"
+        # The client's X List pages are billed to its run at X's per-post price.
+        extra["x_read_pricing"] = deepcopy(X_READ_PRICING)
     return {
         **extra,
         "rate_card": CARD["id"],
@@ -365,10 +377,30 @@ def model_maximum(terms, *, provider, model, input_tokens, output_tokens, search
     )
 
 
+def x_read_charge(pricing, record):
+    """One X read at the run's pinned per-post price: the posts X returned, counted by Tin from
+    the response it received. None when the receipt doesn't say how many."""
+    if record.get("category") != "tool":
+        return None
+    usage = record.get("usage")
+    posts = usage.get("posts_returned") if isinstance(usage, dict) else None
+    if type(posts) is not int or not 0 <= posts <= 10_000:
+        return None
+    return posts * pricing["post_read_nanos"], {
+        "provider": "x",
+        "endpoint": record.get("endpoint"),
+        "basis": "pinned_unit_price",
+        "rate_card": pricing["id"],
+        "posts_returned": posts,
+    }
+
+
 def price_receipt(terms, kind, record):
     if record.get("outcome") not in {"response_received", "invalid_output"}:
         return None
     card = terms["service_pricing"]
+    if kind == "tool" and record.get("provider") == "x" and "x_read_pricing" in terms:
+        return x_read_charge(terms["x_read_pricing"], record)
     if kind == "tool":
         if record.get("provider") not in card["tools"] or record.get("category") != "tool":
             return None
