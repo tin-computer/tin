@@ -88,7 +88,8 @@ Record stories as you go, not at the end. Tomorrow's analyst starts from them.
 ```
 
 Three to five items, most important first. Every item names the story it comes from, so Tin can
-show its outlets. Leave `worth_doing` empty; suggestions go in the report.
+show its outlets. Each item reports what happened and why it matters to the client, never what
+to do about it. Leave `worth_doing` empty; suggestions go in the report's section 5.
 
 Example, for a fictional analytics vendor:
 
@@ -97,13 +98,13 @@ Example, for a fictional analytics vendor:
  "headline": "A rival made its warehouse cheaper to start, and analysts keep asking for HR data in the lakehouse",
  "items": [
   {"lead": "The rival's warehouse got cheaper to start",
-   "body": "It added on-demand billing and a zero-capacity tier, both in preview, [per its announcement](https://example.com/blog/on-demand). That weakens the pay-up-front point on our comparison and pricing pages.",
+   "body": "It added on-demand billing and a zero-capacity tier, both in preview, [per its announcement](https://example.com/blog/on-demand). Buyers who chose us to avoid paying up front now have a cheaper way to start with the rival.",
    "kind": "competitor", "verify": false, "story": "rival-on-demand-billing"},
   {"lead": "Analysts ask for HR data next to clinical data",
    "body": "Two threads asked how to join HR records with the warehouse without a custom pipeline; [one has 40 replies](https://example.com/thread/123).",
    "kind": "buyer", "verify": false, "story": "hr-data-in-lakehouse"},
   {"lead": "A model vendor's new security beta may exclude regulated accounts",
-   "body": "So far only secondary coverage says so, [in one report](https://example.com/news/beta). If the vendor's own docs confirm it, it supports our private deployment page.",
+   "body": "So far only secondary coverage says so, [in one report](https://example.com/news/beta). If the vendor's own docs confirm it, regulated buyers would have one fewer hosted option.",
    "kind": "platform", "verify": true,
    "verify_note": "One secondary report; check the vendor's own documentation.",
    "story": "model-vendor-security-beta"}]}
@@ -120,12 +121,16 @@ Example, for a fictional analytics vendor:
 - **To verify.** Anything resting on a single secondary or unverified source is marked: in the
   brief `"verify": true` with a `verify_note` saying what to check; in the report, say so where
   you use it and list it in Source notes.
-- **Pages in words.** Name the client's pages as a reader would ("our Fabric comparison page",
-  "the Secure AI page"), never as paths, URLs or code.
+- **The brief reports, the report suggests.** A brief item says what happened and why it
+  matters to the client. It never says what to do: no "Worth refreshing our pricing page", no
+  "Worth keeping our comparison page sharp", no "we should", "consider" or next steps. Tin warns
+  about an item that reads as a suggestion; move it to the report's section 5.
+- **Pages in words.** In the report, name the client's pages as a reader would ("our Fabric
+  comparison page", "the Secure AI page"), never as paths, URLs or code.
 - **Links.** Hide each link in a few words: `[Microsoft's announcement](https://...)`. Never a
   bare URL. Link only URLs from today's items or earlier stories.
-- **Suggest, don't promise.** "Worth refreshing our pricing page", never "Tin will update it".
-  Never commit Tin or the client to work or dates.
+- **Suggest, don't promise.** In the report's section 5, "Refresh our pricing page with the
+  new tier", never "Tin will update it". Never commit Tin or the client to work or dates.
 - **Tone.** Plain, specific, no hype, no em dashes. Short sentences a founder reads on a phone.
 - **Sensitive stories** are never hooks, in the brief or the report's content ideas.
 - **No guessing.** A headline-only item is a headline: say so rather than describe the article.
