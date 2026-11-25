@@ -1393,6 +1393,24 @@ class XConnection:
         )
         return {"list_id": list_id, **_own_list_page(result, limit=max_results, what="List posts")}
 
+    async def list_owner(
+        self, project_id: UUID, clerk_user_id: str, *, list_id: str
+    ) -> dict[str, Any]:
+        """Who owns one List, and whether it is the connected account: one lookup, before a
+        caller reads a List on the account's behalf."""
+        list_id = _id(list_id, name="List ID")
+        connection, account = await self._member_connection(LISTS, project_id, clerk_user_id)
+        result = await self._request(
+            connection, LISTS, "GET", f"/2/lists/{list_id}", params={"list.fields": "owner_id"}
+        )
+        data = result.get("data")
+        if not isinstance(data, dict):
+            raise IntegrationUpstreamError("X returned an invalid List")
+        owner = data.get("owner_id")
+        if data.get("id") != list_id or not ID.fullmatch(str(owner or "")):
+            raise IntegrationUpstreamError("X returned an invalid List")
+        return {"list_id": list_id, "owner_id": owner, "owned": owner == account}
+
     async def _public_account(self, connection: Any, username: str) -> dict[str, Any]:
         result = await self._request(
             connection,

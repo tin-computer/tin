@@ -80,6 +80,13 @@ class SocialX(X):
             self.calls.append(request)
             self.members.discard(path.rsplit("/", 1)[1])
             return self.reply(200, {"data": {"is_member": False}})
+        if path in {"/2/lists/1890001", "/2/lists/1890002"} and method == "GET":
+            self.calls.append(request)
+            owner = self.account if path.endswith("1") else "999"
+            return self.reply(200, {"data": {"id": path.rsplit("/", 1)[1], "owner_id": owner}})
+        if path == "/2/lists/1890003" and method == "GET":
+            self.calls.append(request)
+            return self.reply(200, {"errors": [{"title": "Not Found Error"}]})
         if path == "/2/lists/1890001/tweets":
             self.calls.append(request)
             return self.reply(200, feed_body())
@@ -199,6 +206,27 @@ async def test_create_a_list_add_and_remove_members_and_read_it() -> None:
     assert page["list_id"] == "1890001"
     assert page["posts"][0]["reposted_by"]["username"] == "friend"
     assert api.calls[-1].url.params["max_results"] == "25"
+    await integrations.close()
+
+
+async def test_list_owner_says_whether_the_connected_account_owns_a_list() -> None:
+    """intel.daily reads a client's List through Tin's own X only once X says Tin owns it."""
+    from tin_lite.integrations import IntegrationUpstreamError
+
+    integrations, _, api = await service(SocialX())
+    await connect(integrations, api)
+    mine = await integrations.x.list_owner(PROJECT_ID, USER_ID, list_id="1890001")
+    assert mine == {"list_id": "1890001", "owner_id": api.account, "owned": True}
+    assert api.calls[-1].url.params["list.fields"] == "owner_id"
+    theirs = await integrations.x.list_owner(PROJECT_ID, USER_ID, list_id="1890002")
+    assert theirs["owned"] is False
+    with pytest.raises(IntegrationUpstreamError, match="incomplete result"):
+        await integrations.x.list_owner(PROJECT_ID, USER_ID, list_id="1890003")
+    with pytest.raises(IntegrationAuthorizationError, match="act as its account|connected"):
+        await integrations.x.list_owner(PROJECT_ID, "user_Teammate456", list_id="1890001")
+    with pytest.raises(IntegrationInputError, match="List ID"):
+        await integrations.x.list_owner(PROJECT_ID, USER_ID, list_id="../lists")
+    assert writes(api) == []
     await integrations.close()
 
 
