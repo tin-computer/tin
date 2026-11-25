@@ -94,6 +94,8 @@ X_NOTES = {
     "x_rate_limited": "X List cut short: X asked Tin to wait",
     "x_uncertain": "X List cut short: one page wasn't confirmed",
     "x_invalid": "X List not read: X refused the List ID",
+    # A brief with no List saved says nothing about X; sources.json still records the skip.
+    "x_no_list": None,
 }
 FALLBACK_NOTE = "Tin wrote this brief from the day's top stories"
 
@@ -106,7 +108,9 @@ def notes(fetch: dict, *, brief_source: str | None, world_status: str | None) ->
         lines.append("World stories unavailable today")
     for status in fetch.get("source_status") or []:
         if status.get("id") == x_list.SOURCE_ID and status.get("reason"):
-            lines.append(X_NOTES.get(status["reason"], "X List not fully read"))
+            line = X_NOTES.get(status["reason"], "X List not fully read")
+            if line:
+                lines.append(line)
     if brief_source == "fallback":
         lines.append(FALLBACK_NOTE)
     return lines

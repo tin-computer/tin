@@ -153,6 +153,17 @@ def test_every_x_reason_has_its_own_slack_line():
     assert set(slack.X_NOTES) == set(x_list.REASONS)
 
 
+def test_no_saved_list_adds_no_slack_line_but_a_lost_connection_does():
+    from tin_lite.intel_fetch import x_list
+
+    quiet = {"source_status": [x_list.not_saved()]}
+    assert slack.notes(quiet, brief_source="judge", world_status="ready") == []
+    lost = {"source_status": [{**x_list.not_saved(), "reason": "x_reauthorize"}]}
+    assert slack.notes(lost, brief_source="judge", world_status="ready") == [
+        "X List not read: reconnect X in Integrations"
+    ]
+
+
 def test_tins_own_brief_says_so_once():
     """The fallback carries no note; notes() is the one place that says Tin wrote it."""
     from tin_lite.intel_brief import fallback_client_brief

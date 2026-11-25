@@ -150,7 +150,21 @@ async def test_an_invalid_source_is_skipped_with_its_reason(db):
     f = await setup(db, files={intel_daily.RSS_PATH: json.dumps(cfg).encode()})
     await f.acts.prepare(str(f.run_id))
     statuses = (await intel_store.get_fetch(db.pool, f.run_id))["source_status"]
-    assert [(s["id"], s["status"]) for s in statuses] == [("bad", "skipped")]
+    assert [(s["id"], s["status"]) for s in statuses] == [
+        ("bad", "skipped"),
+        ("x-list", "skipped"),
+    ]
+
+
+async def test_no_saved_list_records_x_skipped_with_its_reason(db):
+    # Staging 2026-11-25: a brief saved without x_list_id left X out of sources.json entirely.
+    f = await setup(db)
+    result = await f.acts.prepare(str(f.run_id))
+    assert "x" not in result["groups"]
+    statuses = (await intel_store.get_fetch(db.pool, f.run_id))["source_status"]
+    (x,) = [s for s in statuses if s["id"] == "x-list"]
+    assert x["status"] == "skipped" and x["reason"] == "x_no_list"
+    assert "no X List is saved" in x["error"]
 
 
 async def test_company_md_missing_refuses_before_any_fetch(db):
@@ -190,7 +204,8 @@ async def test_fetch_reads_the_pinned_revision_and_skips_done_sources(db):
     rows = await db.pool.fetch("SELECT source_id FROM intel_items WHERE run_id = $1", f.run_id)
     assert {r["source_id"] for r in rows} == {"health-weekly"}
     statuses = (await intel_store.get_fetch(db.pool, f.run_id))["source_status"]
-    assert [s["id"] for s in statuses] == ["health-weekly"]
+    # x-list: no List saved, so prepare recorded X skipped.
+    assert [s["id"] for s in statuses] == ["x-list", "health-weekly"]
     # A retried group skips what it recorded.
     assert await f.acts.fetch({"run_id": str(f.run_id), "group": "rss"}) == {
         "items": 0,
@@ -252,7 +267,9 @@ async def test_a_crashed_group_records_each_of_its_sources(db, monkeypatch):
     result = await f.acts.fetch({"run_id": str(f.run_id), "group": "pages"})
     assert result == {"items": 0, "sources": 3, "failed": 3}
     statuses = {
-        s["id"]: s for s in (await intel_store.get_fetch(db.pool, f.run_id))["source_status"]
+        s["id"]: s
+        for s in (await intel_store.get_fetch(db.pool, f.run_id))["source_status"]
+        if s["id"] != "x-list"  # no List saved: recorded skipped at prepare
     }
     assert set(statuses) == {"vendor-newsroom", "vendor-blog", "jx-crossref"}
     assert all(
@@ -481,7 +498,7 @@ async def test_publish_unwraps_links_and_is_idempotent(db):
     assert by_id["health-weekly"]["status"] == "ok" and by_id["gn-lakehouse"]["status"] == "ok"
     # The pages group never ran in this test: load recorded its sources as unfinished.
     pages = {"vendor-newsroom", "vendor-blog", "jx-crossref"}
-    assert set(by_id) == {"health-weekly", "gn-lakehouse"} | pages
+    assert set(by_id) == {"health-weekly", "gn-lakehouse", "x-list"} | pages
     assert all(by_id[p]["error"] == "group_failed: its fetch did not finish" for p in pages)
     assert status["world_day"] == {"status": "missing"}
 
