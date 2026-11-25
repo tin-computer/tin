@@ -166,7 +166,7 @@ def _in(win: Window, d: datetime) -> bool:
     return win.since <= d <= win.until
 
 
-async def _get(ctx: dict, url: str, *, retries: int = 1, **kwargs) -> bytes:
+async def _get(ctx: dict, url: str, *, retries: int | None = None, **kwargs) -> bytes:
     response = await ctx["reader"].fetch(url, retries=retries, headers=dict(HEADERS), **kwargs)
     ctx["http"] = response.status
     return response.body
@@ -207,7 +207,7 @@ async def m_rss(src: dict, win: Window, ctx: dict) -> list[Item]:
 
 
 async def m_google_news_rss(src: dict, win: Window, ctx: dict) -> list[Item]:
-    body = await _get(ctx, src["url"], retries=3)
+    body = await _get(ctx, src["url"])
     out = []
     entries = list(parse_feed(body))
     ctx["seen"] = len(entries)
@@ -465,7 +465,7 @@ async def m_wikimedia_top(src: dict, win: Window, ctx: dict) -> list[Item]:
 
 
 async def m_gdelt_doc(src: dict, win: Window, ctx: dict) -> list[Item]:
-    body = await _get(ctx, src["url"], retries=2)
+    body = await _get(ctx, src["url"])
     try:
         data = json.loads(body)
     except ValueError as exc:
