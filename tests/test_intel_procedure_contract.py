@@ -25,11 +25,25 @@ def test_the_world_judge_is_an_isolated_antigravity_procedure():
     spec = validate_codex_procedure_definition(definition)
     assert spec.intel_scope == "world"
     assert spec.agent.harness == "antigravity" and spec.agent.model == "gemini-4-neon"
-    assert spec.sandbox.isolated and spec.sandbox.timeout_seconds == 5400
+    assert spec.sandbox.isolated and spec.sandbox.timeout_seconds == 3600
     assert spec.output_path_template == "intel/world/runs/{run_folder}/NOTES.md"
     assert spec.output_validator == INTEL_NOTES_VALIDATOR and spec.output_max_bytes == 20_000
     assert definition["public_discovery"] is False
     assert definition["input_schema"]["required"] == ["project_id", "parent_run_id", "scope", "day"]
+
+
+# E2B answers "400: Timeout cannot be greater than 1 hours" when a sandbox asks for more
+# (staging, 2026-11-25: the world judge at 5,400 s never started).
+E2B_MAX_SANDBOX_SECONDS = 3600
+
+
+def test_no_builtin_procedure_asks_e2b_for_more_than_an_hour():
+    for builtin in BUILTIN_WORKFLOWS:
+        if builtin.procedure is None:
+            continue
+        definition, _files = builtin.definition_and_resource_files()
+        spec = validate_codex_procedure_definition(definition)
+        assert spec.sandbox.timeout_seconds <= E2B_MAX_SANDBOX_SECONDS, builtin.key
 
 
 def changed(edit):
