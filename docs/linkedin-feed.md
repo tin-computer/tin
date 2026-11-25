@@ -55,6 +55,13 @@ older, from a draft). An update Tin can't name a post for is counted, not guesse
    the first page of comments (when the post has any) and the first `reactors` reactors (when it
    has reactions). Each read takes up to 24 requests. Promoted posts are kept without details.
    A post seen again later keeps the details read the first time.
+   - Posts an earlier run left without details in the last three days (it stopped, or ran out of
+     reads) come next, newest first, whichever member's feed showed them.
+   - One post's server error, timeout or unreadable answer skips that post (`unread`), not the
+     read. A whole read whose answer failed skips its posts, under its own receipt, and the next
+     read goes on. A refusal from LinkedIn still stops all reading.
+   - Skipped posts are settled without details, so they aren't asked for again; the summary
+     says how many.
 4. **Publish:** it writes two files, created once per run:
    - `social/linkedin/feed/<date>-<run>.json`: every post the run's feed showed, in feed order,
      with `position`, `reason`, `comments` and `reactors` (schema `tin.social.linkedin_feed.v1`);

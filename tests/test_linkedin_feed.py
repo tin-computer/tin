@@ -424,8 +424,10 @@ async def test_linkedin_refusals_stop_the_read(status, code):
 class Cloud:
     """The LinkedIn sandbox: the member's feed, a page at a time, and posts' details."""
 
-    def __init__(self, pages, *, errors=None):
+    def __init__(self, pages, *, errors=None, fail_once=None):
         self.pages, self.errors = pages, errors or {}
+        # A kind whose first read fails with this reason, then reads normally.
+        self.fail_once = dict(fail_once or {})
         self.calls, self.cleaned = [], []
 
     async def engagement(self, conn, *, execution_key, run_id, session, packet, seconds=270):
@@ -433,6 +435,8 @@ class Cloud:
         self.calls.append(packet)
         if packet["kind"] in self.errors:
             raise CollectionError(self.errors[packet["kind"]])
+        if packet["kind"] in self.fail_once:
+            raise CollectionError(self.fail_once.pop(packet["kind"]))
         if packet["kind"] == "linkedin_feed_details":
             return {
                 "posts": [
@@ -542,6 +546,7 @@ async def run_through(w, run_id):
             read = await w.feed_details({"run_id": run_id, "read": index})
             notes["detail_reads"] += bool(read["detailed"])
             notes["detailed"] += read["detailed"] or 0
+            notes["failed"] = notes.get("failed", 0) + (read.get("failed") or 0)
             if read["outcome"] == "stopped":
                 notes["stopped"] = read["reason"]
                 break
@@ -647,6 +652,114 @@ async def test_linkedin_objecting_to_details_keeps_the_posts(collection_db):
             )
             == 3
         )
+
+
+async def test_a_details_read_that_fails_skips_its_posts_and_goes_on(collection_db):
+    f = await fixture(collection_db)
+    cloud = Cloud(pages_of(6), fail_once={"linkedin_feed_details": "cloud_failed"})
+    run_id = await feed_run(f, pages=6)
+    w = work(f, cloud)
+    notes = await run_through(w, run_id)
+    reads = [c["posts"] for c in cloud.calls if c["kind"] == "linkedin_feed_details"]
+    # Eighteen posts to read, thirty requests: two reads. The first read's posts are skipped,
+    # the rest read by the next one.
+    assert len(reads) == 2 and len(reads[0]) + len(reads[1]) == 18
+    assert notes["detailed"] == len(reads[1]) and notes["failed"] == len(reads[0])
+    digest = next(b for p, b in files(f.storage).items() if p.endswith(".md")).decode()
+    assert "comments and reactors read for" in digest
+    async with f.db.pool.acquire() as conn:
+        assert not await conn.fetchval(
+            "SELECT count(*) FROM linkedin_feed_posts WHERE details_read_at IS NULL"
+        )
+
+
+async def test_a_retried_failed_read_settles_the_same_posts(collection_db):
+    f = await fixture(collection_db)
+    w = work(f, Cloud(pages_of(6), fail_once={"linkedin_feed_details": "cloud_failed"}))
+    run_id = await feed_run(f, pages=6)
+    await w.feed_prepare(run_id)
+    for index in range(2):
+        await w.feed_read({"run_id": run_id, "read": index})
+
+    async def waiting():
+        return await f.db.pool.fetchval(
+            "SELECT count(*) FROM linkedin_feed_posts WHERE details_read_at IS NULL"
+        )
+
+    first = await w.feed_details({"run_id": run_id, "read": 0})
+    left = await waiting()
+    again = await w.feed_details({"run_id": run_id, "read": 0})
+    assert first["failed"] == again["failed"] == 14 and first["more"] and left == 6
+    assert await waiting() == left
+
+
+async def test_a_later_run_reads_details_an_earlier_one_left(collection_db):
+    f = await fixture(collection_db)
+    first = Cloud(pages_of(1), errors={"linkedin_feed_details": "rate_limited"})
+    await run_through(work(f, first), await feed_run(f, pages=1))
+    # The next day's feed shows other posts; yesterday's still get their details.
+    later = Cloud({0: sample_page(10)})
+    notes = await run_through(work(f, later), await feed_run(f, pages=1))
+    threads = [
+        p["thread"] for c in later.calls if c["kind"] == "linkedin_feed_details" for p in c["posts"]
+    ]
+    assert len(threads) == 6 and notes["detailed"] == 6
+    async with f.db.pool.acquire() as conn:
+        assert not await conn.fetchval(
+            "SELECT count(*) FROM linkedin_feed_posts WHERE details_read_at IS NULL"
+        )
+
+
+async def test_one_posts_server_error_skips_only_that_post():
+    seen = []
+    handler = responder(seen)
+
+    def respond(req):
+        if req.url.params.get("updateId") == "activity:7531336088905240576":
+            return httpx.Response(500)
+        return handler(req)
+
+    async with httpx.AsyncClient(transport=httpx.MockTransport(respond)) as c:
+        result = await reader.read_details(
+            validate_session(session_envelope()),
+            ACTOR,
+            client=c,
+            posts=[
+                {"thread": "activity:7531336088905240576", "comments": True, "reactor_pages": 1},
+                {"thread": "ugcPost:7531297777272778753", "comments": True, "reactor_pages": 1},
+            ],
+            sleep=no_wait,
+        )
+    broken, fine = result["posts"]
+    assert broken["unread"] == "cloud_failed" and broken["comments"] is None
+    assert fine["unread"] is None and len(fine["comments"]) == 3 and len(fine["reactors"]) == 10
+
+
+async def test_linkedin_objecting_on_one_post_still_stops_the_read():
+    seen = []
+    handler = responder(seen)
+
+    def respond(req):
+        if req.url.path == reader.REACTIONS_PATH:
+            return httpx.Response(429)
+        return handler(req)
+
+    async with httpx.AsyncClient(transport=httpx.MockTransport(respond)) as c:
+        with pytest.raises(CollectionError) as error:
+            await reader.read_details(
+                validate_session(session_envelope()),
+                ACTOR,
+                client=c,
+                posts=[
+                    {
+                        "thread": "activity:7531336088905240576",
+                        "comments": False,
+                        "reactor_pages": 1,
+                    }
+                ],
+                sleep=no_wait,
+            )
+    assert error.value.code == "rate_limited"
 
 
 def test_options_stay_inside_their_bounds():

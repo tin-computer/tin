@@ -2045,6 +2045,7 @@ class LinkedInFeedWorkflow:
                         "linkedin_feed_details", {"run_id": run_id, "read": index}, minutes=8
                     )
                     notes["detailed"] += read["detailed"] or 0
+                    notes["failed"] = notes.get("failed", 0) + (read.get("failed") or 0)
                     if read["outcome"] == "stopped":
                         notes["stopped"] = read["reason"]
                         break
