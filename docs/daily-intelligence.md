@@ -209,7 +209,8 @@ workflow.
     "quote_multiword", "thread_comments"}, "reddit": {"subreddits": [{"name", "all_posts",
     "post_queries", "comment_queries"}], "thread_comments"}}`. Tin uses its own endpoints
     (Algolia for HN, Arctic Shift for Reddit), whatever the file says.
-- Optional: an X List, saved as the workflow's `x_list_id`, with X connected on the project.
+- Optional: an X List, saved as the workflow's `x_list_id`. It is read through Tin's own X
+  account, connected on the intel host project, never through an X connection of the client's.
 
 `link_paths` and `url_paths` are path globs, not regular expressions. Configs are project files
 any member can edit, and Tin's worker never runs a pattern from one. A glob is a host (with or
@@ -232,13 +233,22 @@ of the day goes on.
 | Input | Default | Meaning |
 |---|---|---|
 | `post_brief` | `true` | Post the brief in Slack when a channel is set |
-| `x_list_id` | none | The client's private X List; without it X isn't read |
+| `x_list_id` | none | The client's X List, on Tin's own X account; without it X isn't read |
 | `x_keep_retweets` | `false` | Keep plain retweets (dropped by default: mostly truncated copies) |
 | `lookback_hours` | 24 | 12 to 72; used when there is no recent run to continue from |
 
-The X List is read as the member who connected X in the project. A scheduled run starts as the
-member who saved the workflow, so that member saves it. For anyone else, X is skipped with a
-note in the brief.
+Every client's List lives on one X connection: the intel host project's
+(`TIN_LITE_INTEL_HOST_PROJECT_ID`, Tin Computer in production). Connecting one X account to
+several Tin projects keeps only the newest connection, so the client's project needs no X of its
+own, and one it has is ignored. The List is read as whoever connected X on the host project,
+through that connection's own member check; who saved the client's workflow doesn't matter.
+
+- Only a client an operator set up for the daily brief (`tin-lite intel-channel`, below) is read
+  through the host. Its List ID is pinned with each run.
+- Page receipts and the X call records belong to the client's run, and so do its items.
+- X isn't read, with its reason in `sources.json` and a line in the brief, when the host project
+  has no X connection, X there needs reconnecting, X won't serve the List (an unknown ID, or a
+  List Tin's account can't read), no host project is set, or the client isn't set up.
 
 ### How a run goes
 
@@ -247,7 +257,8 @@ note in the brief.
    - the window, which ends at the run's start. It continues from the last successful run with
      an hour of overlap, or else looks back `lookback_hours`;
    - the project revision the configs were read at;
-   - the Slack destination.
+   - the Slack destination;
+   - whether X is read, and through which host project.
 2. **Fetch** reads in groups, one after another: feeds, Google News, pages (html_links, sitemap,
    crossref), HN, Reddit and X.
    - Each source has a deadline, longer for a subreddit.
@@ -286,7 +297,8 @@ note in the brief.
 |---|---|
 | A source fails, is empty or is skipped | Recorded in `sources.json`; the run goes on |
 | A whole fetch group fails or never finishes | Each of its sources is recorded as failed; the run goes on |
-| X not connected, another member, reconnect needed | X skipped with the reason; the brief says so |
+| X not connected on the host project, reconnect needed, List not found or not readable | X skipped with the reason; the brief says so |
+| No host project set, or the client isn't set up for the daily brief | X skipped with the reason |
 | An X page's purchase unconfirmed | Never bought again; X stops there with what it read |
 | No usable world day at load | The run goes on; the brief says world stories are unavailable |
 | The analyst sends no usable brief | Tin writes one from the day's high and medium stories, and the brief says so |
@@ -301,7 +313,11 @@ are paid for by Tin (like posting to X), and each page's receipt carries its est
 ### Operator setup
 
 1. Set `TIN_LITE_INTEL_HOST_PROJECT_ID` to the project whose Slack connection is Tin's own app.
-2. Set the client's channel with `tin-lite intel-channel <project_id> <channel_id> "<name>"`.
-   Use `none` as the channel ID to stop posting.
-3. Commit `company.md` and the source configs to the client's project.
-4. Have the member who connected X save `intel.daily` with its `x_list_id`.
+2. Connect X on the host project with Tin's own account (`@tincomputer` in production). Keep
+   that account connected to the host only: connecting it to another project drops the host's.
+3. Set the client's channel with `tin-lite intel-channel <project_id> <channel_id> "<name>"`.
+   This also sets the client up to have its List read through the host. Use `none` as the
+   channel ID to stop posting; the client stays set up.
+4. Commit `company.md` and the source configs to the client's project.
+5. Create the client's List on Tin's X account, and save `intel.daily` on the client's project
+   with its `x_list_id`.

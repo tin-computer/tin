@@ -160,7 +160,7 @@ def test_no_saved_list_adds_no_slack_line_but_a_lost_connection_does():
     assert slack.notes(quiet, brief_source="judge", world_status="ready") == []
     lost = {"source_status": [{**x_list.not_saved(), "reason": "x_reauthorize"}]}
     assert slack.notes(lost, brief_source="judge", world_status="ready") == [
-        "X List not read: reconnect X in Integrations"
+        "X List not read: reconnect X on Tin's host project"
     ]
 
 

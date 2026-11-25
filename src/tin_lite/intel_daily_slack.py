@@ -88,14 +88,17 @@ def outlets(story: dict | None, links: dict[str, str] | None = None) -> list[tup
 # What the brief says when X wasn't fully read, by x_list.REASONS' key (status wording lives
 # there; this is Slack's). A test keeps the two key sets equal.
 X_NOTES = {
-    "x_member": "X List not read: only the member who connected X can read it",
-    "x_reauthorize": "X List not read: reconnect X in Integrations",
-    "x_not_connected": "X List not read: X isn't connected",
+    "x_member": "X List not read: X on Tin's host project changed hands mid-read",
+    "x_reauthorize": "X List not read: reconnect X on Tin's host project",
+    "x_not_connected": "X List not read: X isn't connected on Tin's host project",
     "x_rate_limited": "X List cut short: X asked Tin to wait",
     "x_uncertain": "X List cut short: one page wasn't confirmed",
     "x_invalid": "X List not read: X refused the List ID",
+    "x_list_unavailable": "X List not read: X didn't find it or won't serve it to Tin's account",
     # A brief with no List saved says nothing about X; sources.json still records the skip.
     "x_no_list": None,
+    "x_no_host": "X List not read: no intel host project is set",
+    "x_not_enrolled": "X List not read: this client isn't set up for Tin's X",
 }
 FALLBACK_NOTE = "Tin wrote this brief from the day's top stories"
 

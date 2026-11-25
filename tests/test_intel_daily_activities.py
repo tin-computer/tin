@@ -43,7 +43,7 @@ class Slack:
         return "1764000000.000100"
 
 
-async def setup(db, *, files=None, inputs=None, channel="C0TESTCHAN"):
+async def setup(db, *, files=None, inputs=None, channel="C0TESTCHAN", with_host=True):
     storage = Storage()
     storage.repo.id = f"projects/{uuid4().hex}"
     project = await db.create_project(name="Acme Data", state_repo_id=storage.repo.id)
@@ -64,7 +64,9 @@ async def setup(db, *, files=None, inputs=None, channel="C0TESTCHAN"):
             project.id,
             channel,
         )
-    host = uuid4()
+    host = (
+        await db.create_project(name="Tin Computer", state_repo_id=f"projects/{uuid4().hex}")
+    ).id
     slack = Slack()
     acts = IntelDailyActivities(
         database=db,
@@ -72,7 +74,7 @@ async def setup(db, *, files=None, inputs=None, channel="C0TESTCHAN"):
         settings=SimpleNamespace(
             app_url="https://app.example",
             switchboard_public_url="https://app.example",
-            intel_host_project_id=host,
+            intel_host_project_id=host if with_host else None,
         ),
         integrations=SimpleNamespace(slack=slack, x=None),
         reader_factory=lambda agent: rss_reader(),
@@ -213,21 +215,108 @@ async def test_fetch_reads_the_pinned_revision_and_skips_done_sources(db):
     }
 
 
-async def test_x_without_a_connection_is_skipped_and_the_day_goes_on(db):
-    f = await setup(db, inputs={"x_list_id": "2125213001850495223"})
+class HostX:
+    """X with one connection, Tin's own on the host project. A client project's connection
+    must never be asked for: X keeps only the newest of one account's connections."""
 
-    class NoX:
-        async def connection(self, project_id, capability=None):
-            from tin_lite.integrations import IntegrationAuthorizationError
+    def __init__(self, host, *, connected=True):
+        self.host = host
+        self.connected = connected
+        self.asked: list[tuple] = []
+        self.connection_row = SimpleNamespace(
+            id=None,
+            project_id=host,
+            provider_key="social.x",
+            connected_by_clerk_user_id="user_host_x",
+        )
 
+    async def connection(self, project_id, capability=None):
+        from tin_lite.integrations import IntegrationAuthorizationError
+
+        self.asked.append(("connection", project_id))
+        assert project_id == self.host, "the client's own X connection was asked for"
+        if not self.connected:
             raise IntegrationAuthorizationError("Connect or reconnect X in this project")
+        return self.connection_row
 
-    f.acts.integrations.x = NoX()
+    async def list_posts(self, project_id, member, *, list_id, max_results, pagination_token):
+        self.asked.append(("list_posts", project_id, member))
+        post = {
+            "id": "31",
+            "text": "Our lakehouse pricing changed today.",
+            "created_at": "2026-11-24T12:00:00.000Z",
+            "author": {"id": "1", "username": "vendor", "name": "Vendor"},
+            "public_metrics": {},
+            "urls": [],
+        }
+        return {"list_id": list_id, "posts": [post], "next_token": None}
+
+
+LIST_ID = "2125213001850495223"
+
+
+async def test_x_reads_the_list_through_the_host_connection_for_the_client_run(db):
+    f = await setup(db, inputs={"x_list_id": LIST_ID})
+    await db.pool.execute(
+        "UPDATE workflow_runs SET started_by_clerk_user_id = 'user_clientmember' WHERE id = $1",
+        f.run_id,
+    )
+    x = HostX(f.host)
+    f.acts.integrations.x = x
+    prepared = await f.acts.prepare(str(f.run_id))
+    assert "x" in prepared["groups"]
+    pinned = (await db.get_effect(f"intel:{f.run_id}:prepare")).result
+    assert pinned["x_host_project_id"] == str(f.host)
+    result = await f.acts.fetch({"run_id": str(f.run_id), "group": "x"})
+    assert result == {"items": 1, "sources": 1, "x": "ok"}
+    # Only the host's connection, as whoever connected X there, not the client run's starter.
+    assert {a[1] for a in x.asked} == {f.host}
+    assert {a[2] for a in x.asked if a[0] == "list_posts"} == {"user_host_x"}
+    # The items, the page receipt and the call record are the client run's.
+    rows = await db.pool.fetch("SELECT source_id FROM intel_items WHERE run_id = $1", f.run_id)
+    assert [r["source_id"] for r in rows] == ["x-list"]
+    page = await db.get_effect(f"intel:{f.run_id}:x:{LIST_ID}:1")
+    assert page.status == "completed" and page.result["posts"] == 1
+    call = await db.pool.fetchrow(
+        "SELECT project_id, run_id, capability FROM integration_call_receipts "
+        "WHERE execution_key = $1",
+        f"intel:{f.run_id}:x:{LIST_ID}:1",
+    )
+    assert call["run_id"] == f.run_id and call["project_id"] == f.host
+    assert call["capability"] == "x.lists.manage"
+
+
+async def test_x_without_a_host_connection_is_skipped_and_the_day_goes_on(db):
+    f = await setup(db, inputs={"x_list_id": LIST_ID})
+    x = HostX(f.host, connected=False)
+    f.acts.integrations.x = x
     await f.acts.prepare(str(f.run_id))
     result = await f.acts.fetch({"run_id": str(f.run_id), "group": "x"})
     assert result["x"] == "x_not_connected"
+    assert x.asked == [("connection", f.host)]
     statuses = (await intel_store.get_fetch(db.pool, f.run_id))["source_status"]
     assert statuses[0]["id"] == "x-list" and statuses[0]["status"] == "skipped"
+    assert "isn't connected on Tin's host project" in statuses[0]["error"]
+    rss = await f.acts.fetch({"run_id": str(f.run_id), "group": "rss"})
+    assert rss["items"] == 3
+
+
+@pytest.mark.parametrize(
+    ("host", "channel", "reason"),
+    [(False, "C0TESTCHAN", "x_no_host"), (True, None, "x_not_enrolled")],
+)
+async def test_x_without_a_host_or_an_operators_setup_is_skipped_at_prepare(
+    db, host, channel, reason
+):
+    f = await setup(db, inputs={"x_list_id": LIST_ID}, with_host=host, channel=channel)
+    x = HostX(f.host)
+    f.acts.integrations.x = x
+    result = await f.acts.prepare(str(f.run_id))
+    assert "x" not in result["groups"]
+    statuses = (await intel_store.get_fetch(db.pool, f.run_id))["source_status"]
+    (status,) = [s for s in statuses if s["id"] == "x-list"]
+    assert status["status"] == "skipped" and status["reason"] == reason
+    assert x.asked == []
 
 
 async def test_load_with_no_items_fails_before_the_judge(db):

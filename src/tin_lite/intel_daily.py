@@ -3,11 +3,12 @@
 Every morning at 09:00 in the project's timezone, code reads the client's market for the last
 day: its trade press, vendors, regulators and journals (`intel/sources/rss.json`), its Hacker
 News queries and subreddits (`intel/sources/hn-reddit.json`), its private X List (the saved
-workflow's `x_list_id`) and today's world stories from Tin's world feed. The client judge
-(`intel.client_judge`, Antigravity on Gemini 4 Neon) then decides what matters for the client
-against its `company.md`, records the day's stories, writes a detailed report and a short
-executive brief. Tin publishes the report, the brief and the fetch status under
-`intel/reports/<day>/`, and posts the brief in Slack when the saved workflow asks for it.
+workflow's `x_list_id`, read through the intel host project's X connection) and today's
+world stories from Tin's world feed. The client judge (`intel.client_judge`, Antigravity on
+Gemini 4 Neon) then decides what matters for the client against its `company.md`, records the
+day's stories, writes a detailed report and a short executive brief. Tin publishes the report,
+the brief and the fetch status under `intel/reports/<day>/`, and posts the brief in Slack when
+the saved workflow asks for it.
 
 Temporal history holds the run ID, the fetch group names, counts and the judge's identifiers;
 configs, items, stories, the brief and every message stay in Postgres and project Files.
@@ -177,7 +178,7 @@ DESCRIPTION = (
     "its claim rules, keeps the day's stories, and writes a detailed report other workflows "
     "draft from and a short executive brief. Tin publishes both with the day's source status "
     "in intel/reports/<day>/ and can post the brief in Slack. Needs company.md and at least "
-    "one source config; X needs the member who connected X to save it."
+    "one source config; the X List is read through Tin's own X account."
 )
 JUDGE_TITLE = "Judge the client's day"
 JUDGE_DESCRIPTION = (
@@ -202,7 +203,12 @@ PRESENTATION = WorkflowDiagram(
             "Read the market",
             "trade press, Google News, pages, HN, Reddit",
         ),
-        DiagramNode("x", "surface", "The client's X List", "page by page, each page receipted"),
+        DiagramNode(
+            "x",
+            "surface",
+            "The client's X List",
+            "through Tin's own X account, each page receipted",
+        ),
         DiagramNode("world", "store", "Today's world stories", "from Tin's world feed"),
         DiagramNode("day", "store", "The day's items", "one snapshot for the analyst"),
         DiagramNode(
