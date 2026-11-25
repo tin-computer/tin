@@ -190,3 +190,38 @@ async def test_a_post_left_sending_becomes_unknown(db):
         body=message(),
     )
     assert again == "already" and slack.posts == []
+
+
+def test_tins_own_summary_names_each_title_once_and_says_so_once():
+    """A fallback brief carries neither the title nor a note: the renderer owns both."""
+    from tin_lite.intel_brief import fallback_world_brief
+
+    stories = [
+        {
+            **story("fabric", "Fabric adds billing"),
+            "summary": "Billing moves to usage. More.",
+            "relevance": "high",
+            "tags": ["ai"],
+        }
+    ]
+    made = fallback_world_brief(stories)
+    body = intel_slack.world_message(
+        made,
+        {s["key"]: s for s in stories},
+        day=DAY,
+        items=10,
+        sources=2,
+        story_count=1,
+        high_count=1,
+        stories_url=None,
+        fallback=True,
+    )
+    texts = " ".join(
+        e["text"]
+        for b in body["blocks"]
+        for e in ([b["text"]] if "text" in b else b.get("elements") or [])
+        if isinstance(e, dict) and isinstance(e.get("text"), str)
+    )
+    assert "|Fabric adds billing>: Billing moves to usage." in texts
+    assert texts.count("Fabric adds billing") == 2  # the headline and the story's own title
+    assert texts.count("from the day's top stories") == 1

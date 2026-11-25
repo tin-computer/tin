@@ -42,6 +42,7 @@ GROUP_TITLES = {
     "culture": "🎭 *Culture and sport*",
 }
 SENSITIVE = "⚠️"
+FALLBACK_NOTE = "Tin wrote this summary from the day's top stories"
 
 
 def escape(text: Any) -> str:
@@ -130,9 +131,11 @@ def world_message(
     high_count: int,
     stories_url: str | None,
     links: dict[str, str] | None = None,
+    fallback: bool = False,
 ) -> dict:
     """The world summary (intel-world-brief/1) as Block Kit. Sensitivity, titles and default
-    links come from the story rows; the brief gives the selection, order and one line each."""
+    links come from the story rows; the brief gives the selection, order and one line each.
+    `fallback` says Tin wrote the summary itself (the brief's source)."""
     headline = brief.get("headline") or ""
     blocks: list[dict] = [
         header(f"The world today · {day_title(day)}"),
@@ -155,7 +158,7 @@ def world_message(
             url = default_link(story, links)
             title = link(url, story["title"]) if url else plain(story["title"])
             line = mrkdwn(entry.get("line") or "", links)
-            lines.append(cut(f"• {mark}{title}: {line}", 900))
+            lines.append(cut(f"• {mark}{title}" + (f": {line}" if line else ""), 900))
         if lines:
             blocks.append(section(GROUP_TITLES[group["group"]] + "\n" + "\n".join(lines)))
     footer = []
@@ -163,6 +166,8 @@ def world_message(
         footer.append(f"{SENSITIVE} sensitive: never a hook for a brand")
     if stories_url:
         footer.append(link(stories_url, f"All {story_count:,} stories"))
+    if fallback:
+        footer.append(FALLBACK_NOTE)
     if brief.get("note"):
         footer.append(plain(brief["note"]))
     if footer:

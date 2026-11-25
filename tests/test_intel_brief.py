@@ -48,7 +48,7 @@ def client(items=3, **extra):
         "items": [
             {"lead": f"Lead {n}", "body": f"Body {n}.", "kind": "competitor"} for n in range(items)
         ],
-        "worth_doing": [{"text": "Refresh the Fabric comparison page."}],
+        "worth_doing": [],
         **extra,
     }
 
@@ -93,8 +93,20 @@ def test_a_client_brief_in_shape_is_kept():
         "kind": "competitor",
         "verify": False,
     }
-    assert kept["worth_doing"] == [{"text": "Refresh the Fabric comparison page."}]
+    assert kept["worth_doing"] == []
     assert warnings == []
+
+
+def test_worth_doing_is_empty_and_suggestions_are_dropped_with_a_sentence():
+    """The schema text and the validator agree with the client prompt: suggestions belong in
+    report.md section 5, never silently in a field nothing renders."""
+    text = brief.schema_text(brief.CLIENT_SCHEMA)
+    assert '"worth_doing": []' in text and "report.md section 5" in text
+    assert "worth-doing suggestions" not in text
+    value = client(worth_doing=[{"text": "Refresh the Fabric comparison page."}])
+    kept, warnings = brief.validate(brief.CLIENT_SCHEMA, value, links=LINKS)
+    assert kept["worth_doing"] == []
+    assert any("report.md section 5" in w for w in warnings)
 
 
 @pytest.mark.parametrize("count", [2, 6])
@@ -170,6 +182,9 @@ def test_fallback_world_brief_uses_high_stories_in_their_sections():
     groups = {g["group"]: [i["story"] for i in g["items"]] for g in made["groups"]}
     assert groups == {"world": ["talks"], "tech_ai": ["chips"], "culture": ["cup"]}
     assert all(len(i["line"]) <= 240 for g in made["groups"] for i in g["items"])
+    # The renderer adds the title and says Tin wrote it; the brief repeats neither.
+    talks = made["groups"][0]["items"][0]
+    assert talks["line"] == "What happened in talks." and "note" not in made
     assert brief.fallback_world_brief([story("x", relevance="low")]) is None
 
 
@@ -181,6 +196,7 @@ def test_fallback_client_brief_picks_kinds_from_tags():
         ("fabric", "competitor"),
         ("hipaa", "regulation"),
     ]
+    assert "note" not in made
     assert brief.fallback_client_brief([]) is None
 
 
