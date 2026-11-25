@@ -333,7 +333,8 @@ def match_sources(db, spec, single=False):
 
 def row_line(r, now):
     dup = f"  [+{r['dups']} dup]" if r["dups"] else ""
-    shown = r["author"] if r["domain"] == "news.google.com" and r["author"] else r["domain"]
+    # A Google News link's domain says nothing; its outlet does.
+    shown = r["source"] if r["domain"] == "news.google.com" and r["source"] else r["domain"]
     dom = f" ({shown})" if shown else ""
     title = (r["title"] or (r["text"] or "")[:120]).replace("\t", " ").replace("\n", " ")
     return f"{r['id']}\t{r['skey']}\t{r['rlabel']}\t{age(r['published'], now)}\t{title}{dom}{dup}"
@@ -382,9 +383,14 @@ def cmd_load(a):
         source TEXT);
     """)
     items = [r for r in rows if r.get("kind") == "item"]
+    # A source is the configured one (`source_id`), named as its config names it: its items'
+    # ranks are its own order. An item's `source` stays the outlet (a Google News item's
+    # publisher), which `intel read` and the row's label show.
+    names = {str(s.get("id")): s.get("name") for s in head.get("sources") or [] if s.get("id")}
     by_src = {}
     for r in items:
-        by_src.setdefault(r.get("source") or "unknown", []).append(r)
+        name = names.get(str(r.get("source_id"))) or r.get("source") or "unknown"
+        by_src.setdefault(name, []).append(r)
     # Each source's own order: its popularity number if it has one, else its feed position.
     ranked = []
     for name, group in by_src.items():
@@ -442,7 +448,7 @@ def cmd_load(a):
                 iid,
                 cu,
                 sk,
-                name,
+                i.get("source") or name,
                 i.get("source_type"),
                 i.get("url"),
                 i.get("discussion_url"),

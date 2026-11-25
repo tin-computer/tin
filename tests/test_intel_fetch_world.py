@@ -1,7 +1,9 @@
-"""Tin's world fetch methods give the same items as the prototype on the same bodies.
+"""Tin's world fetch methods give the recorded items on fixed bodies.
 
 The bodies in tests/fixtures/intel_world are small excerpts of real feeds plus synthetic HN and
-GDELT answers; expected.json is what the prototype's world.py produced from them, once.
+GDELT answers. expected.json was first the prototype's world.py output; it was re-recorded once
+from Tin's methods when the world feed moved onto the shared feed helpers (feeds.py), which
+changed only the Google News items: `source` is now the outlet, as in a client's fetch.
 """
 
 from __future__ import annotations
@@ -26,19 +28,6 @@ WIKI_URL = (
     "https://wikimedia.org/api/rest_v1/metrics/pageviews/top/en.wikipedia/all-access/2026/11/23"
 )
 GDELT_URL = "https://api.gdeltproject.org/api/v2/doc/doc?query=x&mode=artlist&format=json"
-PROTOTYPE_FIELDS = (
-    "source_type",
-    "source",
-    "source_url",
-    "url",
-    "discussion_url",
-    "title",
-    "author",
-    "published_at",
-    "text",
-    "engagement",
-    "fetched_at",
-)
 
 
 def routes() -> dict[str, bytes]:
@@ -99,16 +88,23 @@ def settings(reader):
 
 
 @pytest.mark.parametrize("source", CONFIG["sources"], ids=lambda s: s["id"])
-async def test_each_method_matches_the_prototype(source):
+async def test_each_method_matches_the_recorded_items(source):
     reader = FakeReader()
     found = await world.METHODS[source["method"]](source, WINDOW, settings(reader))
     expected = EXPECTED["items"][source["id"]]
     assert len(found) == len(expected) > 0
     for ours, theirs in zip(found, expected, strict=True):
-        assert {k: ours.get(k) for k in PROTOTYPE_FIELDS} == {
-            k: theirs[k] for k in PROTOTYPE_FIELDS
-        }
+        assert {k: ours.get(k) for k in theirs} == theirs
         assert ours["source_id"] == source["id"]
+
+
+async def test_a_google_news_item_has_the_clients_shape():
+    """The outlet is `source` and the feed is `source_id`, on both sides."""
+    source = next(s for s in CONFIG["sources"] if s["method"] == "google_news_rss")
+    found = await world.METHODS["google_news_rss"](source, WINDOW, settings(FakeReader()))
+    assert {i["source"] for i in found} == {"The New York Times", "Ars Technica", "Reuters"}
+    assert all(i["author"] is None and i["source_id"] == source["id"] for i in found)
+    assert found[0]["publisher_site"] == "https://www.nytimes.com"
 
 
 async def test_run_sources_ranks_dedupes_and_records_failures():
