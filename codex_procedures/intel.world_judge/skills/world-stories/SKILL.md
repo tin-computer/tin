@@ -51,8 +51,13 @@ An id it can't find was mistyped or isn't in today's data: check it with `intel 
 - **title**: plain and factual, under 90 characters.
 - **summary**: two to four sentences: what happened, the key numbers or names, and why people
   care. Only facts the items support. Plain English, no hype, no em dashes.
-- **relevance**: high = a top story most people in business or tech will hear about today;
-  medium = notable in its field or region; low = minor but real.
+- **relevance**: high = a top story most people in tech, business or entertainment will hear
+  about today; medium = notable in its field or region; low = minor but real. Politics,
+  geopolitics and conflict are high only when they move tech or business (chip or export
+  controls, tariffs on tech, AI or platform regulation, state-linked hacks) or are genuinely
+  dominant global news; otherwise medium or low. Tech and AI (security incidents and outages
+  included), business (markets, M&A, funding, earnings, layoffs, big company moves) and
+  entertainment and gaming come first.
 - **tags**: as many as fit, from `intel tags`: ai, tech, devtools, enterprise-software, security,
   outages, business, markets, m-and-a, funding, earnings, labor, policy, regulation, legal,
   elections, geopolitics, conflict, disasters, health, healthcare-industry, science, space,
@@ -79,8 +84,10 @@ Send it as JSON with `intel brief put brief.json` after your stories are recorde
     {"story": "cairo-talks-resume", "line": "Delegations return to Cairo, [Reuters reports](https://www.reuters.com/world/...)."}]}]}
 ```
 
-- Sections: `world`, `tech_ai`, `business`, `science_health`, `culture`; leave out empty ones.
-- Five to eight stories in total, most important first in each section. The headline is the day
+- Sections, in this order: `tech_ai`, `business`, `culture` (entertainment, gaming, internet
+  culture), `science_health`, `world`; leave out empty ones.
+- Five to eight stories in total, most important first in each section, and at most two in
+  `world`. Tin drops any `world` line past the second. The headline is the day
   in one line (at most 200 characters); each line at most 240.
 - A line may link a few words to an item's URL as `[a few words](https://...)`, copied from what
   `intel read` shows. Tin removes any other link, and any bare URL or domain.

@@ -74,7 +74,8 @@ def test_the_world_summary_blocks():
     assert blocks[1]["text"]["text"] == "Quake hits &lt;coast&gt; as Nvidia brings back Huang"
     assert blocks[2]["elements"][0]["text"] == "1,723 items · 61 sources · 129 stories, 14 high"
     assert blocks[3] == {"type": "divider"}
-    world, tech, culture = (b["text"]["text"] for b in blocks[4:7])
+    # Tech, business and entertainment first; world politics last, whatever the brief's order.
+    tech, culture, world = (b["text"]["text"] for b in blocks[4:7])
     # Sensitivity and the title's link come from the story, escaped.
     assert world == (
         "🌍 *World*\n• ⚠️ <https://www.reuters.com/a|Earthquake in &lt;Region&gt; &amp; coast>: "
@@ -86,7 +87,7 @@ def test_the_world_summary_blocks():
     )
     assert "<https://apnews.com/article/nvidia|AP reports>" in tech
     assert "ai.​example" in tech
-    assert culture.startswith("🎭 *Culture and sport*\n• Cup final ends level: ")
+    assert culture.startswith("🎭 *Entertainment and culture*\n• Cup final ends level: ")
     footer = blocks[-1]["elements"][0]["text"]
     assert footer.startswith("⚠️ sensitive: never a hook for a brand · ")
     assert "<https://app.tin.test/document/r1?project=p1|All 129 stories>" in footer
@@ -106,6 +107,18 @@ def test_empty_sections_and_unknown_stories_are_left_out():
     sections = [b for b in body["blocks"] if b["type"] == "section"]
     assert len(sections) == 2 and sections[1]["text"]["text"].startswith("🎭")
     assert not any("sensitive" in str(b) for b in body["blocks"])
+
+
+def test_a_stored_brief_shows_at_most_two_world_lines():
+    brief = {
+        "headline": "H",
+        "groups": [{"group": "world", "items": [{"story": "quake", "line": "x"}] * 3}],
+    }
+    body = intel_slack.world_message(
+        brief, STORIES, day=DAY, items=1, sources=1, story_count=1, high_count=0, stories_url=None
+    )
+    world = next(b for b in body["blocks"] if b["type"] == "section" and "World" in str(b))
+    assert world["text"]["text"].count("\n•") == 2
 
 
 def test_limits_hold_for_a_long_day():

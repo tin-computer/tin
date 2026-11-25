@@ -26,7 +26,7 @@ from tin_lite.integrations import (
     IntegrationError,
     IntegrationRateLimitedError,
 )
-from tin_lite.intel_brief import LINK, default_link
+from tin_lite.intel_brief import LINK, MAX_WORLD_ITEMS, default_link
 
 logger = logging.getLogger(__name__)
 RETRY_HOURS = 6
@@ -34,12 +34,13 @@ POST_TRIES = 3
 SECTION_LIMIT = 2900
 TEXT_LIMIT = 300
 MAX_BLOCKS = 50
+# In the order the summary shows them (intel_brief.WORLD_GROUPS): world politics last.
 GROUP_TITLES = {
-    "world": "🌍 *World*",
     "tech_ai": "🤖 *Tech and AI*",
     "business": "💼 *Business and markets*",
+    "culture": "🎭 *Entertainment and culture*",
     "science_health": "🔬 *Science and health*",
-    "culture": "🎭 *Culture and sport*",
+    "world": "🌍 *World*",
 }
 SENSITIVE = "⚠️"
 FALLBACK_NOTE = "Tin wrote this summary from the day's top stories"
@@ -146,9 +147,18 @@ def world_message(
         {"type": "divider"},
     ]
     any_sensitive = False
-    for group in brief.get("groups") or []:
+    order = list(GROUP_TITLES)
+    groups = sorted(
+        (g for g in brief.get("groups") or [] if g.get("group") in GROUP_TITLES),
+        key=lambda g: order.index(g["group"]),
+    )
+    for group in groups:
         lines = []
-        for entry in group.get("items") or []:
+        entries = group.get("items") or []
+        if group["group"] == "world":
+            # A brief stored before the cap still shows at most two world lines.
+            entries = entries[:MAX_WORLD_ITEMS]
+        for entry in entries:
             story = stories.get(entry.get("story"))
             if story is None:
                 continue

@@ -202,7 +202,7 @@ async def test_briefs_are_checked_and_links_kept_only_for_the_days_items(db):
             "headline": "The day",
             "groups": [
                 {
-                    "group": "world",
+                    "group": "tech_ai",
                     "items": [
                         {
                             "story": f"story-{n}",
@@ -218,7 +218,7 @@ async def test_briefs_are_checked_and_links_kept_only_for_the_days_items(db):
         assert len(put.json()["warnings"]) == 5
         too_few = {
             **brief,
-            "groups": [{"group": "world", "items": brief["groups"][0]["items"][:2]}],
+            "groups": [{"group": "tech_ai", "items": brief["groups"][0]["items"][:2]}],
         }
         refused = await http.put("/intel/brief", headers=bearer(token), json=too_few)
         assert refused.status_code == 400 and "5 to 8" in refused.json()["error"]

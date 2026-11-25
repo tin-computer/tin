@@ -540,7 +540,9 @@
    "id": "bbc_world",
    "name": "BBC World",
    "method": "rss",
-   "url": "https://feeds.bbci.co.uk/news/world/rss.xml"
+   "url": "https://feeds.bbci.co.uk/news/world/rss.xml",
+   "enabled": false,
+   "disabled_reason": "2026-11-25 tuning toward tech and entertainment: world politics came in through too many feeds (58% of stories, 16 of 23 high). Reuters and AP via Google News and the US and GB top stories still bring major world events."
   },
   {
    "id": "bbc_business",
@@ -582,7 +584,9 @@
    "id": "nyt_world",
    "name": "New York Times World",
    "method": "rss",
-   "url": "https://rss.nytimes.com/services/xml/rss/nyt/World.xml"
+   "url": "https://rss.nytimes.com/services/xml/rss/nyt/World.xml",
+   "enabled": false,
+   "disabled_reason": "2026-11-25 tuning toward tech and entertainment: world politics came in through too many feeds (58% of stories, 16 of 23 high). Reuters and AP via Google News and the US and GB top stories still bring major world events."
   },
   {
    "id": "nyt_business",
@@ -612,7 +616,9 @@
    "id": "guardian_world",
    "name": "The Guardian World",
    "method": "rss",
-   "url": "https://www.theguardian.com/world/rss"
+   "url": "https://www.theguardian.com/world/rss",
+   "enabled": false,
+   "disabled_reason": "2026-11-25 tuning toward tech and entertainment: world politics came in through too many feeds (58% of stories, 16 of 23 high). Reuters and AP via Google News and the US and GB top stories still bring major world events."
   },
   {
    "id": "guardian_business",
@@ -648,7 +654,9 @@
    "id": "bloomberg_politics",
    "name": "Bloomberg Politics",
    "method": "rss",
-   "url": "https://feeds.bloomberg.com/politics/news.rss"
+   "url": "https://feeds.bloomberg.com/politics/news.rss",
+   "enabled": false,
+   "disabled_reason": "2026-11-25 tuning toward tech and entertainment: world politics came in through too many feeds (58% of stories, 16 of 23 high). Reuters and AP via Google News and the US and GB top stories still bring major world events."
   },
   {
    "id": "ft_home",
@@ -660,7 +668,9 @@
    "id": "ft_world",
    "name": "Financial Times World",
    "method": "rss",
-   "url": "https://www.ft.com/world?format=rss"
+   "url": "https://www.ft.com/world?format=rss",
+   "enabled": false,
+   "disabled_reason": "2026-11-25 tuning toward tech and entertainment: world politics came in through too many feeds (58% of stories, 16 of 23 high). Reuters and AP via Google News and the US and GB top stories still bring major world events."
   },
   {
    "id": "cnbc_top",
@@ -678,7 +688,9 @@
    "id": "aljazeera",
    "name": "Al Jazeera",
    "method": "rss",
-   "url": "https://www.aljazeera.com/xml/rss/all.xml"
+   "url": "https://www.aljazeera.com/xml/rss/all.xml",
+   "enabled": false,
+   "disabled_reason": "2026-11-25 tuning toward tech and entertainment: world politics came in through too many feeds (58% of stories, 16 of 23 high). Reuters and AP via Google News and the US and GB top stories still bring major world events."
   },
   {
    "id": "verge",
@@ -733,6 +745,62 @@
    "name": "Product Hunt (front page)",
    "method": "rss",
    "url": "https://www.producthunt.com/feed"
+  },
+  {
+   "id": "the_record",
+   "name": "The Record (Recorded Future News)",
+   "method": "rss",
+   "url": "https://therecord.media/feed",
+   "note": "Security incidents, breaches and state-linked hacking; dates are day-only. Checked 2026-11-25: 5 items in 24 h."
+  },
+  {
+   "id": "bleepingcomputer",
+   "name": "BleepingComputer",
+   "method": "rss",
+   "url": "https://www.bleepingcomputer.com/feed/",
+   "note": "Breaches, ransomware, outages. Checked 2026-11-25: 15 items in 24 h."
+  },
+  {
+   "id": "404media",
+   "name": "404 Media",
+   "method": "rss",
+   "url": "https://www.404media.co/rss/",
+   "note": "Tech accountability and internet culture; a few posts a day. Checked 2026-11-25."
+  },
+  {
+   "id": "hollywood_reporter",
+   "name": "The Hollywood Reporter",
+   "method": "rss",
+   "url": "https://www.hollywoodreporter.com/feed/",
+   "note": "Checked 2026-11-25: 10 items in 24 h."
+  },
+  {
+   "id": "deadline",
+   "name": "Deadline",
+   "method": "rss",
+   "url": "https://deadline.com/feed/",
+   "note": "Checked 2026-11-25: 12 items in 24 h."
+  },
+  {
+   "id": "polygon",
+   "name": "Polygon",
+   "method": "rss",
+   "url": "https://www.polygon.com/rss/index.xml",
+   "note": "Gaming and entertainment. Checked 2026-11-25: 10 items in 24 h."
+  },
+  {
+   "id": "kotaku",
+   "name": "Kotaku",
+   "method": "rss",
+   "url": "https://kotaku.com/rss",
+   "note": "Gaming. Checked 2026-11-25: 20 items in 24 h."
+  },
+  {
+   "id": "github_trending",
+   "name": "GitHub trending (daily)",
+   "method": "rss",
+   "url": "https://mshibanami.github.io/GitHubTrendingRSS/daily/all.xml",
+   "note": "GitHub has no trending feed of its own; this is an unofficial daily mirror (mshibanami/GitHubTrendingRSS), refreshed once a day. Checked 2026-11-25: 16 repositories."
   },
   {
    "id": "wsj_world",

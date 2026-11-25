@@ -68,8 +68,14 @@ CLIENT_TAGS = WORLD_TAGS + (
     "research",
 )
 TAGS = {"world": WORLD_TAGS, "client": CLIENT_TAGS}
-# The world summary's sections, in order, and the tags that place a story in each.
+# The world summary's sections, in order, and the tags that place a story in each. Tin's
+# clients are tech and consumer companies: tech, business and entertainment lead, world
+# politics comes last and holds at most MAX_WORLD_ITEMS lines.
 WORLD_GROUPS = {
+    "tech_ai": ("ai", "tech", "devtools", "enterprise-software", "security", "outages", "crypto"),
+    "business": ("business", "markets", "m-and-a", "funding", "earnings", "labor", "energy"),
+    "culture": ("consumer", "gaming", "entertainment", "sports", "culture", "media"),
+    "science_health": ("science", "space", "health", "healthcare-industry"),
     "world": (
         "geopolitics",
         "conflict",
@@ -80,11 +86,8 @@ WORLD_GROUPS = {
         "legal",
         "climate",
     ),
-    "tech_ai": ("ai", "tech", "devtools", "enterprise-software", "security", "outages", "crypto"),
-    "business": ("business", "markets", "m-and-a", "funding", "earnings", "labor", "energy"),
-    "science_health": ("science", "space", "health", "healthcare-industry"),
-    "culture": ("consumer", "gaming", "entertainment", "sports", "culture", "media"),
 }
+MAX_WORLD_ITEMS = 2
 KINDS = ("competitor", "platform", "buyer", "regulation", "market", "world", "other")
 MAX_TAGS = 12
 
@@ -274,10 +277,21 @@ def _world(value: dict, *, links: LinkIndex, stories) -> tuple[dict, list[str]]:
             line, found = check_links(line, links, where=at)
             warnings += found + _style(line, at)
             kept_items.append({"story": key, "line": line})
+        if name == "world" and len(kept_items) > MAX_WORLD_ITEMS:
+            dropped = [item["story"] for item in kept_items[MAX_WORLD_ITEMS:]]
+            kept_items = kept_items[:MAX_WORLD_ITEMS]
+            warnings.append(
+                f"The world section holds at most {MAX_WORLD_ITEMS} stories; Tin dropped "
+                + ", ".join(dropped)
+                + ". Put tech, entertainment or business stories in their place."
+            )
         total += len(kept_items)
         kept_groups.append({"group": name, "items": kept_items})
     if not 5 <= total <= 8:
-        raise BriefError(f"The brief has {total} stories; pick the 5 to 8 that matter most today.")
+        raise BriefError(
+            f"The brief has {total} stories; pick the 5 to 8 that matter most today, at most "
+            f"{MAX_WORLD_ITEMS} of them in the world section."
+        )
     note = _text(value.get("note"), field="note", limit=300, required=False)
     order = list(WORLD_GROUPS)
     kept_groups.sort(key=lambda group: order.index(group["group"]))
@@ -429,6 +443,8 @@ def fallback_world_brief(stories: list[dict], *, headline_hint: str | None = Non
         name = group_of(story.get("tags") or []) or "world"
         if count >= 8:
             break
+        if name == "world" and len(chosen["world"]) >= MAX_WORLD_ITEMS:
+            continue
         # The renderers put the story's title before its line, so the line is the summary's.
         line = _first_sentence(story.get("summary") or "", 240)
         chosen[name].append({"story": story["key"], "line": line})
@@ -492,33 +508,37 @@ WORLD_SCHEMA_TEXT = """intel-world-brief/1: the world summary Tin posts in Slack
 
 {"schema": "intel-world-brief/1",
  "headline": "<the day in one line, at most 200 characters>",
- "groups": [{"group": "world|tech_ai|business|science_health|culture",
+ "groups": [{"group": "tech_ai|business|culture|science_health|world",
              "items": [{"story": "<story key>", "line": "<at most 240 characters>"}]}],
  "note": "<optional, at most 300 characters>"}
 
-5 to 8 stories in total, each once, most important first within a section. Leave out empty
-sections. A line may link a few words to an item URL: [a few words](https://...). Only links
-to items in today's data (or earlier stories) are kept. Tin adds each story's outlets, marks
-sensitive stories from the story itself and renders the Slack message; send plain text, no
-Slack markup, no em dashes.
+5 to 8 stories in total, each once, most important first within a section, at most 2 in
+world (Tin drops the rest). Sections show in the order above: tech and AI, business,
+entertainment and culture (gaming, internet culture, consumer launches), science and health,
+world.
+Leave out empty sections. A line may link a few words to an item URL:
+[a few words](https://...). Only links to items in today's data (or earlier stories) are
+kept. Tin adds each story's outlets, marks sensitive stories from the story itself and renders
+the Slack message; send plain text, no Slack markup, no em dashes.
 
 Example:
 {"schema": "intel-world-brief/1",
- "headline": "Ceasefire talks resume as chip stocks slide on export curbs",
+ "headline": "Chip stocks slide on export curbs as OpenAI shows its first device",
  "groups": [
-  {"group": "world", "items": [
-    {"story": "gaza-ceasefire-talks",
-     "line": "Talks resume in Cairo, [Reuters reports](https://www.reuters.com/world/...)."}]},
   {"group": "tech_ai", "items": [
     {"story": "us-chip-export-curbs",
      "line": "New US rules cover more Nvidia parts; Nvidia fell 4% before the open."},
     {"story": "openai-device-launch",
      "line": "OpenAI shows its first device, a screenless assistant shipping in March."}]},
   {"group": "business", "items": [
-    {"story": "boeing-strike-ends",
-     "line": "Machinists ratify a four-year deal, ending a seven-week strike."},
     {"story": "fed-minutes",
-     "line": "Minutes show most members expect one more cut this year."}]}]}
+     "line": "Minutes show most members expect one more cut this year."}]},
+  {"group": "culture", "items": [
+    {"story": "gta-vi-launch-week",
+     "line": "39 million players in four days, [Polygon reports](https://www.polygon.com/...)."}]},
+  {"group": "world", "items": [
+    {"story": "gaza-ceasefire-talks",
+     "line": "Talks resume in Cairo, [Reuters reports](https://www.reuters.com/world/...)."}]}]}
 """
 
 CLIENT_SCHEMA_TEXT = """intel-brief/1: the client's executive brief Tin posts in Slack.
