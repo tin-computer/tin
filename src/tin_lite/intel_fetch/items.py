@@ -26,6 +26,11 @@ class Item(TypedDict, total=False):
     Fetchers make no judgment calls: no relevance, no notes, no merging by meaning.
     `rank` is the item's place in its source's own order (front-page position, feed position,
     views rank); `published_at` and `fetched_at` are ISO 8601 UTC strings.
+
+    `source_id` is the configured source the item came from, `source` the name a reader sees:
+    for most sources its configured name, for a Google News item the outlet that published the
+    article (the feed's name when Google gives none), with `publisher_site` the outlet's site
+    and `author` empty. The same rule holds in the world feed and in a client's fetch.
     """
 
     source_type: str

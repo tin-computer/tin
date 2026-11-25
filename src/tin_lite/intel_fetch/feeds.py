@@ -1,7 +1,10 @@
-"""Feed and page parsing shared by the intel fetchers, ported from the prototype's rss.py.
+"""Feed and page parsing shared by every intel fetcher, world and client alike.
 
 RSS 2.0, Atom and RDF feeds; article pages read for their date, title, author and first
-paragraphs. Everything parsed is untrusted data: it is read, never executed or followed.
+paragraphs; and the small helpers every fetcher uses: `strip_html`, `clean_url` (one list of
+tracking parameters) and `parse_date`. Ported from the prototype's rss.py, which the world
+fetchers now share too. Everything parsed is untrusted data: it is read, never executed or
+followed.
 """
 
 from __future__ import annotations
@@ -18,10 +21,12 @@ from html.parser import HTMLParser
 from tin_lite.intel_fetch.http import PublicReader
 
 ENRICH_CHARS = 1800
+# Tracking parameters every fetcher drops from an item's URL: one list for the world feed,
+# the client's feeds and pages, and HN and Reddit links, so one article cleans to one URL.
 TRACKING = re.compile(
-    r"^(utm_[a-z_]+|ref|ref_src|ref_url|oc|cmpid|mc_cid|mc_eid|fbclid|gclid|"
-    r"guccounter|guce_referrer|guce_referrer_sig|ncid|taid|smid|sr_share|"
-    r"_hsenc|_hsmi|mkt_tok|source|src|rss|feed|campaign)$",
+    r"^(utm_.*|ref|ref_src|ref_url|reflink|oc|cmpid|taid|ncid|smid|smtyp|sr_share|st|mod|"
+    r"mc_cid|mc_eid|fbclid|gclid|igshid|si|s|guccounter|guce_referrer.*|at_.*|itm_.*|"
+    r"_fb_noscript|_hsenc|_hsmi|mkt_tok|source|src|rss|feed|campaign)$",
     re.I,
 )
 MONTH_DATE = re.compile(
@@ -74,6 +79,7 @@ def parse_date(s: str | None) -> datetime | None:
 
 
 def clean_url(u: str | None) -> str | None:
+    """The URL without tracking parameters or a fragment, its host lowercased."""
     if not u:
         return u
     u = html.unescape(u.strip())

@@ -393,3 +393,41 @@ def test_without_a_grant_the_cli_says_so(day):
 
 def test_version():
     assert run(["--version"], check=True).stdout.strip() == CLI.VERSION == "1"
+
+
+def test_a_feed_is_one_source_and_its_items_keep_their_outlets(tmp_path):
+    """Ranks are a configured source's own order, so fronts group by `source_id` and take its
+    name from the status lines; a Google News item still shows its outlet."""
+
+    def gn(n, outlet):
+        return {
+            "source_type": "world",
+            "source": outlet,
+            "source_id": "gn-business",
+            "url": f"https://news.google.com/rss/articles/CBMiExampleArticle{n:04d}",
+            "discussion_url": None,
+            "publisher_site": None,
+            "title": f"Business story {n}",
+            "author": None,
+            "published_at": "2026-11-24T05:00:00Z",
+            "text": "",
+            "engagement": {},
+            "rank": n,
+            "fetched_at": "2026-11-24T06:00:00Z",
+        }
+
+    path = snapshot(tmp_path, [gn(1, "Reuters"), gn(2, "The New York Times"), gn(3, "Reuters")])
+    raw = gzip.decompress(path.read_bytes()).decode().splitlines()
+    meta = json.loads(raw[0])
+    meta["sources"].append(
+        {"id": "gn-business", "name": "Google News business", "status": "ok", "items": 3}
+    )
+    path.write_bytes(gzip.compress(("\n".join([json.dumps(meta), *raw[1:]]) + "\n").encode()))
+    db = tmp_path / "gn.db"
+    run(["load", "--input", str(path), "--db", str(db)], check=True)
+    sources = run(["sources"], env={"INTEL_DB": str(db)}, check=True).stdout
+    assert "gn-business\t3\tGoogle News business" in sources
+    fronts = run(["fronts", "--n", "3"], env={"INTEL_DB": str(db)}, check=True).stdout
+    lines = [line for line in fronts.splitlines() if "\tgn-business\t" in line]
+    assert [line.split("\t")[2] for line in lines] == ["#1", "#2", "#3"]
+    assert lines[1].endswith("(The New York Times)")

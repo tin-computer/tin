@@ -2,10 +2,12 @@
 
 Big world, tech, business and culture news, not filtered for any client: wires and major
 outlets, Google News front pages, Techmeme, the Hacker News front page, Wikipedia's most viewed
-pages and Google Trends. One item per source entry; nothing is merged by meaning. The item
-shape, text and URL cleaning match the prototype byte for byte, so its proven behaviour holds
-(tests/test_intel_fetch_world.py). Google News links stay Google News links here: unwrapping
-happens after the judge, only for links a reader sees (gnews.unwrap_text).
+pages and Google Trends. One item per source entry; nothing is merged by meaning. Feeds, HTML,
+URLs and dates are read with the helpers every intel fetcher shares (feeds.py), so an article
+cleans to the same URL here and in a client's fetch, and a Google News item has the same shape
+on both sides: `source` is the outlet, `source_id` the feed. Google News links stay Google News
+links here: unwrapping happens after the judge, only for links a reader sees (gnews.py).
+tests/test_intel_fetch_world.py holds the methods to recorded output.
 
 Methods (a source's "method"):
   rss, atom          RSS 2.0 or Atom feed.
@@ -25,12 +27,10 @@ import html
 import json
 import re
 import urllib.parse
-import xml.etree.ElementTree as ET  # noqa: S405 — feeds.parse_xml refuses entity declarations
 from datetime import UTC, datetime, timedelta
-from email.utils import parsedate_to_datetime
 
 from tin_lite.intel_fetch import register_groups
-from tin_lite.intel_fetch.feeds import parse_xml
+from tin_lite.intel_fetch.feeds import clean_url, parse_date, parse_feed, parse_xml, strip_html
 from tin_lite.intel_fetch.http import FetchError, PublicReader
 from tin_lite.intel_fetch.items import Item, Window, iso
 
@@ -39,60 +39,11 @@ UA = (
     "Chrome/130.0 Safari/537.36"
 )
 HEADERS = {"Accept": "*/*", "Accept-Language": "en-US,en;q=0.8"}
-TRACKING = re.compile(
-    r"^(utm_.*|ref|ref_src|ref_url|oc|fbclid|gclid|mc_cid|mc_eid|smid|smtyp|st|reflink|"
-    r"cmpid|taid|guccounter|guce_referrer.*|ncid|sr_share|at_.*|itm_.*|mod|_fb_noscript)$",
-    re.I,
-)
 DEFAULT_MAX_TEXT = 6000
 
 
 def reader(**kwargs) -> PublicReader:
     return PublicReader(user_agent=UA, **kwargs)
-
-
-def parse_dt(s: str | None) -> datetime | None:
-    if not s:
-        return None
-    s = s.strip()
-    try:
-        d = parsedate_to_datetime(s)
-    except (TypeError, ValueError, IndexError):
-        try:
-            d = datetime.fromisoformat(s.replace("Z", "+00:00"))
-        except ValueError:
-            return None
-    if d.tzinfo is None:
-        d = d.replace(tzinfo=UTC)
-    return d.astimezone(UTC)
-
-
-def strip_html(s: str | None) -> str:
-    if not s:
-        return ""
-    s = re.sub(r"<(script|style)\b.*?</\1>", " ", s, flags=re.S | re.I)
-    s = re.sub(r"<br\s*/?>|</p>|</li>", "\n", s, flags=re.I)
-    s = re.sub(r"<[^>]+>", " ", s)
-    s = html.unescape(s)
-    s = re.sub(r"[ \t\r\f\v]+", " ", s)
-    s = re.sub(r"\n\s*", "\n", s)
-    return s.strip()
-
-
-def clean_url(u: str | None) -> str | None:
-    if not u:
-        return u
-    u = u.strip()
-    try:
-        p = urllib.parse.urlsplit(u)
-    except ValueError:
-        return u
-    q = [
-        (k, v)
-        for k, v in urllib.parse.parse_qsl(p.query, keep_blank_values=True)
-        if not TRACKING.match(k)
-    ]
-    return urllib.parse.urlunsplit((p.scheme, p.netloc, p.path, urllib.parse.urlencode(q), ""))
 
 
 def item(
@@ -105,10 +56,11 @@ def item(
     author: str | None = None,
     discussion_url: str | None = None,
     fetched_at: str | None = None,
+    source: str | None = None,
 ) -> Item:
     return Item(
         source_type="world",
-        source=src["name"],
+        source=source or src["name"],
         source_id=src["id"],
         source_url=src.get("url"),
         url=clean_url(url),
@@ -121,45 +73,6 @@ def item(
         engagement=engagement or {},
         fetched_at=fetched_at,
     )
-
-
-def _local(tag: str) -> str:
-    return tag.split("}")[-1]
-
-
-def parse_feed(body: bytes):
-    """The prototype world feed parser: title, link, date, desc, author, source name/url."""
-    root = parse_xml(body)
-    for el in root.iter():
-        if _local(el.tag) not in ("item", "entry"):
-            continue
-        d: dict = {}
-        for c in el:
-            t = _local(c.tag)
-            if t == "link":
-                href = c.attrib.get("href")
-                rel = c.attrib.get("rel", "alternate")
-                if href and rel == "alternate":
-                    d.setdefault("link", href)
-                elif not href and c.text:
-                    d.setdefault("link", c.text.strip())
-            elif t == "source":
-                d["source_name"] = (c.text or "").strip()
-                d["source_url"] = c.attrib.get("url")
-            elif t in ("creator", "author"):
-                name = c.findtext("{http://www.w3.org/2005/Atom}name") if len(c) else c.text
-                d.setdefault("author", (name or "").strip())
-            elif len(c) == 0:
-                d.setdefault(t, c.text)
-            else:
-                d.setdefault(t, ET.tostring(c, encoding="unicode"))
-        d["date"] = parse_dt(
-            d.get("pubDate") or d.get("published") or d.get("updated") or d.get("date")
-        )
-        d["desc"] = (
-            d.get("description") or d.get("summary") or d.get("encoded") or d.get("content") or ""
-        )
-        yield d
 
 
 def _in(win: Window, d: datetime) -> bool:
@@ -181,25 +94,25 @@ async def _json(ctx: dict, url: str, **kwargs):
 
 
 async def m_rss(src: dict, win: Window, ctx: dict) -> list[Item]:
-    body = await _get(ctx, src["url"])
-    out = []
-    entries = list(parse_feed(body))
+    entries = parse_feed(await _get(ctx, src["url"]))
     ctx["seen"] = len(entries)
-    for d in entries:
-        if not d.get("link"):
+    out = []
+    for entry in entries:
+        published = parse_date(entry["date"])
+        if not entry["link"]:
             continue
-        if d["date"] and not _in(win, d["date"]):
+        if published and not _in(win, published):
             continue
-        if not d["date"] and not src.get("keep_undated"):
+        if not published and not src.get("keep_undated"):
             continue
         out.append(
             item(
                 src,
-                d["link"],
-                strip_html(d.get("title")),
-                d["date"],
-                strip_html(d["desc"])[: ctx["max_text"]],
-                author=d.get("author"),
+                entry["link"],
+                entry["title"],
+                published,
+                entry["text"][: ctx["max_text"]],
+                author=entry["author"],
                 fetched_at=ctx["now"],
             )
         )
@@ -207,33 +120,32 @@ async def m_rss(src: dict, win: Window, ctx: dict) -> list[Item]:
 
 
 async def m_google_news_rss(src: dict, win: Window, ctx: dict) -> list[Item]:
-    body = await _get(ctx, src["url"])
-    out = []
-    entries = list(parse_feed(body))
+    """A Google News feed's entries, shaped as a client's are: `source` is the outlet (the
+    feed's name when Google gives none), `author` empty, `publisher_site` the outlet's site."""
+    entries = parse_feed(await _get(ctx, src["url"]))
     ctx["seen"] = len(entries)
-    for d in entries:
-        if not d.get("link") or not d["date"] or not _in(win, d["date"]):
+    out = []
+    for entry in entries:
+        published = parse_date(entry["date"])
+        if not entry["link"] or not published or not _in(win, published):
             continue
-        title = strip_html(d.get("title"))
-        outlet = d.get("source_name") or ""
+        title = entry["title"] or ""
+        outlet = entry["source_name"] or ""
         if outlet and title.endswith(" - " + outlet):
             title = title[: -len(outlet) - 3]
+        site = entry["source_site"] or ""
         # Google News descriptions list the story cluster: "<headline> <outlet> <headline> ...".
-        cluster = strip_html(d["desc"])
-        text = f"Outlet: {outlet} ({d.get('source_url') or ''})\nGoogle News cluster: {cluster}"[
-            : ctx["max_text"]
-        ]
+        text = f"Outlet: {outlet} ({site})\nGoogle News cluster: {entry['text']}"
         found = item(
             src,
-            d["link"],
+            entry["link"],
             title,
-            d["date"],
-            text,
-            author=outlet or None,
+            published,
+            text[: ctx["max_text"]],
             fetched_at=ctx["now"],
-            discussion_url=None,
+            source=outlet or None,
         )
-        found["publisher_site"] = (d.get("source_url") or None) and d["source_url"][:300]
+        found["publisher_site"] = site[:300] or None
         out.append(found)
     return out
 
@@ -248,7 +160,7 @@ async def m_google_trends_rss(src: dict, win: Window, ctx: dict) -> list[Item]:
     ctx["seen"] = len(entries)
     for it in entries:
         q = (it.findtext("title") or "").strip()
-        dt = parse_dt(it.findtext("pubDate"))
+        dt = parse_date(it.findtext("pubDate"))
         if not q or not dt or not _in(win, dt):
             continue
         traffic = it.findtext("ht:approx_traffic", namespaces=ns)
@@ -476,7 +388,7 @@ async def m_gdelt_doc(src: dict, win: Window, ctx: dict) -> list[Item]:
     articles = data.get("articles", [])
     ctx["seen"] = len(articles)
     for a in articles:
-        dt = parse_dt(
+        dt = parse_date(
             re.sub(
                 r"^(\d{4})(\d\d)(\d\d)T(\d\d)(\d\d)(\d\d)Z$",
                 r"\1-\2-\3T\4:\5:\6+00:00",
