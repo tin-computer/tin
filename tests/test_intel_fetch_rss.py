@@ -107,7 +107,7 @@ def test_invalid_sources_are_skipped_with_a_reason():
 
 def test_groups_split_the_client_sources_by_method():
     cfg = _config()
-    pick = {name: group("client", name)[0](cfg) for name in ("rss", "gnews", "pages")}
+    pick = {name: group("client", name)[0](cfg["sources"]) for name in ("rss", "gnews", "pages")}
     assert [s["id"] for s in pick["rss"]] == ["health-weekly"]
     assert [s["id"] for s in pick["gnews"]] == ["gn-lakehouse"]
     assert [s["id"] for s in pick["pages"]] == ["vendor-newsroom", "vendor-blog", "jx-crossref"]

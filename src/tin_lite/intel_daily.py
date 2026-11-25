@@ -20,13 +20,14 @@ from typing import Any
 from uuid import UUID
 
 from tin_lite.intel_fetch import config as source_config
-from tin_lite.intel_fetch import hn_reddit, register_group, rss
+from tin_lite.intel_fetch import hn_reddit, register_groups, rss
+from tin_lite.intel_judge import CLIENT_JUDGE_KEY
 from tin_lite.workflow_diagrams import DiagramEdge, DiagramNode, WorkflowDiagram
 
 KEY = "intel.daily"
 WORKFLOW_ID = UUID("c41c0ac2-f115-4d05-9c12-ae106354e8fd")
 JUDGE_WORKFLOW_ID = UUID("1d1b094c-29c7-4f5c-8d4f-007328c24511")
-JUDGE_KEY = "intel.client_judge"
+JUDGE_KEY = CLIENT_JUDGE_KEY
 SCOPE = "client"
 POLICY = {"version": "intel-v1"}
 VERSION_LABEL = "1.0.0"
@@ -92,17 +93,7 @@ def check(source: dict) -> str | None:
 source_config.register_checks(SCOPE, set(METHODS), check)
 
 
-def _selector(methods: tuple[str, ...]):
-    def select(config: dict) -> list[dict]:
-        return [s for s in config.get("sources") or [] if s.get("method") in methods]
-
-    return select
-
-
-for _name, _methods in GROUP_METHODS.items():
-    register_group(
-        SCOPE, _name, _selector(_methods), {m: METHODS[m] for m in _methods if m in METHODS}
-    )
+register_groups(SCOPE, GROUP_METHODS, METHODS)
 
 
 class ConfigMissing(LookupError):

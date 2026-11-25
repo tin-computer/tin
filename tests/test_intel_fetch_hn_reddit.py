@@ -146,3 +146,47 @@ def test_a_subreddit_gets_a_longer_deadline_than_the_default():
     settings = intel_daily.group_settings("reddit", {"settings": {}})
     assert deadline({"id": "reddit:x", "method": "reddit"}, settings) == 900
     assert deadline({"id": "hn:x", "method": "hn"}, settings) == 300
+
+
+async def test_a_lasting_arctic_shift_rate_limit_is_reported_as_one(monkeypatch):
+    """One retry policy: the reader retries nothing for Arctic Shift, so six spent-budget
+    answers are six requests and the subreddit says "too many requests", not a timeout."""
+    import httpx
+
+    from tin_lite.intel_fetch import http as intel_http
+
+    monkeypatch.setitem(intel_http.HOST_GAP, "arctic-shift.photon-reddit.com", 0.0)
+    calls = []
+
+    def handler(request):
+        calls.append(request)
+        return httpx.Response(
+            429,
+            headers={"x-ratelimit-reset": "5"},
+            stream=httpx.ByteStream(b'{"error": "Too many requests"}'),
+        )
+
+    async def resolver(host, port, type=None):
+        return [(2, 1, 6, "", ("93.184.215.14", port))]
+
+    async def nap(_seconds):
+        return None
+
+    reader = intel_http.PublicReader(
+        user_agent="t",
+        client=httpx.AsyncClient(transport=httpx.MockTransport(handler)),
+        resolver=resolver,
+        sleep=nap,
+    )
+    _fake, cfg = hn_reddit_reader()
+    sources, found = hn_reddit.expand(cfg)
+    sub = next(s for s in sources if s["id"] == "reddit:healthit")
+    async with reader:
+        items, statuses = await run_sources(
+            hn_reddit.METHODS, [sub], WINDOW, reader, settings=_settings(found)
+        )
+    intel_http._host_next.pop("arctic-shift.photon-reddit.com", None)
+    assert items == [] and statuses[0]["status"] == "failed"
+    assert statuses[0]["error"].startswith("FetchError: Arctic Shift: HTTP 429")
+    assert "Too many requests" in statuses[0]["error"]
+    assert len(calls) == hn_reddit.ARCTIC_TRIES
