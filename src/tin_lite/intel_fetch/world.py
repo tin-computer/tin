@@ -29,7 +29,7 @@ import xml.etree.ElementTree as ET  # noqa: S405 — feeds.parse_xml refuses ent
 from datetime import UTC, datetime, timedelta
 from email.utils import parsedate_to_datetime
 
-from tin_lite.intel_fetch import register_group
+from tin_lite.intel_fetch import register_groups
 from tin_lite.intel_fetch.feeds import parse_xml
 from tin_lite.intel_fetch.http import FetchError, PublicReader
 from tin_lite.intel_fetch.items import Item, Window, iso
@@ -533,14 +533,4 @@ def settings(config: dict, now: datetime) -> dict:
     }
 
 
-def _selector(methods: set[str]):
-    def select(sources: list[dict]) -> list[dict]:
-        return [s for s in sources if s.get("method") in methods]
-
-    return select
-
-
-for _name, _methods in GROUP_METHODS.items():
-    register_group(
-        "world", _name, _selector(_methods), {k: v for k, v in METHODS.items() if k in _methods}
-    )
+register_groups("world", GROUP_METHODS, METHODS)

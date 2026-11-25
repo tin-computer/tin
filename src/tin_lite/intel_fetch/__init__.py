@@ -8,20 +8,21 @@ characters), `http`, `items_seen`, `items_in_window`, `excluded_outlets` and `se
 A failing source is recorded and skipped, never fatal.
 
 Groups split one scope's sources into activities that can retry on their own: a scope
-registers each group with the sources it selects and the methods it runs (`register_group`).
+registers its groups by the methods each runs (`register_groups`), and a group's selector picks
+its sources from the validated source list.
 """
 
 from __future__ import annotations
 
 import asyncio
 import time
-from collections.abc import Awaitable, Callable
+from collections.abc import Awaitable, Callable, Iterable, Mapping
 from typing import Any
 
 from tin_lite.intel_fetch.http import PublicReader
 from tin_lite.intel_fetch.items import Item, Window
 
-__all__ = ["GROUPS", "Item", "Window", "group", "register_group", "run_sources"]
+__all__ = ["GROUPS", "Item", "Window", "group", "register_groups", "run_sources"]
 
 Method = Callable[[dict, Window, dict], Awaitable[list[Item]]]
 # Every source gets a deadline, so one stuck read can't hold its group: five minutes unless the
@@ -45,20 +46,31 @@ def deadline(src: dict, settings: dict[str, Any]) -> float:
     return min(max(number, MIN_TIMEOUT_SECONDS), MAX_TIMEOUT_SECONDS)
 
 
-GROUPS: dict[tuple[str, str], tuple[Callable[[dict], list[dict]], dict[str, Method]]] = {}
+Select = Callable[[list[dict]], list[dict]]
+GROUPS: dict[tuple[str, str], tuple[Select, dict[str, Method]]] = {}
 
 
-def register_group(
-    scope: str,
-    name: str,
-    select: Callable[[dict], list[dict]],
-    methods: dict[str, Method],
+def _selector(wanted: frozenset[str]) -> Select:
+    def select(sources: list[dict]) -> list[dict]:
+        return [s for s in sources if s.get("method") in wanted]
+
+    return select
+
+
+def register_groups(
+    scope: str, group_methods: Mapping[str, Iterable[str]], methods: dict[str, Method]
 ) -> None:
-    """`select` picks this group's sources from the validated source list."""
-    GROUPS[(scope, name)] = (select, dict(methods))
+    """A scope's fetch groups: each runs the sources whose method it names. Its selector picks
+    them from the validated source list (config.select's `ready`), for every scope alike."""
+    for name, wanted in group_methods.items():
+        chosen = frozenset(wanted)
+        GROUPS[(scope, name)] = (
+            _selector(chosen),
+            {method: methods[method] for method in sorted(chosen) if method in methods},
+        )
 
 
-def group(scope: str, name: str) -> tuple[Callable[[dict], list[dict]], dict[str, Method]]:
+def group(scope: str, name: str) -> tuple[Select, dict[str, Method]]:
     if (scope, name) not in GROUPS:
         raise KeyError(f"no intel fetch group {scope}/{name}")
     return GROUPS[(scope, name)]
