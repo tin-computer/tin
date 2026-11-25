@@ -164,3 +164,28 @@ async def test_paced_hosts_take_turns(monkeypatch):
 
         await asyncio.gather(*(r.get(f"https://other.example/{n}") for n in range(4)))
     assert time.monotonic() - started >= 0.44
+
+
+async def test_a_callers_retries_are_honoured_on_a_paced_host(monkeypatch):
+    """One retry policy: a caller that handles a host's refusals itself (Arctic Shift) passes
+    retries=0 and sees the first 429, not four more waits of the reader's own."""
+    monkeypatch.setitem(intel_http.HOST_GAP, "news.example", 0.0)
+    intel_http._host_next.pop("news.example", None)
+    calls = []
+
+    def handler(request):
+        calls.append(request)
+        return answer(429, headers={"retry-after": "9"}, text="Too many requests")
+
+    sleeps: list[float] = []
+    async with reader(handler, sleeps=sleeps) as r:
+        exact = await r.get("https://news.example/api", retries=0)
+        assert exact.status == 429 and exact.error.startswith("HTTP 429: Too many requests")
+        assert len(calls) == 1 and sleeps == []
+        # The 429 still pauses the host for every other reader.
+        assert intel_http._host_next["news.example"] >= time.monotonic() + 7
+        intel_http._host_next.pop("news.example", None)
+        calls.clear()
+        # Left unsaid, a paced host gets the reader's own patience.
+        await r.get("https://news.example/api")
+    assert len(calls) == intel_http.DEFAULT_PACED_RETRIES + 1

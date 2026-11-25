@@ -45,6 +45,8 @@ HOST_GAP = {
 }
 # What a refused read keeps of its answer: a short body and the rate-limit headers, so a source's
 # status can say why (Arctic Shift reports a spent budget in its body, with x-ratelimit-reset).
+# Retries for a paced host when the caller doesn't say: its 429s are expected and waited out.
+DEFAULT_PACED_RETRIES = 4
 ERROR_BODY = 300
 REDIRECTS = frozenset({301, 302, 303, 307, 308})
 _host_next: dict[str, float] = {}
@@ -255,16 +257,20 @@ class PublicReader:
         *,
         data: bytes | None = None,
         headers: dict[str, str] | None = None,
-        retries: int = 1,
+        retries: int | None = None,
         max_bytes: int = MAX_BYTES,
         seconds: float = TIMEOUT_SECONDS,
     ) -> Response:
         """One read with the prototype's retries: 429 waits (Retry-After, else 15 s doubling,
         at most 120 s) and pauses the host; 5xx and network errors wait 1.5 s per attempt.
-        Never raises for an HTTP or network outcome: `status` 0 with `error` means no answer."""
+        Never raises for an HTTP or network outcome: `status` 0 with `error` means no answer.
+
+        One retry policy: a caller's `retries` is honoured exactly, so a caller that handles a
+        host's refusals itself passes 0 and sees the first 429 as a 429. Left None, it is 1, or
+        DEFAULT_PACED_RETRIES for a paced host. A 429 pauses the host for everyone either way."""
         headers = dict(headers or {})
-        if _host(url) in HOST_GAP:
-            retries = max(retries, 4)
+        if retries is None:
+            retries = DEFAULT_PACED_RETRIES if _host(url) in HOST_GAP else 1
         last = Response(0, b"", url, "not attempted")
         for attempt in range(retries + 1):
             await pace(url)
@@ -300,9 +306,11 @@ class PublicReader:
                 f"HTTP {response.status}" + (f": {said}" if said else ""),
                 response.headers,
             )
-            if response.status == 429 and attempt < retries:
+            if response.status == 429:
                 wait = retry_after(response.headers) or min(120, 15 * 2**attempt)
                 cool_down(url, wait)
+                if attempt >= retries:
+                    break
                 await self._sleep(wait)
                 continue
             if response.status not in {500, 502, 503, 504}:
