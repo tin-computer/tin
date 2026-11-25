@@ -12,14 +12,21 @@ host, and touches nothing on the account but that List. Pages come newest
 first, 100 posts each, until the oldest post is before the window or X has no more;
 X_MAX_PAGES is a runaway guard (Databasin's List took 5).
 
-Each page is a paid read on Tin's X app, so it has its own receipt, recorded against the client
-run before X is asked (effect `intel:<run>:x:<list>:<n>`):
+Each page is a paid read, billed to the client's run like any priced provider call: the page's
+ceiling (100 posts at the run's pinned `x_read_pricing`) is reserved, then its usage receipt
+(`external_usage_v1`, key `intel:<run>:x:<list>:<n>`) is recorded, then X is asked, and the
+page is charged for the posts X returned:
 
 - a completed page is reused with its cursor, and the read goes on from it;
 - a page started but never confirmed (X's answer was lost, the worker stopped) may have been
-  bought: it is never bought again, and X stops with `x_uncertain`;
-- X refusing before anything was bought (a rate limit, a reconnect, a List it won't serve)
-  forgets the started receipt and stops with a named reason; the rest of the day goes on.
+  bought: it is never bought again and never counted as zero; its charge stays pending until
+  the run settles, and X stops with `x_uncertain`;
+- X refusing before anything was sold (a rate limit, a reconnect, a List it won't serve) is
+  recorded on the receipt and charged nothing, and X stops with a named reason;
+- no room left in the run's budget or the project's limits stops X before X is asked.
+
+The ownership lookup has its own receipt and isn't priced. The rest of the day goes on whatever
+X does.
 
 Plain retweets are dropped unless the saved workflow keeps them: on Databasin's first day they
 were a quarter of the volume, arrived truncated, and one in 113 was worth reading. A quote post
@@ -33,6 +40,7 @@ from datetime import UTC, datetime
 from typing import Any
 from uuid import UUID
 
+from tin_lite.billing_contracts import BillingError, object_value, receipt_charge
 from tin_lite.connection_records import record_call
 from tin_lite.integrations import (
     IntegrationAuthorizationError,
@@ -46,10 +54,12 @@ from tin_lite.intel_fetch.items import Item, Window, iso, parse_iso
 
 X_MAX_PAGES = 20
 PAGE_SIZE = 100
-# X's per-post read price on Tin's app, for the receipt's estimate (operator-funded).
+# X's per-post read price, for the call record's estimate; the charge uses the run's pinned
+# x_read_pricing (service_pricing.X_READ_PRICING).
 X_POST_USD = 0.005
 CAPABILITY = "x.lists.manage"
-OPERATION = "intel.x_list_page"
+# A page is a priced provider call: its receipt is the usage receipt billing settles from.
+OPERATION = "external_usage_v1"
 OWNER_OPERATION = "intel.x_list_owner"
 SOURCE_ID = "x-list"
 
@@ -68,6 +78,10 @@ REASONS = {
         "before it are kept."
     ),
     "x_invalid": "Skipped: X refused the List ID.",
+    "x_spending": (
+        "Stopped: the run's spending limits or credits left no room for another page of the "
+        "List, so Tin didn't buy it; the posts before it are kept."
+    ),
     "x_list_unavailable": (
         "Skipped: X didn't find this List, or won't let Tin's X account read it. Check the "
         "List ID and that the List is on Tin's X account."
@@ -187,6 +201,7 @@ SKIPPED = frozenset(
         "x_reauthorize",
         "x_not_connected",
         "x_invalid",
+        "x_spending",
         "x_list_unavailable",
         "x_list_not_owned",
         "x_list_not_enrolled",
@@ -263,6 +278,44 @@ def _outcome(exc: Exception) -> tuple[str, bool]:
     if isinstance(exc, IntegrationUpstreamError) and (reason := _list_refusal(exc)):
         return reason, True
     return "x_uncertain", False
+
+
+def _count(value) -> int:
+    return value if type(value) is int and 0 <= value <= 10_000 else 0
+
+
+async def _reserve(db, conn, *, run_id: UUID, key: str) -> None:
+    """Reserve one page's ceiling on the client run before X is asked (the run's budget and
+    the project's limits decide). Nothing to reserve where billing is off."""
+    billing = getattr(db, "billing", None)
+    if billing is None:
+        return
+    await billing.begin_operation(
+        conn,
+        run_id=run_id,
+        operation_id=key,
+        kind="tool",
+        maximum=lambda terms: PAGE_SIZE * terms["x_read_pricing"]["post_read_nanos"],
+    )
+
+
+async def _charge(db, conn, *, key: str, record: dict | None = None, nanos=None, reason=None):
+    """Charge a page from its own receipt at the run's pinned price, or nothing for a page X
+    refused before selling. A receipt without a priceable count stays pending, never zero."""
+    billing = getattr(db, "billing", None)
+    if billing is None:
+        return
+    if record is not None:
+        budget = await conn.fetchval(
+            "SELECT terms FROM billing_run_budgets WHERE run_id=$1", UUID(record["run_id"])
+        )
+        priced = receipt_charge(object_value(budget), "tool", record) if budget else None
+        if priced is None:
+            return
+        nanos, observation = priced
+    else:
+        observation = {"provider": "x", "basis": "refused_before_sale", "reason": reason}
+    await billing.observe_operation(conn, operation_id=key, nanos=nanos, observation=observation)
 
 
 async def read_list(
@@ -354,11 +407,33 @@ async def read_list(
         async with db.effect_lock(key, OPERATION) as (conn, receipt):
             if receipt is not None and receipt.status == "completed":
                 result = receipt.result or {}
+                if result.get("refused"):
+                    return stop(result["refused"])
             elif receipt is not None:
                 # Started before and never confirmed: X may have sold this page already.
                 return stop("x_uncertain")
             else:
+                # The client's run pays for the page: its ceiling is reserved before X is asked.
+                try:
+                    await _reserve(db, conn, run_id=run_id, key=key)
+                except BillingError as exc:
+                    return stop(
+                        "x_uncertain" if exc.code == "operation_already_attempted" else "x_spending"
+                    )
+                record = {
+                    "version": 1,
+                    "run_id": str(run_id),
+                    "provider": "x",
+                    "category": "tool",
+                    "endpoint": "lists/tweets",
+                    "step": f"x:{list_id}:{number}",
+                    "attempted_at": iso(datetime.now(UTC)),
+                    "outcome": "unconfirmed",
+                    "usage": None,
+                    "reported_cost_usd": None,
+                }
                 await db.start_effect(conn, execution_key=key, operation=OPERATION)
+                await db.save_effect_progress(conn, execution_key=key, result=record)
                 try:
                     page = await x.list_posts(
                         host_project_id,
@@ -370,9 +445,14 @@ async def read_list(
                 except Exception as exc:  # noqa: BLE001 — sorted by what X may have sold
                     reason, refused = _outcome(exc)
                     if refused:
-                        await db.discard_started_effect(conn, execution_key=key)
+                        # X refused before selling anything: a known outcome, charged nothing.
+                        refusal = {**record, "outcome": "refused", "refused": reason}
+                        await db.complete_effect(conn, execution_key=key, result=refusal)
+                        await _charge(db, conn, key=key, nanos=0, reason=reason)
                     return stop(reason)
                 posts = [p for p in page.get("posts") or [] if isinstance(p, dict)]
+                # X sells every post it returns, protected ones it only counted included.
+                returned = len(posts) + _count(page.get("left_out_protected"))
                 items, counts = page_items(
                     posts,
                     list_id=list_id,
@@ -390,19 +470,24 @@ async def read_list(
                     run_id=run_id,
                     status="completed",
                     response_summary={
-                        "posts": len(posts),
-                        "est_supplier_usd": f"{X_POST_USD * len(posts):.3f}",
+                        "posts": returned,
+                        "est_supplier_usd": f"{X_POST_USD * returned:.3f}",
                     },
                 )
                 oldest = _oldest(posts)
                 result = {
+                    **record,
+                    "outcome": "response_received",
+                    "observed_at": iso(datetime.now(UTC)),
+                    "usage": {"posts_returned": returned},
                     "cursor": page.get("next_token"),
-                    "posts": len(posts),
+                    "posts": returned,
                     "kept": len(items),
                     "oldest": iso(oldest),
                     **counts,
                 }
                 await db.complete_effect(conn, execution_key=key, result=result)
+                await _charge(db, conn, key=key, record=result)
         status["pages"] += 1
         status["posts_read"] += int(result.get("posts_read", result.get("posts", 0)))
         status["retweets_dropped"] += int(result.get("retweets_dropped", 0))

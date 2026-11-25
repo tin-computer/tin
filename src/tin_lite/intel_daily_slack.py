@@ -94,6 +94,7 @@ X_NOTES = {
     "x_rate_limited": "X List cut short: X asked Tin to wait",
     "x_uncertain": "X List cut short: one page wasn't confirmed",
     "x_invalid": "X List not read: X refused the List ID",
+    "x_spending": "X List cut short: no room left in the run's spending limits",
     "x_list_unavailable": "X List not read: X didn't find it or won't serve it to Tin's account",
     "x_list_not_owned": "X List not read: Tin's X account doesn't own it",
     "x_list_not_enrolled": "X List not read: it isn't the List set up for this client",

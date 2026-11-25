@@ -10,6 +10,7 @@ from uuid import uuid4
 import pytest
 from intel_client_fakes import WINDOW
 
+from tin_lite.billing_contracts import BillingError
 from tin_lite.integrations import (
     IntegrationAuthorizationError,
     IntegrationDeliveryUnknownError,
@@ -19,6 +20,7 @@ from tin_lite.integrations import (
 )
 from tin_lite.intel_fetch import x_list
 from tin_lite.provider_errors import ProviderErrorDetail
+from tin_lite.service_pricing import service_terms
 
 MEMBER = "user_xconnector"
 LIST = "2125213001850495223"
@@ -72,19 +74,52 @@ class Receipt(SimpleNamespace):
     pass
 
 
+class FakeBilling:
+    """The client run's budget: reservations before dispatch and charges after."""
+
+    def __init__(self, refuse=None):
+        self.terms = service_terms({"executor": "intel.daily", "key": "intel.daily"})
+        self.reserved: dict[str, int] = {}
+        self.charged: dict[str, int] = {}
+        self.refuse = refuse
+
+    async def begin_operation(self, conn, *, run_id, operation_id, kind, maximum):
+        assert kind == "tool"
+        if self.refuse:
+            raise BillingError(self.refuse, "No room.")
+        self.reserved[operation_id] = maximum(self.terms)
+
+    async def observe_operation(self, conn, *, operation_id, nanos, observation):
+        assert operation_id in self.reserved
+        self.charged[operation_id] = nanos
+
+
+class FakeConn:
+    def __init__(self, db):
+        self.db = db
+
+    async def fetchval(self, sql, run_id):
+        assert "billing_run_budgets" in sql
+        return self.db.billing.terms if self.db.billing else None
+
+
 class FakeDb:
     """Effect receipts as Database keeps them: started, completed or forgotten."""
 
-    def __init__(self):
+    def __init__(self, billing=None):
         self.effects: dict[str, Receipt] = {}
         self.calls: list[dict] = []
+        self.billing = billing
 
     @contextlib.asynccontextmanager
     async def effect_lock(self, key, operation):
-        yield object(), self.effects.get(key)
+        yield FakeConn(self), self.effects.get(key)
 
     async def start_effect(self, conn, *, execution_key, operation):
         self.effects.setdefault(execution_key, Receipt(status="started", result=None))
+
+    async def save_effect_progress(self, conn, *, execution_key, result):
+        self.effects[execution_key].result = result
 
     async def complete_effect(self, conn, *, execution_key, result):
         self.effects[execution_key] = Receipt(status="completed", result=result)
@@ -222,12 +257,21 @@ async def test_an_unconfirmed_page_is_never_bought_again():
         ),
     ],
 )
-async def test_a_refusal_before_anything_was_bought_forgets_the_receipt(failure, reason):
-    db, run_id = FakeDb(), uuid4()
-    status, kept = await read(db, FakeX(fail={None: failure}), run_id)
+async def test_a_refusal_before_anything_was_sold_is_recorded_and_charged_nothing(failure, reason):
+    db, run_id = FakeDb(FakeBilling()), uuid4()
+    x = FakeX(fail={None: failure})
+    status, kept = await read(db, x, run_id)
     assert status["reason"] == reason and kept == []
     assert status["status"] in {"failed", "skipped"}
-    assert list(db.effects) == [x_list.owner_key(run_id, LIST)] and len(db.calls) == 1
+    key = x_list.page_key(run_id, LIST, 1)
+    assert db.effects[key].status == "completed" and db.effects[key].result["refused"] == reason
+    assert db.billing.charged == {key: 0}
+    assert len(db.calls) == 1  # the ownership lookup only
+    # A retried fetch sees the refusal and asks X nothing again.
+    again = FakeX()
+    again.connected = x.connected
+    status, _ = await read(db, again, run_id)
+    assert status["reason"] == reason and again.asked == []
 
 
 async def test_the_list_is_read_as_whoever_connected_x_on_the_host():
@@ -246,7 +290,8 @@ async def test_the_host_reconnected_by_someone_else_mid_read_is_skipped():
     db, run_id = FakeDb(), uuid4()
     status, kept = await read(db, FakeX(fail={None: refused}), run_id)
     assert status["status"] == "skipped" and status["reason"] == "x_member"
-    assert list(db.effects) == [x_list.owner_key(run_id, LIST)] and kept == []
+    assert db.effects[x_list.page_key(run_id, LIST, 1)].result["refused"] == "x_member"
+    assert kept == []
 
 
 def _forbidden(kind):
@@ -284,7 +329,7 @@ async def test_a_list_x_wont_serve_is_skipped_with_its_reason(failure, reason, w
     if where == "owner":
         assert db.effects == {} and db.calls == [] and x.asked == []
     else:
-        assert list(db.effects) == [x_list.owner_key(run_id, LIST)]
+        assert db.effects[x_list.page_key(run_id, LIST, 1)].result["refused"] == reason
         assert len(db.calls) == 1  # the ownership lookup only
 
 
@@ -344,3 +389,46 @@ async def test_x_not_connected_is_skipped():
     )
     status, _ = await read(FakeDb(), x, uuid4())
     assert status["status"] == "skipped" and status["reason"] == "x_not_connected"
+
+
+async def test_each_page_is_charged_to_the_client_run_for_the_posts_x_returned():
+    """User decision 2026-11-25: the client pays for its List reads at X's per-post price."""
+    db, run_id = FakeDb(FakeBilling()), uuid4()
+    status, _ = await read(db, FakeX(), run_id)
+    pages = [x_list.page_key(run_id, LIST, n) for n in (1, 2)]
+    # Each page reserved its 100-post ceiling ($0.50) before X was asked...
+    assert db.billing.reserved == dict.fromkeys(pages, 500_000_000)
+    # ...and is charged for what X returned: 4 posts, then 2, at $0.005.
+    assert db.billing.charged == {pages[0]: 20_000_000, pages[1]: 10_000_000}
+    receipt = db.effects[pages[0]].result
+    assert receipt["provider"] == "x" and receipt["category"] == "tool"
+    assert receipt["run_id"] == str(run_id) and receipt["usage"] == {"posts_returned": 4}
+    assert status["est_supplier_usd"] == 0.03
+
+
+async def test_an_unconfirmed_page_is_never_charged_as_zero():
+    db, run_id = FakeDb(FakeBilling()), uuid4()
+    x = FakeX(fail={"page2": IntegrationDeliveryUnknownError("X's answer was lost")})
+    status, _ = await read(db, x, run_id)
+    second = x_list.page_key(run_id, LIST, 2)
+    assert status["reason"] == "x_uncertain"
+    assert second in db.billing.reserved and second not in db.billing.charged
+    assert db.effects[second].status == "started"
+    assert db.effects[second].result["outcome"] == "unconfirmed"
+
+
+@pytest.mark.parametrize(
+    ("refusal", "reason"),
+    [
+        ("project_limit", "x_spending"),
+        ("insufficient_funds", "x_spending"),
+        # An earlier reservation without a receipt: never bought again.
+        ("operation_already_attempted", "x_uncertain"),
+    ],
+)
+async def test_no_room_in_the_budget_stops_x_before_it_is_asked(refusal, reason):
+    db, run_id = FakeDb(FakeBilling(refuse=refusal)), uuid4()
+    x = FakeX()
+    status, kept = await read(db, x, run_id)
+    assert status["reason"] == reason and kept == []
+    assert x.asked == [] and x_list.page_key(run_id, LIST, 1) not in db.effects

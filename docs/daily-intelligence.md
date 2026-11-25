@@ -256,7 +256,8 @@ own, and one it has is ignored.
   connection's own member check; who saved or started the client's workflow doesn't matter.
 - **Receipts.** The ownership lookup and every page have receipts keyed by the client's run
   (`intel:<run>:x:<list>:owner`, `intel:<run>:x:<list>:<page>`), and so do its items. The X call
-  records carry the client's run and the host's connection.
+  records carry the client's run and the host's connection. Each page's receipt is its usage
+  receipt, and the client's run is charged from it (see Billing below).
 - **When X isn't read**, the reason is in `sources.json` and, except for a client with no List,
   in a line of the brief:
 
@@ -270,6 +271,7 @@ own, and one it has is ignored.
   | `x_list_unavailable` | X doesn't find the List, or won't serve it to Tin's account |
   | `x_list_not_owned` | Tin's account doesn't own the List |
   | `x_member` | X on the host was reconnected by someone else mid-read |
+  | `x_spending` | The run's budget or the project's limits had no room for another page |
 
 ### How a run goes
 
@@ -328,8 +330,11 @@ own, and one it has is ignored.
 
 ### Billing
 
-Billing is as described [above](#billing): about $2.30 a day for the analyst. X List reads
-are paid for by Tin (like posting to X), and each page's receipt carries its estimated cost.
+Billing is as described [above](#billing): $2.30 to $3.80 a day for the analyst. The client
+also pays for its X List pages, read through Tin's X: each page reserves 100 posts' worth
+($0.50) before X is asked and is charged $0.005 for each post X returned, on the client's run.
+A page X refused is charged nothing; a page whose answer was lost stays pending until the run
+settles. Tin's X ownership lookup, one per run, isn't charged.
 
 ### Operator setup
 
