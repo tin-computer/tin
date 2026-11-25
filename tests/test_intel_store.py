@@ -194,6 +194,21 @@ async def test_latest_world_day_is_recent_and_usable(db):
     assert await intel_store.latest_world_day(db.pool, now=later) is None
 
 
+async def test_a_world_day_rewritten_after_the_client_started_still_counts(db):
+    # Staging 2026-11-25: a same-day world re-run rewrote the day row (updated_at 09:52) after
+    # the client run started (09:45), and the client's load then saw no world day at all.
+    from datetime import UTC, datetime
+
+    host = await project(db)
+    run_id = await run(db, host, "intel.world")
+    client_started = datetime.now(UTC) - timedelta(minutes=20)
+    await intel_store.set_world_day(
+        db.pool, day=DAY, run_id=run_id, status="ready", stories=113, items=1668
+    )
+    found = await intel_store.latest_world_day(db.pool, now=client_started)
+    assert found["status"] == "ready" and found["day"] == DAY.isoformat()
+
+
 async def test_prune_removes_only_old_items_and_snapshots(db):
     host = await project(db)
     old, new = await run(db, host, "intel.world"), await run(db, host, "intel.world")

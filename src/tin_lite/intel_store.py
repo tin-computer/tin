@@ -629,13 +629,15 @@ def _world_day(row) -> dict | None:
 async def latest_world_day(
     conn, *, now: datetime, within: timedelta = timedelta(hours=30)
 ) -> dict | None:
-    """The newest usable world day (ready or partial) settled within `within` of `now`."""
+    """The newest usable world day (ready or partial) settled no earlier than `within` before
+    `now`. A day settled after `now` counts too: `now` is the client run's start, a world run
+    that finishes during the client's fetch is fresher, and a same-day world re-run rewrites the
+    row's updated_at although the day was usable all along. The caller pins the result once."""
     row = await conn.fetchrow(
         """SELECT * FROM intel_world_days WHERE status IN ('ready', 'partial')
-             AND updated_at >= $1 AND updated_at <= $2
+             AND updated_at >= $1
            ORDER BY day DESC LIMIT 1""",
         now - within,
-        now + timedelta(minutes=5),
     )
     return _world_day(row)
 
