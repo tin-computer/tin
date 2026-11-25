@@ -10,16 +10,19 @@ from __future__ import annotations
 
 import hashlib
 import json
-from datetime import UTC, date, datetime, timedelta
+from datetime import date, datetime, timedelta
 from typing import Any
 from uuid import UUID, uuid4
 
+from tin_lite.intel_brief import default_link
 from tin_lite.intel_fetch.gnews import link_cache_get, link_cache_put
-from tin_lite.intel_fetch.items import Item, assign_keys, bounded, canon, parse_iso, short_id
+from tin_lite.intel_fetch.items import MAX_TEXT, Item, assign_keys, bounded, canon, iso, short_id
 
 __all__ = [
     "ITEM_RETENTION",
     "SNAPSHOT_RETENTION",
+    "WORLD_MISSING",
+    "WORLD_SOURCE",
     "assign_item_keys",
     "attach_items",
     "begin_fetch",
@@ -28,17 +31,24 @@ __all__ = [
     "get_fetch",
     "get_snapshot",
     "latest_world_day",
+    "latest_world_status",
     "link_cache_get",
     "link_cache_put",
+    "pin_world_day",
     "prune",
     "put_brief",
     "put_items",
     "put_story",
+    "put_world_items",
     "record_sources",
+    "record_unfinished",
     "save_snapshot",
     "set_fetch",
+    "set_world_day",
     "stories",
     "story",
+    "today_stories",
+    "world_day",
 ]
 
 ITEM_RETENTION = timedelta(days=30)
@@ -86,6 +96,7 @@ async def get_fetch(conn, run_id: UUID) -> dict | None:
         return None
     value = dict(row)
     value["source_status"] = _json(value["source_status"])
+    value["world_day"] = _json(value["world_day"])
     return value
 
 
@@ -100,9 +111,11 @@ async def set_fetch(conn, run_id: UUID, *, status: str | None = None, items: int
     )
 
 
-async def put_items(conn, *, run_id: UUID, items: list[Item]) -> int:
+async def put_items(conn, *, run_id: UUID, items: list[Item], keep_existing: bool = False) -> int:
     """Upsert a source's items; returns how many were new. The same canonical URL seen again
-    keeps one row, the one with the better (lower) rank in its own source."""
+    keeps one row: between the run's own sources, the one with the better (lower) rank in its
+    own source. `keep_existing` never replaces a row already there (world stories added to a
+    client's day, whose ranks mean nothing beside a source's)."""
     rows = []
     for raw in items:
         item = bounded(raw)
@@ -127,9 +140,17 @@ async def put_items(conn, *, run_id: UUID, items: list[Item]) -> int:
         if held is None or (row["rank"] or 10**6) < (held["rank"] or 10**6):
             best[row["canon_url"]] = row
     inserted = await conn.fetch(
-        """INSERT INTO intel_items (run_id, item_key, canon_url, source_type, source, source_id,
-               source_url, url, discussion_url, publisher_site, title, author, published_at,
-               rank, engagement, text, fetched_at)
+        _KEEP_ITEMS if keep_existing else _UPSERT_ITEMS,
+        run_id,
+        json.dumps(list(best.values()), ensure_ascii=False, default=str),
+    )
+    return sum(1 for row in inserted if row["inserted"])
+
+
+# One canonical URL per run: put_items replaces a worse-ranked copy, or keeps what is there.
+_INSERT_ITEMS = """INSERT INTO intel_items (run_id, item_key, canon_url, source_type, source,
+               source_id, source_url, url, discussion_url, publisher_site, title, author,
+               published_at, rank, engagement, text, fetched_at)
            SELECT $1, x.item_key, x.canon_url, x.source_type, x.source, x.source_id, x.source_url,
                x.url, x.discussion_url, x.publisher_site, x.title, x.author, x.published_at,
                x.rank, COALESCE(x.engagement, '{}'::jsonb), COALESCE(x.text, ''), x.fetched_at
@@ -138,7 +159,13 @@ async def put_items(conn, *, run_id: UUID, items: list[Item]) -> int:
                discussion_url text, publisher_site text, title text, author text,
                published_at timestamptz, rank integer, engagement jsonb, text text,
                fetched_at timestamptz)
-           ON CONFLICT (run_id, canon_url) DO UPDATE SET
+"""
+_KEEP_ITEMS = (
+    _INSERT_ITEMS + "ON CONFLICT (run_id, canon_url) DO NOTHING RETURNING (xmax = 0) AS inserted"
+)
+_UPSERT_ITEMS = (
+    _INSERT_ITEMS
+    + """ON CONFLICT (run_id, canon_url) DO UPDATE SET
                source_type = EXCLUDED.source_type, source = EXCLUDED.source,
                source_id = EXCLUDED.source_id, source_url = EXCLUDED.source_url,
                url = EXCLUDED.url, discussion_url = EXCLUDED.discussion_url,
@@ -147,11 +174,8 @@ async def put_items(conn, *, run_id: UUID, items: list[Item]) -> int:
                rank = EXCLUDED.rank, engagement = EXCLUDED.engagement, text = EXCLUDED.text,
                fetched_at = EXCLUDED.fetched_at
            WHERE COALESCE(EXCLUDED.rank, 1000000) < COALESCE(intel_items.rank, 1000000)
-           RETURNING (xmax = 0) AS inserted""",
-        run_id,
-        json.dumps(list(best.values()), ensure_ascii=False, default=str),
-    )
-    return sum(1 for row in inserted if row["inserted"])
+           RETURNING (xmax = 0) AS inserted"""
+)
 
 
 async def record_sources(conn, *, run_id: UUID, statuses: list[dict]) -> None:
@@ -183,6 +207,26 @@ async def done_sources(conn, run_id: UUID) -> set[str]:
         "SELECT source_status FROM intel_fetches WHERE run_id = $1", run_id
     )
     return {str(entry["id"]) for entry in _json(current or "[]") if isinstance(entry, dict)}
+
+
+async def record_unfinished(conn, *, run_id: UUID, sources: list[dict], reason: str) -> int:
+    """Record every source of `sources` that has no status yet as failed with `reason`: a fetch
+    group that raised, or whose activity never finished. Returns how many were recorded."""
+    done = await done_sources(conn, run_id)
+    missing = [
+        {
+            "id": str(source["id"]),
+            "name": source.get("name") or str(source["id"]),
+            "method": source.get("method"),
+            "status": "failed",
+            "error": reason[:300],
+            "items_in_window": 0,
+        }
+        for source in sources
+        if str(source["id"]) not in done
+    ]
+    await record_sources(conn, run_id=run_id, statuses=missing)
+    return len(missing)
 
 
 async def assign_item_keys(conn, run_id: UUID, *, taken: dict[str, str] | None = None) -> int:
@@ -314,6 +358,22 @@ async def stories(
             }
         )
     return [_story_row(dict(row), grouped.get(row["id"], [])) for row in rows]
+
+
+async def today_stories(conn, *, project_id: UUID | None, day: date) -> list[dict]:
+    """The scope's stories touched on `day` (a story-day row for it, not only `last_day`), with
+    their items: what `intel status`, the brief's checks, STORIES.md and the fallbacks count."""
+    found = await stories(conn, project_id=project_id, since_day=day, until_day=day, limit=2000)
+    touched = {
+        row["key"]
+        for row in await conn.fetch(
+            """SELECT s.key FROM intel_story_days d JOIN intel_stories s ON s.id = d.story_id
+               WHERE s.project_id IS NOT DISTINCT FROM $1 AND d.day = $2""",
+            project_id,
+            day,
+        )
+    }
+    return [s for s in found if s["key"] in touched]
 
 
 async def story(conn, *, project_id: UUID | None, key: str) -> dict | None:
@@ -597,38 +657,42 @@ async def prune(conn, *, now: datetime) -> None:
     )
 
 
-def window_iso(value: datetime) -> str:
-    return value.astimezone(UTC).strftime("%Y-%m-%dT%H:%M:%SZ")
-
-
-def published(value: str | None) -> datetime | None:
-    return parse_iso(value)
-
-
 WORLD_SOURCE = "World stories"
+WORLD_SOURCE_ID = "world-stories"
+# A client run whose load found no usable world day pins this.
+WORLD_MISSING = {"status": "missing"}
 _RELEVANCE_ORDER = {"high": 1, "medium": 2, "low": 3}
 
 
-async def put_world_items(conn, *, run_id: UUID, now: datetime) -> dict | None:
-    """A client run's copy of today's world stories, as items from "World stories" that its
+async def pin_world_day(conn, run_id: UUID, world: dict) -> dict:
+    """Pin the client run's world day once; returns the pinned one (the first, on a retry)."""
+    pinned = await conn.fetchval(
+        """UPDATE intel_fetches SET world_day = COALESCE(world_day, $2::jsonb),
+               updated_at = now()
+           WHERE run_id = $1 RETURNING world_day""",
+        run_id,
+        json.dumps(world),
+    )
+    if pinned is None:
+        raise LookupError("this run has no intel fetch")
+    return _json(pinned)
+
+
+async def put_world_items(conn, *, run_id: UUID, world: dict, now: datetime) -> int:
+    """A client run's copy of the world day's stories, as items from "World stories" that its
     judge can search, cite and attach: the story's strongest item as the URL, its summary (and
-    SENSITIVE, and its tags) as the text, relevance order as the rank. Returns the world day
-    used, or None when no usable world day is recent enough."""
-    day = await latest_world_day(conn, now=now)
-    if day is None:
-        return None
+    SENSITIVE, and its tags) as the text, relevance order as the rank. A client's own item for
+    the same URL always keeps its row; it gets an "Also a world story" line instead, so the
+    judge still sees the link. Returns how many world items were added."""
     found = await stories(
-        conn, project_id=None, since_day=date.fromisoformat(day["day"]), limit=400
+        conn, project_id=None, since_day=date.fromisoformat(world["day"]), limit=400
     )
     ordered = sorted(
         found, key=lambda s: (_RELEVANCE_ORDER.get(s.get("relevance") or "", 4), s["key"])
     )
     items: list[Item] = []
     for story in ordered:
-        url = next(
-            (i["url"] for i in story.get("items") or [] if str(i["url"]).startswith("https://")),
-            None,
-        )
+        url = default_link(story)
         if url is None:
             continue
         text = story["summary"] + ("\nSENSITIVE" if story.get("sensitive") else "")
@@ -638,19 +702,36 @@ async def put_world_items(conn, *, run_id: UUID, now: datetime) -> dict | None:
             Item(
                 source_type="world",
                 source=WORLD_SOURCE,
-                source_id="world-stories",
+                source_id=WORLD_SOURCE_ID,
                 source_url=None,
                 url=url,
                 discussion_url=None,
                 publisher_site=None,
                 title=story["title"],
                 author=None,
-                published_at=window_iso(now),
+                published_at=iso(now),
                 text=text,
                 engagement={},
                 rank=len(items) + 1,
-                fetched_at=window_iso(now),
+                fetched_at=iso(now),
             )
         )
-    await put_items(conn, run_id=run_id, items=items)
-    return day
+    titles: dict[str, str] = {}
+    for entry in items:
+        titles.setdefault(canon(entry["url"]), entry["title"] or "")
+    for row in await conn.fetch(
+        """SELECT id, canon_url, text FROM intel_items
+           WHERE run_id = $1 AND source_type <> 'world' AND canon_url = ANY($2::text[])""",
+        run_id,
+        list(titles),
+    ):
+        line = f"Also a world story: {titles[row['canon_url']]}"
+        if line not in row["text"]:
+            # The line is kept whole; the item's own text gives way at the 8,000 bound.
+            body = row["text"].rstrip()[: MAX_TEXT - len(line) - 2]
+            await conn.execute(
+                "UPDATE intel_items SET text = $2 WHERE id = $1",
+                row["id"],
+                f"{body}\n\n{line}" if body else line,
+            )
+    return await put_items(conn, run_id=run_id, items=items, keep_existing=True)

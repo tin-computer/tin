@@ -255,12 +255,8 @@ async def test_snapshot_for_a_client_carries_world_stories_and_prior_stories(db)
     )
     prepared = await intel_snapshot.prepare(db.pool, fetch_run_id=run_id, now=datetime.now(UTC))
     assert prepared["items"] == 2 and prepared["world_day"]["status"] == "ready"
-    body = await intel_snapshot.build(
-        db.pool, fetch_run_id=run_id, client_name="Acme", now=datetime.now(UTC)
-    )
-    assert body == await intel_snapshot.build(
-        db.pool, fetch_run_id=run_id, client_name="Acme", now=datetime.now(UTC)
-    )
+    body = await intel_snapshot.build(db.pool, fetch_run_id=run_id, client_name="Acme")
+    assert body == await intel_snapshot.build(db.pool, fetch_run_id=run_id, client_name="Acme")
     lines = [json.loads(line) for line in gzip.decompress(body).splitlines()]
     meta = lines[0]
     assert meta["kind"] == "meta" and meta["scope"] == "client"
@@ -282,3 +278,125 @@ async def test_snapshot_without_a_world_day_says_missing(db):
     body = await intel_snapshot.build(db.pool, fetch_run_id=run_id)
     meta = json.loads(gzip.decompress(body).splitlines()[0])
     assert meta["world_status"] == "missing" and meta["world_day"] is None
+
+
+async def world_story_day(db, url: str, *, key="quake", title="Earthquake hits the coast"):
+    """A ready world day with one story whose strongest item is `url`."""
+    host = await project(db)
+    world_run = await run(db, host, "intel.world")
+    await fetch(db, world_run)
+    await intel_store.put_items(db.pool, run_id=world_run, items=[item(url)])
+    await intel_store.assign_item_keys(db.pool, world_run)
+    story_id, _ = await story(db, world_run, key, title=title, tags=["disasters"])
+    async with db.pool.acquire() as conn:
+        await intel_store.attach_items(
+            conn,
+            story_id=story_id,
+            day=DAY,
+            run_id=world_run,
+            fetch_run_id=world_run,
+            project_id=None,
+            keys=[short_id(canon(url))],
+        )
+    await intel_store.set_world_day(
+        db.pool, day=DAY, run_id=world_run, status="ready", stories=1, items=1
+    )
+    return world_run
+
+
+async def test_a_clients_own_item_keeps_its_row_when_a_world_story_shares_its_url(db):
+    """Ranks are positions inside one source: a world story ranked 1 must not replace the
+    client's own copy of the same article, nor vanish because the client's ranked first."""
+    from datetime import UTC, datetime
+
+    await world_story_day(db, "https://www.reuters.com/world/quake")
+    client = await project(db, "Client")
+    run_id = await run(db, client, "intel.daily")
+    await fetch(db, run_id, scope="client", project_id=client)
+    own = item(
+        "https://reuters.com/world/quake/?utm_source=feed",
+        source="Reuters",
+        source_type="rss",
+        rank=7,
+        text="The client feed's full article text.",
+    )
+    own["author"] = "A Reporter"
+    await intel_store.put_items(db.pool, run_id=run_id, items=[own])
+    for _ in range(2):  # a retried load changes nothing more
+        await intel_snapshot.prepare(db.pool, fetch_run_id=run_id, now=datetime.now(UTC))
+    rows = await db.pool.fetch(
+        "SELECT source_type, source, author, text FROM intel_items WHERE run_id = $1", run_id
+    )
+    assert len(rows) == 1
+    row = rows[0]
+    assert (row["source_type"], row["source"], row["author"]) == ("rss", "Reuters", "A Reporter")
+    assert row["text"] == (
+        "The client feed's full article text.\n\nAlso a world story: Earthquake hits the coast"
+    )
+
+
+async def test_a_client_run_pins_the_world_day_its_load_used(db):
+    """The snapshot, brief and sources.json read the fetch row's world day, so a world run that
+    settles after the client's load can't make them disagree."""
+    from datetime import UTC, datetime
+
+    world_run = await world_story_day(db, "https://www.reuters.com/world/quake")
+    client = await project(db, "Client")
+    run_id = await run(db, client, "intel.daily")
+    await fetch(db, run_id, scope="client", project_id=client)
+    await intel_store.put_items(
+        db.pool, run_id=run_id, items=[item("https://news.example/a", source_type="rss")]
+    )
+    prepared = await intel_snapshot.prepare(db.pool, fetch_run_id=run_id, now=datetime.now(UTC))
+    assert prepared["world_day"]["run_id"] == str(world_run)
+    # The world day moves on (a rerun failed, or finished later): the client's day doesn't.
+    await db.pool.execute("UPDATE intel_world_days SET status = 'failed'")
+    pinned = (await intel_store.get_fetch(db.pool, run_id))["world_day"]
+    assert pinned["status"] == "ready" and pinned["run_id"] == str(world_run)
+    meta = json.loads(
+        gzip.decompress(await intel_snapshot.build(db.pool, fetch_run_id=run_id)).splitlines()[0]
+    )
+    assert meta["world_status"] == "ready" and meta["world_day"] == DAY.isoformat()
+    again = await intel_snapshot.prepare(db.pool, fetch_run_id=run_id, now=datetime.now(UTC))
+    assert again["world_day"] == pinned
+    # With no usable day, the miss itself is pinned.
+    other = await run(db, client, "intel.daily")
+    await fetch(db, other, scope="client", project_id=client)
+    missed = await intel_snapshot.prepare(db.pool, fetch_run_id=other, now=datetime.now(UTC))
+    assert missed["world_day"] == {"status": "missing"}
+    await db.pool.execute("UPDATE intel_world_days SET status = 'ready'")
+    assert (await intel_store.get_fetch(db.pool, other))["world_day"] == {"status": "missing"}
+
+
+async def test_unfinished_sources_are_recorded_failed_once(db):
+    host = await project(db)
+    run_id = await run(db, host, "intel.world")
+    await fetch(db, run_id)
+    await intel_store.record_sources(
+        db.pool, run_id=run_id, statuses=[{"id": "bbc", "status": "ok"}]
+    )
+    sources = [
+        {"id": "bbc", "name": "BBC", "method": "rss"},
+        {"id": "ft", "name": "FT", "method": "rss"},
+    ]
+    recorded = await intel_store.record_unfinished(
+        db.pool, run_id=run_id, sources=sources, reason="group_failed: its fetch did not finish"
+    )
+    assert recorded == 1
+    assert (
+        await intel_store.record_unfinished(db.pool, run_id=run_id, sources=sources, reason="again")
+        == 0
+    )
+    stored = {s["id"]: s for s in (await intel_store.get_fetch(db.pool, run_id))["source_status"]}
+    assert stored["bbc"]["status"] == "ok"
+    assert stored["ft"]["status"] == "failed" and stored["ft"]["name"] == "FT"
+    assert stored["ft"]["error"] == "group_failed: its fetch did not finish"
+
+
+async def test_todays_stories_are_the_ones_touched_today(db):
+    host = await project(db)
+    run_id = await run(db, host, "intel.world")
+    await story(db, run_id, "yesterday-only", day=DAY - timedelta(days=1))
+    await story(db, run_id, "today", day=DAY)
+    found = await intel_store.today_stories(db.pool, project_id=None, day=DAY)
+    assert [s["key"] for s in found] == ["today"]
