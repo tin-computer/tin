@@ -311,19 +311,23 @@ class CodeStorage:
         commits = result.get("commits", [])
         return commits[0]["sha"] if commits else None
 
-    def sandbox_remotes(self, *, repo_id: str, branch: str, subject: str) -> SandboxRemotes:
+    def sandbox_remotes(
+        self, *, repo_id: str, branch: str, subject: str, ttl: int = 900
+    ) -> SandboxRemotes:
+        """Git remotes for one sandbox. `ttl` must cover the sandbox's whole life: its last
+        push uses the same write token as its first clone."""
         canonical_token = self._generate_token(
             repo_id=repo_id,
             scopes=["git:read"],
             subject=f"{subject}:read",
-            ttl=900,
+            ttl=ttl,
         )
         ephemeral_ref = f"refs/namespaces/ephemeral/refs/heads/{branch}"
         ephemeral_token = self._generate_token(
             repo_id=repo_id,
             scopes=["git:read", "git:write"],
             subject=f"{subject}:write",
-            ttl=900,
+            ttl=ttl,
             refs=[
                 [ephemeral_ref, ["no-force-push"]],
                 ["*", ["no-push"]],

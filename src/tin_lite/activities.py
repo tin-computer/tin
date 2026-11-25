@@ -3381,10 +3381,14 @@ class TinActivities:
                         details={"previous_sandbox_id": previous_sandbox_id},
                         dedupe_key=f"{execution_key}:sandbox_recovered:{sandbox_id}",
                     )
+                # The procedure pushes its output with this token when it finishes, which can be
+                # long after 15 minutes (staging 2026-11-25: a 23-minute analyst lost its report
+                # to an expired token). It lives as long as the sandbox, like the run's grants.
                 remotes = self._storage.sandbox_remotes(
                     repo_id=project.state_repo_id,
                     branch=run.ephemeral_branch,
                     subject=f"run:{run.id}:procedure",
+                    ttl=procedure.sandbox.timeout_seconds + 60,
                 )
                 public_host = urlsplit(self._settings.switchboard_public_url).hostname
                 if not public_host:
