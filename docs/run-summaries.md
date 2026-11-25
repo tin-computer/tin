@@ -105,8 +105,14 @@ founder chooses the channel; pick one whose members may see that.
 ## Slack connection
 
 `messaging.slack` uses Slack OAuth v2 with a bot token and the scopes `channels:read`,
-`groups:read`, `chat:write` and `chat:write.public`. Tin lists up to 2,000 channels and posts; it
-never reads messages. The token is stored encrypted and is revoked (`auth.revoke`) on disconnect.
+`groups:read`, `chat:write`, `chat:write.public`, `channels:history` and `groups:history`. Tin
+lists up to 2,000 channels and posts, and may read the history and threads of channels its app is
+a member of (capability `slack.messages.read`), so that what a founder and Tin discuss there can
+inform Tin's work. It never asks for direct messages (`im:history`, `mpim:history`). The token is
+stored encrypted and is revoked (`auth.revoke`) on disconnect.
+
+Connections made before the history scopes were added keep posting; they lack
+`slack.messages.read` until the founder reconnects Slack.
 
 - **Public channels**: Tin can post to any of them; the app does not need to join.
 - **Private channels**: Slack shows a bot only the private channels it is in, so someone in the
@@ -118,7 +124,7 @@ Operator setup:
 
 1. Create the Slack app from [`infra/slack-app-manifest.json`](../infra/slack-app-manifest.json):
    api.slack.com/apps → *Create New App* → *From a manifest* → pick the workspace → paste the
-   file (JSON). It sets the name, the bot user, the four bot scopes above, token rotation off,
+   file (JSON). It sets the name, the bot user, the six bot scopes above, token rotation off,
    and the redirect URLs for app.tin.computer and app.staging.tin.computer. A self-hosted
    deployment replaces them with `{TIN_LITE_PUBLIC_URL}/integrations/callback/slack`. A test
    keeps the manifest's scopes and callback path equal to the code's.
