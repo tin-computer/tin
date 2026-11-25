@@ -254,7 +254,11 @@ note in the brief.
    - A retried group skips the sources it already recorded.
    - Google News links stay Google News links until after the judge.
 3. **Load** builds the day the analyst reads:
-   - it adds today's stories from Tin's world feed when a world day is ready;
+   - it records any source a fetch group never finished as failed, with the group's reason;
+   - it adds the stories of the newest usable world day (`ready` or `partial`), and pins that
+     day on the run, so the snapshot, the brief and `sources.json` all name the same one;
+   - a client's own item for the same URL as a world story keeps its row, with a line naming
+     the world story;
    - it gives every item its id;
    - it stores one snapshot.
 
@@ -281,11 +285,11 @@ note in the brief.
 | Situation | What happens |
 |---|---|
 | A source fails, is empty or is skipped | Recorded in `sources.json`; the run goes on |
-| A whole fetch group fails | Recorded; the run goes on |
+| A whole fetch group fails or never finishes | Each of its sources is recorded as failed; the run goes on |
 | X not connected, another member, reconnect needed | X skipped with the reason; the brief says so |
 | An X page's purchase unconfirmed | Never bought again; X stops there with what it read |
-| No world day ready | The run goes on; the brief says world stories are unavailable |
-| The analyst sends no usable brief | Tin writes one from the day's high and medium stories |
+| No usable world day at load | The run goes on; the brief says world stories are unavailable |
+| The analyst sends no usable brief | Tin writes one from the day's high and medium stories, and the brief says so |
 | The analyst fails | The run fails with the analyst's own reason; its stories stay |
 | No Slack channel set, or Slack refuses | Nothing is posted; the run still succeeds |
 

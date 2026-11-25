@@ -16,7 +16,8 @@ from __future__ import annotations
 import re
 from datetime import date
 
-from tin_lite.intel_brief import LINK
+from tin_lite.intel_brief import LINK, story_links
+from tin_lite.intel_fetch import x_list
 from tin_lite.intel_slack import (
     MAX_BLOCKS,
     TEXT_LIMIT,
@@ -31,6 +32,7 @@ from tin_lite.intel_slack import (
     plain,
     section,
 )
+from tin_lite.intel_store import WORLD_SOURCE
 
 KIND_MARKERS = {
     "competitor": "⚔️",
@@ -43,6 +45,7 @@ KIND_MARKERS = {
 }
 VERIFY = "🔎 To verify"
 OUTLETS = 2
+WORLD_FEED = "Tin's world feed"
 SOURCE_KINDS = (
     ("x", "X List"),
     ("rss", "trade press"),
@@ -68,44 +71,44 @@ def source_kinds(counts: dict[str, int]) -> str:
 
 
 def outlets(story: dict | None, links: dict[str, str] | None = None) -> list[tuple[str, str]]:
-    """Up to two of a story's outlets, strongest first (the order the judge attached them),
-    each with the link to its item."""
+    """Up to two of a story's outlets, strongest first (intel_brief.story_links), one link per
+    outlet name."""
     found: list[tuple[str, str]] = []
     seen: set[str] = set()
-    for entry in (story or {}).get("items") or []:
-        url = (links or {}).get(entry.get("url"), entry.get("url"))
-        name = (entry.get("source") or "").strip()
-        if not name or name in seen or not isinstance(url, str) or not url.startswith("https://"):
+    for name, url in story_links(story, links):
+        if not name or name in seen:
             continue
-        if name == "World stories":
-            name = "Tin's world feed"
         seen.add(name)
-        found.append((name, url))
+        found.append((WORLD_FEED if name == WORLD_SOURCE else name, url))
         if len(found) == OUTLETS:
             break
     return found
 
 
+# What the brief says when X wasn't fully read, by x_list.REASONS' key (status wording lives
+# there; this is Slack's). A test keeps the two key sets equal.
+X_NOTES = {
+    "x_member": "X List not read: only the member who connected X can read it",
+    "x_reauthorize": "X List not read: reconnect X in Integrations",
+    "x_not_connected": "X List not read: X isn't connected",
+    "x_rate_limited": "X List cut short: X asked Tin to wait",
+    "x_uncertain": "X List cut short: one page wasn't confirmed",
+    "x_invalid": "X List not read: X refused the List ID",
+}
+FALLBACK_NOTE = "Tin wrote this brief from the day's top stories"
+
+
 def notes(fetch: dict, *, brief_source: str | None, world_status: str | None) -> list[str]:
-    """Plain lines on what the day lacked: world stories, X, a brief Tin wrote itself."""
+    """Plain lines on what the day lacked: world stories, X, a brief Tin wrote itself. The
+    fallback brief carries no note of its own, so this is the one place that says so."""
     lines = []
     if world_status in (None, "missing"):
         lines.append("World stories unavailable today")
     for status in fetch.get("source_status") or []:
-        if status.get("id") == "x-list" and status.get("reason"):
-            reason = status["reason"]
-            lines.append(
-                {
-                    "x_member": "X List not read: only the member who connected X can read it",
-                    "x_reauthorize": "X List not read: reconnect X in Integrations",
-                    "x_not_connected": "X List not read: X isn't connected",
-                    "x_rate_limited": "X List cut short: X asked Tin to wait",
-                    "x_uncertain": "X List cut short: one page wasn't confirmed",
-                    "x_invalid": "X List not read: X refused the List ID",
-                }.get(reason, "X List not fully read")
-            )
+        if status.get("id") == x_list.SOURCE_ID and status.get("reason"):
+            lines.append(X_NOTES.get(status["reason"], "X List not fully read"))
     if brief_source == "fallback":
-        lines.append("Tin wrote this brief from the day's top stories")
+        lines.append(FALLBACK_NOTE)
     return lines
 
 
@@ -219,16 +222,3 @@ def brief_markdown(
     if tail:
         lines += ["", "---", ""] + [f"{line}." if not line.endswith(".") else line for line in tail]
     return "\n".join(lines).rstrip() + "\n"
-
-
-def google_links(brief: dict, stories: dict[str, dict]) -> list[str]:
-    """Every Google News link the rendered brief uses: in its text and its outlets' links."""
-    found: list[str] = []
-    texts = [brief.get("headline") or "", brief.get("note") or ""]
-    for entry in brief.get("items") or []:
-        texts.append(entry.get("body") or "")
-        story = stories.get(entry.get("story") or "")
-        found += [url for _name, url in outlets(story)]
-    for text in texts:
-        found += [m.group(2) for m in LINK.finditer(text)]
-    return list(dict.fromkeys(u for u in found if u.startswith("https://news.google.com/")))

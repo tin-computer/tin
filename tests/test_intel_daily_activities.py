@@ -237,6 +237,79 @@ async def test_load_builds_one_snapshot_and_notes_a_missing_world_day(db):
     assert (await intel_store.get_fetch(db.pool, f.run_id))["status"] == "loaded"
 
 
+async def test_a_crashed_group_records_each_of_its_sources(db, monkeypatch):
+    """No `group:<name>` pseudo-row: each source the group would have read is in the status,
+    the snapshot meta and sources.json with the group's reason."""
+    from tin_lite import intel_daily_activities as module
+
+    f = await setup(db)
+    await f.acts.prepare(str(f.run_id))
+
+    async def broken(*args, **kwargs):
+        raise RuntimeError("the reader fell over")
+
+    monkeypatch.setattr(module, "run_sources", broken)
+    result = await f.acts.fetch({"run_id": str(f.run_id), "group": "pages"})
+    assert result == {"items": 0, "sources": 3, "failed": 3}
+    statuses = {
+        s["id"]: s for s in (await intel_store.get_fetch(db.pool, f.run_id))["source_status"]
+    }
+    assert set(statuses) == {"vendor-newsroom", "vendor-blog", "jx-crossref"}
+    assert all(
+        s["status"] == "failed" and s["error"].startswith("group_failed: RuntimeError")
+        for s in statuses.values()
+    )
+
+
+async def test_load_records_the_sources_of_a_group_that_never_finished(db):
+    f = await setup(db, inputs={"x_list_id": "2125213001850495223"})
+    await f.acts.prepare(str(f.run_id))
+    # rss ran; gnews, pages and x timed out or ran out of attempts.
+    await f.acts.fetch({"run_id": str(f.run_id), "group": "rss"})
+    await f.acts.load(str(f.run_id))
+    statuses = {
+        s["id"]: s for s in (await intel_store.get_fetch(db.pool, f.run_id))["source_status"]
+    }
+    unfinished = {
+        k for k, s in statuses.items() if s["error"] == "group_failed: its fetch did not finish"
+    }
+    assert unfinished == {"gn-lakehouse", "vendor-newsroom", "vendor-blog", "jx-crossref", "x-list"}
+    assert statuses["health-weekly"]["status"] == "ok"
+    body, _sha = await intel_store.get_snapshot(db.pool, f.run_id)
+    import gzip
+
+    meta = json.loads(gzip.decompress(body).splitlines()[0])
+    assert {s["id"] for s in meta["sources"]} == set(statuses)
+
+
+async def test_the_brief_and_sources_json_use_the_world_day_the_load_pinned(db):
+    """A world run that settles after the client's load can't make the brief disagree with
+    the snapshot the analyst read."""
+    f = await setup(db)
+    world_run = await run(db, f.project.id, "intel.world")
+    await intel_store.set_world_day(
+        db.pool, day=date(2026, 11, 24), run_id=world_run, status="ready", stories=0, items=0
+    )
+    await db.pool.execute(
+        "UPDATE intel_world_days SET updated_at = $1", CREATED - timedelta(hours=2)
+    )
+    await judged(db, f, brief=BRIEF)
+    assert (await f.acts.load(str(f.run_id)))["world"] == "ready"
+    # The world day is redone after the load and now fails.
+    await intel_store.set_world_day(
+        db.pool, day=date(2026, 11, 24), run_id=world_run, status="failed", stories=0, items=0
+    )
+    await f.acts.judge_collect(str(f.run_id))
+    await f.acts.publish(str(f.run_id))
+    tree = f.storage.repo.trees[f.storage.repo.head]
+    paths = intel_daily.report_paths("2026-11-24")
+    assert json.loads(tree[paths["sources.json"]][1])["world_day"]["status"] == "ready"
+    assert "World stories unavailable" not in tree[paths["brief.md"]][1].decode()
+    await f.acts.post(str(f.run_id))
+    [(_poster, _channel, _text, blocks)] = f.slack.posts
+    assert "World stories unavailable" not in json.dumps(blocks)
+
+
 # The judge's results.
 
 
@@ -383,7 +456,7 @@ BRIEF = {
         }
     ]
     * 3,
-    "worth_doing": [{"text": "Refresh the pricing page."}],
+    "worth_doing": [],
 }
 
 
@@ -402,10 +475,15 @@ async def test_publish_unwraps_links_and_is_idempotent(db):
     brief = tree[paths["brief.md"]][1].decode()
     assert PUBLISHER in report and GN not in report
     assert f"[Tech Daily]({PUBLISHER})" in brief and GN not in brief
-    assert "Refresh the pricing page" not in brief
     status = json.loads(tree[paths["sources.json"]][1])
     assert status["day"] == "2026-11-24" and status["items"] == 4
-    assert {s["id"] for s in status["sources"]} == {"health-weekly", "gn-lakehouse"}
+    by_id = {s["id"]: s for s in status["sources"]}
+    assert by_id["health-weekly"]["status"] == "ok" and by_id["gn-lakehouse"]["status"] == "ok"
+    # The pages group never ran in this test: load recorded its sources as unfinished.
+    pages = {"vendor-newsroom", "vendor-blog", "jx-crossref"}
+    assert set(by_id) == {"health-weekly", "gn-lakehouse"} | pages
+    assert all(by_id[p]["error"] == "group_failed: its fetch did not finish" for p in pages)
+    assert status["world_day"] == {"status": "missing"}
 
 
 async def test_post_sends_once_through_the_host_project_and_finish_succeeds(db):
