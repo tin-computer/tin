@@ -28,6 +28,7 @@ import re
 import urllib.parse
 from datetime import UTC, datetime
 
+from tin_lite.intel_fetch.feeds import clean_url
 from tin_lite.intel_fetch.http import FetchError
 from tin_lite.intel_fetch.items import Item, Window, iso
 
@@ -37,29 +38,11 @@ HN_ITEM = "https://hn.algolia.com/api/v1/items/{id}"
 HN_WEB = "https://news.ycombinator.com/item?id={}"
 ARCTIC = "https://arctic-shift.photon-reddit.com/api"
 REDDIT_WEB = "https://www.reddit.com"
-TRACKING = re.compile(
-    r"^(utm_[a-z]+|ref|ref_src|ref_url|fbclid|gclid|mc_cid|mc_eid|igshid|si|s)$", re.I
-)
 HN_EXTRA = {"typoTolerance", "queryType", "advancedSyntax", "restrictSearchableAttributes"}
 HN_PAGES = 10  # runaway guard: 2,000 hits for one query in one window
 REDDIT_PAGES = 50
 ARCTIC_TRIES = 6
 METHOD_NAMES = ("hn", "reddit")
-
-
-def strip_tracking(url: str | None) -> str | None:
-    if not url:
-        return url
-    try:
-        p = urllib.parse.urlsplit(url)
-    except ValueError:
-        return url
-    q = [
-        (k, v)
-        for k, v in urllib.parse.parse_qsl(p.query, keep_blank_values=True)
-        if not TRACKING.match(k)
-    ]
-    return urllib.parse.urlunsplit((p.scheme, p.netloc, p.path, urllib.parse.urlencode(q), ""))
 
 
 def hn_clean(text: str | None) -> str:
@@ -287,7 +270,7 @@ async def _hn_story(ctx: dict, hit: dict, search_url: str) -> Item:
         source_type="hn",
         source="Hacker News",
         source_url=search_url,
-        url=strip_tracking(hit.get("url")) or discussion,
+        url=clean_url(hit.get("url")) or discussion,
         discussion_url=discussion,
         title=hit.get("title"),
         author=hit.get("author"),
@@ -361,7 +344,9 @@ async def _arctic(ctx: dict, path: str, params: dict) -> dict:
     sleep = ctx.get("sleep") or asyncio.sleep
     last = "no answer"
     for attempt in range(ARCTIC_TRIES):
-        response = await ctx["reader"].get(url, headers={"Accept": "application/json"}, retries=1)
+        # This loop is the one retry policy for Arctic Shift: the reader retries nothing, so
+        # a spent budget is waited out here and, if it lasts, reported as what it is.
+        response = await ctx["reader"].get(url, headers={"Accept": "application/json"}, retries=0)
         if response.status == 200:
             try:
                 body = json.loads(response.body)
@@ -498,7 +483,7 @@ async def _post_item(ctx: dict, post: dict, source_url: str) -> Item:
             "any comments]"
         )
     thread = await _reddit_thread(ctx, post["id"]) if (post.get("num_comments") or 0) > 0 else ""
-    url = perma if post.get("is_self", True) else (strip_tracking(post.get("url")) or perma)
+    url = perma if post.get("is_self", True) else (clean_url(post.get("url")) or perma)
     return Item(
         source_type="reddit",
         source=f"r/{post['subreddit']}",
