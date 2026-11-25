@@ -2283,6 +2283,11 @@ class ConnectionCollectionWorkflow:
             raise
 
 
+# Both intelligence parents retry their judge once after a temporary provider failure;
+# histories recorded before it replay without the retry step.
+INTEL_JUDGE_RETRY_PATCH = "intel-judge-retry-v1"
+
+
 @workflow.defn(name="intel.world")
 class IntelWorldWorkflow:
     """Today's world stories (intel_world): pull, snapshot, judge as a child, publish, post.
@@ -2329,17 +2334,25 @@ class IntelWorldWorkflow:
             for group in prepared["groups"]:
                 await fetch(group)
             await call("intel_world_load", minutes=10)
-            child = await call("intel_world_judge_start", minutes=10)
-            # The judge's own run records why it stopped; collect decides what that means.
-            with contextlib.suppress(Exception):
-                await workflow.execute_child_workflow(
-                    child["executor"],
-                    child["run_id"],
-                    id=child["temporal_workflow_id"],
-                    task_queue=workflow.info().task_queue,
-                    parent_close_policy=workflow.ParentClosePolicy.ABANDON,
-                    cancellation_type=workflow.ChildWorkflowCancellationType.ABANDON,
-                )
+
+            async def judge(child: dict) -> None:
+                # The judge's own run records why it stopped; collect decides what that means.
+                with contextlib.suppress(Exception):
+                    await workflow.execute_child_workflow(
+                        child["executor"],
+                        child["run_id"],
+                        id=child["temporal_workflow_id"],
+                        task_queue=workflow.info().task_queue,
+                        parent_close_policy=workflow.ParentClosePolicy.ABANDON,
+                        cancellation_type=workflow.ChildWorkflowCancellationType.ABANDON,
+                    )
+
+            await judge(await call("intel_world_judge_start", minutes=10))
+            if workflow.patched(INTEL_JUDGE_RETRY_PATCH):
+                # One more judge only when the first died on a temporary provider failure.
+                again = await call("intel_world_judge_retry", minutes=10)
+                if (again or {}).get("temporal_workflow_id"):
+                    await judge(again)
             await call("intel_world_judge_collect")
             await call("intel_world_unwrap", minutes=15, heartbeat=timedelta(minutes=2))
             # Publishing writes the world day, so nothing after it can hide a usable day.

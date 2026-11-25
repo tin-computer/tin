@@ -173,6 +173,18 @@ class IntelWorldActivities(IntelActivities):
             self, run, key=intel_judge.WORLD_JUDGE_KEY, scope="world"
         )
 
+    @activity.defn(name="intel_world_judge_retry")
+    async def judge_retry(self, run_id: str) -> dict:
+        """One more judge when the first died on a temporary provider failure; {} otherwise."""
+        run = await self._active(run_id)
+
+        async def progress(note: str) -> None:
+            await self._progress(run, "judge", 4, note)
+
+        return await intel_judge.retry_child(
+            self, run, key=intel_judge.WORLD_JUDGE_KEY, scope="world", progress=progress
+        )
+
     async def _today(self, run) -> tuple[dict, list[dict]]:
         fetch = await self._fetch(run)
         found = await intel_store.today_stories(self.db.pool, project_id=None, day=fetch["day"])
@@ -366,6 +378,7 @@ def activities_of(instance: IntelWorldActivities) -> list:
         instance.fetch,
         instance.load,
         instance.judge_start,
+        instance.judge_retry,
         instance.judge_collect,
         instance.unwrap,
         instance.publish,

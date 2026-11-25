@@ -25,6 +25,7 @@ NAMES = [
     "intel_world_fetch",
     "intel_world_load",
     "intel_world_judge_start",
+    "intel_world_judge_retry",
     "intel_world_judge_collect",
     "intel_world_unwrap",
     "intel_world_publish",
@@ -44,7 +45,26 @@ class JudgeStub:
             raise ApplicationError("The agent's turn did not finish", non_retryable=True)
 
 
-def stubs(calls, *, items=1500, collect=None, fetch_fails=("special",), post_fails=False):
+def children(history) -> int:
+    return sum(
+        1
+        for event in history.events
+        if event.HasField("start_child_workflow_execution_initiated_event_attributes")
+    )
+
+
+def child_ids():
+    child = str(uuid4())
+    return {
+        "run_id": child,
+        "executor": "codex.procedure",
+        "temporal_workflow_id": f"codex.procedure:{child}",
+    }
+
+
+def stubs(
+    calls, *, items=1500, collect=None, fetch_fails=("special",), post_fails=False, retry=False
+):
     def stub(name):
         @activity.defn(name=name)
         async def implementation(control):
@@ -63,12 +83,10 @@ def stubs(calls, *, items=1500, collect=None, fetch_fails=("special",), post_fai
                     )
                 return {"items": items}
             if name == "intel_world_judge_start":
-                child = str(uuid4())
-                return {
-                    "run_id": child,
-                    "executor": "codex.procedure",
-                    "temporal_workflow_id": f"codex.procedure:{child}",
-                }
+                return child_ids()
+            if name == "intel_world_judge_retry":
+                # The activity decides from the first child's receipts; {} means no retry.
+                return {**child_ids(), "attempt": 2} if retry else {}
             if name == "intel_world_post" and post_fails:
                 raise ApplicationError("the summary didn't render", non_retryable=True)
             if name == "intel_world_judge_collect":
@@ -195,3 +213,37 @@ async def test_a_failed_slack_post_never_fails_the_day(env):
     assert outcome == "succeeded"
     assert names.count("intel_world_post") == 1
     assert names[-1] == "intel_world_finish" and "intel_world_failure" not in names
+
+
+async def test_a_judge_that_died_on_a_provider_error_runs_once_more(env):
+    calls: list = []
+    CHILD["outcome"] = "failed"
+    run_id, outcome, history = await run_world(env, calls, retry=True)
+    names = [name for name, _ in calls]
+    assert outcome == "succeeded" and children(history) == 2
+    assert names.count("intel_world_judge_retry") == 1
+    assert names.index("intel_world_judge_retry") < names.index("intel_world_judge_collect")
+    assert names[-1] == "intel_world_finish"
+    assert_identifier_only(history, run_id)
+    await Replayer(
+        workflows=[IntelWorldWorkflow], interceptors=[ActivityLaneInterceptor()]
+    ).replay_workflow(history)
+
+
+async def test_no_retry_due_means_one_judge(env):
+    calls: list = []
+    CHILD["outcome"] = "failed"
+    _run_id, _outcome, history = await run_world(
+        env, calls, collect=lambda: {"stories": 40, "status": "partial"}
+    )
+    assert children(history) == 1
+    assert [name for name, _ in calls].count("intel_world_judge_retry") == 1
+
+
+async def test_histories_from_before_the_retry_still_replay():
+    from temporalio.client import WorkflowHistory
+
+    history = WorkflowHistory.from_json("intel.world", json.loads(FIXTURE.read_text()))
+    await Replayer(
+        workflows=[IntelWorldWorkflow], interceptors=[ActivityLaneInterceptor()]
+    ).replay_workflow(history)

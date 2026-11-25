@@ -99,6 +99,7 @@ TRUSTED_ACTIVITIES = frozenset(
         "intel_world_fetch",
         "intel_world_load",
         "intel_world_judge_start",
+        "intel_world_judge_retry",
         "intel_world_judge_collect",
         "intel_world_unwrap",
         "intel_world_publish",
