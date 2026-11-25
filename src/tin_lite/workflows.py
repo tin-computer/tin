@@ -2416,18 +2416,24 @@ class IntelDailyWorkflow:
             for group in prepared["groups"]:
                 await fetch(group)
             await call("intel_daily_load", minutes=10)
-            child = await call("intel_daily_judge_start", minutes=10)
-            if (child or {}).get("temporal_workflow_id"):
-                # The analyst's own run records why it stopped; collect decides.
-                with contextlib.suppress(Exception):
-                    await workflow.execute_child_workflow(
-                        child["executor"],
-                        child["run_id"],
-                        id=child["temporal_workflow_id"],
-                        task_queue=workflow.info().task_queue,
-                        parent_close_policy=workflow.ParentClosePolicy.ABANDON,
-                        cancellation_type=workflow.ChildWorkflowCancellationType.ABANDON,
-                    )
+
+            async def analyst(child: dict) -> None:
+                if (child or {}).get("temporal_workflow_id"):
+                    # The analyst's own run records why it stopped; collect decides.
+                    with contextlib.suppress(Exception):
+                        await workflow.execute_child_workflow(
+                            child["executor"],
+                            child["run_id"],
+                            id=child["temporal_workflow_id"],
+                            task_queue=workflow.info().task_queue,
+                            parent_close_policy=workflow.ParentClosePolicy.ABANDON,
+                            cancellation_type=workflow.ChildWorkflowCancellationType.ABANDON,
+                        )
+
+            await analyst(await call("intel_daily_judge_start", minutes=10))
+            if workflow.patched(INTEL_JUDGE_RETRY_PATCH):
+                # One more analyst only when the first died on a temporary provider failure.
+                await analyst(await call("intel_daily_judge_retry", minutes=10))
             await call("intel_daily_judge_collect")
             await call("intel_daily_publish", minutes=15)
             try:

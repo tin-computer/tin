@@ -362,6 +362,24 @@ class IntelDailyActivities(IntelActivities):
             client_name=project.name,
         )
 
+    @activity.defn(name="intel_daily_judge_retry")
+    async def judge_retry(self, run_id: str) -> dict:
+        """One more analyst when the first died on a temporary provider failure; {} otherwise."""
+        run = await self._active(run_id)
+        project = await self.db.get_project(run.project_id)
+
+        async def progress(note: str) -> None:
+            await self._progress(run, "judge", 4, note)
+
+        return await intel_judge.retry_child(
+            self,
+            run,
+            key=intel_daily.JUDGE_KEY,
+            scope=intel_daily.SCOPE,
+            client_name=project.name,
+            progress=progress,
+        )
+
     @activity.defn(name="intel_daily_judge_collect")
     async def judge_collect(self, run_id: str) -> dict:
         """What the judge left. A failed judge fails the run with its own reason (its stories
@@ -624,6 +642,7 @@ def activities_of(instance: IntelDailyActivities) -> list:
         instance.fetch,
         instance.load,
         instance.judge_start,
+        instance.judge_retry,
         instance.judge_collect,
         instance.publish,
         instance.post,

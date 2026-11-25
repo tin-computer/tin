@@ -457,6 +457,39 @@ async def test_a_failed_judge_fails_the_run_with_its_own_reason(db):
     assert await intel_store.story(db.pool, project_id=f.project.id, key="vendor-on-demand")
 
 
+async def test_a_second_failed_attempt_fails_the_run_with_its_own_reason(db):
+    """After one retry (intel_judge.retry_child), collect reads the second attempt: its
+    classified reason ends the run, and the first attempt's stories still stay."""
+    f = await setup(db)
+    await judged(db, f, status="failed", error="Google failed the first request.")
+    second = await run(db, f.project.id, intel_daily.JUDGE_KEY, status="failed")
+    await db.pool.execute(
+        "UPDATE workflow_runs SET error_message = $2, error_kind = 'explained' WHERE id = $1",
+        second,
+        "The agent execution failed before a completed result was recovered.",
+    )
+    key = f"intel:{f.run_id}:judge_child:2"
+    async with db.effect_lock(key, intel_daily.KEY) as (conn, _):
+        await db.start_effect(conn, execution_key=key, operation=intel_daily.KEY)
+        await db.complete_effect(
+            conn,
+            execution_key=key,
+            result={
+                "run_id": str(second),
+                "executor": "codex.procedure",
+                "temporal_workflow_id": "t2",
+                "attempt": 2,
+                "retry_of": "first",
+                "cause": "stream_unconfirmed",
+            },
+        )
+    with pytest.raises(ApplicationError) as raised:
+        await f.acts.judge_collect(str(f.run_id))
+    assert "completed result was recovered" in raised.value.message
+    assert raised.value.details[0]["tin_failure"]["kind"] == "explained"
+    assert await intel_store.story(db.pool, project_id=f.project.id, key="vendor-on-demand")
+
+
 # Publish, post and finish.
 
 
