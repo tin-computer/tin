@@ -177,7 +177,13 @@ importScripts("collection/core.js");
     let preparedTab;
     try {
       // Setup prepares the supported search contract once, with no friend hardcoded.
-      if (!query?.client_version || query.client_version !== context?.context?.li_track?.clientVersion || Date.now() - query.at > 86400000) {
+      // LinkedIn's search page may expose no contract at all, so the setup tab opens at most
+      // once a day; otherwise a refresh that finds none would reopen it on every poll.
+      const stale = !query?.client_version || query.client_version !== context?.context?.li_track?.clientVersion || Date.now() - query.at > 86400000;
+      if (stale && state.search_setup_at && Date.now() - state.search_setup_at < 86400000) query = null;
+      else if (stale) {
+        state.search_setup_at = Date.now();
+        await save(state);
         preparedTab = await chrome.tabs.create({url:"about:blank",active:false});
         await chrome.tabs.update(preparedTab.id,{url:'https://www.linkedin.com/search/results/people/?network=%5B%22S%22%5D'});
         const deadline = Date.now() + 15000;
@@ -209,6 +215,8 @@ importScripts("collection/core.js");
         // The backend already pauses cloud execution until a valid source is ready.
         if (query?.tab_id !== preparedTab.id) query = null;
       }
+      // A contract LinkedIn no longer confirms is dropped, so the next poll matches this session.
+      if (stale && !query) await chrome.storage.local.remove("tin.linkedin.collection.search");
       const session = await capture(state, query && preparedTab ? preparedTab : accountTab);
       if (query && query.client_version !== session.browser_context.li_track.clientVersion) throw Error("refresh_linkedin_context");
       state.connection = await api(state, `${route(state)}/session`, {actor_key:state.actor.key,
@@ -412,7 +420,7 @@ importScripts("collection/core.js");
       const origin = sender.url ? new URL(sender.url).origin : "";
       if (!sender.tab || !origins.has(origin) || message.base !== origin) throw Error("untrusted_origin");
       if (message.type === "DISCOVER") return discover();
-      if (message.type === "WAKE") { const state = await load();delete state.refresh_after;delete state.refresh_blocked;state.reason="";state.refresh_requested=true;await save(state);schedule();return publicState(state); }
+      if (message.type === "WAKE") { const state = await load();delete state.refresh_after;delete state.refresh_blocked;delete state.search_setup_at;state.reason="";state.refresh_requested=true;await save(state);schedule();return publicState(state); }
       return pair(origin, message.grant);
     }
     if (sender.url !== chrome.runtime.getURL("popup/collection.html")) throw Error("untrusted_sender");
