@@ -15,7 +15,7 @@ from intel_fixtures import project, run
 from temporalio.exceptions import ApplicationError
 from test_intel_fetch_world import FakeReader
 
-from tin_lite import intel_store
+from tin_lite import intel_steps, intel_store
 from tin_lite import intel_world_activities as module
 from tin_lite.intel_world_activities import IntelWorldActivities
 from tin_lite.run_service import WorkflowInputError
@@ -200,8 +200,8 @@ async def test_a_partial_day_posts_tins_own_brief_once_and_finishes(db, monkeypa
     assert await activities.judge_collect(str(run_id)) == {"stories": 12, "status": "partial"}
     brief = await intel_store.get_brief(db.pool, parent_run_id=run_id)
     assert brief["source"] == "fallback" and brief["run_id"] == str(child)
-    assert await activities.post(str(run_id)) == {"posted": "sent"}
-    assert await activities.post(str(run_id)) == {"posted": "already"}
+    assert await activities.post(str(run_id)) == {"outcome": "sent"}
+    assert await activities.post(str(run_id)) == {"outcome": "already"}
     assert len(slack.posts) == 1
     _poster, channel, text, blocks = slack.posts[0]
     assert channel == "C0B5W5325JP" and text.startswith("The world today, Tue 24 Nov: ")
@@ -212,7 +212,7 @@ async def test_a_partial_day_posts_tins_own_brief_once_and_finishes(db, monkeypa
         assert "Story 0" in kwargs["documents"]["intel/world/2026-11-24/STORIES.md"].decode()
         return "c" * 40
 
-    monkeypatch.setattr(module, "publish_artifacts", published)
+    monkeypatch.setattr(intel_steps, "publish_artifacts", published)
     await db.pool.execute("UPDATE projects SET canonical_branch = 'main' WHERE id = $1", host)
     await activities.publish(str(run_id))
     await activities.finish(str(run_id))
@@ -227,4 +227,51 @@ async def test_no_channel_means_nothing_posts(db):
     host = await project(db)
     activities, run_id, _child = await judged(db, host, child_status="succeeded", stories=6)
     activities.settings.intel_world_slack_channel = None
-    assert await activities.post(str(run_id)) == {"posted": "not_configured"}
+    assert await activities.post(str(run_id)) == {"outcome": "not_configured"}
+
+
+async def test_a_failed_slack_post_never_hides_a_published_day(db, monkeypatch):
+    """The world day is written with the stories, before Slack: a post that raises something
+    other than a refusal fails nothing the clients read."""
+    host = await project(db)
+    activities, run_id, _child = await judged(db, host, child_status="succeeded", stories=6)
+    await activities.judge_collect(str(run_id))
+
+    async def published(**kwargs):
+        return "c" * 40
+
+    monkeypatch.setattr(intel_steps, "publish_artifacts", published)
+    await db.pool.execute("UPDATE projects SET canonical_branch = 'main' WHERE id = $1", host)
+    await activities.publish(str(run_id))
+    day = await intel_store.latest_world_status(db.pool)
+    assert (day["status"], day["stories"], day["run_id"]) == ("ready", 6, str(run_id))
+
+    class Broken:
+        async def post(self, *args, **kwargs):
+            raise RuntimeError("the renderer broke")
+
+    activities.integrations.slack = Broken()
+    assert await activities.post(str(run_id)) == {"outcome": "unknown"}
+    # Even a run that fails after publishing keeps its day usable.
+    await activities.failure({"run_id": str(run_id), "reason": "x", "kind": "explained"})
+    day = await intel_store.latest_world_status(db.pool)
+    assert day["status"] == "ready" and day["run_id"] == str(run_id)
+    assert (await intel_store.get_fetch(db.pool, run_id))["status"] == "failed"
+
+
+async def test_a_group_that_raised_records_each_unfinished_source(db, reader, monkeypatch):
+    host = await project(db)
+    activities = acts(db, host)
+    run_id = await world_run(db, host)
+    await activities.prepare(str(run_id))
+
+    async def broken(*args, **kwargs):
+        raise RuntimeError("the reader fell over")
+
+    monkeypatch.setattr(module, "run_sources", broken)
+    await activities.fetch({"run_id": str(run_id), "group": "special"})
+    statuses = {s["id"]: s for s in (await intel_store.get_fetch(db.pool, run_id))["source_status"]}
+    special = [s for s in statuses.values() if s["method"] in {"techmeme_river", "gdelt_doc"}]
+    assert len(special) == 2
+    assert all(s["status"] == "failed" for s in special)
+    assert all(s["error"].startswith("group_failed: RuntimeError") for s in special)
