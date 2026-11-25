@@ -20,9 +20,21 @@ from tin_lite.linkedin_feed import FEED_PAGES_PER_READ, DetailsResult, FeedResul
 from tin_lite.organic_audit_publication import publish_artifacts
 
 STEPS = 3
+# A detail read that failed with one of these skips its posts and goes on to the next read.
+SKIPPED = frozenset({None, "cloud_failed", "unsupported_contract"})
 FALLBACK = "Tin couldn't finish reading your LinkedIn feed. Try again later."
 # What a read hands Temporal: counts, never the posts.
-RETURNED = ("outcome", "reason", "posts", "new", "skipped", "pages", "detailed", "more")
+RETURNED = (
+    "outcome",
+    "reason",
+    "posts",
+    "new",
+    "skipped",
+    "pages",
+    "detailed",
+    "failed",
+    "more",
+)
 
 
 def _returned(result: dict) -> dict:
@@ -131,19 +143,62 @@ class LinkedInFeedActivities(LinkedInConnectionsActivities):
         )
         if reason == "done":
             return _returned(parsed)
-        if reason:
+        if reason in STOPS:
             # The posts are kept; their comments and reactors wait for a later run.
-            outcome = "stopped" if reason in STOPS else "unread"
-            return _returned({"outcome": outcome, "reason": reason, "detailed": 0})
+            return _returned({"outcome": "stopped", "reason": reason, "detailed": 0})
+        if reason not in SKIPPED:
+            # The runtime isn't there, or an earlier attempt was interrupted: stop for now; a
+            # later run reads these posts' details.
+            return _returned({"outcome": "unread", "reason": reason, "detailed": 0})
+        if reason:
+            # The read's answer failed as a whole: its posts are settled without details, so
+            # the next read goes on to others rather than repeat them.
+            # Under its own receipt, so a retry settles the same posts, not the next ones.
+            skipped = f"{key}:skipped"
+            async with self.db.effect_lock(skipped, self.key) as (conn, receipt):
+                if receipt and receipt.status == "completed":
+                    threads = receipt.result["threads"]
+                else:
+                    async with conn.transaction():
+                        if receipt is None:
+                            await self.db.start_effect(
+                                conn, execution_key=skipped, operation=self.key
+                            )
+                        posts = posts or await store.need_details(
+                            conn, project_id=run.project_id, run_id=run.id, reactors=reactors
+                        )
+                        threads = [p["thread"] for p in posts]
+                        await store.record_details(
+                            conn,
+                            project_id=run.project_id,
+                            details=[{"thread": t, "unread": reason} for t in threads],
+                        )
+                        await self.db.complete_effect(
+                            conn, execution_key=skipped, result={"threads": threads}
+                        )
+                more = await store.details_left(conn, project_id=run.project_id, run_id=run.id)
+            return _returned(
+                {
+                    "outcome": "read",
+                    "reason": reason,
+                    "detailed": 0,
+                    "failed": len(threads),
+                    "more": more,
+                }
+            )
         async with self.db.effect_lock(key, ENGAGEMENT_OPERATION) as (conn, _receipt):
             async with conn.transaction():
+                details = [item.model_dump() for item in parsed.posts]
                 detailed = await store.record_details(
-                    conn,
-                    project_id=run.project_id,
-                    details=[item.model_dump() for item in parsed.posts],
+                    conn, project_id=run.project_id, details=details
                 )
                 more = await store.details_left(conn, project_id=run.project_id, run_id=run.id)
-                result = {"outcome": "read", "detailed": detailed, "more": more}
+                result = {
+                    "outcome": "read",
+                    "detailed": detailed,
+                    "failed": len(details) - detailed,
+                    "more": more,
+                }
                 await self.db.complete_effect(conn, execution_key=key, result=result)
         _heartbeat({"details": index})
         return _returned(result)

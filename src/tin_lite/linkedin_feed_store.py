@@ -40,6 +40,8 @@ REACTORS_MAX = REACTIONS_PAGE * MAX_REACTOR_PAGES
 FEED_READS = math.ceil(PAGES_MAX / FEED_PAGES_PER_READ)
 # Detail reads per run: a runaway guard well above a day's new posts.
 DETAIL_READS = 25
+# Posts an earlier run left without details are read by a later run while this recent.
+CATCH_UP = "3 days"
 FOLDER = "social/linkedin/feed"
 LIMITS = {"feed.json": 8_000_000, "feed.md": 1_000_000}
 EXCERPT = 400
@@ -117,17 +119,24 @@ async def record_posts(conn, *, project_id, run_id, member: str, posts: list[dic
     return {"posts": shown, "new": new}
 
 
+# Posts whose details Tin hasn't read: this run's in feed order, then those an earlier run
+# found recently and didn't finish, newest first.
+_WAITING = f"""
+    FROM linkedin_feed_posts p
+    LEFT JOIN linkedin_feed_sightings s
+      ON s.project_id = p.project_id AND s.thread = p.thread AND s.run_id = $1
+    WHERE p.project_id = $2 AND p.details_read_at IS NULL
+      AND (s.run_id IS NOT NULL OR p.last_seen_at > now() - interval '{CATCH_UP}')"""
+
+
 async def need_details(conn, *, project_id, run_id, reactors: int) -> list[dict]:
-    """The next posts this run's feed showed whose comments and reactors Tin hasn't read, as
-    many as one detail read takes, feed order first. Promoted posts and posts with nothing to
-    read are settled without a read."""
+    """The next posts whose comments and reactors Tin hasn't read, as many as one detail read
+    takes: this run's in feed order first, then any an earlier run left unread in the last
+    few days. Promoted posts and posts with nothing to read are settled without a read."""
 
     rows = await conn.fetch(
-        """SELECT p.thread, p.post
-           FROM linkedin_feed_sightings s
-           JOIN linkedin_feed_posts p USING (project_id, thread)
-           WHERE s.run_id = $1 AND p.project_id = $2 AND p.details_read_at IS NULL
-           ORDER BY s.position""",
+        f"""SELECT p.thread, p.post {_WAITING}
+            ORDER BY s.position NULLS LAST, p.last_seen_at DESC, p.thread""",
         run_id,
         project_id,
     )
@@ -160,6 +169,9 @@ async def need_details(conn, *, project_id, run_id, reactors: int) -> list[dict]
 
 
 async def record_details(conn, *, project_id, details: list[dict]) -> int:
+    """Keep each post's comments and reactors, and settle it either way: a post whose details
+    couldn't be read isn't asked for again. Returns how many were read."""
+
     for item in details:
         await conn.execute(
             """UPDATE linkedin_feed_posts
@@ -173,20 +185,11 @@ async def record_details(conn, *, project_id, details: list[dict]) -> int:
             json.dumps(item.get("reactors")) if item.get("reactors") is not None else None,
             item.get("reactors_total"),
         )
-    return len(details)
+    return sum(not item.get("unread") for item in details)
 
 
 async def details_left(conn, *, project_id, run_id) -> bool:
-    return bool(
-        await conn.fetchval(
-            """SELECT EXISTS (
-                 SELECT 1 FROM linkedin_feed_sightings s
-                 JOIN linkedin_feed_posts p USING (project_id, thread)
-                 WHERE s.run_id = $1 AND p.project_id = $2 AND p.details_read_at IS NULL)""",
-            run_id,
-            project_id,
-        )
-    )
+    return bool(await conn.fetchval(f"SELECT EXISTS (SELECT 1 {_WAITING})", run_id, project_id))
 
 
 async def run_posts(conn, *, project_id, run_id) -> list[dict]:
@@ -228,7 +231,10 @@ def sentence(notes: dict) -> str:
     text = f"{posts} post{'s' if posts != 1 else ''} read from your LinkedIn feed"
     if new != posts:
         text += f", {new} new"
-    return text + f"; comments and reactors read for {detailed}."
+    text += f"; comments and reactors read for {detailed}"
+    if notes.get("failed"):
+        text += f" ({notes['failed']} couldn't be read)"
+    return text + "."
 
 
 def _count(value) -> str:

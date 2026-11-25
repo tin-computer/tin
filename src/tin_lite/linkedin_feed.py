@@ -27,6 +27,7 @@ from datetime import UTC, datetime
 from typing import Literal
 from urllib.parse import urlsplit, urlunsplit
 
+import httpx
 from pydantic import Field, field_validator
 
 from tin_lite.connection_collection import ClosedModel, CollectionError
@@ -64,6 +65,11 @@ COMPANY = re.compile(r"urn:li:(?:fs_|fsd_)?(?:miniCompany|company):(\d{1,20})")
 TEXT_MAX = 3500
 COMMENT_MAX = 3000
 IMAGES_MAX = 4
+# Refusals that end the whole read: the account needs its owner, or LinkedIn objected. Anything
+# else on one post (a server error, a timeout, an answer Tin can't read) skips that post.
+STOPS = frozenset(
+    {"session_expired", "account_changed", "challenge", "rate_limited", "access_denied"}
+)
 
 
 class Author(ClosedModel):
@@ -161,6 +167,8 @@ class PostDetails(ClosedModel):
         default=None, max_length=REACTIONS_PAGE * MAX_REACTOR_PAGES
     )
     reactors_total: int | None = None
+    # Why this post's details couldn't be read, when they couldn't: the read went on without it.
+    unread: str | None = Field(default=None, max_length=40)
 
     @field_validator("thread")
     @classmethod
@@ -544,49 +552,64 @@ async def read_details(
     profile_id = await _me(client, session, actor)
     found = []
     for post in posts:
-        thread = post["thread"]
-        referer = f"{ORIGIN}/feed/update/urn:li:{thread}/"
-        item = {"thread": thread}
-        if post.get("comments"):
+        try:
+            item = await _post_details(
+                session, client, post, profile_id=profile_id, gap=gap, sleep=sleep
+            )
+        except CollectionError as error:
+            if error.code in STOPS:
+                raise
+            item = {"thread": post["thread"], "unread": error.code}
+        except (httpx.HTTPError, ValueError, KeyError, TypeError):
+            item = {"thread": post["thread"], "unread": "cloud_failed"}
+        found.append(PostDetails.model_validate(item).model_dump())
+    return {"posts": found, "read_at": (now or datetime.now(UTC)).isoformat()}
+
+
+async def _post_details(session, client, post: dict, *, profile_id: str, gap, sleep) -> dict:
+    """One post's first comments and first reactors."""
+
+    thread = post["thread"]
+    referer = f"{ORIGIN}/feed/update/urn:li:{thread}/"
+    item = {"thread": thread}
+    if post.get("comments"):
+        await _sleep(gap, sleep)
+        payload = await _get(
+            client,
+            session,
+            COMMENTS_PATH,
+            {
+                "count": str(COMMENTS_PAGE),
+                "q": "comments",
+                "sortOrder": "RELEVANCE",
+                "start": "0",
+                "updateId": thread,
+            },
+            request_headers=_headers(session, page="d_flagship3_detail_base", referer=referer),
+        )
+        item["comments"], item["comments_total"] = comments_page(payload)
+    pages = max(0, min(post.get("reactor_pages", 0), MAX_REACTOR_PAGES))
+    if pages:
+        people, total, position = [], None, 0
+        for _ in range(pages):
             await _sleep(gap, sleep)
             payload = await _get(
                 client,
                 session,
-                COMMENTS_PATH,
+                REACTIONS_PATH,
                 {
-                    "count": str(COMMENTS_PAGE),
-                    "q": "comments",
-                    "sortOrder": "RELEVANCE",
-                    "start": "0",
-                    "updateId": thread,
+                    "count": str(REACTIONS_PAGE),
+                    "q": "reactionType",
+                    "start": str(position),
+                    "threadUrn": f"urn:li:{thread}",
                 },
                 request_headers=_headers(session, page="d_flagship3_detail_base", referer=referer),
             )
-            item["comments"], item["comments_total"] = comments_page(payload)
-        pages = max(0, min(post.get("reactor_pages", 0), MAX_REACTOR_PAGES))
-        if pages:
-            people, total, position = [], None, 0
-            for _ in range(pages):
-                await _sleep(gap, sleep)
-                payload = await _get(
-                    client,
-                    session,
-                    REACTIONS_PATH,
-                    {
-                        "count": str(REACTIONS_PAGE),
-                        "q": "reactionType",
-                        "start": str(position),
-                        "threadUrn": f"urn:li:{thread}",
-                    },
-                    request_headers=_headers(
-                        session, page="d_flagship3_detail_base", referer=referer
-                    ),
-                )
-                page, total = reactions_page(payload, start=position, profile_id=profile_id)
-                people.extend(page)
-                position += REACTIONS_PAGE
-                if position >= total:
-                    break
-            item["reactors"], item["reactors_total"] = people, total
-        found.append(PostDetails.model_validate(item).model_dump())
-    return {"posts": found, "read_at": (now or datetime.now(UTC)).isoformat()}
+            page, total = reactions_page(payload, start=position, profile_id=profile_id)
+            people.extend(page)
+            position += REACTIONS_PAGE
+            if position >= total:
+                break
+        item["reactors"], item["reactors_total"] = people, total
+    # Checked here so a post LinkedIn answered oddly is skipped, not the whole read.
+    return PostDetails.model_validate(item).model_dump()
