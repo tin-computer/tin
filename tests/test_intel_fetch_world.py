@@ -201,3 +201,31 @@ async def test_a_stuck_source_times_out_with_a_named_reason_and_the_rest_go_on(m
         intel_fetch.deadline({"method": "google_news_rss"}, world.settings({}, WINDOW.until)) == 900
     )
     assert intel_fetch.deadline({"method": "rss"}, {}) == intel_fetch.SOURCE_TIMEOUT_SECONDS
+
+
+def test_every_scopes_groups_select_from_the_validated_source_list():
+    """One selector contract (register_groups): a list of sources in, this group's out, so a
+    caller shared by both scopes (the unfinished-source sweep) passes the same shape."""
+    import tin_lite.intel_fetch as intel_fetch
+
+    async def method(src, window, ctx):
+        return []
+
+    intel_fetch.register_groups(
+        "test-scope",
+        {"feeds": {"rss"}, "talk": ("hn", "not_a_method")},
+        {"rss": method, "hn": method},
+    )
+    try:
+        sources = [
+            {"id": "a", "method": "rss"},
+            {"id": "b", "method": "hn"},
+            {"id": "c", "method": "x"},
+        ]
+        select, methods = group("test-scope", "feeds")
+        assert [s["id"] for s in select(sources)] == ["a"] and set(methods) == {"rss"}
+        select, methods = group("test-scope", "talk")
+        assert [s["id"] for s in select(sources)] == ["b"] and set(methods) == {"hn"}
+    finally:
+        for key in [k for k in intel_fetch.GROUPS if k[0] == "test-scope"]:
+            del intel_fetch.GROUPS[key]
