@@ -1914,7 +1914,8 @@ BUILTIN_WORKFLOWS = (
             output_path_template=INTEL_SCOPES["world"][2],
             output_validator=INTEL_NOTES_VALIDATOR,
             output_max_bytes=INTEL_MAX_BYTES[INTEL_NOTES_VALIDATOR],
-            sandbox=SandboxProfile(profile=ISOLATED_SANDBOX_PROFILE, timeout_seconds=5400),
+            # E2B refuses a sandbox over one hour; the judge takes 10 to 25 minutes.
+            sandbox=SandboxProfile(profile=ISOLATED_SANDBOX_PROFILE, timeout_seconds=3600),
             agent=AgentSelection(ANTIGRAVITY, "gemini-4-neon", "high"),
             intel_scope="world",
         ),
