@@ -26,7 +26,7 @@ from tin_lite.integrations import (
     IntegrationError,
     IntegrationRateLimitedError,
 )
-from tin_lite.intel_brief import LINK, WORLD_GROUPS
+from tin_lite.intel_brief import LINK, default_link
 
 logger = logging.getLogger(__name__)
 RETRY_HOURS = 6
@@ -119,15 +119,6 @@ def day_short(day: date) -> str:
     return f"{day:%a} {day.day} {day:%b}"
 
 
-def default_link(story: dict, links: dict[str, str] | None = None) -> str | None:
-    """A story's strongest item: the first one the judge attached that has an https URL."""
-    for item in story.get("items") or []:
-        url = (links or {}).get(item.get("url"), item.get("url"))
-        if isinstance(url, str) and url.startswith("https://"):
-            return url
-    return None
-
-
 def world_message(
     brief: dict,
     stories: dict[str, dict],
@@ -178,10 +169,6 @@ def world_message(
         blocks.append(context(" · ".join(footer)))
     text = cut(f"The world today, {day_short(day)}: {headline}", TEXT_LIMIT)
     return {"text": plain(text), "blocks": blocks[:MAX_BLOCKS]}
-
-
-def group_order() -> tuple[str, ...]:
-    return tuple(WORLD_GROUPS)
 
 
 # Posting, recorded before Slack is called.

@@ -349,6 +349,50 @@ def _client(value: dict, *, links: LinkIndex, stories) -> tuple[dict, list[str]]
     return brief, warnings
 
 
+# A story's links: what code owns, the brief can't claim.
+
+
+def story_links(story: dict | None, links: dict[str, str] | None = None) -> list[tuple[str, str]]:
+    """A story's items as (outlet, https URL), strongest first: the order the judge attached
+    them. `links` swaps a Google News link for the publisher URL Tin unwrapped. The one rule
+    the default link, a client brief's outlets and a world story's item in a client's day use."""
+    found = []
+    for entry in (story or {}).get("items") or []:
+        url = (links or {}).get(entry.get("url"), entry.get("url"))
+        if isinstance(url, str) and url.startswith("https://"):
+            found.append(((entry.get("source") or "").strip(), url))
+    return found
+
+
+def default_link(story: dict | None, links: dict[str, str] | None = None) -> str | None:
+    """A story's strongest item: the first one the judge attached that has an https URL."""
+    found = story_links(story, links)
+    return found[0][1] if found else None
+
+
+def brief_links(schema: str, brief: dict | None, stories: dict[str, dict]) -> list[str]:
+    """Every link a rendered brief shows, in order: the [words](url) links in its text and the
+    links code adds from its stories (a world line's default link, a client item's outlets).
+    Which of them to unwrap is gnews.resolve_many's call."""
+    brief = brief or {}
+    texts = [brief.get("headline") or "", brief.get("note") or ""]
+    found: list[str] = []
+    if schema == WORLD_SCHEMA:
+        for group in brief.get("groups") or []:
+            for entry in group.get("items") or []:
+                texts.append(entry.get("line") or "")
+                url = default_link(stories.get(entry.get("story") or ""))
+                if url:
+                    found.append(url)
+    else:
+        for entry in brief.get("items") or []:
+            texts.append(entry.get("body") or "")
+            found += [url for _name, url in story_links(stories.get(entry.get("story") or ""))]
+    for text in texts:
+        found += [match.group(2) for match in LINK.finditer(text)]
+    return list(dict.fromkeys(found))
+
+
 # Tin's own briefs, when the judge's is missing or unusable.
 
 _RELEVANCE = {"high": 0, "medium": 1, "low": 2}

@@ -300,24 +300,12 @@ async def put_story(runtime, judge: Judge, body: object) -> dict:
 
 async def today(runtime, judge: Judge) -> dict:
     pool = runtime.database.pool
-    found = await intel_store.stories(
-        pool, project_id=judge.project_id, since_day=judge.day, until_day=judge.day, limit=2000
-    )
-    # Touched today means a story-day row for today, not only last_day.
-    touched = {
-        row["key"]
-        for row in await pool.fetch(
-            """SELECT s.key FROM intel_story_days d JOIN intel_stories s ON s.id = d.story_id
-               WHERE s.project_id IS NOT DISTINCT FROM $1 AND d.day = $2""",
-            judge.project_id,
-            judge.day,
-        )
-    }
+    found = await intel_store.today_stories(pool, project_id=judge.project_id, day=judge.day)
     source = await pool.fetchval("SELECT source FROM intel_briefs WHERE run_id = $1", judge.run_id)
     return {
         "scope": judge.scope,
         "day": judge.day.isoformat(),
-        "stories": [s for s in found if s["key"] in touched],
+        "stories": found,
         "brief": {"state": "set" if source == "judge" else "missing"},
     }
 

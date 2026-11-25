@@ -11,7 +11,8 @@ read-only SQLite file for the `intel` CLI (sandbox/intel/intel.py). Lines, in or
   client: 14), and `{"kind": "story_item", "sid", "day", "item_key", "url", "title",
   "source"}` for their items;
 - for a client, today's world stories are among the items (source "World stories"), put
-  there by its load step (intel_store.put_world_items).
+  there by its load step (intel_store.put_world_items). The world day it used is pinned on the
+  fetch row (`world_day`), so the snapshot, the brief and sources.json name the same one.
 
 The same inputs give the same bytes (gzip without a timestamp).
 """
@@ -24,7 +25,7 @@ from datetime import UTC, datetime, timedelta
 from uuid import UUID
 
 from tin_lite import intel_store
-from tin_lite.intel_fetch.items import canon
+from tin_lite.intel_fetch.items import canon, iso
 
 FORMAT = "intel-snapshot/1"
 PRIOR_DAYS = {"world": 7, "client": 14}
@@ -34,13 +35,7 @@ def _line(value: dict) -> bytes:
     return (json.dumps(value, ensure_ascii=False, sort_keys=True, default=str) + "\n").encode()
 
 
-async def build(
-    conn,
-    *,
-    fetch_run_id: UUID,
-    client_name: str | None = None,
-    now: datetime | None = None,
-) -> bytes:
+async def build(conn, *, fetch_run_id: UUID, client_name: str | None = None) -> bytes:
     fetch = await intel_store.get_fetch(conn, fetch_run_id)
     if fetch is None:
         raise LookupError("this run has no intel fetch")
@@ -53,9 +48,7 @@ async def build(
         until_day=day,
         limit=2000,
     )
-    world_day = None
-    if scope == "client":
-        world_day = await intel_store.latest_world_day(conn, now=now or datetime.now(UTC))
+    world_day = fetch["world_day"] if scope == "client" else None
     rows = await conn.fetch(
         """SELECT item_key, source_type, source, source_id, source_url, url, discussion_url,
                publisher_site, title, author, published_at, rank, engagement, text, fetched_at
@@ -68,12 +61,12 @@ async def build(
         "format": FORMAT,
         "scope": scope,
         "day": day.isoformat(),
-        "now": intel_store.window_iso(fetch["window_end"]),
+        "now": iso(fetch["window_end"]),
         "client_name": client_name,
-        "world_day": world_day["day"] if world_day else None,
-        "world_status": world_day["status"]
-        if world_day
-        else ("missing" if scope == "client" else None),
+        "world_day": (world_day or {}).get("day"),
+        "world_status": (world_day or intel_store.WORLD_MISSING)["status"]
+        if scope == "client"
+        else None,
         "sources": [
             {
                 "id": status.get("id"),
@@ -90,7 +83,7 @@ async def build(
         value = dict(row)
         value["engagement"] = intel_store._json(value["engagement"]) or {}
         for name in ("published_at", "fetched_at"):
-            value[name] = intel_store.window_iso(value[name]) if value[name] else None
+            value[name] = iso(value[name]) if value[name] else None
         out.append(_line({"kind": "item", **value}))
     for story in prior:
         out.append(
@@ -133,17 +126,25 @@ _STORY_FIELDS = (
 
 
 async def prepare(conn, *, fetch_run_id: UUID, now: datetime | None = None) -> dict:
-    """Ready the run's items for a snapshot, once all fetch groups are done: a client run gets
-    today's world stories as items (intel_store.put_world_items), and every item gets its final
-    id, the earlier stories' items keeping theirs. Returns the item count and the world day."""
+    """Ready the run's items for a snapshot, once all fetch groups are done: a client run pins
+    its world day on the fetch row (the newest usable one, once; intel_store.pin_world_day) and
+    gets that day's stories as items (intel_store.put_world_items), and every item gets its
+    final id, the earlier stories' items keeping theirs. Returns the item count and the world
+    day (for a client, the pinned row or {"status": "missing"})."""
     fetch = await intel_store.get_fetch(conn, fetch_run_id)
     if fetch is None:
         raise LookupError("this run has no intel fetch")
     world_day = None
     if fetch["scope"] == "client":
-        world_day = await intel_store.put_world_items(
-            conn, run_id=fetch_run_id, now=now or datetime.now(UTC)
-        )
+        now = now or datetime.now(UTC)
+        world_day = fetch["world_day"]
+        if world_day is None:
+            found = await intel_store.latest_world_day(conn, now=now)
+            world_day = await intel_store.pin_world_day(
+                conn, fetch_run_id, found or intel_store.WORLD_MISSING
+            )
+        if world_day.get("day"):
+            await intel_store.put_world_items(conn, run_id=fetch_run_id, world=world_day, now=now)
     taken = {
         row["item_key"]: canon(row["url"])
         for row in await conn.fetch(

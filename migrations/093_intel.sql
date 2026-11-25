@@ -12,6 +12,10 @@ CREATE TABLE IF NOT EXISTS intel_fetches (
     config_revision text,
     source_status jsonb NOT NULL DEFAULT '[]' CHECK (jsonb_typeof(source_status) = 'array'),
     item_count integer NOT NULL DEFAULT 0,
+    -- A client run's world day, pinned once by its load step (intel_snapshot.prepare): the
+    -- intel_world_days row it used, or {"status": "missing"}. Its snapshot, brief and
+    -- sources.json all read this, never the world day as it is later.
+    world_day jsonb CHECK (world_day IS NULL OR jsonb_typeof(world_day) = 'object'),
     status text NOT NULL DEFAULT 'fetching'
         CHECK (status IN ('fetching', 'loaded', 'judged', 'partial', 'failed')),
     created_at timestamptz NOT NULL DEFAULT now(),
