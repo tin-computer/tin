@@ -233,6 +233,7 @@ async def _intel_world_enable(created_by: str, *, paused: bool) -> None:
 
     from tin_lite import intel_world
     from tin_lite.project_workflow_operations import sync_project_workflow
+    from tin_lite.workflow_inputs import normalize_workflow_inputs
 
     settings = get_settings()
     host = settings.intel_host_project_id
@@ -267,7 +268,11 @@ async def _intel_world_enable(created_by: str, *, paused: bool) -> None:
             workflow_id=workflow.id,
             definition_commit_sha=workflow.current_commit_sha,
             name="World stories",
-            inputs={"project_id": str(host)},
+            inputs=normalize_workflow_inputs(
+                schema=workflow.definition["input_schema"],
+                project_id=host,
+                inputs=intel_world.saved_inputs(),
+            ),
             input_schema=workflow.definition["input_schema"],
             schedule={
                 "cadence": "daily",

@@ -36,6 +36,12 @@ INPUT_SCHEMA: dict[str, Any] = {
 }
 
 
+def saved_inputs() -> dict[str, Any]:
+    """The saved configuration's inputs. Tin binds `project_id` itself and refuses it as a
+    saved or started input, so the world feed saves none."""
+    return {}
+
+
 def stories_path(day: str) -> str:
     return f"intel/world/{day}/STORIES.md"
 
