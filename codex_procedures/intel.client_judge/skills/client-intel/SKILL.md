@@ -14,7 +14,8 @@ matters, and what the client can credibly do or say about it.
 `intel` is on your PATH and already points at today's data. Each call prints a header line,
 short tab-separated rows and a footer that says what was left out and how to get it. Output is
 capped near 9 KB a call, so run one or two commands per shell call; to read several items, pass
-them to one `intel read`.
+them to one `intel read`. Read an item once, at the length you need: everything printed stays in
+your context for the rest of the session.
 
 ```
 intel status                      what is loaded, failed sources, your stories, the brief
@@ -72,7 +73,8 @@ A story is one development, written so a reader who missed the feed understands 
   story's outlets. An id Tin can't find comes back as `missing`; check it with `intel read`.
 - `--continues <sid>`: an earlier story this one carries forward, when the key changes.
 
-Record stories as you go, not at the end. Tomorrow's analyst starts from them.
+Record stories as you go, one or two per turn, not all at the end. Tomorrow's analyst starts
+from them.
 
 ## 3. The executive brief (intel-brief/1)
 
@@ -128,7 +130,9 @@ Example, for a fictional analytics vendor:
 - **Pages in words.** In the report, name the client's pages as a reader would ("our Fabric
   comparison page", "the Secure AI page"), never as paths, URLs or code.
 - **Links.** Hide each link in a few words: `[Microsoft's announcement](https://...)`. Never a
-  bare URL. Link only URLs from today's items or earlier stories.
+  bare URL. Link only URLs from today's items or earlier stories. In the report, link a source
+  the first time a section uses it, not at every mention: Google News links run to a few hundred
+  characters each.
 - **Suggest, don't promise.** In the report's section 5, "Refresh our pricing page with the
   new tier", never "Tin will update it". Never commit Tin or the client to work or dates.
 - **Tone.** Plain, specific, no hype, no em dashes. Short sentences a founder reads on a phone.
