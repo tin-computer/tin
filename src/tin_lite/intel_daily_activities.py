@@ -6,8 +6,9 @@ is safe to repeat:
 - prepare pins the day, the window, the source configs' project revision and the Slack
   destination once (`intel:<run>:prepare`), and refuses before any spend when company.md or
   both source configs are missing;
-- a fetch group skips the sources it already recorded, and X pages have their own receipts
-  (intel_fetch.x_list);
+- a fetch group skips the sources it already recorded; the X List is read through the intel
+  host project's X connection (pinned at prepare), its pages under the client run's own
+  receipts (intel_fetch.x_list);
 - load records any source a fetch group never finished, pins the world day it adds (on the
   fetch row, which the brief and sources.json read too), gives every item its final id and
   keeps one snapshot;
@@ -185,32 +186,48 @@ class IntelDailyActivities(IntelActivities):
                 config_sha256=source_config.digest(config),
                 config_revision=head,
             )
-            # No saved List: X is recorded as skipped with its reason, never silently absent.
-            unread_x = [] if inputs.get("x_list_id") else [x_list.not_saved()]
+            # An operator's row: the client's Slack channel, and its leave to use Tin's own X.
+            channel = await conn.fetchrow(
+                "SELECT slack_channel_id, slack_channel_name FROM intel_projects "
+                "WHERE project_id = $1",
+                run.project_id,
+            )
+            x_host, x_unread = self._x_host(inputs, enrolled=channel is not None)
+            # X not read: recorded as skipped with its reason, never silently absent.
+            unread_x = [x_list.skipped(x_unread)] if x_unread else []
             await store.record_sources(conn, run_id=run.id, statuses=skipped + problems + unread_x)
             groups = [
                 name
                 for name in intel_daily.GROUP_METHODS
                 if group(intel_daily.SCOPE, name)[0](ready)
             ]
-            if inputs.get("x_list_id"):
+            if x_host:
                 groups.append(intel_daily.X_GROUP)
-            channel = await conn.fetchrow(
-                "SELECT slack_channel_id, slack_channel_name FROM intel_projects "
-                "WHERE project_id = $1",
-                run.project_id,
-            )
             pinned = {
                 "groups": groups,
                 "company_path": company_path,
                 "post_brief": inputs.get("post_brief", True) is not False,
                 "channel_id": channel["slack_channel_id"] if channel else None,
                 "channel_name": channel["slack_channel_name"] if channel else None,
+                "x_host_project_id": x_host,
             }
             if saved is None:
                 await self.db.start_effect(conn, execution_key=key, operation=KEY)
             await self.db.complete_effect(conn, execution_key=key, result=pinned)
         return {"groups": groups}
+
+    def _x_host(self, inputs: dict, *, enrolled: bool) -> tuple[str | None, str | None]:
+        """The project whose X connection reads the client's List, or why X isn't read. Every
+        client List lives on the intel host project's X (one account can't stay connected to
+        several projects), and only a client an operator set up is read through it."""
+        if not inputs.get("x_list_id"):
+            return None, "x_no_list"
+        host = getattr(self.settings, "intel_host_project_id", None)
+        if host is None:
+            return None, "x_no_host"
+        if not enrolled:
+            return None, "x_not_enrolled"
+        return str(host), None
 
     @activity.defn(name="intel_daily_fetch")
     async def fetch(self, control: dict) -> dict:
@@ -290,16 +307,22 @@ class IntelDailyActivities(IntelActivities):
         if x_list.SOURCE_ID in await store.done_sources(self.db.pool, run.id):
             return {"items": 0, "sources": 0}
         inputs = run.input or {}
+        host = (await self._pinned(run)).get("x_host_project_id")
+        if not host:
+            # Pinned at prepare; a run prepared without the host reads no X.
+            status = x_list.skipped("x_no_host")
+            await store.record_sources(self.db.pool, run_id=run.id, statuses=[status])
+            return {"items": 0, "sources": 1, "x": status["reason"]}
 
         async def put(conn, items):
             await store.put_items(conn, run_id=run.id, items=items)
 
+        # The host's X connection reads the List; receipts and items are the client run's.
         status = await x_list.read_list(
             self.db,
             self.integrations.x,
             run_id=run.id,
-            project_id=run.project_id,
-            member=run.started_by_clerk_user_id,
+            host_project_id=UUID(host),
             list_id=str(inputs["x_list_id"]),
             window=window,
             keep_retweets=inputs.get("x_keep_retweets") is True,

@@ -1,4 +1,5 @@
-"""The client's X List: paid pages under receipts, retweets dropped, the window respected."""
+"""The client's X List: read through the host's X, paid pages under the client run's receipts,
+retweets dropped, the window respected."""
 
 from __future__ import annotations
 
@@ -12,9 +13,12 @@ from intel_client_fakes import WINDOW
 from tin_lite.integrations import (
     IntegrationAuthorizationError,
     IntegrationDeliveryUnknownError,
+    IntegrationProviderError,
     IntegrationRateLimitedError,
+    IntegrationUpstreamError,
 )
 from tin_lite.intel_fetch import x_list
+from tin_lite.provider_errors import ProviderErrorDetail
 
 MEMBER = "user_xconnector"
 LIST = "2125213001850495223"
@@ -94,9 +98,13 @@ class FakeDb:
 
 
 class FakeX:
+    """The host project's X connection; `projects` records which project each call named."""
+
     def __init__(self, *, fail=None, connector=MEMBER):
         self.fail = fail or {}
         self.asked: list[str | None] = []
+        self.projects: list = []
+        self.members: list = []
         self.connected = SimpleNamespace(
             id=uuid4(),
             project_id=uuid4(),
@@ -105,18 +113,21 @@ class FakeX:
         )
 
     async def connection(self, project_id, capability=None):
+        self.projects.append(project_id)
         if "connection" in self.fail:
             raise self.fail["connection"]
         return self.connected
 
     async def list_posts(self, project_id, member, *, list_id, max_results, pagination_token):
+        self.projects.append(project_id)
+        self.members.append(member)
         self.asked.append(pagination_token)
         if pagination_token in self.fail:
             raise self.fail[pagination_token]
         return {"list_id": list_id, **PAGES[pagination_token]}
 
 
-async def read(db, x, run_id, *, keep_retweets=False, member=MEMBER):
+async def read(db, x, run_id, *, keep_retweets=False):
     kept: list = []
 
     async def put(conn, items):
@@ -126,8 +137,7 @@ async def read(db, x, run_id, *, keep_retweets=False, member=MEMBER):
         db,
         x,
         run_id=run_id,
-        project_id=x.connected.project_id,
-        member=member,
+        host_project_id=x.connected.project_id,
         list_id=LIST,
         window=WINDOW,
         keep_retweets=keep_retweets,
@@ -205,11 +215,78 @@ async def test_a_refusal_before_anything_was_bought_forgets_the_receipt(failure,
     assert db.effects == {} and db.calls == []
 
 
-async def test_another_member_is_skipped_before_x_is_asked():
-    db, x = FakeDb(), FakeX(connector="user_someone_else")
+async def test_the_list_is_read_as_whoever_connected_x_on_the_host():
+    """Who saved or started the client's run doesn't matter: the host connection's member."""
+    db, x = FakeDb(), FakeX(connector="user_host_connector")
     status, kept = await read(db, x, uuid4())
+    assert status["status"] == "ok" and kept
+    assert set(x.projects) == {x.connected.project_id}
+    assert set(x.members) == {"user_host_connector"}
+
+
+async def test_the_host_reconnected_by_someone_else_mid_read_is_skipped():
+    refused = IntegrationAuthorizationError(
+        "Only the member who connected X in this project can act as its account."
+    )
+    db = FakeDb()
+    status, kept = await read(db, FakeX(fail={None: refused}), uuid4())
     assert status["status"] == "skipped" and status["reason"] == "x_member"
-    assert x.asked == [] and db.effects == {} and kept == []
+    assert db.effects == {} and kept == []
+
+
+def _forbidden(kind):
+    exc = IntegrationAuthorizationError("X rejected this access; reconnect or check your X plan")
+    exc.provider_error = ProviderErrorDetail(provider="X", status=403, type=kind)
+    return exc
+
+
+@pytest.mark.parametrize(
+    ("failure", "reason"),
+    [
+        # An unknown or private List: X answers with errors and no posts.
+        (IntegrationUpstreamError(x_list.NO_POSTS_ANSWER), "x_list_unavailable"),
+        (
+            IntegrationProviderError(
+                "X refused this request (HTTP 404)",
+                provider_error=ProviderErrorDetail(provider="X", status=404),
+            ),
+            "x_list_unavailable",
+        ),
+        (_forbidden("not-authorized-for-resource"), "x_list_unavailable"),
+        # X's plan or app refusal is the connection's problem, not the List's.
+        (_forbidden("client-forbidden"), "x_reauthorize"),
+    ],
+)
+async def test_a_list_x_wont_serve_is_skipped_with_its_reason(failure, reason):
+    db = FakeDb()
+    status, kept = await read(db, FakeX(fail={None: failure}), uuid4())
+    assert status["status"] == "skipped" and status["reason"] == reason
+    assert status["error"] == x_list.REASONS[reason]
+    assert db.effects == {} and db.calls == [] and kept == []
+
+
+@pytest.mark.parametrize(
+    "failure",
+    [
+        IntegrationUpstreamError("X could not be reached; try again"),
+        IntegrationProviderError(
+            "X could not complete the request",
+            provider_error=ProviderErrorDetail(provider="X", status=503),
+        ),
+    ],
+)
+async def test_a_lost_or_failed_answer_stays_uncertain(failure):
+    db, run_id = FakeDb(), uuid4()
+    status, _ = await read(db, FakeX(fail={None: failure}), run_id)
+    assert status["reason"] == "x_uncertain" and status["status"] == "failed"
+    assert db.effects[x_list.page_key(run_id, LIST, 1)].status == "started"
+
+
+def test_every_unread_reason_is_a_skip_with_wording():
+    for reason in ("x_no_list", "x_no_host", "x_not_enrolled"):
+        status = x_list.skipped(reason)
+        assert status["status"] == "skipped" and status["error"] == x_list.REASONS[reason]
+    assert x_list.SKIPPED <= set(x_list.REASONS)
 
 
 async def test_x_not_connected_is_skipped():

@@ -82,7 +82,6 @@ from tin_lite.integrations import (
     GSC_PROVIDER,
     LINKEDIN_POSTING_PROVIDER,
     STRIPE_PROVIDER,
-    X_PROVIDER,
     IntegrationRequirement,
     parse_integration_requirements,
 )
@@ -1937,10 +1936,8 @@ BUILTIN_WORKFLOWS = (
         default_schedule=dict(intel_daily.DEFAULT_SCHEDULE),
         agent_only=True,
         input_schema=intel_daily.INPUT_SCHEMA,
-        # The client's X List, read as the member who connected X; without it, X is skipped.
-        integration_requirements=(
-            IntegrationRequirement(X_PROVIDER, ("x.lists.manage",), required=False),
-        ),
+        # No integration of the client's own: its X List is read through the intel host
+        # project's X connection, and its brief posts through the host's Slack.
     ),
     BuiltinWorkflow(
         id=intel_daily.JUDGE_WORKFLOW_ID,
