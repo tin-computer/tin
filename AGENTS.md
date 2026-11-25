@@ -267,6 +267,29 @@ outside marketing, or were written without ever being run. Full rules:
   repository's checks. Never merge with no checks at all or checks Tin can't read; Tin does
   not build founder sites in its sandbox. A declined row never comes back. See [website.change](docs/website-change.md).
 
+## Client project files: company.md and log.md
+
+Every Tin project for a business (our clients and Tin Computer itself) keeps `company.md` and
+`log.md` at its project-files root, linked from `wiki/INDEX.md` under "Start here". Before any work
+for a client, through Tin's MCP or by hand, read `company.md` and the last 3 days of `log.md`.
+
+- `company.md`: the compact, agent-oriented overview of the business. Follow its §7 hard rules. It
+  stays under 15,000 tokens (Claude tokenizer): an abbreviation legend, bullets, `[S#]` source keys
+  mapped in §12, details linked to the source files rather than copied. Keep §7 complete with exact
+  approved wording. When you learn something durable (a new competitor, a changed rule, a decision),
+  update the right section and re-check the cap.
+- `log.md`: a chronological record of the work done for the client, one `## YYYY-MM-DD` section per
+  day, oldest first. After any meaningful work for a client, append to that day's section without
+  waiting for a human: one line per piece of work, saying whose agent did it (for example
+  "(Ege's agent)"), what was done, the result, and where it lives (link or path). Facts and results
+  only; no credentials, prices or internal chatter. Several agents may log the same day: add lines,
+  never rewrite someone else's.
+
+`open-questions.md` next to them is for people; agents don't need to read it.
+
+The project root does not accept `prepare_file_upload`; upload to `wiki/` and move the file to the root
+with `commit_project_changes` (rename), or upsert it directly.
+
 ## Verification and contributions
 
 - Start with focused tests; use CI for the full suite. Never use production credentials
