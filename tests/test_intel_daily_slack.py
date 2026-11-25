@@ -140,5 +140,39 @@ def test_brief_markdown_mirrors_the_message():
     assert "Refresh the Fabric comparison page" not in text
 
 
-def test_google_links_lists_what_the_brief_shows():
-    assert slack.google_links(BRIEF, STORIES) == [GN]
+def test_the_links_to_unwrap_are_the_ones_the_brief_shows():
+    from tin_lite.intel_brief import CLIENT_SCHEMA, brief_links
+    from tin_lite.intel_fetch.gnews import is_article
+
+    assert [u for u in brief_links(CLIENT_SCHEMA, BRIEF, STORIES) if is_article(u)] == [GN]
+
+
+def test_every_x_reason_has_its_own_slack_line():
+    from tin_lite.intel_fetch import x_list
+
+    assert set(slack.X_NOTES) == set(x_list.REASONS)
+
+
+def test_tins_own_brief_says_so_once():
+    """The fallback carries no note; notes() is the one place that says Tin wrote it."""
+    from tin_lite.intel_brief import fallback_client_brief
+
+    stories = {
+        "fabric": {
+            "key": "fabric",
+            "title": "Fabric adds mirroring",
+            "summary": "Fabric adds mirroring. More.",
+            "relevance": "high",
+            "tags": ["competitor"],
+            "items": [{"url": "https://www.reuters.com/a", "source": "Reuters"}],
+        }
+    }
+    made = fallback_client_brief(list(stories.values()))
+    extra = slack.notes({}, brief_source="fallback", world_status="ready")
+    kwargs = {"client_name": "Acme", "day": DAY, "items": 10, "sources": 2}
+    markdown = slack.brief_markdown(made, stories, extra_notes=extra, **kwargs)
+    assert markdown.count("from the day's top stories") == 1
+    body = slack.client_message(
+        made, stories, kinds="", report_url=None, sources_url=None, extra_notes=extra, **kwargs
+    )
+    assert json.dumps(body).count("from the day's top stories") == 1

@@ -8,24 +8,25 @@ is safe to repeat:
   both source configs are missing;
 - a fetch group skips the sources it already recorded, and X pages have their own receipts
   (intel_fetch.x_list);
-- load adds today's world stories, gives every item its final id and keeps one snapshot;
+- load records any source a fetch group never finished, pins the world day it adds (on the
+  fetch row, which the brief and sources.json read too), gives every item its final id and
+  keeps one snapshot;
 - the judge starts once (intel_judge) and its brief falls back to Tin's own when missing;
 - the publication is one commit under `intel:<run>:publish`, the Slack post is recorded
   before Slack is called (intel_slack.send), and the run's projection has its own receipt.
 
 Failing well: a source, a group, X or the world feed missing is a recorded outcome, never the
 run's failure; no items at all fails before the judge is paid for; a failed judge fails the run
-with the judge's own reason.
+with the judge's own reason. The skeleton both intel workflows share is
+intel_steps.IntelActivities.
 """
 
 from __future__ import annotations
 
 import asyncio
-import contextlib
 import json
 import logging
 from datetime import UTC, date, datetime, timedelta
-from typing import Any
 from uuid import UUID
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
@@ -36,19 +37,19 @@ from tin_lite import intel_daily, intel_daily_slack, intel_judge, intel_slack, i
 from tin_lite import intel_store as store
 from tin_lite.document_handoff import document_url
 from tin_lite.failures import failure_projection, split_failure_input
-from tin_lite.intel_brief import CLIENT_SCHEMA, fallback_client_brief
+from tin_lite.intel_brief import CLIENT_SCHEMA, brief_links, fallback_client_brief
 from tin_lite.intel_fetch import config as source_config
 from tin_lite.intel_fetch import gnews, group, run_sources, x_list
 from tin_lite.intel_fetch.http import PublicReader
 from tin_lite.intel_fetch.items import Window, iso
-from tin_lite.organic_audit_publication import publish_artifacts
+from tin_lite.intel_steps import IntelActivities, beating, heartbeat
 from tin_lite.product_urls import dashboard_url
 from tin_lite.workflow_inputs import WorkflowInputError
 
 logger = logging.getLogger(__name__)
 
 KEY = intel_daily.KEY
-STEPS = 7
+STEPS = 6
 FALLBACK = "Tin couldn't finish today's market brief. Tomorrow's run tries again."
 NO_ITEMS = (
     "No items were fetched: every source failed or was empty. Check the sources in "
@@ -62,31 +63,8 @@ NO_CONFIG = (
     "The daily brief needs at least one source config in the project's files: "
     "intel/sources/rss.json or intel/sources/hn-reddit.json. Add one, then start it again."
 )
-HEARTBEAT_SECONDS = 20
-MAX_LINKS = 60
-
-
-def _heartbeat(detail: Any = None) -> None:
-    if activity.in_activity():
-        activity.heartbeat(detail)
-
-
-@contextlib.asynccontextmanager
-async def _beating(detail: str):
-    """Heartbeat while a long read runs: one subreddit can take minutes at Arctic Shift's pace."""
-
-    async def beat():
-        while True:
-            _heartbeat(detail)
-            await asyncio.sleep(HEARTBEAT_SECONDS)
-
-    task = asyncio.create_task(beat())
-    try:
-        yield
-    finally:
-        task.cancel()
-        with contextlib.suppress(asyncio.CancelledError):
-            await task
+MAX_LINKS = gnews.UNWRAP_LIMIT
+X_SOURCE = {"id": x_list.SOURCE_ID, "name": "X List", "method": "x_list"}
 
 
 def zone(name: str | None) -> ZoneInfo:
@@ -112,42 +90,23 @@ def window_for(created: datetime, *, lookback_hours: int, previous_end: datetime
     return Window(until - timedelta(hours=lookback_hours), until)
 
 
-class IntelDailyActivities:
+class IntelDailyActivities(IntelActivities):
+    KEY = KEY
+    STEPS = STEPS
+    INACTIVE = "This brief's run is no longer active."
+    NOT_PUBLISHED = "The report was never published."
+
     def __init__(self, *, database, storage, settings, integrations, reader_factory=None):
-        # intel_judge reads .db .storage .settings .integrations.
-        self.db, self.storage = database, storage
-        self.settings, self.integrations = settings, integrations
-        self._reader = reader_factory or (lambda agent: PublicReader(user_agent=agent))
-
-    # Shared helpers.
-
-    async def _active(self, run_id, *, conn=None):
-        run = await self.db.get_run(UUID(str(run_id)), conn=conn)
-        if not run or run.executor != KEY or run.status.value not in {"pending", "running"}:
-            raise ApplicationError("This brief's run is no longer active.", non_retryable=True)
-        return run
-
-    async def _progress(self, run, step: str, current: int, summary: str) -> None:
-        await self.db.project_run_progress(
-            run_id=run.id, mode="steps", step=step, current=current, total=STEPS, summary=summary
+        super().__init__(
+            database=database, storage=storage, settings=settings, integrations=integrations
         )
-        _heartbeat({"step": step})
+        self._reader = reader_factory or (lambda agent: PublicReader(user_agent=agent))
 
     async def _pinned(self, run) -> dict:
         saved = await self.db.get_effect(f"intel:{run.id}:prepare")
         if not saved or saved.status != "completed":
-            raise ApplicationError(
-                "The day was never prepared; start it again.", non_retryable=True
-            )
+            raise ApplicationError(self.NOT_PREPARED, non_retryable=True)
         return saved.result or {}
-
-    async def _fetch(self, run) -> dict:
-        fetch = await store.get_fetch(self.db.pool, run.id)
-        if fetch is None:
-            raise ApplicationError(
-                "The day was never prepared; start it again.", non_retryable=True
-            )
-        return fetch
 
     async def _files(self, project, revision: str, paths) -> dict[str, bytes | None]:
         found = {}
@@ -230,7 +189,7 @@ class IntelDailyActivities:
             groups = [
                 name
                 for name in intel_daily.GROUP_METHODS
-                if group(intel_daily.SCOPE, name)[0]({"sources": ready})
+                if group(intel_daily.SCOPE, name)[0](ready)
             ]
             if inputs.get("x_list_id"):
                 groups.append(intel_daily.X_GROUP)
@@ -263,7 +222,7 @@ class IntelDailyActivities:
         fetch = await self._fetch(run)
         window = Window(fetch["window_start"], fetch["window_end"])
         try:
-            async with _beating(name):
+            async with beating(name):
                 if name == intel_daily.X_GROUP:
                     return await self._fetch_x(run, window)
                 return await self._fetch_group(run, fetch, name, window)
@@ -271,21 +230,22 @@ class IntelDailyActivities:
             raise
         except Exception as exc:  # noqa: BLE001 — one group's failure is recorded, not the run's
             logger.warning("intel.daily fetch group %s failed: %s", name, type(exc).__name__)
-            await store.record_sources(
-                self.db.pool,
-                run_id=run.id,
-                statuses=[
-                    {
-                        "id": f"group:{name}",
-                        "name": f"{name} group",
-                        "method": "group",
-                        "status": "failed",
-                        "error": f"group_failed: {type(exc).__name__}: {exc}"[:300],
-                        "items_in_window": 0,
-                    }
-                ],
-            )
-            return {"items": 0, "sources": 0, "failed": True}
+            reason = f"group_failed: {type(exc).__name__}: {exc}"
+            try:
+                sources = await self._group_sources(run, fetch, name)
+            except Exception:  # noqa: BLE001 — the load step sweeps what this can't name
+                sources = []
+            failed = await self._record_unfinished(run, sources, reason)
+            return {"items": 0, "sources": failed, "failed": failed}
+
+    async def _group_sources(self, run, fetch: dict, name: str) -> list[dict]:
+        """The sources a fetch group reads, from the pinned configs (X: the saved List)."""
+        if name == intel_daily.X_GROUP:
+            return [X_SOURCE] if (run.input or {}).get("x_list_id") else []
+        project = await self.db.get_project(run.project_id)
+        config, _problems = await self._config(project, fetch["config_revision"])
+        ready, _skipped = source_config.select(config, intel_daily.SCOPE)
+        return group(intel_daily.SCOPE, name)[0](ready)
 
     async def _fetch_group(self, run, fetch: dict, name: str, window: Window) -> dict:
         project = await self.db.get_project(run.project_id)
@@ -293,7 +253,7 @@ class IntelDailyActivities:
         ready, _skipped = source_config.select(config, intel_daily.SCOPE)
         select, methods = group(intel_daily.SCOPE, name)
         done = await store.done_sources(self.db.pool, run.id)
-        todo = [source for source in select({"sources": ready}) if source["id"] not in done]
+        todo = [source for source in select(ready) if source["id"] not in done]
         if not todo:
             return {"items": 0, "sources": 0}
         settings = {
@@ -342,23 +302,34 @@ class IntelDailyActivities:
             window=window,
             keep_retweets=inputs.get("x_keep_retweets") is True,
             put=put,
-            heartbeat=_heartbeat,
+            heartbeat=heartbeat,
         )
         await store.record_sources(self.db.pool, run_id=run.id, statuses=[status])
         return {"items": status["items_in_window"], "sources": 1, "x": status["reason"] or "ok"}
 
     @activity.defn(name="intel_daily_load")
     async def load(self, run_id: str) -> dict:
-        """Today's world stories as items, final ids, and the judge's snapshot. No items from
-        the client's own sources fails here, before the judge is paid for."""
+        """Sources no fetch group recorded, today's world stories as items, final ids, and the
+        judge's snapshot. No items from the client's own sources fails here, before the judge
+        is paid for. The world day used is pinned on the fetch row."""
         run = await self._active(run_id)
         await self._progress(run, "load", 3, "Gathering the day for the analyst")
         project = await self.db.get_project(run.project_id)
         now = run.created_at or datetime.now(UTC)
+        fetch = await self._fetch(run)
+        if await store.get_snapshot(self.db.pool, run.id) is None:
+            # A group whose activity never finished (it timed out or ran out of attempts) left
+            # its sources unrecorded: they fail here with that reason.
+            for name in (await self._pinned(run)).get("groups") or []:
+                try:
+                    sources = await self._group_sources(run, fetch, name)
+                except Exception:  # noqa: BLE001 — a config that won't read was recorded at prepare
+                    sources = []
+                await self._record_unfinished(
+                    run, sources, "group_failed: its fetch did not finish"
+                )
         async with self.db.pool.acquire() as conn:
-            existing = await store.get_snapshot(conn, run.id)
-            fetch = await store.get_fetch(conn, run.id)
-            if existing is None:
+            if await store.get_snapshot(conn, run.id) is None:
                 own = await conn.fetchval(
                     "SELECT count(*) FROM intel_items WHERE run_id = $1 AND source_type <> 'world'",
                     run.id,
@@ -368,13 +339,13 @@ class IntelDailyActivities:
                     raise ApplicationError(NO_ITEMS, non_retryable=True)
                 await intel_snapshot.prepare(conn, fetch_run_id=run.id, now=now)
                 body = await intel_snapshot.build(
-                    conn, fetch_run_id=run.id, client_name=project.name, now=now
+                    conn, fetch_run_id=run.id, client_name=project.name
                 )
                 await store.save_snapshot(conn, run_id=run.id, body=body)
                 await store.set_fetch(conn, run.id, status="loaded")
-                fetch = await store.get_fetch(conn, run.id)
-            world = await store.latest_world_day(conn, now=now)
-        return {"items": int(fetch["item_count"]), "world": world["status"] if world else "missing"}
+            fetch = await store.get_fetch(conn, run.id)
+        world = fetch["world_day"] or store.WORLD_MISSING
+        return {"items": int(fetch["item_count"]), "world": world["status"]}
 
     @activity.defn(name="intel_daily_judge_start")
     async def judge_start(self, run_id: str) -> dict:
@@ -419,11 +390,8 @@ class IntelDailyActivities:
         brief = "judge" if found["brief"] else "none"
         if not found["brief"]:
             fetch = await self._fetch(run)
-            today = await store.stories(
-                self.db.pool, project_id=run.project_id, since_day=fetch["day"]
-            )
             fallback = fallback_client_brief(
-                [s for s in today if s["last_day"] == fetch["day"].isoformat()]
+                await store.today_stories(self.db.pool, project_id=run.project_id, day=fetch["day"])
             )
             if fallback is not None:
                 await store.put_brief(
@@ -479,49 +447,25 @@ class IntelDailyActivities:
         project = await self.db.get_project(run.project_id)
         fetch = await self._fetch(run)
         paths = intel_daily.report_paths(fetch["day"].isoformat())
-        key = f"intel:{run.id}:publish"
-        async with self.db.effect_lock(key, KEY) as (conn, receipt):
-            if receipt and receipt.status == "completed":
-                return {"links": len((receipt.result or {}).get("links") or {})}
-            if receipt is None:
-                await self.db.start_effect(conn, execution_key=key, operation=KEY)
-            saved = (receipt.result or {}) if receipt else {}
-            documents = saved.get("documents")
-            if not isinstance(documents, dict):
-                # Kept before publishing, so a retry publishes exactly what it meant to.
-                documents, links, headline = await self._documents(run, project, fetch, paths)
-                saved = {**saved, "documents": documents, "links": links, "headline": headline}
-                await self.db.save_effect_progress(conn, execution_key=key, result=saved)
-            async with self.db.project_state_lock(conn, project.id):
 
-                async def save_intent(value):
-                    await self.db.save_publication_intent(conn, execution_key=key, intent=value)
-
-                async def validate_active():
-                    await self._active(run.id, conn=conn)
-
-                revision = await publish_artifacts(
-                    storage=self.storage,
-                    repo_id=project.state_repo_id,
-                    branch=project.canonical_branch,
-                    documents={path: documents[name].encode() for name, path in paths.items()},
-                    paths=paths,
-                    limits=intel_daily.LIMITS,
-                    message=f"{KEY} {run.id} [{key}]",
-                    intent=saved.get("publication"),
-                    save_intent=save_intent,
-                    validate_active=validate_active,
-                    # A second run on the same day replaces the day's files; history keeps both.
-                    replaceable=frozenset(paths.values()),
-                )
-            result = {
-                "canonical_commit_sha": revision,
-                "artifact_path": paths["report.md"],
-                "summary": (saved.get("headline") or "")[:300] or None,
-                "links": saved.get("links") or {},
+        async def documents() -> dict:
+            texts, links, headline = await self._documents(run, project, fetch, paths)
+            return {
+                "documents": texts,
+                "links": links,
+                "headline": headline,
+                "summary": headline[:300] or None,
             }
-            await self.db.complete_effect(conn, execution_key=key, result=result)
-        return {"links": len(result["links"])}
+
+        result = await self._publish(
+            run,
+            project,
+            paths=paths,
+            limits=intel_daily.LIMITS,
+            artifact="report.md",
+            documents=documents,
+        )
+        return {"links": len(result.get("links") or {})}
 
     async def _documents(self, run, project, fetch, paths) -> tuple[dict, dict, str]:
         found = await intel_judge.collect(self, run)
@@ -537,25 +481,18 @@ class IntelDailyActivities:
         ).decode("utf-8", "replace")
         saved, stories = await self._brief_parts(run, fetch)
         brief = (saved or {}).get("brief")
-        links: dict[str, str] = {}
         reader = self._reader(intel_daily.GROUP_USER_AGENT["gnews"])
         try:
             report, _count = await gnews.unwrap_text(self.db.pool, reader, report)
-            for link in intel_daily_slack.google_links(brief or {}, stories)[:MAX_LINKS]:
-                try:
-                    url = await gnews.resolve(self.db.pool, reader, link)
-                except Exception:  # noqa: BLE001 — a link that won't unwrap keeps working
-                    url = None
-                if url:
-                    links[link] = url
+            links = await gnews.resolve_many(
+                self.db.pool, reader, brief_links(CLIENT_SCHEMA, brief, stories), limit=MAX_LINKS
+            )
         finally:
             await reader.aclose()
         items, sources, _kinds = self._counts(fetch)
-        world = await store.latest_world_day(self.db.pool, now=run.created_at or datetime.now(UTC))
+        world = fetch["world_day"] or store.WORLD_MISSING
         extra = intel_daily_slack.notes(
-            fetch,
-            brief_source=(saved or {}).get("source"),
-            world_status=world["status"] if world else None,
+            fetch, brief_source=(saved or {}).get("source"), world_status=world["status"]
         )
         if brief:
             brief_md = intel_daily_slack.brief_markdown(
@@ -610,7 +547,7 @@ class IntelDailyActivities:
         result = (published.result or {}) if published else {}
         project = await self.db.get_project(run.project_id)
         items, sources, kinds = self._counts(fetch)
-        world = await store.latest_world_day(self.db.pool, now=run.created_at or datetime.now(UTC))
+        world = fetch["world_day"] or store.WORLD_MISSING
         base = dashboard_url(self.settings)
         sources_url = None
         if result.get("canonical_commit_sha"):
@@ -637,7 +574,7 @@ class IntelDailyActivities:
             extra_notes=intel_daily_slack.notes(
                 fetch,
                 brief_source=saved.get("source"),
-                world_status=world["status"] if world else None,
+                world_status=world["status"],
             ),
         )
         await self._progress(run, "post", 6, "Posting the brief in Slack")
@@ -658,28 +595,7 @@ class IntelDailyActivities:
     async def finish(self, run_id: str) -> None:
         """The run succeeds with report.md as its artifact."""
         run = await self._active(run_id)
-        published = await self.db.get_effect(f"intel:{run.id}:publish")
-        if not published or published.status != "completed":
-            raise ApplicationError("The report was never published.", non_retryable=True)
-        result = published.result
-        project = await self.db.get_project(run.project_id)
-        projection = f"intel:{run.id}:projection"
-        async with self.db.effect_lock(projection, KEY) as (conn, saved):
-            if saved and saved.status == "completed":
-                return
-            if saved is None:
-                await self.db.start_effect(conn, execution_key=projection, operation=KEY)
-            sha = result["canonical_commit_sha"]
-            await self.db._complete_readonly_report_projection(
-                conn,
-                execution_key=projection,
-                run_id=run.id,
-                canonical_commit_sha=sha,
-                artifact_path=result["artifact_path"],
-                artifact_ref=f"code.storage://{project.state_repo_id}@{sha}/{result['artifact_path']}",
-                summary=result.get("summary"),
-                workflow_key=KEY,
-            )
+        await self._finish_projection(run)
 
     @activity.defn(name="intel_daily_failure")
     async def failure(self, argument: str | dict) -> None:
@@ -687,8 +603,7 @@ class IntelDailyActivities:
         run = await self.db.get_run(UUID(str(run_id)))
         if not run or run.executor != KEY:
             return
-        with contextlib.suppress(Exception):
-            await store.set_fetch(self.db.pool, run.id, status="failed")
+        await self._fail_fetch(run)
         await self.db.project_failure(run_id=run.id, **failure_projection(passed, FALLBACK))
 
 
