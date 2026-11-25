@@ -338,6 +338,35 @@ async def _intel_channel(project_id: UUID, channel: str, name: str) -> None:
         print("TIN_LITE_INTEL_HOST_PROJECT_ID is unset here, so nothing posts until it is set")
 
 
+async def _intel_x_list(project_id: UUID, list_id: str) -> None:
+    """Operator-only: the one X List, on Tin's own X account, a managed client's daily brief
+    reads through the intel host project's X connection, or `none` to stop reading X."""
+    from tin_lite import intel_store
+
+    list_id = list_id.strip()
+    clear = list_id.lower() == "none"
+    settings = get_settings()
+    database = Database(settings.runtime_dsn)
+    await database.connect()
+    try:
+        if await database.get_project(project_id) is None:
+            raise SystemExit(f"project {project_id} does not exist")
+        try:
+            await intel_store.set_x_list(
+                database.pool, project_id=project_id, list_id=None if clear else list_id
+            )
+        except ValueError as exc:
+            raise SystemExit(str(exc)) from None
+    finally:
+        await database.close()
+    if clear:
+        print(f"the daily brief of project {project_id} no longer reads an X List")
+        return
+    print(f"the daily brief of project {project_id} reads X List {list_id} through the host")
+    if settings.intel_host_project_id is None:
+        print("TIN_LITE_INTEL_HOST_PROJECT_ID is unset here, so X isn't read until it is set")
+
+
 async def _rollouts(run_id: UUID, *, out: Path | None, trace: bool, max_output_chars: int) -> None:
     """Operator-only read path for captured Codex rollouts; never a product surface."""
     settings = get_settings()
@@ -526,6 +555,12 @@ def main() -> None:
     intel_channel.add_argument("project_id", type=UUID)
     intel_channel.add_argument("channel", help="the Slack channel ID, or none to stop posting")
     intel_channel.add_argument("name", nargs="?", default="", help="the channel's name")
+    intel_x_list = commands.add_parser(
+        "intel-x-list",
+        help="pin the X List (on Tin's X account) a managed client's daily brief reads (or none)",
+    )
+    intel_x_list.add_argument("project_id", type=UUID)
+    intel_x_list.add_argument("list_id", help="the X List ID, or none to stop reading X")
     rollouts = commands.add_parser(
         "rollouts", help="list, export, or print the Codex rollouts captured for a run"
     )
@@ -568,6 +603,8 @@ def main() -> None:
         asyncio.run(_intel_world_enable(args.created_by, paused=args.paused))
     elif args.command == "intel-channel":
         asyncio.run(_intel_channel(args.project_id, args.channel, args.name))
+    elif args.command == "intel-x-list":
+        asyncio.run(_intel_x_list(args.project_id, args.list_id))
     elif args.command == "rollouts":
         asyncio.run(
             _rollouts(

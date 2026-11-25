@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import re
 from datetime import date, datetime, timedelta
 from typing import Any
 from uuid import UUID, uuid4
@@ -26,6 +27,7 @@ __all__ = [
     "assign_item_keys",
     "attach_items",
     "begin_fetch",
+    "client_setup",
     "done_sources",
     "get_brief",
     "get_fetch",
@@ -44,6 +46,7 @@ __all__ = [
     "record_unfinished",
     "save_snapshot",
     "set_fetch",
+    "set_x_list",
     "set_world_day",
     "stories",
     "story",
@@ -590,6 +593,44 @@ async def get_brief(conn, *, parent_run_id: UUID) -> dict | None:
         "source": row["source"],
         "day": row["day"].isoformat(),
     }
+
+
+async def client_setup(conn, project_id: UUID) -> dict | None:
+    """An operator's setup of a managed client (`intel_projects`), or None: its Slack channel and
+    the X List pinned for it. Only a client with a row may use the host project's connections."""
+    row = await conn.fetchrow(
+        "SELECT slack_channel_id, slack_channel_name, x_list_id FROM intel_projects "
+        "WHERE project_id = $1",
+        project_id,
+    )
+    return dict(row) if row else None
+
+
+class ListTaken(ValueError):
+    """The X List is already pinned for another client."""
+
+
+async def set_x_list(conn, *, project_id: UUID, list_id: str | None) -> None:
+    """Pin the one X List a client's runs read through the host project's X, or clear it with
+    None. Operator-only (tin-lite intel-x-list); a List belongs to one client."""
+    if list_id is not None and not re.fullmatch(r"[0-9]{1,19}", list_id):
+        raise ValueError(f"{list_id[:40]} is not an X List ID")
+    owner = None
+    if list_id is not None:
+        owner = await conn.fetchval(
+            "SELECT project_id FROM intel_projects WHERE x_list_id = $1 AND project_id <> $2",
+            list_id,
+            project_id,
+        )
+    if owner is not None:
+        raise ListTaken(f"X List {list_id} is already pinned for project {owner}")
+    await conn.execute(
+        """INSERT INTO intel_projects (project_id, x_list_id) VALUES ($1, $2)
+           ON CONFLICT (project_id) DO UPDATE SET x_list_id = EXCLUDED.x_list_id,
+               updated_at = now()""",
+        project_id,
+        list_id,
+    )
 
 
 async def set_world_day(

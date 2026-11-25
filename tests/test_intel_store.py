@@ -415,3 +415,29 @@ async def test_todays_stories_are_the_ones_touched_today(db):
     await story(db, run_id, "today", day=DAY)
     found = await intel_store.today_stories(db.pool, project_id=None, day=DAY)
     assert [s["key"] for s in found] == ["today"]
+
+
+async def test_an_operator_pins_one_x_list_per_client(db):
+    """The List a client's runs read through the host's X is the operator's pin, never the
+    client's own input, and one List belongs to one client."""
+    acme, other = await project(db, "Acme"), await project(db, "Other")
+    assert await intel_store.client_setup(db.pool, acme) is None
+    await intel_store.set_x_list(db.pool, project_id=acme, list_id="2125213001850495223")
+    setup = await intel_store.client_setup(db.pool, acme)
+    assert setup == {
+        "slack_channel_id": None,
+        "slack_channel_name": "",
+        "x_list_id": "2125213001850495223",
+    }
+    with pytest.raises(intel_store.ListTaken, match="already pinned"):
+        await intel_store.set_x_list(db.pool, project_id=other, list_id="2125213001850495223")
+    with pytest.raises(ValueError, match="not an X List ID"):
+        await intel_store.set_x_list(db.pool, project_id=other, list_id="lists/1")
+    # Setting the channel keeps the pin; clearing the pin keeps the client set up.
+    await db.pool.execute(
+        "UPDATE intel_projects SET slack_channel_id = 'C0TEST' WHERE project_id = $1", acme
+    )
+    await intel_store.set_x_list(db.pool, project_id=acme, list_id=None)
+    setup = await intel_store.client_setup(db.pool, acme)
+    assert setup["x_list_id"] is None and setup["slack_channel_id"] == "C0TEST"
+    await intel_store.set_x_list(db.pool, project_id=other, list_id="2125213001850495223")
