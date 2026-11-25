@@ -153,6 +153,8 @@ async def test_pages_until_the_window_with_retweets_dropped_and_quotes_kept():
     assert all(r.status == "completed" for r in db.effects.values())
     assert [c["response_summary"]["est_supplier_usd"] for c in db.calls] == ["0.020", "0.010"]
     assert {c["capability"] for c in db.calls} == {"x.lists.manage"}
+    # integration_call_receipts takes started, completed, failed or unknown.
+    assert {c["status"] for c in db.calls} == {"completed"}
 
 
 async def test_retweets_kept_when_the_saved_workflow_asks():
