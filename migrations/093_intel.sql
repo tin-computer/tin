@@ -130,11 +130,14 @@ CREATE TABLE IF NOT EXISTS intel_world_days (
     updated_at timestamptz NOT NULL DEFAULT now()
 );
 
--- The channel an operator set for a managed client's brief (tin-lite intel-channel).
+-- An operator's setup of a managed client: the channel its brief posts to (tin-lite
+-- intel-channel) and the one X List on Tin's own X account its runs may read through the
+-- host project (tin-lite intel-x-list). A List belongs to one client.
 CREATE TABLE IF NOT EXISTS intel_projects (
     project_id uuid PRIMARY KEY REFERENCES projects(id) ON DELETE CASCADE,
     slack_channel_id text CHECK (slack_channel_id ~ '^[A-Z0-9]{1,32}$'),
     slack_channel_name text NOT NULL DEFAULT '' CHECK (length(slack_channel_name) <= 100),
+    x_list_id text UNIQUE CHECK (x_list_id ~ '^[0-9]{1,19}$'),
     updated_at timestamptz NOT NULL DEFAULT now()
 );
 
