@@ -54,7 +54,11 @@ happened, records it as stories, and writes a brief. Code renders and posts the 
    Then record the world day clients read (`intel_world_days`), `ready` or `partial`. Nothing
    after this step can hide a usable day: a failure later in the run leaves it usable.
 7. **Post.** The summary goes to `TIN_LITE_INTEL_WORLD_SLACK_CHANNEL` through the host
-   project's `messaging.slack` connection, which is Tin's own Slack app. Each post is recorded
+   project's `messaging.slack` connection, which is Tin's own Slack app. Its sections run Tech
+   and AI, Business, Entertainment and culture, Science and health, then World, which holds at
+   most two lines: Tin's clients are tech and consumer companies, so the judge weights the day
+   toward tech, business and entertainment and keeps politics to what moves them or dominates
+   the news. Each post is recorded
    as `sending` before Slack is called. A post left `sending` becomes `unknown` and is never
    sent again. A refused post is retried for a few hours. Slack never fails the run.
 8. **Finish.** Prune, and give the run its result.

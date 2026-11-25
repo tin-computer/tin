@@ -35,7 +35,7 @@ def world(lines=5, **extra):
         "schema": brief.WORLD_SCHEMA,
         "headline": "Talks resume as chips slide",
         "groups": [
-            {"group": "world", "items": [{"story": k, "line": f"Line for {k}."} for k in keys]}
+            {"group": "tech_ai", "items": [{"story": k, "line": f"Line for {k}."} for k in keys]}
         ],
         **extra,
     }
@@ -57,7 +57,7 @@ def test_a_world_brief_in_shape_is_kept_with_its_sections_in_order():
     value = world()
     value["groups"].insert(0, {"group": "culture", "items": [value["groups"][0]["items"].pop()]})
     kept, warnings = brief.validate(brief.WORLD_SCHEMA, value, links=LINKS, stories=STORIES)
-    assert [g["group"] for g in kept["groups"]] == ["world", "culture"]
+    assert [g["group"] for g in kept["groups"]] == ["tech_ai", "culture"]
     assert sum(len(g["items"]) for g in kept["groups"]) == 5
     assert warnings == []
 
@@ -183,9 +183,47 @@ def test_fallback_world_brief_uses_high_stories_in_their_sections():
     assert groups == {"world": ["talks"], "tech_ai": ["chips"], "culture": ["cup"]}
     assert all(len(i["line"]) <= 240 for g in made["groups"] for i in g["items"])
     # The renderer adds the title and says Tin wrote it; the brief repeats neither.
-    talks = made["groups"][0]["items"][0]
+    assert [g["group"] for g in made["groups"]] == ["tech_ai", "culture", "world"]
+    talks = made["groups"][-1]["items"][0]
     assert talks["line"] == "What happened in talks." and "note" not in made
     assert brief.fallback_world_brief([story("x", relevance="low")]) is None
+
+
+def test_world_politics_comes_last_and_holds_at_most_two_lines():
+    """Tech, business and entertainment lead; a third world line is dropped with a sentence
+    the judge can act on, and the 5 to 8 count is checked on what is kept."""
+    value = {
+        "schema": brief.WORLD_SCHEMA,
+        "headline": "A day",
+        "groups": [
+            {
+                "group": "world",
+                "items": [{"story": k, "line": "A line."} for k in list(STORIES)[:3]],
+            },
+            {"group": "culture", "items": [{"story": "game", "line": "A line."}]},
+            {"group": "business", "items": [{"story": "fed", "line": "A line."}]},
+            {"group": "tech_ai", "items": [{"story": "moon", "line": "A line."}]},
+            {"group": "science_health", "items": [{"story": "extra", "line": "A line."}]},
+        ],
+    }
+    kept, warnings = brief.validate(brief.WORLD_SCHEMA, value, links=LINKS, stories=STORIES)
+    order = [g["group"] for g in kept["groups"]]
+    assert order == ["tech_ai", "business", "culture", "science_health", "world"]
+    assert [i["story"] for i in kept["groups"][-1]["items"]] == ["talks", "chips"]
+    assert any("at most 2" in w and "device" in w for w in warnings)
+    # Dropping the third world line below five stories asks for other stories instead.
+    value["groups"] = value["groups"][:3]
+    with pytest.raises(brief.BriefError, match="at most 2 of them in the world section"):
+        brief.validate(brief.WORLD_SCHEMA, value, links=LINKS, stories=STORIES)
+
+
+def test_the_fallback_brief_takes_at_most_two_world_stories():
+    stories = [story(k, tags=["geopolitics"]) for k in ("a1", "a2", "a3", "a4")]
+    stories += [story("chip", tags=["ai"]), story("deal", tags=["m-and-a"])]
+    made = brief.fallback_world_brief(stories)
+    groups = {g["group"]: [i["story"] for i in g["items"]] for g in made["groups"]}
+    assert len(groups["world"]) == 2 and groups["tech_ai"] == ["chip"]
+    assert groups["business"] == ["deal"]
 
 
 def test_fallback_client_brief_picks_kinds_from_tags():
