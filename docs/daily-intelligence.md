@@ -132,11 +132,21 @@ the latest world day's status.
 
 ## Billing
 
-- Both parents are spending parents with a $15 maximum, and buy nothing themselves.
-- Each judge is session-funded with a $15 ceiling. Observed days cost about $2.
-- The world run is billed to the host project's workspace.
+- Both parents are spending parents with a $15 maximum. The world parent buys nothing
+  itself; the client parent buys only its X List pages (below).
+- Each judge is session-funded with a $15 ceiling. Observed days cost about $2 for the world
+  and $2.30 to $3.80 for a client.
+- The world run is billed to the host project's workspace (Tin Computer in production). It is
+  admitted like any paid run: the workspace needs run billing on, and credits or invoiced
+  funding for the estimate, and the host project's limits must cover $15 a run. A scheduled
+  world run needs a standing schedule limit of at least $15.
+- A client's X List pages are billed to the client's run at X's pay-per-use price per post
+  returned (pinned in the run's terms as `x_read_pricing`, $0.005 a post today), through the
+  same receipt and charge path as other priced provider calls. Each page reserves its ceiling
+  (100 posts) before X is asked and is charged for what X returned. A page whose answer never
+  arrived is never bought again and never counted as zero: it stays pending until the run
+  settles, like any unconfirmed paid call.
 - Both parents refuse to start without API-billed Codex execution enabled.
-- A scheduled world run needs a standing schedule limit of at least $15 on the host project.
 
 ## Operating it
 
