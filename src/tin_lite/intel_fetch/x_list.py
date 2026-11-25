@@ -56,6 +56,7 @@ REASONS = {
         "before it are kept."
     ),
     "x_invalid": "Skipped: X refused the List ID.",
+    "x_no_list": "Skipped: no X List is saved on this daily brief (its x_list_id input).",
 }
 
 
@@ -146,7 +147,25 @@ def _oldest(posts: list[dict]) -> datetime | None:
     return min(stamps) if stamps else None
 
 
-SKIPPED = frozenset({"x_member", "x_reauthorize", "x_not_connected", "x_invalid"})
+SKIPPED = frozenset({"x_member", "x_reauthorize", "x_not_connected", "x_invalid", "x_no_list"})
+
+
+def not_saved() -> dict[str, Any]:
+    """The X source's status on a run whose saved brief names no List: skipped, said so, so the
+    judge's `intel status` and sources.json show X was not read rather than leave it out."""
+    return {
+        "id": SOURCE_ID,
+        "name": "X List",
+        "method": "x_list",
+        "status": "skipped",
+        "error": REASONS["x_no_list"],
+        "reason": "x_no_list",
+        "pages": 0,
+        "posts_read": 0,
+        "retweets_dropped": 0,
+        "items_in_window": 0,
+        "est_supplier_usd": 0.0,
+    }
 
 
 def _refusal(exc: Exception) -> str:

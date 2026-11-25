@@ -185,7 +185,9 @@ class IntelDailyActivities(IntelActivities):
                 config_sha256=source_config.digest(config),
                 config_revision=head,
             )
-            await store.record_sources(conn, run_id=run.id, statuses=skipped + problems)
+            # No saved List: X is recorded as skipped with its reason, never silently absent.
+            unread_x = [] if inputs.get("x_list_id") else [x_list.not_saved()]
+            await store.record_sources(conn, run_id=run.id, statuses=skipped + problems + unread_x)
             groups = [
                 name
                 for name in intel_daily.GROUP_METHODS
