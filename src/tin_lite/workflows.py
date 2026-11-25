@@ -2311,7 +2311,7 @@ class IntelWorldWorkflow:
 
         async def fetch(group: str):
             # A group that fails is recorded on its sources; the day goes on without it.
-            with contextlib.suppress(ActivityError):
+            try:
                 await call(
                     "intel_world_fetch",
                     {"run_id": run_id, "group": group},
@@ -2319,6 +2319,9 @@ class IntelWorldWorkflow:
                     heartbeat=timedelta(seconds=60),
                     attempts=2,
                 )
+            except ActivityError as exc:
+                if is_cancelled_exception(exc):
+                    raise
 
         try:
             prepared = await call("intel_world_prepare")
@@ -2339,8 +2342,14 @@ class IntelWorldWorkflow:
                 )
             await call("intel_world_judge_collect")
             await call("intel_world_unwrap", minutes=15, heartbeat=timedelta(minutes=2))
+            # Publishing writes the world day, so nothing after it can hide a usable day.
             await call("intel_world_publish")
-            await call("intel_world_post")
+            try:
+                await call("intel_world_post")
+            except ActivityError as exc:
+                # Slack never fails the run; its outcome is recorded with the post.
+                if is_cancelled_exception(exc):
+                    raise
             await call("intel_world_finish")
         except BaseException as exc:
             await call("intel_world_failure", failure_input(run_id, exc), minutes=1)

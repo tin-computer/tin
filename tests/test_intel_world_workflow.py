@@ -44,7 +44,7 @@ class JudgeStub:
             raise ApplicationError("The agent's turn did not finish", non_retryable=True)
 
 
-def stubs(calls, *, items=1500, collect=None, fetch_fails=("special",)):
+def stubs(calls, *, items=1500, collect=None, fetch_fails=("special",), post_fails=False):
     def stub(name):
         @activity.defn(name=name)
         async def implementation(control):
@@ -69,6 +69,8 @@ def stubs(calls, *, items=1500, collect=None, fetch_fails=("special",)):
                     "executor": "codex.procedure",
                     "temporal_workflow_id": f"codex.procedure:{child}",
                 }
+            if name == "intel_world_post" and post_fails:
+                raise ApplicationError("the summary didn't render", non_retryable=True)
             if name == "intel_world_judge_collect":
                 if collect is not None:
                     return collect()
@@ -183,3 +185,13 @@ async def test_a_failed_judge_with_few_stories_fails_the_day(env):
     names = [name for name, _ in calls]
     assert outcome == "failed" and names[-1] == "intel_world_failure"
     assert "intel_world_publish" not in names
+
+
+async def test_a_failed_slack_post_never_fails_the_day(env):
+    calls: list = []
+    CHILD["outcome"] = "succeeded"
+    _run_id, outcome, _history = await run_world(env, calls, post_fails=True)
+    names = [name for name, _ in calls]
+    assert outcome == "succeeded"
+    assert names.count("intel_world_post") == 1
+    assert names[-1] == "intel_world_finish" and "intel_world_failure" not in names

@@ -1,8 +1,7 @@
 # Daily intelligence
 
 Tin writes a short intelligence brief for a project every morning: what its market said and
-did in the last day, and what is worth doing about it. Two native workflows do the work, and
-each runs one agent as a child:
+did in the last day. Two native workflows do the work, and each runs one agent as a child:
 
 | Workflow | Runs on | Its judge | Output |
 |---|---|---|---|
@@ -30,24 +29,28 @@ happened, records it as stories, and writes a brief. Code renders and posts the 
 2. **Fetch.** Three groups (`gnews`, `feeds`, `special`), one activity each, run one at a
    time. Each source's items and status are recorded as it finishes, so a retried group only
    fetches what is missing. A source that fails, comes back empty or runs past its deadline
-   is recorded with a reason. A group that fails as a whole is recorded on its sources. The
-   day goes on either way.
+   is recorded with a reason. A group that fails as a whole, or whose activity never finishes,
+   is recorded on each of its sources, as failed with a `group_failed` reason. The day goes on
+   either way.
 3. **Load.** Give items their final ids and build the day's snapshot. With no items at all
    the run fails here, before the judge: "No items were fetched".
 4. **Judge.** Start `intel.world_judge` once, as a billed child on the parent's own registry
    revision (start key `intel:<run>:judge`). A judge that finishes makes the day `ready`. A
    judge that stops with at least 10 stories makes it `partial`, and the run still posts. A
    judge that stops with fewer fails the run with the judge's reason. If no usable brief
-   arrived, Tin builds one from the day's high and medium stories.
+   arrived, Tin builds one from the day's high and medium stories, and the summary says Tin
+   wrote it.
 5. **Unwrap.** Google News links stay Google News links while fetching. Only the links the
    Slack summary shows are unwrapped to the publisher, and the answers are cached for every
    run (`intel_link_cache`). A link that won't unwrap is kept as it is.
 6. **Publish.** `intel/world/<day>/STORIES.md` in the host project's Files, rendered by code.
+   Then record the world day clients read (`intel_world_days`), `ready` or `partial`. Nothing
+   after this step can hide a usable day: a failure later in the run leaves it usable.
 7. **Post.** The summary goes to `TIN_LITE_INTEL_WORLD_SLACK_CHANNEL` through the host
    project's `messaging.slack` connection, which is Tin's own Slack app. Each post is recorded
    as `sending` before Slack is called. A post left `sending` becomes `unknown` and is never
    sent again. A refused post is retried for a few hours. Slack never fails the run.
-8. **Finish.** Record the world day (`intel_world_days`), prune, and give the run its result.
+8. **Finish.** Prune, and give the run its result.
 
 Temporal history holds the run ID, the group names, counts and the judge's identifiers.
 Items, stories, briefs and messages stay in Postgres and code.storage.
@@ -65,6 +68,9 @@ The judge reads the day with the `intel` command (`sandbox/intel/intel.py`, inst
 - Each call prints at most 9 KB and says what it left out. Antigravity cuts tool output past
   about 10 KB.
 - Ids are five characters, from the item's canonical URL, and stay the same across days.
+- A source is a configured one: its key and name come from the source config, and its ranks
+  are its own order. An item's own `source` is what a reader sees, which for a Google News
+  item is the outlet that published it.
 
 Before any spend, the runtime asks the image's root helper for `check-intel`. It needs the
 pinned CLI owned by root, SQLite with FTS5, and no `sqlite3` shell, and an older image fails
