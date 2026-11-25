@@ -100,8 +100,10 @@ class FakeDb:
 class FakeX:
     """The host project's X connection; `projects` records which project each call named."""
 
-    def __init__(self, *, fail=None, connector=MEMBER):
+    def __init__(self, *, fail=None, connector=MEMBER, owned=True):
         self.fail = fail or {}
+        self.owned = owned
+        self.owner_asked: list[str] = []
         self.asked: list[str | None] = []
         self.projects: list = []
         self.members: list = []
@@ -117,6 +119,13 @@ class FakeX:
         if "connection" in self.fail:
             raise self.fail["connection"]
         return self.connected
+
+    async def list_owner(self, project_id, member, *, list_id):
+        self.projects.append(project_id)
+        self.owner_asked.append(list_id)
+        if "owner" in self.fail:
+            raise self.fail["owner"]
+        return {"list_id": list_id, "owner_id": "1", "owned": self.owned}
 
     async def list_posts(self, project_id, member, *, list_id, max_results, pagination_token):
         self.projects.append(project_id)
@@ -159,9 +168,15 @@ async def test_pages_until_the_window_with_retweets_dropped_and_quotes_kept():
     assert status["status"] == "ok" and status["pages"] == 2
     assert status["retweets_dropped"] == 2 and status["items_in_window"] == 3
     # One receipt and one provider call record per page, with the estimated supplier cost.
-    assert sorted(db.effects) == [x_list.page_key(run_id, LIST, n) for n in (1, 2)]
+    assert sorted(db.effects) == sorted(
+        [x_list.owner_key(run_id, LIST)] + [x_list.page_key(run_id, LIST, n) for n in (1, 2)]
+    )
     assert all(r.status == "completed" for r in db.effects.values())
-    assert [c["response_summary"]["est_supplier_usd"] for c in db.calls] == ["0.020", "0.010"]
+    assert db.calls[0]["response_summary"] == {"owned": True}
+    assert [c["response_summary"]["est_supplier_usd"] for c in db.calls[1:]] == [
+        "0.020",
+        "0.010",
+    ]
     assert {c["capability"] for c in db.calls} == {"x.lists.manage"}
     # integration_call_receipts takes started, completed, failed or unknown.
     assert {c["status"] for c in db.calls} == {"completed"}
@@ -179,7 +194,7 @@ async def test_a_retry_reuses_completed_pages_without_buying_them_again():
     again = FakeX()
     again.connected = x.connected
     status, kept = await read(db, again, run_id)
-    assert again.asked == [] and kept == []
+    assert again.asked == [] and again.owner_asked == [] and kept == []
     assert status["pages"] == 2 and status["items_in_window"] == 3
 
 
@@ -212,7 +227,7 @@ async def test_a_refusal_before_anything_was_bought_forgets_the_receipt(failure,
     status, kept = await read(db, FakeX(fail={None: failure}), run_id)
     assert status["reason"] == reason and kept == []
     assert status["status"] in {"failed", "skipped"}
-    assert db.effects == {} and db.calls == []
+    assert list(db.effects) == [x_list.owner_key(run_id, LIST)] and len(db.calls) == 1
 
 
 async def test_the_list_is_read_as_whoever_connected_x_on_the_host():
@@ -228,10 +243,10 @@ async def test_the_host_reconnected_by_someone_else_mid_read_is_skipped():
     refused = IntegrationAuthorizationError(
         "Only the member who connected X in this project can act as its account."
     )
-    db = FakeDb()
-    status, kept = await read(db, FakeX(fail={None: refused}), uuid4())
+    db, run_id = FakeDb(), uuid4()
+    status, kept = await read(db, FakeX(fail={None: refused}), run_id)
     assert status["status"] == "skipped" and status["reason"] == "x_member"
-    assert db.effects == {} and kept == []
+    assert list(db.effects) == [x_list.owner_key(run_id, LIST)] and kept == []
 
 
 def _forbidden(kind):
@@ -257,12 +272,46 @@ def _forbidden(kind):
         (_forbidden("client-forbidden"), "x_reauthorize"),
     ],
 )
-async def test_a_list_x_wont_serve_is_skipped_with_its_reason(failure, reason):
-    db = FakeDb()
-    status, kept = await read(db, FakeX(fail={None: failure}), uuid4())
+@pytest.mark.parametrize("where", ["owner", None])
+async def test_a_list_x_wont_serve_is_skipped_with_its_reason(failure, reason, where):
+    """Refused at the ownership lookup (where an unknown List shows first) or at a page."""
+    db, run_id = FakeDb(), uuid4()
+    x = FakeX(fail={where: failure})
+    status, kept = await read(db, x, run_id)
     assert status["status"] == "skipped" and status["reason"] == reason
     assert status["error"] == x_list.REASONS[reason]
-    assert db.effects == {} and db.calls == [] and kept == []
+    assert kept == []
+    if where == "owner":
+        assert db.effects == {} and db.calls == [] and x.asked == []
+    else:
+        assert list(db.effects) == [x_list.owner_key(run_id, LIST)]
+        assert len(db.calls) == 1  # the ownership lookup only
+
+
+async def test_a_list_tins_account_doesnt_own_is_never_read():
+    db, run_id = FakeDb(), uuid4()
+    x = FakeX(owned=False)
+    status, kept = await read(db, x, run_id)
+    assert status["status"] == "skipped" and status["reason"] == "x_list_not_owned"
+    assert x.asked == [] and kept == []
+    assert db.effects[x_list.owner_key(run_id, LIST)].result == {"owned": False}
+    # A retry reuses the answer rather than asking X again.
+    again = FakeX()
+    again.connected = x.connected
+    status, _ = await read(db, again, run_id)
+    assert status["reason"] == "x_list_not_owned" and again.owner_asked == []
+
+
+async def test_an_unconfirmed_ownership_lookup_is_never_asked_again():
+    db, run_id = FakeDb(), uuid4()
+    x = FakeX(fail={"owner": IntegrationDeliveryUnknownError("X's answer was lost")})
+    status, _ = await read(db, x, run_id)
+    assert status["reason"] == "x_uncertain" and x.asked == []
+    assert db.effects[x_list.owner_key(run_id, LIST)].status == "started"
+    retry = FakeX()
+    retry.connected = x.connected
+    status, _ = await read(db, retry, run_id)
+    assert status["reason"] == "x_uncertain" and retry.owner_asked == []
 
 
 @pytest.mark.parametrize(
@@ -283,7 +332,7 @@ async def test_a_lost_or_failed_answer_stays_uncertain(failure):
 
 
 def test_every_unread_reason_is_a_skip_with_wording():
-    for reason in ("x_no_list", "x_no_host", "x_not_enrolled"):
+    for reason in ("x_no_list", "x_no_host", "x_not_enrolled", "x_list_not_enrolled"):
         status = x_list.skipped(reason)
         assert status["status"] == "skipped" and status["error"] == x_list.REASONS[reason]
     assert x_list.SKIPPED <= set(x_list.REASONS)

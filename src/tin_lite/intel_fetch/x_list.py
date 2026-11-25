@@ -3,10 +3,12 @@
 Every client List lives on one X connection: the intel host project's
 (`TIN_LITE_INTEL_HOST_PROJECT_ID`, Tin Computer in production). X keeps only the newest
 connection when one account is connected to several projects, so a client project's own X
-connection is never used. The List ID is the client's saved-workflow input, pinned with the
-run; the read goes through `XConnection.list_posts` and its member check, unchanged, as the
-member who connected X on the host. Only a client an operator set up for the daily brief (an
-`intel_projects` row, `tin-lite intel-channel`) is read through the host. Pages come newest
+connection is never used. The List is the one an operator pinned for the client
+(`intel_projects.x_list_id`, `tin-lite intel-x-list`), copied onto each run at prepare; a
+client's member can't name another. Before any page, one receipted lookup
+(`XConnection.list_owner`) confirms Tin's account owns the List. The read goes through
+`XConnection.list_posts` and its member check, unchanged, as the member who connected X on the
+host, and touches nothing on the account but that List. Pages come newest
 first, 100 posts each, until the oldest post is before the window or X has no more;
 X_MAX_PAGES is a runaway guard (Databasin's List took 5).
 
@@ -48,6 +50,7 @@ PAGE_SIZE = 100
 X_POST_USD = 0.005
 CAPABILITY = "x.lists.manage"
 OPERATION = "intel.x_list_page"
+OWNER_OPERATION = "intel.x_list_owner"
 SOURCE_ID = "x-list"
 
 REASONS = {
@@ -69,7 +72,15 @@ REASONS = {
         "Skipped: X didn't find this List, or won't let Tin's X account read it. Check the "
         "List ID and that the List is on Tin's X account."
     ),
-    "x_no_list": "Skipped: no X List is saved on this daily brief (its x_list_id input).",
+    "x_list_not_owned": (
+        "Skipped: the List pinned for this client isn't owned by Tin's X account, so Tin didn't "
+        "read it."
+    ),
+    "x_list_not_enrolled": (
+        "Skipped: this run names an X List other than the one an operator pinned for this "
+        "client, so Tin didn't read it."
+    ),
+    "x_no_list": "Skipped: no X List is pinned for this client (tin-lite intel-x-list).",
     "x_no_host": (
         "Skipped: no intel host project is set here, so there is no X account to read the List."
     ),
@@ -81,6 +92,10 @@ REASONS = {
 
 def page_key(run_id, list_id: str, page: int) -> str:
     return f"intel:{run_id}:x:{list_id}:{page}"
+
+
+def owner_key(run_id, list_id: str) -> str:
+    return f"intel:{run_id}:x:{list_id}:owner"
 
 
 def list_url(list_id: str) -> str:
@@ -173,6 +188,8 @@ SKIPPED = frozenset(
         "x_not_connected",
         "x_invalid",
         "x_list_unavailable",
+        "x_list_not_owned",
+        "x_list_not_enrolled",
         "x_no_list",
         "x_no_host",
         "x_not_enrolled",
@@ -233,6 +250,21 @@ def _list_refusal(exc: Exception) -> str | None:
     return None
 
 
+def _outcome(exc: Exception) -> tuple[str, bool]:
+    """A failed X call's reason, and whether X refused it before selling anything (so its
+    started receipt is forgotten). Anything else may have been bought and stays uncertain."""
+    if isinstance(exc, IntegrationRateLimitedError):
+        return "x_rate_limited", True
+    if isinstance(exc, IntegrationInputError):
+        return "x_invalid", True
+    if isinstance(exc, IntegrationAuthorizationError):
+        # Refused before X served anything (the List, the member check, a reconnect).
+        return _list_refusal(exc) or _refusal(exc), True
+    if isinstance(exc, IntegrationUpstreamError) and (reason := _list_refusal(exc)):
+        return reason, True
+    return "x_uncertain", False
+
+
 async def read_list(
     db,
     x,
@@ -245,9 +277,10 @@ async def read_list(
     put,
     heartbeat=None,
 ) -> dict[str, Any]:
-    """Read the List for the window through the host project's X connection, page by page under
-    the client run's receipts; `put(conn, items)` stores a page's items in the page's own
-    receipt lock. Returns the X source's status."""
+    """Read the List for the window through the host project's X connection, once X confirms
+    the host's account owns it, page by page under the client run's receipts; `put(conn,
+    items)` stores a page's items in the page's own receipt lock. Returns the X source's
+    status."""
     fetched_at = iso(datetime.now(UTC))
     status: dict[str, Any] = {
         "id": SOURCE_ID,
@@ -283,6 +316,36 @@ async def read_list(
     member = connection.connected_by_clerk_user_id
     if not member:
         return stop("x_reauthorize")
+    # Only a List Tin's own account owns is read, whatever ID was pinned: one receipted lookup.
+    key = owner_key(run_id, list_id)
+    async with db.effect_lock(key, OWNER_OPERATION) as (conn, receipt):
+        if receipt is not None and receipt.status == "completed":
+            owned = (receipt.result or {}).get("owned") is True
+        elif receipt is not None:
+            return stop("x_uncertain")
+        else:
+            await db.start_effect(conn, execution_key=key, operation=OWNER_OPERATION)
+            try:
+                found = await x.list_owner(host_project_id, member, list_id=list_id)
+            except Exception as exc:  # noqa: BLE001 — sorted by what X may have sold
+                reason, refused = _outcome(exc)
+                if refused:
+                    await db.discard_started_effect(conn, execution_key=key)
+                return stop(reason)
+            owned = found.get("owned") is True
+            await record_call(
+                db,
+                connection=connection,
+                capability=CAPABILITY,
+                fingerprint=hashlib.sha256(f"owner|{list_id}".encode()).hexdigest(),
+                execution_key=key,
+                run_id=run_id,
+                status="completed",
+                response_summary={"owned": owned},
+            )
+            await db.complete_effect(conn, execution_key=key, result={"owned": owned})
+    if not owned:
+        return stop("x_list_not_owned")
     cursor: str | None = None
     for number in range(1, X_MAX_PAGES + 1):
         if heartbeat is not None:
@@ -304,24 +367,11 @@ async def read_list(
                         max_results=PAGE_SIZE,
                         pagination_token=cursor,
                     )
-                except IntegrationRateLimitedError:
-                    await db.discard_started_effect(conn, execution_key=key)
-                    return stop("x_rate_limited")
-                except IntegrationInputError:
-                    await db.discard_started_effect(conn, execution_key=key)
-                    return stop("x_invalid")
-                except IntegrationAuthorizationError as exc:
-                    # Refused before X served anything (the List, the member check, a
-                    # reconnect).
-                    await db.discard_started_effect(conn, execution_key=key)
-                    return stop(_list_refusal(exc) or _refusal(exc))
-                except IntegrationUpstreamError as exc:
-                    if (reason := _list_refusal(exc)) is None:
-                        return stop("x_uncertain")  # may have been bought: kept started
-                    await db.discard_started_effect(conn, execution_key=key)
+                except Exception as exc:  # noqa: BLE001 — sorted by what X may have sold
+                    reason, refused = _outcome(exc)
+                    if refused:
+                        await db.discard_started_effect(conn, execution_key=key)
                     return stop(reason)
-                except Exception:  # noqa: BLE001 — an unknown outcome may have been bought
-                    return stop("x_uncertain")
                 posts = [p for p in page.get("posts") or [] if isinstance(p, dict)]
                 items, counts = page_items(
                     posts,

@@ -43,7 +43,10 @@ class Slack:
         return "1764000000.000100"
 
 
-async def setup(db, *, files=None, inputs=None, channel="C0TESTCHAN", with_host=True):
+LIST_ID = "2125213001850495223"
+
+
+async def setup(db, *, files=None, inputs=None, channel="C0TESTCHAN", with_host=True, x_list=None):
     storage = Storage()
     storage.repo.id = f"projects/{uuid4().hex}"
     project = await db.create_project(name="Acme Data", state_repo_id=storage.repo.id)
@@ -57,12 +60,15 @@ async def setup(db, *, files=None, inputs=None, channel="C0TESTCHAN", with_host=
     storage.repo.edit({**defaults, **(files or {})}, message="client files")
     run_id = await run(db, project.id, intel_daily.KEY, status="pending", inputs=inputs or {})
     await db.pool.execute("UPDATE workflow_runs SET created_at = $2 WHERE id = $1", run_id, CREATED)
-    if channel:
+    if channel or x_list:
+        # An operator's setup: the channel (tin-lite intel-channel) and the pinned List
+        # (tin-lite intel-x-list).
         await db.pool.execute(
-            "INSERT INTO intel_projects (project_id, slack_channel_id, slack_channel_name) "
-            "VALUES ($1, $2, 'test-channel')",
+            "INSERT INTO intel_projects (project_id, slack_channel_id, slack_channel_name, "
+            "x_list_id) VALUES ($1, $2, 'test-channel', $3)",
             project.id,
             channel,
+            x_list,
         )
     host = (
         await db.create_project(name="Tin Computer", state_repo_id=f"projects/{uuid4().hex}")
@@ -126,7 +132,8 @@ async def test_prepare_pins_the_day_window_revision_and_destination(db):
                 json.loads((FIXTURES / "hn-reddit.json").read_text())["config"]
             ).encode()
         },
-        inputs={"x_list_id": "2125213001850495223", "post_brief": True},
+        inputs={"post_brief": True},
+        x_list=LIST_ID,
     )
     head = f.storage.repo.head
     result = await f.acts.prepare(str(f.run_id))
@@ -159,14 +166,14 @@ async def test_an_invalid_source_is_skipped_with_its_reason(db):
 
 
 async def test_no_saved_list_records_x_skipped_with_its_reason(db):
-    # Staging 2026-11-25: a brief saved without x_list_id left X out of sources.json entirely.
+    # Staging 2026-11-25: a brief without a List left X out of sources.json entirely.
     f = await setup(db)
     result = await f.acts.prepare(str(f.run_id))
     assert "x" not in result["groups"]
     statuses = (await intel_store.get_fetch(db.pool, f.run_id))["source_status"]
     (x,) = [s for s in statuses if s["id"] == "x-list"]
     assert x["status"] == "skipped" and x["reason"] == "x_no_list"
-    assert "no X List is saved" in x["error"]
+    assert "no X List is pinned" in x["error"]
 
 
 async def test_company_md_missing_refuses_before_any_fetch(db):
@@ -219,9 +226,10 @@ class HostX:
     """X with one connection, Tin's own on the host project. A client project's connection
     must never be asked for: X keeps only the newest of one account's connections."""
 
-    def __init__(self, host, *, connected=True):
+    def __init__(self, host, *, connected=True, owned=True):
         self.host = host
         self.connected = connected
+        self.owned = owned
         self.asked: list[tuple] = []
         self.connection_row = SimpleNamespace(
             id=None,
@@ -239,8 +247,12 @@ class HostX:
             raise IntegrationAuthorizationError("Connect or reconnect X in this project")
         return self.connection_row
 
+    async def list_owner(self, project_id, member, *, list_id):
+        self.asked.append(("list_owner", project_id, member, list_id))
+        return {"list_id": list_id, "owner_id": "1", "owned": self.owned}
+
     async def list_posts(self, project_id, member, *, list_id, max_results, pagination_token):
-        self.asked.append(("list_posts", project_id, member))
+        self.asked.append(("list_posts", project_id, member, list_id))
         post = {
             "id": "31",
             "text": "Our lakehouse pricing changed today.",
@@ -252,11 +264,8 @@ class HostX:
         return {"list_id": list_id, "posts": [post], "next_token": None}
 
 
-LIST_ID = "2125213001850495223"
-
-
-async def test_x_reads_the_list_through_the_host_connection_for_the_client_run(db):
-    f = await setup(db, inputs={"x_list_id": LIST_ID})
+async def test_x_reads_the_pinned_list_through_the_host_connection_for_the_client_run(db):
+    f = await setup(db, x_list=LIST_ID)
     await db.pool.execute(
         "UPDATE workflow_runs SET started_by_clerk_user_id = 'user_clientmember' WHERE id = $1",
         f.run_id,
@@ -266,12 +275,15 @@ async def test_x_reads_the_list_through_the_host_connection_for_the_client_run(d
     prepared = await f.acts.prepare(str(f.run_id))
     assert "x" in prepared["groups"]
     pinned = (await db.get_effect(f"intel:{f.run_id}:prepare")).result
-    assert pinned["x_host_project_id"] == str(f.host)
+    assert pinned["x_host_project_id"] == str(f.host) and pinned["x_list_id"] == LIST_ID
     result = await f.acts.fetch({"run_id": str(f.run_id), "group": "x"})
     assert result == {"items": 1, "sources": 1, "x": "ok"}
     # Only the host's connection, as whoever connected X there, not the client run's starter.
     assert {a[1] for a in x.asked} == {f.host}
-    assert {a[2] for a in x.asked if a[0] == "list_posts"} == {"user_host_x"}
+    assert {a[2] for a in x.asked if a[0] != "connection"} == {"user_host_x"}
+    # Ownership first, then only the pinned List's pages: nothing else on the account.
+    assert [a[0] for a in x.asked] == ["connection", "list_owner", "list_posts"]
+    assert {a[3] for a in x.asked if a[0] != "connection"} == {LIST_ID}
     # The items, the page receipt and the call record are the client run's.
     rows = await db.pool.fetch("SELECT source_id FROM intel_items WHERE run_id = $1", f.run_id)
     assert [r["source_id"] for r in rows] == ["x-list"]
@@ -287,7 +299,7 @@ async def test_x_reads_the_list_through_the_host_connection_for_the_client_run(d
 
 
 async def test_x_without_a_host_connection_is_skipped_and_the_day_goes_on(db):
-    f = await setup(db, inputs={"x_list_id": LIST_ID})
+    f = await setup(db, x_list=LIST_ID)
     x = HostX(f.host, connected=False)
     f.acts.integrations.x = x
     await f.acts.prepare(str(f.run_id))
@@ -302,13 +314,18 @@ async def test_x_without_a_host_connection_is_skipped_and_the_day_goes_on(db):
 
 
 @pytest.mark.parametrize(
-    ("host", "channel", "reason"),
-    [(False, "C0TESTCHAN", "x_no_host"), (True, None, "x_not_enrolled")],
+    ("setup_args", "reason"),
+    [
+        ({"with_host": False, "x_list": LIST_ID}, "x_no_host"),
+        # No operator setup: the project can't use the host's X at all, whatever it asks for.
+        ({"channel": None, "inputs": {"x_list_id": LIST_ID}}, "x_not_enrolled"),
+        ({}, "x_no_list"),
+        # A run whose (older) input names another client's List is never read.
+        ({"x_list": LIST_ID, "inputs": {"x_list_id": "999"}}, "x_list_not_enrolled"),
+    ],
 )
-async def test_x_without_a_host_or_an_operators_setup_is_skipped_at_prepare(
-    db, host, channel, reason
-):
-    f = await setup(db, inputs={"x_list_id": LIST_ID}, with_host=host, channel=channel)
+async def test_x_is_read_only_for_the_list_an_operator_pinned(db, setup_args, reason):
+    f = await setup(db, **setup_args)
     x = HostX(f.host)
     f.acts.integrations.x = x
     result = await f.acts.prepare(str(f.run_id))
@@ -316,7 +333,28 @@ async def test_x_without_a_host_or_an_operators_setup_is_skipped_at_prepare(
     statuses = (await intel_store.get_fetch(db.pool, f.run_id))["source_status"]
     (status,) = [s for s in statuses if s["id"] == "x-list"]
     assert status["status"] == "skipped" and status["reason"] == reason
+    # Even a fetch of the X group asked for anyway reads nothing.
+    assert (await f.acts.fetch({"run_id": str(f.run_id), "group": "x"}))["items"] == 0
     assert x.asked == []
+
+
+async def test_an_older_input_naming_the_pinned_list_is_read(db):
+    f = await setup(db, x_list=LIST_ID, inputs={"x_list_id": LIST_ID})
+    f.acts.integrations.x = HostX(f.host)
+    assert "x" in (await f.acts.prepare(str(f.run_id)))["groups"]
+    assert (await f.acts.fetch({"run_id": str(f.run_id), "group": "x"}))["x"] == "ok"
+
+
+async def test_a_list_tins_account_doesnt_own_is_never_read(db):
+    f = await setup(db, x_list=LIST_ID)
+    x = HostX(f.host, owned=False)
+    f.acts.integrations.x = x
+    await f.acts.prepare(str(f.run_id))
+    result = await f.acts.fetch({"run_id": str(f.run_id), "group": "x"})
+    assert result["x"] == "x_list_not_owned"
+    assert [a[0] for a in x.asked] == ["connection", "list_owner"]
+    owner = await db.get_effect(f"intel:{f.run_id}:x:{LIST_ID}:owner")
+    assert owner.status == "completed" and owner.result == {"owned": False}
 
 
 async def test_load_with_no_items_fails_before_the_judge(db):
@@ -368,7 +406,7 @@ async def test_a_crashed_group_records_each_of_its_sources(db, monkeypatch):
 
 
 async def test_load_records_the_sources_of_a_group_that_never_finished(db):
-    f = await setup(db, inputs={"x_list_id": "2125213001850495223"})
+    f = await setup(db, x_list=LIST_ID)
     await f.acts.prepare(str(f.run_id))
     # rss ran; gnews, pages and x timed out or ran out of attempts.
     await f.acts.fetch({"run_id": str(f.run_id), "group": "rss"})

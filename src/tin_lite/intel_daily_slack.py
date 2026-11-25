@@ -95,7 +95,9 @@ X_NOTES = {
     "x_uncertain": "X List cut short: one page wasn't confirmed",
     "x_invalid": "X List not read: X refused the List ID",
     "x_list_unavailable": "X List not read: X didn't find it or won't serve it to Tin's account",
-    # A brief with no List saved says nothing about X; sources.json still records the skip.
+    "x_list_not_owned": "X List not read: Tin's X account doesn't own it",
+    "x_list_not_enrolled": "X List not read: it isn't the List set up for this client",
+    # A brief with no List pinned says nothing about X; sources.json still records the skip.
     "x_no_list": None,
     "x_no_host": "X List not read: no intel host project is set",
     "x_not_enrolled": "X List not read: this client isn't set up for Tin's X",

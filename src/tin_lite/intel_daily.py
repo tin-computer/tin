@@ -2,8 +2,8 @@
 
 Every morning at 09:00 in the project's timezone, code reads the client's market for the last
 day: its trade press, vendors, regulators and journals (`intel/sources/rss.json`), its Hacker
-News queries and subreddits (`intel/sources/hn-reddit.json`), its private X List (the saved
-workflow's `x_list_id`, read through the intel host project's X connection) and today's
+News queries and subreddits (`intel/sources/hn-reddit.json`), its private X List (the one an
+operator pinned for it, read through the intel host project's X connection) and today's
 world stories from Tin's world feed. The client judge (`intel.client_judge`, Antigravity on
 Gemini 4 Neon) then decides what matters for the client against its `company.md`, records the
 day's stories, writes a detailed report and a short executive brief. Tin publishes the report,
@@ -34,13 +34,15 @@ POLICY = {"version": "intel-v1"}
 VERSION_LABEL = "1.0.0"
 DEFAULT_SCHEDULE = {"cadence": "daily", "local_time": "09:00"}
 
+# No `x_list_id`: the List is the one an operator pinned for the client (intel_projects,
+# `tin-lite intel-x-list`), read through Tin's own X. Runs and saved workflows pinned to the
+# first definition may still carry one; a run reads it only when it equals the pin.
 INPUT_SCHEMA: dict[str, Any] = {
     "type": "object",
     "additionalProperties": False,
     "properties": {
         "project_id": {"type": "string", "format": "uuid"},
         "post_brief": {"type": "boolean", "default": True},
-        "x_list_id": {"type": "string", "pattern": "^[0-9]{1,19}$"},
         "x_keep_retweets": {"type": "boolean", "default": False},
         "lookback_hours": {"type": "integer", "minimum": 12, "maximum": 72, "default": 24},
     },
@@ -227,7 +229,7 @@ PRESENTATION = WorkflowDiagram(
     ),
     edges=(
         DiagramEdge("configs", "fetch"),
-        DiagramEdge("configs", "x", label="when a List is saved"),
+        DiagramEdge("configs", "x", label="when an operator pinned a List"),
         DiagramEdge("fetch", "day"),
         DiagramEdge("x", "day"),
         DiagramEdge("world", "day", label="missing: the brief says so"),
