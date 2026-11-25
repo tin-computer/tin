@@ -107,3 +107,25 @@ def test_the_judges_markdown_check_is_lenient():
         validate_intel_markdown(
             b"The grant was Bearer abcdefghijklmnopqrstuvwxyz0123", limit=20_000
         )
+
+
+def test_the_client_judges_brief_example_reports_and_never_suggests():
+    """Staging 2026-11-25: the skill's own example modelled a page suggestion, and Databasin's
+    brief copied it ("Worth refreshing our ... comparison page"). The example passes Tin's
+    brief check with no warning, and the rules no longer hold a suggestion up as good style."""
+    import json
+    import re
+    from pathlib import Path
+
+    from tin_lite import intel_brief
+
+    root = Path(__file__).resolve().parents[1] / "codex_procedures" / "intel.client_judge"
+    skill = (root / "skills" / "client-intel" / "SKILL.md").read_text()
+    example = json.loads(re.search(r"Example, for[^\n]*\n\n```json\n(.*?)\n```", skill, re.S)[1])
+    links = intel_brief.LinkIndex(
+        re.findall(r"\]\((https://[^)]+)\)", json.dumps(example).replace("\\/", "/"))
+    )
+    _kept, warnings = intel_brief.validate(intel_brief.CLIENT_SCHEMA, example, links=links)
+    assert warnings == []
+    # The old rule held the suggestion up as the right way to write.
+    assert '"Worth refreshing our pricing page", never' not in skill

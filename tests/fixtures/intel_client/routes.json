@@ -1,0 +1,11 @@
+{"feeds.example/health.xml": "feed.xml",
+ "news.google.com/rss/search": "gnews.xml",
+ "press.example/2026/11/payer-rule": "page-payer-rule.html",
+ "press.example/2026/11/undated-feature": "page-undated.html",
+ "vendor.example/newsroom": "listing.html",
+ "vendor.example/newsroom/post/one-launch": "page-one-launch.html",
+ "vendor.example/newsroom/post/two-old": "page-two-old.html",
+ "blog.example/sitemap.xml": "sitemap-index.xml",
+ "blog.example/sitemap-posts.xml": "sitemap-posts.xml",
+ "blog.example/blog/governed-answers": "page-governed.html",
+ "api.crossref.org/journals/1234-5678/works": "crossref.json"}

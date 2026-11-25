@@ -8,8 +8,8 @@ did in the last day. Two native workflows do the work, and each runs one agent a
 | `intel.world` | the operator's host project, daily 06:00 UTC | `intel.world_judge` | world stories every client reads; `intel/world/<day>/STORIES.md`; a Slack summary in Tin's workspace |
 | `intel.daily` | a client project, daily in its time zone | `intel.client_judge` | the client's stories, `intel/reports/<day>/report.md`, and a Slack brief |
 
-The client workflow is documented with its own package. This page covers what both share
-and the world feed.
+This page covers what both share and the world feed, then the client brief in
+[A client's daily brief](#a-clients-daily-brief-inteldaily).
 
 ## How a day runs
 
@@ -182,3 +182,168 @@ a managed client's daily brief posts to.
 A failed world run shows in the host project's My system under Needs a look, and in Activity.
 Its day is recorded as `failed`, and client briefs say the world stories are unavailable that
 day.
+
+## A client's daily brief (`intel.daily`)
+
+`intel.daily` reads one client's market every morning, has an analyst agent judge it, and
+publishes a detailed report and a short executive brief. It is a saved project workflow,
+scheduled daily at 09:00 in the project's timezone and billed to the project like any other
+workflow.
+
+### What the project needs
+
+- `company.md` at the root of the project files (`context/company.md` also works): who the
+  client is, its buyers, competitors and team, and in section 7 the claims it may and may not
+  make. The analyst follows section 7 in everything it writes. Without it the run is refused
+  before anything is fetched or charged.
+- At least one source config. Without either, the run is refused the same way.
+  - `intel/sources/rss.json`: `{"sources": [...], "exclude_outlets": [...],
+    "exclude_domains": [...], "enrich_text_below_chars": 280}`. Each source has an `id`, a
+    `name` and a `method`:
+    - `rss`: a feed `url`;
+    - `google_news`: a search `query`;
+    - `html_links`: a listing page `url`, and `link_paths` naming the article links;
+    - `sitemap`: a sitemap `url`, and `url_paths` naming the pages to read;
+    - `crossref`: a journal `issn`.
+  - `intel/sources/hn-reddit.json`: `{"hn": {"queries": [{"q", "tags"}], "extra_params",
+    "quote_multiword", "thread_comments"}, "reddit": {"subreddits": [{"name", "all_posts",
+    "post_queries", "comment_queries"}], "thread_comments"}}`. Tin uses its own endpoints
+    (Algolia for HN, Arctic Shift for Reddit), whatever the file says.
+- Optional: an X List on Tin's own X account, pinned for the client by an operator
+  (`tin-lite intel-x-list`). It is read through the X connection on the intel host project,
+  never through an X connection of the client's.
+
+`link_paths` and `url_paths` are path globs, not regular expressions. Configs are project files
+any member can edit, and Tin's worker never runs a pattern from one. A glob is a host (with or
+without `www.`) and path segments:
+
+- `*` stands for exactly one segment;
+- `**` stands for one or more, and only as the last part;
+- everything else is literal.
+
+A trailing slash, the query and the fragment are ignored. For example,
+`vendor.example/blog/*` and `vendor.example/news/**`. A source can have up to 20 globs of up to
+200 characters. A source that still uses `link_pattern` or `url_pattern` is skipped with that
+reason.
+
+A source that fails its checks is skipped with a reason in the run's source status, and the rest
+of the day goes on.
+
+### Inputs
+
+| Input | Default | Meaning |
+|---|---|---|
+| `post_brief` | `true` | Post the brief in Slack when a channel is set |
+| `x_keep_retweets` | `false` | Keep plain retweets (dropped by default: mostly truncated copies) |
+| `lookback_hours` | 24 | 12 to 72; used when there is no recent run to continue from |
+
+### The X List
+
+Every client's List lives on one X connection: the intel host project's
+(`TIN_LITE_INTEL_HOST_PROJECT_ID`, Tin Computer in production). Connecting one X account to
+several Tin projects keeps only the newest connection, so the client's project needs no X of its
+own, and one it has is ignored.
+
+- **The List is the operator's pin, not an input.** `tin-lite intel-x-list <project> <list_id>`
+  stores it on the client's `intel_projects` row; a List can be pinned for one client only.
+  Members of a client project can't choose a List, so they can't point Tin's X account at
+  another client's. Saved workflows from the first definition may still carry an `x_list_id`
+  input: a run reads X only when it equals the pin.
+- **Ownership is checked.** Before any page, one receipted lookup asks X who owns the List; Tin
+  reads it only when Tin's own account does. The read touches nothing on the account but that
+  List.
+- **Who reads it.** The List is read as whoever connected X on the host project, through that
+  connection's own member check; who saved or started the client's workflow doesn't matter.
+- **Receipts.** The ownership lookup and every page have receipts keyed by the client's run
+  (`intel:<run>:x:<list>:owner`, `intel:<run>:x:<list>:<page>`), and so do its items. The X call
+  records carry the client's run and the host's connection. Each page's receipt is its usage
+  receipt, and the client's run is charged from it (see Billing below).
+- **When X isn't read**, the reason is in `sources.json` and, except for a client with no List,
+  in a line of the brief:
+
+  | Reason | When |
+  |---|---|
+  | `x_no_host` | No intel host project is set |
+  | `x_not_enrolled` | The client has no operator setup (`intel_projects` row) |
+  | `x_no_list` | No List is pinned for the client |
+  | `x_list_not_enrolled` | The run's old `x_list_id` input names a different List |
+  | `x_not_connected`, `x_reauthorize` | X isn't connected on the host, or needs reconnecting |
+  | `x_list_unavailable` | X doesn't find the List, or won't serve it to Tin's account |
+  | `x_list_not_owned` | Tin's account doesn't own the List |
+  | `x_member` | X on the host was reconnected by someone else mid-read |
+  | `x_spending` | The run's budget or the project's limits had no room for another page |
+
+### How a run goes
+
+1. **Prepare** pins these, so a later edit changes only future runs:
+   - the client's day, which is the local date in the project's timezone;
+   - the window, which ends at the run's start. It continues from the last successful run with
+     an hour of overlap, or else looks back `lookback_hours`;
+   - the project revision the configs were read at;
+   - the Slack destination;
+   - whether X is read: the host project and the List pinned for the client.
+2. **Fetch** reads in groups, one after another: feeds, Google News, pages (html_links, sitemap,
+   crossref), HN, Reddit and X.
+   - Each source has a deadline, longer for a subreddit.
+   - A retried group skips the sources it already recorded.
+   - Google News links stay Google News links until after the judge.
+3. **Load** builds the day the analyst reads:
+   - it records any source a fetch group never finished as failed, with the group's reason;
+   - it adds the stories of the newest usable world day (`ready` or `partial`), and pins that
+     day on the run, so the snapshot, the brief and `sources.json` all name the same one;
+   - a client's own item for the same URL as a world story keeps its row, with a line naming
+     the world story;
+   - it gives every item its id;
+   - it stores one snapshot.
+
+   If the client's own sources gave nothing, the run fails here, before the analyst is paid for.
+4. **Judge**: `intel.client_judge` (Antigravity on Gemini 4 Neon, high effort, in the isolated
+   sandbox) runs as the run's child. It reads the day with the `intel` command and does three
+   things:
+   - it records the day's stories;
+   - it writes the eight-section `report.md`;
+   - it sends the brief as `intel-brief/1` JSON, which Tin checks. Links must lead to the day's
+     items, and single-source claims are marked "To verify".
+5. **Publish** unwraps the Google News links that the report and brief use. Then one commit
+   adds `intel/reports/<day>/report.md`, `brief.md` and `sources.json` (the status of every
+   source).
+6. **Post** sends the brief through Tin's own Slack app (the host project's
+   `messaging.slack` connection) to the channel an operator set for the client.
+   - The message has the day's headline, three to five developments with their outlets, and
+     buttons to the report and the source status.
+   - Suggestions stay in the report.
+   - The post is recorded before Slack is called and is never sent twice.
+
+### When part of the day is missing
+
+| Situation | What happens |
+|---|---|
+| A source fails, is empty or is skipped | Recorded in `sources.json`; the run goes on |
+| A whole fetch group fails or never finishes | Each of its sources is recorded as failed; the run goes on |
+| X not connected on the host project, reconnect needed, List not found, not readable or not Tin's | X skipped with the reason; the brief says so |
+| No host project, no operator setup, no pinned List, or an input naming another List | X skipped with the reason |
+| An X page's purchase unconfirmed | Never bought again; X stops there with what it read |
+| No usable world day at load | The run goes on; the brief says world stories are unavailable |
+| The analyst sends no usable brief | Tin writes one from the day's high and medium stories, and the brief says so |
+| The analyst fails | The run fails with the analyst's own reason; its stories stay |
+| No Slack channel set, or Slack refuses | Nothing is posted; the run still succeeds |
+
+### Billing
+
+Billing is as described [above](#billing): $2.30 to $3.80 a day for the analyst. The client
+also pays for its X List pages, read through Tin's X: each page reserves 100 posts' worth
+($0.50) before X is asked and is charged $0.005 for each post X returned, on the client's run.
+A page X refused is charged nothing; a page whose answer was lost stays pending until the run
+settles. Tin's X ownership lookup, one per run, isn't charged.
+
+### Operator setup
+
+1. Set `TIN_LITE_INTEL_HOST_PROJECT_ID` to the project whose Slack connection is Tin's own app.
+2. Connect X on the host project with Tin's own account (`@tincomputer` in production). Keep
+   that account connected to the host only: connecting it to another project drops the host's.
+3. Set the client's channel with `tin-lite intel-channel <project_id> <channel_id> "<name>"`.
+   Use `none` as the channel ID to stop posting.
+4. Create the client's List on Tin's X account and pin it with
+   `tin-lite intel-x-list <project_id> <list_id>`. Use `none` to stop reading X.
+5. Commit `company.md` and the source configs to the client's project, and save `intel.daily`
+   on it.

@@ -1,0 +1,314 @@
+{
+ "config": {
+  "hn": {
+   "endpoint": "https://hn.algolia.com/api/v1/search_by_date",
+   "items_endpoint": "https://hn.algolia.com/api/v1/items/{id}",
+   "quote_multiword": true,
+   "extra_params": {
+    "typoTolerance": "false"
+   },
+   "thread_comments": {
+    "max_comments": 8,
+    "max_chars_per_comment": 1200
+   },
+   "queries": [
+    {
+     "q": "Epic Clarity",
+     "tags": [
+      "story",
+      "comment"
+     ]
+    },
+    {
+     "q": "Caboodle",
+     "tags": [
+      "story"
+     ]
+    }
+   ]
+  },
+  "reddit": {
+   "api_base": "https://arctic-shift.photon-reddit.com/api",
+   "pace_seconds": 0,
+   "thread_comments": {
+    "max_comments": 10,
+    "max_chars_per_comment": 1200
+   },
+   "subreddits": [
+    {
+     "name": "healthIT",
+     "all_posts": true,
+     "comment_queries": [
+      "Clarity"
+     ]
+    },
+    {
+     "name": "dataengineering",
+     "post_queries": [
+      "Fabric"
+     ]
+    }
+   ]
+  }
+ },
+ "responses": [
+  {
+   "path": "/api/v1/search_by_date",
+   "params": {
+    "query": "\"Epic Clarity\"",
+    "tags": "story"
+   },
+   "body": {
+    "hits": [
+     {
+      "objectID": "900",
+      "title": "Show HN: Query Epic Clarity without a warehouse",
+      "url": "https://tool.example/clarity?utm_source=hn",
+      "author": "dev1",
+      "created_at_i": 1795485600,
+      "points": 120,
+      "num_comments": 3,
+      "story_text": null
+     }
+    ],
+    "nbPages": 1
+   }
+  },
+  {
+   "path": "/api/v1/search_by_date",
+   "params": {
+    "query": "\"Epic Clarity\"",
+    "tags": "comment"
+   },
+   "body": {
+    "hits": [
+     {
+      "objectID": "903",
+      "story_id": 900,
+      "story_title": "Show HN: Query Epic Clarity without a warehouse",
+      "story_url": "https://tool.example/clarity",
+      "author": "analyst9",
+      "comment_text": "We run Epic Clarity extracts nightly; <p>the hard part is the &quot;Caboodle&quot; joins.",
+      "created_at_i": 1795489200
+     }
+    ],
+    "nbPages": 1
+   }
+  },
+  {
+   "path": "/api/v1/search_by_date",
+   "params": {
+    "query": "Caboodle",
+    "tags": "story"
+   },
+   "body": {
+    "hits": [],
+    "nbPages": 0
+   }
+  },
+  {
+   "path": "/api/v1/items/900",
+   "params": {},
+   "body": {
+    "id": 900,
+    "points": 120,
+    "children": [
+     {
+      "id": 901,
+      "type": "comment",
+      "author": "a",
+      "text": "Short top comment.",
+      "children": []
+     },
+     {
+      "id": 902,
+      "type": "comment",
+      "author": "b",
+      "text": "A much longer top comment about how Clarity reporting works in practice at a mid-sized hospital.",
+      "children": [
+       {
+        "id": 903,
+        "type": "comment",
+        "author": "analyst9",
+        "text": "We run Epic Clarity extracts nightly",
+        "children": [
+         {
+          "id": 904,
+          "type": "comment",
+          "author": "c",
+          "text": "Same here, Caboodle helps.",
+          "children": []
+         }
+        ]
+       }
+      ]
+     }
+    ]
+   }
+  },
+  {
+   "path": "/api/posts/search",
+   "params": {
+    "subreddit": "healthIT"
+   },
+   "body": {
+    "data": [
+     {
+      "id": "p1",
+      "subreddit": "healthIT",
+      "title": "How do you get Clarity data into the cloud?",
+      "selftext": "Our team copies tables by hand.",
+      "author": "hitguy",
+      "created_utc": 1795482000,
+      "score": 14,
+      "num_comments": 2,
+      "is_self": true,
+      "permalink": "/r/healthIT/comments/p1/how_do_you_get_clarity/"
+     },
+     {
+      "id": "p2",
+      "subreddit": "healthIT",
+      "title": "Vendor announces something",
+      "selftext": "[removed]",
+      "removed_by_category": "automod_filtered",
+      "author": "x",
+      "created_utc": 1795492800,
+      "score": 1,
+      "num_comments": 0,
+      "is_self": false,
+      "url": "https://vendor.example/news?utm_source=reddit&a=1",
+      "permalink": "/r/healthIT/comments/p2/vendor/"
+     }
+    ]
+   }
+  },
+  {
+   "path": "/api/comments/search",
+   "params": {
+    "subreddit": "healthIT",
+    "body": "Clarity"
+   },
+   "body": {
+    "data": [
+     {
+      "id": "c1",
+      "subreddit": "healthIT",
+      "link_id": "t3_p1",
+      "author": "dba",
+      "body": "We use Clarity extracts into a warehouse.",
+      "created_utc": 1795496400,
+      "score": 5
+     }
+    ]
+   }
+  },
+  {
+   "path": "/api/comments/tree",
+   "params": {
+    "link_id": "t3_p1"
+   },
+   "body": {
+    "data": [
+     {
+      "kind": "t1",
+      "data": {
+       "id": "c1",
+       "author": "dba",
+       "body": "We use Clarity extracts into a warehouse.",
+       "score": 5,
+       "replies": {
+        "data": {
+         "children": [
+          {
+           "kind": "t1",
+           "data": {
+            "id": "c3",
+            "author": "r1",
+            "body": "Which tool?",
+            "score": 2
+           }
+          }
+         ]
+        }
+       }
+      }
+     },
+     {
+      "kind": "t1",
+      "data": {
+       "id": "c2",
+       "author": "AutoModerator",
+       "body": "Rules reminder.",
+       "score": 1
+      }
+     },
+     {
+      "kind": "t1",
+      "data": {
+       "id": "c4",
+       "author": "other",
+       "body": "We built our own pipeline.",
+       "score": 9
+      }
+     }
+    ]
+   }
+  },
+  {
+   "path": "/api/posts/ids",
+   "params": {
+    "ids": "p1"
+   },
+   "body": {
+    "data": [
+     {
+      "id": "p1",
+      "subreddit": "healthIT",
+      "title": "How do you get Clarity data into the cloud?",
+      "selftext": "Our team copies tables by hand.",
+      "author": "hitguy",
+      "created_utc": 1795482000,
+      "score": 14,
+      "num_comments": 2,
+      "is_self": true,
+      "permalink": "/r/healthIT/comments/p1/how_do_you_get_clarity/"
+     }
+    ]
+   }
+  },
+  {
+   "path": "/api/posts/search",
+   "params": {
+    "subreddit": "dataengineering"
+   },
+   "body": {
+    "data": [
+     {
+      "id": "d1",
+      "subreddit": "dataengineering",
+      "title": "Fabric capacity costs",
+      "selftext": "Is Fabric worth it?",
+      "author": "de1",
+      "created_utc": 1795500000,
+      "score": 30,
+      "num_comments": 0,
+      "is_self": true,
+      "permalink": "/r/dataengineering/comments/d1/fabric/"
+     },
+     {
+      "id": "d2",
+      "subreddit": "dataengineering",
+      "title": "Fabricated benchmarks",
+      "selftext": "Spark tuning.",
+      "author": "de2",
+      "created_utc": 1795503600,
+      "score": 3,
+      "num_comments": 0,
+      "is_self": true,
+      "permalink": "/r/dataengineering/comments/d2/x/"
+     }
+    ]
+   }
+  }
+ ]
+}
