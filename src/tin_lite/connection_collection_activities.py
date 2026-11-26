@@ -126,6 +126,22 @@ def artifacts(job, pages):
     return documents
 
 
+def _friends(count):
+    return "1 friend" if count == 1 else f"{count} friends"
+
+
+# Friends a run leaves out and goes on without, with the sentence the founder reads.
+SKIPPED = {
+    "friend_not_prepared": lambda count: (
+        f"Skipped {_friends(count)} whose connections Tin couldn't open while Chrome was "
+        "closed. Run again with Chrome open to include them."
+    ),
+    "friend_not_connected": lambda count: (
+        f"Skipped {_friends(count)} who {'is' if count == 1 else 'are'} not your LinkedIn "
+        f"connection{'' if count == 1 else 's'}."
+    ),
+}
+
 FAILURE_FALLBACK = "Connection collection could not finish. Accepted pages were retained."
 # Founder wording for the finite codes a collection stops with. Any other code is Tin's own
 # state and reads as the fallback.
@@ -373,11 +389,18 @@ class CollectionActivities:
             raise ApplicationError("collection_failed", failed.details(), non_retryable=True)
         people_count = len({person["profile_url"] for page in pages for person in page["records"]})
         summary = f"Collected {people_count} people. Results are in Files."
+        reasons = [value["reason"] for value in job["coverage"].values()]
+        skipped = {key: reasons.count(key) for key in SKIPPED if key in reasons}
         if job["state"] != "completed":
             summary = (
                 f"Partial collection: {people_count} people saved. "
                 "Collection stopped before all results were read."
             )
+        if skipped and all(r == "visible_results_exhausted" or r in SKIPPED for r in reasons):
+            # Every friend was read to the end or left out for a named reason: say which.
+            summary = f"Collected {people_count} people."
+        for key, count in skipped.items():
+            summary += " " + SKIPPED[key](count)
         await self.db.project_run_progress(
             run_id=run.id,
             mode="indeterminate",

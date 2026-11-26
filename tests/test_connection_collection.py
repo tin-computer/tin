@@ -762,6 +762,59 @@ async def test_publication_retains_coverage_without_hiding_failure(
         )
 
 
+@pytest.mark.parametrize(
+    ("coverage", "summary"),
+    [
+        (
+            {
+                "0": {"reason": "friend_not_prepared", "pages": 0, "people": 0},
+                "1": {"reason": "visible_results_exhausted", "pages": 2, "people": 0},
+            },
+            "Collected 0 people. Skipped 1 friend whose connections Tin couldn't open while "
+            "Chrome was closed. Run again with Chrome open to include them.",
+        ),
+        (
+            {
+                "0": {"reason": "friend_not_connected", "pages": 0, "people": 0},
+                "1": {"reason": "friend_not_connected", "pages": 0, "people": 0},
+            },
+            "Collected 0 people. Skipped 2 friends who are not your LinkedIn connections.",
+        ),
+        (
+            {
+                "0": {"reason": "friend_not_connected", "pages": 0, "people": 0},
+                "1": {"reason": "people_limit", "pages": 9, "people": 0},
+            },
+            "Partial collection: 0 people saved. Collection stopped before all results were "
+            "read. Skipped 1 friend who is not your LinkedIn connection.",
+        ),
+    ],
+)
+async def test_a_skipped_friend_is_named_in_the_summary(
+    collection_db, monkeypatch, coverage, summary
+):
+    from tin_lite import connection_collection_activities as activities
+
+    f = await seed(collection_db)
+    await collection_db.pool.execute(
+        "UPDATE connection_collection_jobs SET state='partial',coverage=$2::jsonb WHERE run_id=$1",
+        f.run.id,
+        json.dumps(coverage),
+    )
+
+    async def publish(**kwargs):
+        manifest = json.loads(kwargs["documents"][f"connections/{f.run.id}/manifest.json"])
+        assert manifest["coverage"] == coverage
+        return "f" * 40
+
+    monkeypatch.setattr(activities, "publish_artifacts", publish)
+    implementation = activities.CollectionActivities(
+        database=collection_db, storage=None, settings=f.store.settings
+    )
+    await implementation.publish(str(f.run.id))
+    assert (await collection_db.get_run(f.run.id)).progress_summary == summary
+
+
 async def test_http_extension_origin_and_secret_errors_are_closed(collection_db):
     import httpx
     from fastapi import FastAPI
