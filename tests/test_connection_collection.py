@@ -656,6 +656,71 @@ async def test_dedicated_cloud_image_receipts_cleanup_and_secret_boundary(
     assert usage.result["observed_wall_seconds"] is not None
 
 
+@pytest.mark.parametrize("detail", ["name_heading_missing", "not-a-known-check", None])
+async def test_the_cloud_accepts_a_named_preparation_miss_and_nothing_else(
+    collection_db, monkeypatch, detail
+):
+    from tin_lite import linkedin_cloud
+    from tin_lite.linkedin_session import validate_session
+
+    f = await cloud_fixture(collection_db)
+    job = record(
+        await collection_db.pool.fetchrow(
+            "SELECT * FROM connection_collection_jobs WHERE run_id=$1", f.run.id
+        )
+    )
+    answer = {"error": "browser_preparation_required"}
+    if detail:
+        answer["detail"] = detail
+
+    class Sandbox:
+        sandbox_id = "synthetic-cloud-sandbox"
+
+        def __init__(self):
+            self.files = self.commands = self
+
+        async def write(self, *_, **__):
+            pass
+
+        async def read(self, *_, **__):
+            return json.dumps(answer)
+
+        async def run(self, *_, **__):
+            pass
+
+        async def get_info(self):
+            return SimpleNamespace(
+                metadata={"run_id": str(f.run.id), "profile": "linkedin_http_v1"},
+                started_at=datetime.now(UTC),
+                cpu_count=1,
+                memory_mb=1024,
+            )
+
+        async def kill(self):
+            pass
+
+    class Provider:
+        @staticmethod
+        async def create(*_, **__):
+            return Sandbox()
+
+        @staticmethod
+        async def connect(*_, **__):
+            return Sandbox()
+
+    monkeypatch.setattr(linkedin_cloud, "AsyncSandbox", Provider)
+    runtime = linkedin_cloud.LinkedInCloud(collection_db, f.store.settings)
+    unresolved = {"friend_url": FRIEND, "actor": ACTOR, "query_id": None}
+    session = validate_session(session_envelope())
+    if detail == "not-a-known-check":
+        with pytest.raises(CollectionError, match="cloud_failed"):
+            await runtime.page(job, session, unresolved)
+        return
+    response = await runtime.page(job, session, unresolved)
+    assert response["error"] == "browser_preparation_required"
+    assert response.get("detail") == detail
+
+
 def test_cloud_gate_reuses_account_with_optional_override():
     from pydantic import SecretStr
 

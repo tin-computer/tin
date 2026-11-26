@@ -275,13 +275,28 @@ def prepare_source(document, source, profile, keywords):
         raise CollectionError("filters_changed")
     urn = profile.get("entityUrn", "")
     if not re.fullmatch(r"urn:li:fsd_profile:[A-Za-z0-9_-]{1,256}", urn):
-        raise CollectionError("browser_preparation_required")
+        raise CollectionError("browser_preparation_required", "no_member_id")
     member = urn.rsplit(":", 1)[-1]
     name = clean(" ".join(profile.get(k, "") for k in ("firstName", "lastName")))
     if not name:
-        raise CollectionError("browser_preparation_required")
+        raise CollectionError("browser_preparation_required", "no_name")
     content = document.content()
     matched = False
+    # When nothing matches, the furthest check any connections link got to names the miss.
+    stages = (
+        "no_connections_link",
+        "connections_link_other_member",
+        "name_heading_missing",
+        "name_heading_repeated",
+        "no_degree_badge",
+        "many_degree_badges",
+    )
+    missed = stages[0]
+
+    def reach(stage):
+        nonlocal missed
+        missed = max(missed, stage, key=stages.index)
+
     for node in content.nodes():
         if (
             node.tag != "a"
@@ -298,7 +313,9 @@ def prepare_source(document, source, profile, keywords):
         except ValueError:
             continue
         if targets != [member]:
+            reach("connections_link_other_member")
             continue
+        reach("name_heading_missing")
         for scope in node.ancestors():
             if scope is content or scope.tag in {"body", "document"}:
                 break
@@ -306,6 +323,7 @@ def prepare_source(document, source, profile, keywords):
             if not headings:
                 continue
             if len(headings) != 1:
+                reach("name_heading_repeated")
                 break
             # Social-proof cards can have other relationship badges inside the top card.
             # Bind the badge to the selected person's heading, not the whole section.
@@ -316,12 +334,15 @@ def prepare_source(document, source, profile, keywords):
                         if degrees != ["1st"]:
                             raise CollectionError("friend_not_connected")
                         matched = True
+                    else:
+                        reach("many_degree_badges")
                     break
                 if heading_scope is scope:
+                    reach("no_degree_badge")
                     break
             break
     if not matched:
-        raise CollectionError("browser_preparation_required")
+        raise CollectionError("browser_preparation_required", missed)
     result = CollectionSource(
         friend_url=expected,
         friend_name=name[:200],
@@ -658,20 +679,26 @@ async def read_document_page(client, session, source, keywords, page):
             "/voyager/api/identity/dash/profiles",
             {"q": "memberIdentity", "memberIdentity": identifier},
         )
-        stack, profiles, visited = [payload], {}, 0
+        stack, profiles, others, visited = [payload], {}, set(), 0
         while stack:
             value = stack.pop()
             visited += 1
             if visited > 5000:
-                raise CollectionError("browser_preparation_required")
+                raise CollectionError("browser_preparation_required", "lookup_too_large")
             if isinstance(value, dict):
                 if value.get("publicIdentifier") == identifier and value.get("entityUrn"):
                     profiles[value["entityUrn"]] = value
+                elif value.get("publicIdentifier") and value.get("entityUrn"):
+                    others.add(value["entityUrn"])
                 stack.extend(v for v in value.values() if isinstance(v, (dict, list)))
             elif isinstance(value, list):
                 stack.extend(value)
         if len(profiles) != 1:
-            raise CollectionError("browser_preparation_required")
+            # Only another link's profile came back: the friend changed their profile link.
+            raise CollectionError(
+                "browser_preparation_required",
+                "lookup_many" if profiles else "profile_link_changed" if others else "lookup_none",
+            )
         document = await get_document(client, session, friend)
         verify_document(document)
         resolved = prepare_source(document, source, next(iter(profiles.values())), keywords)
