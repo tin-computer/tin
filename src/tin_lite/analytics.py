@@ -93,8 +93,74 @@ METADATA_FIELDS = frozenset(
     }
 )
 
-PERSON_FIELDS = frozenset({"email"})
+PERSON_FIELDS = frozenset({"email", "name", "company", "company_domain"})
 """Person properties Tin sets (`$set`); PostHog shows a person by their email."""
+
+PERSONAL_EMAIL_DOMAINS = frozenset(
+    {
+        "gmail.com",
+        "googlemail.com",
+        "outlook.com",
+        "hotmail.com",
+        "live.com",
+        "msn.com",
+        "yahoo.com",
+        "ymail.com",
+        "icloud.com",
+        "me.com",
+        "mac.com",
+        "aol.com",
+        "proton.me",
+        "protonmail.com",
+        "pm.me",
+        "gmx.com",
+        "gmx.de",
+        "mail.com",
+        "zoho.com",
+        "yandex.com",
+        "yandex.ru",
+        "hey.com",
+        "fastmail.com",
+        "qq.com",
+        "163.com",
+        "naver.com",
+        "hotmail.co.uk",
+        "yahoo.co.uk",
+        "outlook.de",
+    }
+)
+"""Mail providers anyone can sign up with: their domain says nothing about a company."""
+
+
+def company_domain(email: str | None) -> str | None:
+    """The work domain of an address, or None for personal, education and malformed ones."""
+    if not email or "@" not in email:
+        return None
+    domain = email.strip().lower().rsplit("@", 1)[1]
+    if "." not in domain or domain in PERSONAL_EMAIL_DOMAINS:
+        return None
+    if domain.endswith(".edu") or re.search(r"\.(ac|edu)\.[a-z]{2}$", domain):
+        return None
+    return domain
+
+
+def person_properties(email: str | None, name: str | None = None) -> dict[str, str]:
+    """Email, name, and the company read from a work email's domain, for `$set`.
+
+    Empty values are left out, so a thinner event never blanks what PostHog already has.
+    The company name is the domain's first label ("acme" for acme.co.uk); the domain is
+    the exact key for joining a person to their company.
+    """
+    props: dict[str, str] = {}
+    if email:
+        props["email"] = email
+    if name and name.strip():
+        props["name"] = name.strip()
+    domain = company_domain(email)
+    if domain:
+        props["company_domain"] = domain
+        props["company"] = domain.split(".", 1)[0]
+    return props
 
 
 class PersonEmails:

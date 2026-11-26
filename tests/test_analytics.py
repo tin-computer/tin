@@ -62,7 +62,7 @@ async def test_capture_batches_to_posthog() -> None:
 
 
 @pytest.mark.asyncio
-async def test_capture_sets_only_the_person_email() -> None:
+async def test_capture_sets_only_the_person_fields() -> None:
     posted: list[dict] = []
 
     async def handler(request: httpx.Request) -> httpx.Response:
@@ -71,11 +71,15 @@ async def test_capture_sets_only_the_person_email() -> None:
 
     client = Analytics("phc_test", "https://ph.example")
     client._client = httpx.AsyncClient(transport=httpx.MockTransport(handler))
-    client.capture("x", distinct_id="user_1", person={"email": "a@b.co", "name": "A"})
+    client.capture(
+        "x",
+        distinct_id="user_1",
+        person={"email": "a@b.co", "name": "A", "company": "b", "phone": "555"},
+    )
     client.capture("x", distinct_id="user_1", person={"email": None})
     await client.flush()
     first, second = posted[0]["batch"]
-    assert first["properties"]["$set"] == {"email": "a@b.co"}
+    assert first["properties"]["$set"] == {"email": "a@b.co", "name": "A", "company": "b"}
     assert "$set" not in second["properties"]
     await client.aclose()
 
@@ -162,13 +166,17 @@ async def test_middleware_records_tool_calls_and_session_start(monkeypatch) -> N
     event, kw = calls[-1]
     assert event == "mcp_session_started" and kw["distinct_id"] == "user_1"
     assert kw["properties"]["client_name"] == "codex"
-    assert kw["person"] == {"email": None}
+    assert kw["person"] == {}
 
     async def fetch(user_id: str) -> str:
         return f"{user_id}@example.com"
 
     await analytics_middleware(init, call_next, emails=PersonEmails(fetch))
-    assert calls[-1][1]["person"] == {"email": "user_1@example.com"}
+    assert calls[-1][1]["person"] == {
+        "email": "user_1@example.com",
+        "company_domain": "example.com",
+        "company": "example",
+    }
 
     other = SimpleNamespace(method="tools/list", params=None, session=session)
     before = len(calls)
@@ -272,3 +280,62 @@ async def test_middleware_returns_the_tool_result_when_analytics_fails(monkeypat
             await analytics_middleware(ctx, failing)
     finally:
         analytics.configure(None, "")
+
+
+@pytest.mark.parametrize(
+    ("email", "domain"),
+    [
+        ("emre@tin.computer", "tin.computer"),
+        ("Jane@Acme.co.uk", "acme.co.uk"),
+        ("someone@gmail.com", None),
+        ("student@mit.edu", None),
+        ("student@ox.ac.uk", None),
+        ("not-an-email", None),
+        (None, None),
+    ],
+)
+def test_company_domain_reads_work_emails_only(email, domain) -> None:
+    assert analytics.company_domain(email) == domain
+
+
+def test_person_properties_leave_out_empty_values() -> None:
+    assert analytics.person_properties("emre@tin.computer", " Emre Sarbak ") == {
+        "email": "emre@tin.computer",
+        "name": "Emre Sarbak",
+        "company_domain": "tin.computer",
+        "company": "tin",
+    }
+    assert analytics.person_properties("a@gmail.com") == {"email": "a@gmail.com"}
+    assert analytics.person_properties(None, "") == {}
+
+
+@pytest.mark.asyncio
+async def test_browser_sign_up_sends_tin_user_created_with_the_person(monkeypatch) -> None:
+    import asyncio
+
+    from tin_lite import auth as auth_module
+
+    client = analytics.configure("phc_test", "https://ph.example", source="test")
+    calls: list[tuple[str, dict]] = []
+    monkeypatch.setattr(client, "capture", lambda event, **kw: calls.append((event, kw)))
+
+    class FakeAuth:
+        async def person_properties(self, clerk_user_id: str) -> dict[str, str]:
+            return analytics.person_properties("emre+test@tin.computer", "Emre")
+
+    auth_module._announce_web_user(FakeAuth(), "user_new")
+    await asyncio.gather(*auth_module._WEB_USER_TASKS)
+    event, kw = calls[-1]
+    assert event == "tin_user_created" and kw["distinct_id"] == "user_new"
+    assert kw["properties"] == {"clerk_user_id": "user_new", "via": "web"}
+    assert kw["person"]["company_domain"] == "tin.computer"
+    assert kw["person"]["email"] == "emre+test@tin.computer"
+
+    class SlowAuth:
+        async def person_properties(self, clerk_user_id: str) -> dict[str, str]:
+            raise RuntimeError("clerk down")
+
+    auth_module._announce_web_user(SlowAuth(), "user_two")
+    await asyncio.gather(*auth_module._WEB_USER_TASKS)
+    assert calls[-1][0] == "tin_user_created" and calls[-1][1]["person"] == {}
+    analytics.configure(None, "")

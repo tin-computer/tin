@@ -166,6 +166,20 @@ class ClerkAuth:
         ).strip()
         return {"display_name": name or email or "Project member", "email": email}
 
+    async def person_properties(self, clerk_user_id: str) -> dict[str, str]:
+        """Email, name and company for analytics from Clerk, or {} when Clerk is unavailable."""
+        from tin_lite import analytics
+
+        try:
+            profile = await self.member_profile(clerk_user_id)
+        except (httpx.HTTPError, ValueError, AttributeError):
+            return {}
+        email = profile.get("email")
+        name = profile.get("display_name")
+        if name in {email, "Project member"}:
+            name = None
+        return analytics.person_properties(email, name)
+
     async def primary_email(self, clerk_user_id: str) -> str | None:
         """The person's primary email from Clerk's Backend API, or None when unavailable."""
         try:
@@ -390,9 +404,42 @@ async def require_user(
             detail="authentication required",
             headers={"WWW-Authenticate": "Bearer"},
         ) from exc
-    await request.app.state.runtime.database.record_tin_user(context.clerk_user_id)
+    if await request.app.state.runtime.database.record_tin_user(context.clerk_user_id):
+        _announce_web_user(request.app.state.auth, context.clerk_user_id)
     request.state.tin_auth = context
     return context
+
+
+_WEB_USER_TASKS: set[asyncio.Task[None]] = set()
+
+
+def _announce_web_user(auth: Any, clerk_user_id: str) -> None:
+    """Send tin_user_created for a browser sign-up, with the person's email, name and
+    company, without holding up the request. The MCP path sends the same event."""
+    from tin_lite import analytics
+
+    if not analytics.current().enabled:
+        return
+
+    async def send() -> None:
+        lookup = getattr(auth, "person_properties", None)
+        person: dict[str, str] = {}
+        if lookup is not None:
+            try:
+                async with asyncio.timeout(5):
+                    person = await lookup(clerk_user_id)
+            except Exception:
+                person = {}
+        analytics.capture(
+            "tin_user_created",
+            distinct_id=clerk_user_id,
+            person=person,
+            properties={"clerk_user_id": clerk_user_id, "via": "web"},
+        )
+
+    task = asyncio.create_task(send())
+    _WEB_USER_TASKS.add(task)
+    task.add_done_callback(_WEB_USER_TASKS.discard)
 
 
 def _context_from_state(state: Any, *, credential_kind: str) -> AuthContext:
