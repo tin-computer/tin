@@ -135,7 +135,8 @@ try:
     else:
         result = asyncio.run(engagement(packet))
 except CollectionError as exc:
-    result = {"error": exc.code}
+    # The check that stopped a friend's preparation, by its finite name, when there is one.
+    result = {"error": exc.code, **({"detail": exc.detail} if exc.detail else {})}
 except Exception:
     result = {"error": "cloud_failed"}
 finally:

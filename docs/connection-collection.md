@@ -217,6 +217,16 @@ as closed) and for at most ten minutes. Otherwise the run leaves that friend out
 isn't the member's first-degree connection is left out the same way, with
 `friend_not_connected`, instead of pausing the run. A run that left a friend out ends partial,
 and its summary names how many and why.
+
+A friend the cloud couldn't prepare also records which check missed, as a finite `detail` in its
+coverage (and in the worker's log when Chrome may still prepare it). The lookup found nobody
+(`lookup_none`), several people (`lookup_many`), too much data (`lookup_too_large`) or only
+another link's profile (`profile_link_changed`, a renamed profile); the profile had no member ID
+(`no_member_id`) or name (`no_name`); or the page had no connections link
+(`no_connections_link`), one for another member (`connections_link_other_member`), no heading
+with the friend's name (`name_heading_missing`), two of them (`name_heading_repeated`), no
+relationship badge (`no_degree_badge`) or several (`many_degree_badges`). Images built before
+this send no detail.
 The earlier GraphQL parser remains available for older pinned images; its query identifier
 must come from an observed browser view. No cloud browser login screen is part of setup.
 

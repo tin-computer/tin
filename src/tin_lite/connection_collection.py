@@ -34,12 +34,33 @@ LOCAL_BACKUP_REASONS = frozenset({"cloud_unavailable", "session_expired", "cloud
 STOP_REASONS = frozenset({"challenge", "rate_limited", "account_changed", "access_denied"})
 
 
+# Which check stopped the cloud preparing a friend. A finite name, never page or profile text:
+# it travels from the sandbox with the error and lands in the friend's coverage.
+PREPARATION_DETAILS = frozenset(
+    {
+        "lookup_none",
+        "lookup_many",
+        "lookup_too_large",
+        "profile_link_changed",
+        "no_member_id",
+        "no_name",
+        "no_connections_link",
+        "connections_link_other_member",
+        "name_heading_missing",
+        "name_heading_repeated",
+        "no_degree_badge",
+        "many_degree_badges",
+    }
+)
+
+
 class CollectionError(ValueError):
     """Finite errors may be exposed without reflecting records or session material."""
 
-    def __init__(self, code: str):
+    def __init__(self, code: str, detail: str | None = None):
         super().__init__(code)
         self.code = code
+        self.detail = detail if detail in PREPARATION_DETAILS else None
 
 
 def canonical_json(value) -> str:
