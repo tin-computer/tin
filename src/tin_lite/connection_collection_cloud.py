@@ -125,6 +125,26 @@ async def step(store, runtime, cipher, run_id):
         async with store.locked(run_id) as (conn, current):
             if current["state"] in {"completed", "partial", "failed", "stopped"}:
                 return
+            # One friend Tin can't search never holds up the others: a friend who isn't the
+            # member's connection, or one the cloud couldn't prepare while Chrome is closed, is
+            # left out with its reason and the run goes on.
+            if (
+                exc.code in {"friend_not_connected", "browser_preparation_required"}
+                and store.preparing(current)
+                and (current["cloud_deadline"] is None or current["cloud_cleanup_confirmed"])
+                and (
+                    exc.code == "friend_not_connected"
+                    or not await store.chrome_online(conn, current)
+                )
+            ):
+                await store.skip_friend(
+                    conn,
+                    current,
+                    "friend_not_connected"
+                    if exc.code == "friend_not_connected"
+                    else "friend_not_prepared",
+                )
+                return
             # An uncertain cleanup never dispatches a local attempt.
             if exc.code == "cloud_cleanup_pending" or (
                 current["cloud_deadline"] is not None and not current["cloud_cleanup_confirmed"]

@@ -205,6 +205,14 @@ Every page first verifies the authenticated account through `/voyager/api/me` wi
 explicit cookie header. Account identity does not depend on an avatar rendering in the page.
 Unsupported profile or page evidence preserves the checkpoint and follows the existing
 browser preparation or backup policy. A challenge or account change stops the run.
+
+One friend never holds up the others. When the cloud can't prepare a friend, Chrome prepares
+it only while Tin for Chrome is open (it checks in every 30 seconds; two quiet minutes count
+as closed) and for at most ten minutes. Otherwise the run leaves that friend out with
+`friend_not_prepared` in its coverage and goes on in the cloud with the next one. A friend who
+isn't the member's first-degree connection is left out the same way, with
+`friend_not_connected`, instead of pausing the run. A run that left a friend out ends partial,
+and its summary names how many and why.
 The earlier GraphQL parser remains available for older pinned images; its query identifier
 must come from an observed browser view. No cloud browser login screen is part of setup.
 
@@ -240,8 +248,9 @@ Existing jobs retain their pinned image; create a new run to use the new adapter
 Execution policies are pinned for the run:
 
 - `local_only`: Chrome performs the collection automatically when available.
-- `cloud_only`: use the saved session; wait for Chrome if session refresh or friend
-  preparation is needed. Results are collected in cloud compute; cloud failures pause.
+- `cloud_only`: use the saved session; wait for Chrome if session refresh is needed, and let
+  an open Chrome prepare a friend the cloud couldn't (see above). Results are collected in
+  cloud compute; cloud failures pause.
 - `cloud_preferred`: use the saved session. When the runtime is unavailable or a recoverable
   cloud failure occurs, continue in Chrome if the saved permission allows browser backup.
   Accepted pages, filters and cumulative limits are preserved. Cleanup must be confirmed
