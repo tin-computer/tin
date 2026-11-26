@@ -246,6 +246,23 @@ def test_profile_resolver_requires_evidence_linked_to_exact_friend():
         resolved_source(raw, unresolved(), "")
 
 
+async def chrome(f, *, seen):
+    """When the member's Tin for Chrome last checked in: `seen` ago, or never."""
+    await f.db.pool.execute(
+        "UPDATE connection_extension_devices SET last_seen_at=$2 WHERE project_id=$1",
+        f.project.id,
+        None if seen is None else datetime.now(UTC) - seen,
+    )
+
+
+async def job_row(f, job):
+    return record(
+        await f.db.pool.fetchrow(
+            "SELECT * FROM connection_collection_jobs WHERE run_id=$1", job["run_id"]
+        )
+    )
+
+
 async def test_cloud_prepares_new_friend_and_collects_without_browser(collection_db):
     f = await prepared(collection_db)
     job = await new_run(f)
@@ -375,6 +392,7 @@ async def test_unsupported_cloud_preparation_waits_for_browser_without_resetting
         )
         assert status["session_available"]
     job = await new_run(f)
+    await chrome(f, seen=timedelta(seconds=20))
     calls = []
 
     class Cloud:
@@ -775,3 +793,110 @@ async def test_a_network_search_never_waits_for_chrome(collection_db):
     )
     # A friend's search would move to Chrome here; the whole network pauses for the member.
     assert state["state"] == "paused" and state["reason"] == "cloud_failed"
+
+
+OTHER = "https://www.linkedin.com/in/other-friend"
+
+
+@pytest.mark.parametrize("seen", [None, timedelta(minutes=5)])
+async def test_a_friend_the_cloud_cannot_prepare_is_skipped_while_chrome_is_closed(
+    collection_db, seen
+):
+    from test_linkedin_document import PROFILE, friend_html, results
+
+    f = await prepared(collection_db)
+    await chrome(f, seen=seen)
+    job = await new_run(f, friends=[OTHER, FRIEND])
+    reads = []
+
+    def respond(request):
+        if request.url.path == "/voyager/api/me":
+            return httpx.Response(200, json={"miniProfile": {"publicIdentifier": "owner"}})
+        if request.url.path.endswith("/profiles"):
+            return httpx.Response(200, json={"included": [PROFILE]})
+        if request.url.path == "/in/friend":
+            return httpx.Response(200, text=friend_html())
+        page = int(request.url.params["page"])
+        return httpx.Response(200, text=results(page, more=page == 1))
+
+    class Cloud:
+        async def page(self, job, session, source):
+            reads.append(source.get("friend_url"))
+            if source.get("friend_url") == OTHER:
+                return {"error": "browser_preparation_required"}
+            async with httpx.AsyncClient(transport=httpx.MockTransport(respond)) as client:
+                result = await read_page(
+                    session, source, "", job["next_page"], client=client, document=True
+                )
+                return {**result, "observed_at": datetime.now(UTC).isoformat()}
+
+    await step(f.store, Cloud(), f.cipher, job["run_id"])
+    skipped = await job_row(f, job)
+    # No wait for a browser that isn't there: the next friend is up, still in the cloud.
+    assert skipped["state"] == "cloud_ready" and skipped["friend_index"] == 1
+    assert skipped["coverage"] == {"0": {"reason": "friend_not_prepared", "pages": 0, "people": 0}}
+    for _ in range(2):
+        await step(f.store, Cloud(), f.cipher, job["run_id"])
+    final = await job_row(f, job)
+    assert reads == [OTHER, FRIEND, FRIEND]
+    assert final["state"] == "partial" and final["reason"] is None
+    assert final["coverage"]["1"]["reason"] == "visible_results_exhausted"
+    assert final["sources"]["1"]["friend_url"] == FRIEND and "0" not in final["sources"]
+
+
+async def test_chrome_prepares_a_friend_only_while_it_is_open(collection_db):
+    f = await prepared(collection_db)
+    await chrome(f, seen=timedelta(seconds=20))
+    job = await new_run(f, friends=[OTHER, FRIEND])
+
+    class Cloud:
+        async def page(self, *_):
+            return {"error": "browser_preparation_required"}
+
+    await step(f.store, Cloud(), f.cipher, job["run_id"])
+    await f.store.activate_cloud(job["run_id"])
+    waiting = await job_row(f, job)
+    assert waiting["state"] == "waiting_browser" and waiting["friend_index"] == 0
+    # Chrome closes before it picks the friend up: the run goes on without that friend.
+    await chrome(f, seen=timedelta(minutes=3))
+    await f.store.activate_cloud(job["run_id"])
+    moved = await job_row(f, job)
+    assert moved["state"] == "cloud_ready" and moved["friend_index"] == 1
+    assert moved["coverage"]["0"]["reason"] == "friend_not_prepared"
+    assert moved["credential_generation"] == waiting["credential_generation"]
+
+
+async def test_chrome_that_never_picks_a_friend_up_is_not_waited_on_forever(collection_db):
+    f = await prepared(collection_db)
+    await chrome(f, seen=timedelta(seconds=20))
+    job = await new_run(f)
+
+    class Cloud:
+        async def page(self, *_):
+            return {"error": "browser_preparation_required"}
+
+    await step(f.store, Cloud(), f.cipher, job["run_id"])
+    await f.db.pool.execute(
+        "UPDATE connection_collection_jobs SET friend_started_at=now()-interval '11 minutes' "
+        "WHERE run_id=$1",
+        job["run_id"],
+    )
+    await f.store.activate_cloud(job["run_id"])
+    final = await job_row(f, job)
+    assert final["state"] == "partial" and final["friend_index"] == 1
+    assert final["coverage"] == {"0": {"reason": "friend_not_prepared", "pages": 0, "people": 0}}
+
+
+async def test_a_friend_who_is_not_a_connection_is_skipped_not_paused(collection_db):
+    f = await prepared(collection_db)
+    await chrome(f, seen=timedelta(seconds=20))
+    job = await new_run(f)
+
+    class Cloud:
+        async def page(self, *_):
+            return {"error": "friend_not_connected"}
+
+    await step(f.store, Cloud(), f.cipher, job["run_id"])
+    final = await job_row(f, job)
+    assert final["state"] == "partial"
+    assert final["coverage"] == {"0": {"reason": "friend_not_connected", "pages": 0, "people": 0}}

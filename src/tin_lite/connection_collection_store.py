@@ -329,15 +329,78 @@ class CollectionStore:
                 )
             return record(row)
 
+    async def chrome_online(self, conn, job):
+        """Whether the member's Tin for Chrome checked in lately. It does every 30 seconds while
+        Chrome is open, so two quiet minutes mean nobody will prepare a friend there."""
+
+        return await conn.fetchval(
+            "SELECT EXISTS(SELECT 1 FROM connection_extension_devices WHERE connection_id=$1 "
+            "AND revoked_at IS NULL AND expires_at>now() "
+            "AND last_seen_at>now()-interval '2 minutes')",
+            job["connection_id"],
+        )
+
+    async def skip_friend(self, conn, job, reason):
+        """Leave out a friend whose connections Tin can't search, and go on in the cloud with
+        the next one. The friend's coverage keeps the reason; the run ends partial."""
+
+        from tin_lite.connection_collection_connection import usable
+
+        friends = job["inputs"]["friends"]
+        index = job["friend_index"]
+        coverage = {**job["coverage"], str(index): {"reason": reason, "pages": 0, "people": 0}}
+        config = document(
+            await conn.fetchval(
+                "SELECT configuration FROM integration_connections WHERE id=$1",
+                job["connection_id"],
+            )
+        )
+        if index + 1 >= len(friends):
+            state, reason, generation = "partial", None, job["credential_generation"]
+        elif usable(config):
+            # The member may have refreshed the session while the run waited for Chrome.
+            state, reason, generation = "cloud_ready", None, config["session_generation"]
+        else:
+            state, reason, generation = "paused", "session_expired", job["credential_generation"]
+        await conn.execute(
+            """UPDATE connection_collection_jobs SET state=$2,reason=$3,coverage=$4::jsonb,
+            friend_index=$5,next_page=1,friend_started_at=now(),credential_generation=$6,
+            generation=generation+1,lease_hash=NULL,lease_expires_at=NULL,updated_at=now()
+            WHERE run_id=$1""",
+            job["run_id"],
+            state,
+            reason,
+            canonical_json(coverage),
+            index + 1,
+            generation,
+        )
+
+    def preparing(self, job):
+        """A friend run that has not yet searched its current friend."""
+
+        return (
+            job["cloud_transport"] == "http_v2"
+            and bool(job["inputs"]["friends"])
+            and job["friend_index"] < len(job["inputs"]["friends"])
+            and str(job["friend_index"]) not in job["sources"]
+        )
+
     async def activate_cloud(self, run_id):
         from tin_lite.connection_collection_connection import permission, usable
 
         async with self.locked(run_id) as (conn, job):
-            if (
-                job["state"] != "waiting_browser"
-                or job["cloud_transport"] != "http_v2"
-                or job["reason"] == "browser_preparation_required"
-            ):
+            if job["state"] != "waiting_browser" or job["cloud_transport"] != "http_v2":
+                return
+            if job["reason"] == "browser_preparation_required":
+                # Chrome prepares a friend the cloud couldn't, but only while it's open and only
+                # for a while. A run never waits on a browser that isn't there; it skips that
+                # friend instead.
+                started = job.get("friend_started_at")
+                if self.preparing(job) and (
+                    not await self.chrome_online(conn, job)
+                    or (started and datetime.now(UTC) - started > timedelta(minutes=10))
+                ):
+                    await self.skip_friend(conn, job, "friend_not_prepared")
                 return
             config = document(
                 await conn.fetchval(
