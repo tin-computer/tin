@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import logging
 import secrets
 from datetime import UTC, datetime
 from uuid import UUID
@@ -15,6 +16,8 @@ from tin_lite.connection_collection import (
 )
 from tin_lite.connection_collection_connection import permission
 from tin_lite.connection_collection_store import document, record, token_hash
+
+logger = logging.getLogger(__name__)
 
 
 async def _step(store, runtime, cipher, run_id):
@@ -96,7 +99,7 @@ async def _step(store, runtime, cipher, run_id):
                 raise CollectionError("browser_preparation_required")
         response = await runtime.page(job, sealed["session"], source)
         if response.get("error"):
-            raise CollectionError(response["error"])
+            raise CollectionError(response["error"], response.get("detail"))
         await store.page(
             run_id,
             job["project_id"],
@@ -143,8 +146,17 @@ async def step(store, runtime, cipher, run_id):
                     "friend_not_connected"
                     if exc.code == "friend_not_connected"
                     else "friend_not_prepared",
+                    detail=exc.detail,
                 )
                 return
+            if exc.code == "browser_preparation_required" and exc.detail:
+                # Chrome may still prepare this friend; keep which check the cloud missed.
+                logger.warning(
+                    "Cloud could not prepare friend %s of run %s: %s",
+                    current["friend_index"],
+                    run_id,
+                    exc.detail,
+                )
             # An uncertain cleanup never dispatches a local attempt.
             if exc.code == "cloud_cleanup_pending" or (
                 current["cloud_deadline"] is not None and not current["cloud_cleanup_confirmed"]

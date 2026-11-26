@@ -95,18 +95,67 @@ async def test_resolves_saved_friend_and_paginates_without_browser_metadata():
 
 
 @pytest.mark.parametrize(
-    "html",
+    ("html", "detail"),
     [
-        friend_html().replace("member1", "unrelated"),
-        friend_html().replace("<span>1st</span>", ""),
-        friend_html().replace("500+ connections", "12 mutual connections"),
-        friend_html().replace("Test Friend", "Other Person"),
-        friend_html().replace("<section>", "<section><span>2nd</span>"),
+        (friend_html().replace("member1", "unrelated"), "connections_link_other_member"),
+        (friend_html().replace("<span>1st</span>", ""), "no_degree_badge"),
+        (friend_html().replace("500+ connections", "12 mutual connections"), "no_connections_link"),
+        (friend_html().replace("Test Friend", "Other Person"), "name_heading_missing"),
+        (friend_html().replace("<section>", "<section><span>2nd</span>"), "many_degree_badges"),
+        (
+            friend_html().replace("<section>", "<section><h2>Test Friend</h2>"),
+            "name_heading_repeated",
+        ),
     ],
 )
-def test_profile_requires_matching_friend_relationship_and_visible_list(html):
-    with pytest.raises(CollectionError, match="browser_preparation_required"):
+def test_profile_requires_matching_friend_relationship_and_visible_list(html, detail):
+    # Each miss names the check it failed, so a friend the cloud couldn't prepare says why.
+    with pytest.raises(CollectionError, match="browser_preparation_required") as raised:
         prepare_source(Document(html), SOURCE, PROFILE, "founder")
+    assert raised.value.detail == detail
+
+
+@pytest.mark.parametrize(
+    ("profile", "detail"),
+    [
+        ({**PROFILE, "entityUrn": "urn:li:member:1"}, "no_member_id"),
+        ({**PROFILE, "firstName": "", "lastName": ""}, "no_name"),
+    ],
+)
+def test_a_profile_without_an_id_or_name_names_the_miss(profile, detail):
+    with pytest.raises(CollectionError, match="browser_preparation_required") as raised:
+        prepare_source(Document(friend_html()), SOURCE, profile, "")
+    assert raised.value.detail == detail
+
+
+@pytest.mark.parametrize(
+    ("payload", "detail"),
+    [
+        ({"included": []}, "lookup_none"),
+        ({"included": [{**PROFILE, "publicIdentifier": "renamed-friend"}]}, "profile_link_changed"),
+        (
+            {"included": [PROFILE, {**PROFILE, "entityUrn": "urn:li:fsd_profile:member2"}]},
+            "lookup_many",
+        ),
+        ({"included": [[] for _ in range(5001)]}, "lookup_too_large"),
+    ],
+)
+async def test_a_lookup_that_does_not_find_exactly_the_friend_names_the_miss(payload, detail):
+    def respond(request):
+        if request.url.path == "/voyager/api/me":
+            return httpx.Response(200, json={"miniProfile": {"publicIdentifier": "owner"}})
+        assert request.url.path == "/voyager/api/identity/dash/profiles"
+        return httpx.Response(200, json=payload)
+
+    async with httpx.AsyncClient(transport=httpx.MockTransport(respond)) as client:
+        session = validate_session(session_envelope())
+        with pytest.raises(CollectionError, match="browser_preparation_required") as raised:
+            await read_page(session, SOURCE, "", 1, client=client, document=True)
+    assert raised.value.detail == detail
+
+
+def test_an_unknown_detail_is_never_carried():
+    assert CollectionError("browser_preparation_required", "Oguzhan's page").detail is None
 
 
 def test_second_degree_friend_is_rejected():

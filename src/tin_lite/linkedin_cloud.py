@@ -9,6 +9,7 @@ from datetime import UTC, datetime, timedelta
 from e2b import AsyncSandbox, SandboxNotFoundException
 
 from tin_lite.connection_collection import (
+    PREPARATION_DETAILS,
     CollectionError,
     CollectionSource,
     Person,
@@ -182,7 +183,9 @@ class LinkedInCloud:
                 value = json.loads(raw)
                 if not isinstance(value, dict):
                     raise CollectionError("cloud_failed")
-                if set(value) == {"error"}:
+                if set(value) in ({"error"}, {"error", "detail"}):
+                    if value.get("detail", "") not in PREPARATION_DETAILS | {""}:
+                        raise CollectionError("cloud_failed")
                     if value["error"] not in {
                         "session_expired",
                         "account_changed",

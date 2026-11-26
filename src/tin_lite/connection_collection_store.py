@@ -13,6 +13,7 @@ from tin_lite.connection_collection import (
     CAPABILITY,
     POLICY,
     POLICY_V2,
+    PREPARATION_DETAILS,
     PROVIDER,
     TERMINAL,
     Actor,
@@ -340,15 +341,19 @@ class CollectionStore:
             job["connection_id"],
         )
 
-    async def skip_friend(self, conn, job, reason):
+    async def skip_friend(self, conn, job, reason, *, detail=None):
         """Leave out a friend whose connections Tin can't search, and go on in the cloud with
-        the next one. The friend's coverage keeps the reason; the run ends partial."""
+        the next one. The friend's coverage keeps the reason, and which check the cloud missed
+        when it knows; the run ends partial."""
 
         from tin_lite.connection_collection_connection import usable
 
         friends = job["inputs"]["friends"]
         index = job["friend_index"]
-        coverage = {**job["coverage"], str(index): {"reason": reason, "pages": 0, "people": 0}}
+        entry = {"reason": reason, "pages": 0, "people": 0}
+        if detail in PREPARATION_DETAILS:
+            entry["detail"] = detail
+        coverage = {**job["coverage"], str(index): entry}
         config = document(
             await conn.fetchval(
                 "SELECT configuration FROM integration_connections WHERE id=$1",

@@ -823,7 +823,7 @@ async def test_a_friend_the_cloud_cannot_prepare_is_skipped_while_chrome_is_clos
         async def page(self, job, session, source):
             reads.append(source.get("friend_url"))
             if source.get("friend_url") == OTHER:
-                return {"error": "browser_preparation_required"}
+                return {"error": "browser_preparation_required", "detail": "name_heading_missing"}
             async with httpx.AsyncClient(transport=httpx.MockTransport(respond)) as client:
                 result = await read_page(
                     session, source, "", job["next_page"], client=client, document=True
@@ -834,7 +834,15 @@ async def test_a_friend_the_cloud_cannot_prepare_is_skipped_while_chrome_is_clos
     skipped = await job_row(f, job)
     # No wait for a browser that isn't there: the next friend is up, still in the cloud.
     assert skipped["state"] == "cloud_ready" and skipped["friend_index"] == 1
-    assert skipped["coverage"] == {"0": {"reason": "friend_not_prepared", "pages": 0, "people": 0}}
+    # The friend's coverage keeps which check the cloud missed.
+    assert skipped["coverage"] == {
+        "0": {
+            "reason": "friend_not_prepared",
+            "pages": 0,
+            "people": 0,
+            "detail": "name_heading_missing",
+        }
+    }
     for _ in range(2):
         await step(f.store, Cloud(), f.cipher, job["run_id"])
     final = await job_row(f, job)
