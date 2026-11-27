@@ -169,5 +169,9 @@ Example, for a fictional analytics vendor:
 - **Suggest, don't promise.** In the report's section 5, "Refresh our pricing page with the
   new tier", never "Tin will update it". Never commit Tin or the client to work or dates.
 - **Tone.** Plain, specific, no hype, no em dashes. Short sentences a founder reads on a phone.
+- **No plumbing, no guessed causes.** Founders read the brief and the report: never mention
+  Tin's host project, connections, setup or how Tin fetches, and never explain a thin day with a
+  guess (a holiday, a weekend). A missing source goes in Source notes in plain words ("X posts
+  weren't available today"), never in the brief or its `note`.
 - **Sensitive stories** are never hooks, in the brief or the report's content ideas.
 - **No guessing.** A headline-only item is a headline: say so rather than describe the article.

@@ -197,7 +197,7 @@ world stories. `intel-channel` sets the channel in Tin's Slack that
 a managed client's daily brief posts to.
 
 A failed world run shows in the host project's My system under Needs a look, and in Activity.
-Its day is recorded as `failed`, and client briefs say the world stories are unavailable that
+Its day is recorded as `failed`, and client reports say in Source notes that world stories were unavailable that
 day.
 
 ## A client's daily brief (`intel.daily`)
@@ -275,8 +275,9 @@ own, and one it has is ignored.
   (`intel:<run>:x:<list>:owner`, `intel:<run>:x:<list>:<page>`), and so do its items. The X call
   records carry the client's run and the host's connection. Each page's receipt is its usage
   receipt, and the client's run is charged from it (see Billing below).
-- **When X isn't read**, the reason is in `sources.json` and, except for a client with no List,
-  in a line of the brief:
+- **When X isn't read**, the reason is in `sources.json`, as a plain sentence beside its code
+  (founders can open that file, so it never names Tin's plumbing). The brief never carries it:
+  a gap goes only in the report's Source notes, in plain words.
 
   | Reason | When |
   |---|---|
@@ -337,7 +338,9 @@ own, and one it has is ignored.
    made "Still open from <day>". It writes the report one section per turn (sections 2 and 5
    in halves) and puts at most three stories a turn: a turn that streams for more than about a
    minute usually loses the model's cache. It may use web search sparingly, to check a claim at
-   its primary source or read a headline-only item.
+   its primary source or read a headline-only item. Founders read all of it, so it never names Tin's
+   internals (host project, connections, setup) and never guesses why a day was thin; `brief
+   put` warns on a brief line about Tin or the day's sources.
 5. **Publish** unwraps the Google News links that the report and brief use. Then one commit
    adds `intel/reports/<day>/report.md`, `brief.md` and `sources.json` (the status of every
    source).
@@ -354,10 +357,10 @@ own, and one it has is ignored.
 |---|---|
 | A source fails, is empty or is skipped | Recorded in `sources.json`; the run goes on |
 | A whole fetch group fails or never finishes | Each of its sources is recorded as failed; the run goes on |
-| X not connected on the host project, reconnect needed, List not found, not readable or not Tin's | X skipped with the reason; the brief says so |
+| X not connected on the host project, reconnect needed, List not found, not readable or not Tin's | X skipped with the reason; the report's Source notes say X posts weren't available |
 | No host project, no operator setup, no pinned List, or an input naming another List | X skipped with the reason |
 | An X page's purchase unconfirmed | Never bought again; X stops there with what it read |
-| No usable world day at load | The run goes on; the brief says world stories are unavailable |
+| No usable world day at load | The run goes on; the report's Source notes say so, the brief doesn't |
 | The analyst sends no usable brief | Tin writes one from the day's high and medium stories, and the brief says so |
 | The analyst fails | The run fails with the analyst's own reason; its stories stay |
 | No Slack channel set, or Slack refuses | Nothing is posted; the run still succeeds |

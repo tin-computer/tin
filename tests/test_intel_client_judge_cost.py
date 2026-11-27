@@ -150,3 +150,14 @@ def test_web_search_is_allowed_sparingly_for_checking_claims():
     prompt = flat(prompt_text())
     assert "Web search and reading a page on the web are allowed, sparingly" in prompt
     assert "primary source" in prompt and "headline only" in prompt
+
+
+def test_founder_facing_text_carries_no_plumbing_and_no_guessed_causes():
+    """Ege 2026-11-27 on a staging brief: "X List not read: X isn't connected on Tin's host
+    project · Holiday volume was light". Gaps go in Source notes in plain words."""
+    prompt, skill = flat(prompt_text()), flat(skill_text())
+    assert "Never write Tin's internals" in prompt
+    assert "never guess why the day was thin" in prompt
+    assert '"X posts weren\'t available today"), never in the brief' in prompt
+    assert "No notes about the day's sources" in prompt
+    assert "No plumbing, no guessed causes." in skill

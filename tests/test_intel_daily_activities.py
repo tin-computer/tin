@@ -173,7 +173,7 @@ async def test_no_saved_list_records_x_skipped_with_its_reason(db):
     statuses = (await intel_store.get_fetch(db.pool, f.run_id))["source_status"]
     (x,) = [s for s in statuses if s["id"] == "x-list"]
     assert x["status"] == "skipped" and x["reason"] == "x_no_list"
-    assert "no X List is pinned" in x["error"]
+    assert "no X List is set up" in x["error"]
 
 
 async def test_company_md_missing_refuses_before_any_fetch(db):
@@ -344,7 +344,8 @@ async def test_x_without_a_host_connection_is_skipped_and_the_day_goes_on(db):
     assert x.asked == [("connection", f.host)]
     statuses = (await intel_store.get_fetch(db.pool, f.run_id))["source_status"]
     assert statuses[0]["id"] == "x-list" and statuses[0]["status"] == "skipped"
-    assert "isn't connected on Tin's host project" in statuses[0]["error"]
+    assert statuses[0]["reason"] == "x_not_connected"
+    assert statuses[0]["error"] == "Skipped: X posts weren't available today."
     rss = await f.acts.fetch({"run_id": str(f.run_id), "group": "rss"})
     assert rss["items"] == 3
 
@@ -711,7 +712,8 @@ async def test_post_sends_once_through_the_host_project_and_finish_succeeds(db):
     assert text.startswith("Acme Data market brief, Tue 24 Nov")
     rendered = json.dumps(blocks)
     assert PUBLISHER in rendered and GN not in rendered
-    assert "World stories unavailable today" in rendered
+    # A missing world day is a Source notes line in the report, never a line of the brief.
+    assert "World stories unavailable" not in rendered
     await f.acts.finish(str(f.run_id))
     done = await db.get_run(f.run_id)
     assert done.status.value == "succeeded"

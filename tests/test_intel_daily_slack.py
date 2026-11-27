@@ -147,21 +147,24 @@ def test_the_links_to_unwrap_are_the_ones_the_brief_shows():
     assert [u for u in brief_links(CLIENT_SCHEMA, BRIEF, STORIES) if is_article(u)] == [GN]
 
 
-def test_every_x_reason_has_its_own_slack_line():
+def test_a_missing_source_is_never_a_line_of_the_brief():
+    """Ege 2026-11-27: a staging brief said "X List not read: X isn't connected on Tin's host
+    project". Gaps go to sources.json and the report's Source notes, never the brief."""
     from tin_lite.intel_fetch import x_list
 
-    assert set(slack.X_NOTES) == set(x_list.REASONS)
+    for reason in x_list.REASONS:
+        lost = {"source_status": [{**x_list.not_saved(), "reason": reason}]}
+        assert slack.notes(lost, brief_source="judge", world_status="missing") == []
 
 
-def test_no_saved_list_adds_no_slack_line_but_a_lost_connection_does():
+def test_x_reasons_are_plain_words_without_tins_plumbing():
+    """The reason text reaches the analyst's `intel status` and the client's sources.json."""
     from tin_lite.intel_fetch import x_list
 
-    quiet = {"source_status": [x_list.not_saved()]}
-    assert slack.notes(quiet, brief_source="judge", world_status="ready") == []
-    lost = {"source_status": [{**x_list.not_saved(), "reason": "x_reauthorize"}]}
-    assert slack.notes(lost, brief_source="judge", world_status="ready") == [
-        "X List not read: reconnect X on Tin's host project"
-    ]
+    for reason, text in x_list.REASONS.items():
+        lowered = text.lower()
+        for internal in ("host project", "connect", "operator", "tin-lite", "pinned", "tin's"):
+            assert internal not in lowered, (reason, text)
 
 
 def test_tins_own_brief_says_so_once():

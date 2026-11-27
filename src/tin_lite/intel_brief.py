@@ -262,6 +262,27 @@ def _suggestion(text: str, where: str) -> list[str]:
     ]
 
 
+# A client brief line about Tin's plumbing or the day's sources rather than the market. Staging
+# 2026-11-27: "Holiday volume was light (282 items across 65 sources) and Tin's private X List
+# was skipped because X is not connected on Tin's host". A warning, never a refusal.
+PLUMBING = re.compile(
+    r"\b(?:host project|(?:is ?n[o']t|not) connected|connection|operator|X List|"
+    r"\d[\d,]* items across|sources? (?:failed|w(?:as|ere) (?:empty|skipped))|"
+    r"holiday (?:volume|lull)|quiet (?:day|holiday))\b",
+    re.IGNORECASE,
+)
+
+
+def _plumbing(text: str, where: str) -> list[str]:
+    if PLUMBING.search(text) is None:
+        return []
+    return [
+        f"{where} talks about Tin or the day's sources: founders read the brief, so leave out "
+        "how Tin fetched, missing sources and item counts, and never guess why a day was thin. "
+        "Gaps go in report.md Source notes, in plain words."
+    ]
+
+
 def validate(
     schema: str,
     value: object,
@@ -416,6 +437,7 @@ def _client(value: dict, *, links: LinkIndex, stories) -> tuple[dict, list[str]]
             continue
         body, found = check_links(body, links, where=at)
         warnings += found + _style(lead + body, at) + _suggestion(f"{lead}. {body}", at)
+        warnings += _plumbing(f"{lead}. {visible(body)}", at)
         if verify and not note:
             warnings.append(f"{at}: say in `verify_note` what needs checking.")
         entry = {"lead": lead, "body": body, "kind": kind, "verify": verify}
@@ -432,7 +454,9 @@ def _client(value: dict, *, links: LinkIndex, stories) -> tuple[dict, list[str]]
             "worth_doing: leave it empty; suggestions go in report.md section 5. Tin dropped "
             "them from the brief."
         )
-    warnings += _style(headline, "headline")
+    warnings += _style(headline, "headline") + _plumbing(headline, "headline")
+    if note:
+        warnings += _plumbing(note, "note")
     brief = {
         "schema": CLIENT_SCHEMA,
         "headline": headline,
@@ -644,7 +668,9 @@ what happened and one concrete consequence for the client: no suggestions, no to
 Tin drops any sent here and warns about an item that reads as one. Only links to items in
 today's data (or earlier stories) are kept. No meta comments: keep verify false, send no
 verify_note, and attribute a single-source item in plain words ("one post on X says") or
-leave it out. Character limits count what a reader sees, so a link's URL doesn't count. Tin
-adds each story's outlets and renders the Slack message; send plain text, no Slack markup, no
-em dashes. Tin lists every problem with a brief at once.
+leave it out. Nothing about Tin or the day's sources (missing sources, item counts, quiet days)
+in the headline, items or note: those go in report.md Source notes. Character limits count
+what a reader sees, so a link's URL doesn't count. Tin adds each story's outlets and renders
+the Slack message; send plain text, no Slack markup, no em dashes. Tin lists every problem
+with a brief at once.
 """

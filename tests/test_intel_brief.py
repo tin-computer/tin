@@ -329,3 +329,20 @@ def test_an_unusable_model_brief_is_refused_and_the_fallback_still_posts():
     assert kept["groups"][0]["items"][0]["line"] == "Big news."
     assert warnings
     assert brief.fallback_world_brief(list(STORIES.values())) is not None
+
+
+def test_a_brief_about_tins_plumbing_or_a_guessed_cause_warns():
+    """Staging 2026-11-27, the analyst's own note: "Holiday volume was light (282 items across
+    65 sources) and Tin's private X List was skipped because X is not connected on Tin's
+    host". Kept, with a warning that sends it to the report's Source notes."""
+    value = client(1)
+    value["note"] = (
+        "Holiday volume was light (282 items across 65 sources) and Tin's private X List was "
+        "skipped because X is not connected on Tin's host."
+    )
+    _kept, warnings = brief.validate(brief.CLIENT_SCHEMA, value, links=LINKS)
+    assert any(w.startswith("note talks about Tin or the day's sources") for w in warnings)
+    value = client(1)
+    value["items"][0]["body"] = "Rival cut list prices 20%, which undercuts our pricing page."
+    _kept, warnings = brief.validate(brief.CLIENT_SCHEMA, value, links=LINKS)
+    assert not any("talks about Tin" in w for w in warnings)
