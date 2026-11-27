@@ -367,12 +367,19 @@ def test_the_digest_lists_companies_without_their_own_message():
         people_url="u",
         project_name="Acme",
     )
-    text = text_of(body)
-    assert body["text"] == "4 more visitors today"
-    assert (
-        "🏢 Companies only (4): Comcast, not worth chasing; Small Co, weak fit; Unjudged, "
-        "not rated; Acme, visited again" in text
-    )
+    assert body["text"].splitlines()[0] == "4 more visitors today"
+    rows = [
+        [cell["text"] for cell in row]
+        for block in body["blocks"]
+        if block["type"] == "table"
+        for row in block["rows"][1:]
+    ]
+    assert rows == [
+        ["Unknown visitor", "—", "Comcast", "Company only"],
+        ["Unknown visitor", "—", "Small Co", "Weak fit"],
+        ["Unknown visitor", "—", "Unjudged", "Not rated"],
+        ["Unknown visitor", "—", "Acme", "Visited again"],
+    ]
 
 
 def test_the_runs_line_says_the_verdict():
@@ -626,7 +633,7 @@ async def test_a_company_the_model_says_isnt_worth_chasing_buys_nothing(collecti
     await f.db.pool.execute("UPDATE rb2b_visits SET received_at = $1", SEEN)
     now = SEEN.replace(hour=19)
     assert await rb2b_slack.post_digests(runtime, settings(), now=now) == 1
-    assert slack.posts[0]["text"] == "1 more visitor today"
+    assert slack.posts[0]["text"].splitlines()[0] == "1 more visitor today"
 
 
 async def test_an_unusable_verdict_or_no_people_search_still_finishes(collection_db, monkeypatch):

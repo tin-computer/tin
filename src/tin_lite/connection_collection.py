@@ -447,13 +447,14 @@ def personal(workflow) -> bool:
 
 
 # Personal workflows each member saves once: they read the member's whole account, so a second
-# copy would only read it again. A collection takes profiles to read, so it can be saved more.
+# copy would only read it again. A collection takes profiles to read, so it can be saved more;
+# so can the feed, which shows other posts a few hours later (a second copy at another time of
+# day reads it twice a day).
 ONE_PER_MEMBER = frozenset(
     {
         "social.linkedin_engagers",
         "social.linkedin_profile_viewers",
         "social.linkedin_connections",
-        "social.linkedin_feed",
     }
 )
 NOT_YOURS = (

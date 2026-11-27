@@ -14,8 +14,10 @@ The same as [connections export](linkedin-connections.md):
   `linkedin_feed_details` runner kinds.
 - **Member:** each member runs it with their own LinkedIn connection, with cloud reading on and
   a live session from Tin for Chrome. A run reads the feed of the member who started it. Each
-  member saves their own copy, once; its daily schedule runs as them
-  ([personal workflows](connection-collection.md#connect-once-then-run-from-tin)).
+  member saves their own copies; a copy's daily schedule runs as them
+  ([personal workflows](connection-collection.md#connect-once-then-run-from-tin)). A schedule
+  has one time of day, so reading the feed twice a day is two copies, say 08:00 and 20:00.
+  A post already saved is only marked seen again; details are read for new posts.
 
 ## Inputs
 

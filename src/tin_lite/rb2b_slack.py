@@ -42,7 +42,6 @@ RATED = {**POSTED, 2: ("🟠", "Weak fit"), 1: ("⚪", "Not a fit")}
 RATED = {fit: f"{emoji} {label}" for fit, (emoji, label) in RATED.items()}
 INTENT = {"hot": "🔥 hot", "warm": "🌤 warm", "cold": "🧊 cold"}
 DIGEST_AT = time(18, 0)
-DIGEST_LISTED = 15
 LOOP_SECONDS = 300
 TEXT = 2900
 UNMATCHED = re.compile(r"no matching visit in PostHog|none clearly theirs|PostHog didn't answer")
@@ -294,63 +293,145 @@ def _button(text: str, url: str, action: str) -> dict:
 def digest_message(
     people: list[dict], *, people_url: str, project_name: str, companies: list[dict] = ()
 ) -> dict | None:
-    """The day's other visitors in one message, grouped by how they rated, with the companies
-    a visit was matched to that didn't get their own message; None for none."""
+    """The day's other visitors in one Slack table: a row each, weak fits first, then people
+    who aren't a fit, people Tin couldn't rate, and last the companies a visit was matched to
+    that didn't get their own message. None for none.
+
+    The table stops at DIGEST_ROWS rows or TABLE_TEXT characters, whichever comes first, and
+    says how many more are in Tin. The message's `text`, which notifications and clients
+    without tables show, lists them as lines."""
 
     if not people and not companies:
         return None
-    groups = {2: [], 1: [], None: []}
-    for person in people:
-        groups.get(_fit(person), groups[None]).append(person)
+    order = {2: 0, 1: 1, None: 2}
+    people = sorted(people, key=lambda person: order.get(_fit(person), 2))
     count = len(people) + len(companies)
     said = f"{count} more visitor{'s' if count != 1 else ''} today"
-    head = f"🌙 *{said}*"
-    lines = []
-    for fit, label in ((2, "🟠 Weak fit"), (1, "⚪ Not a fit"), (None, "❔ Not rated")):
-        listed = groups[fit]
-        if not listed:
-            continue
-        shown = [_short(person) for person in listed[:DIGEST_LISTED]]
-        more = len(listed) - len(shown)
-        tail = f", and {more} more" if more > 0 else ""
-        lines.append(f"{label} ({len(listed)}): " + "; ".join(shown) + tail)
-    if companies:
-        shown = [_company_short(company) for company in companies[:DIGEST_LISTED]]
-        more = len(companies) - len(shown)
-        tail = f", and {more} more" if more > 0 else ""
-        lines.append(f"🏢 Companies only ({len(companies)}): " + "; ".join(shown) + tail)
+    rows = [_person_row(person) for person in people]
+    rows += [_company_row(company) for company in companies]
+    header = [_bold(label) for label in ("Name", "Title", "Company", "Fit")]
+    table, used = [header], sum(_cell_text(cell) for cell in header)
+    for row in rows[:DIGEST_ROWS]:
+        size = sum(_cell_text(cell) for cell in row)
+        if used + size > TABLE_TEXT:
+            break
+        table.append(row)
+        used += size
+    more = len(rows) - (len(table) - 1)
     blocks = [
-        {"type": "section", "text": {"type": "mrkdwn", "text": head}},
-        {"type": "section", "text": {"type": "mrkdwn", "text": _cut("\n".join(lines), TEXT)}},
-        {"type": "actions", "elements": [_button("See them in Tin", people_url, "people")]},
-        {
-            "type": "context",
-            "elements": [{"type": "mrkdwn", "text": f"{_escape(project_name)} · Tin"}],
-        },
+        _section(f"🌙 *{said}*"),
+        _context(_counts(people, companies)),
+        {"type": "table", "column_settings": [{"is_wrapped": True}] * 4, "rows": table},
     ]
-    return {"text": said, "blocks": blocks}
+    if more > 0:
+        blocks.append(_context(f"And {more} more in Tin."))
+    blocks += [
+        {"type": "actions", "elements": [_button("See them in Tin", people_url, "people")]},
+        _context(f"{_escape(project_name)} · Tin"),
+    ]
+    lines = [_line(row) for row in rows]
+    return {"text": _cut("\n".join([said, *lines]), TEXT), "blocks": blocks}
 
 
-def _company_short(company: dict) -> str:
-    """A company in the digest: its name and the model's verdict."""
+# The digest's rows: name, title, company and fit, as Slack table cells. Table cells are raw
+# text, not mrkdwn, so nothing in them is escaped.
+DIGEST_ROWS = 50
+TABLE_TEXT = 9000
+FIT_WORDS = {2: "Weak fit", 1: "Not a fit", None: "Not rated"}
+EMPTY = "—"
 
-    name = _escape(company.get("name") or "A company")
+
+def _counts(people: list[dict], companies: list[dict]) -> str:
+    """How the day split: '14 not a fit · 6 matched to a company only'."""
+
+    bits = []
+    for fit, words in ((2, "weak fit"), (1, "not a fit"), (None, "not rated")):
+        if n := sum(1 for person in people if _fit(person) == fit):
+            bits.append(f"{n} {words}")
+    if companies:
+        bits.append(f"{len(companies)} matched to a company only")
+    return " · ".join(bits)
+
+
+def _title(person: dict) -> str:
+    """Their job title: RB2B's position, else the headline without its ' at Company' tail."""
+
+    if position := _field(person, "position"):
+        return position
+    headline = _field(person, "headline") or ""
+    company = _field(person, "company") or ""
+    if company and headline.endswith(f" at {company}"):
+        return headline[: -len(f" at {company}")]
+    return headline
+
+
+def _person_row(person: dict) -> list[dict]:
+    name = _cut(_field(person, "name") or "Someone", 60)
+    return [
+        _link(name, link) if (link := _profile(person)) else _raw(name),
+        _raw(_cut(_title(person), 80)),
+        _raw(_cut(_field(person, "company") or "", 60)),
+        _raw(FIT_WORDS.get(_fit(person), "Not rated")),
+    ]
+
+
+def _company_row(company: dict) -> list[dict]:
+    """A company-only visit: nobody named, the company, and what Tin made of it when that
+    isn't the usual (not worth chasing)."""
+
     fit = company.get("fit")
     if company.get("repeat_of"):
-        said = "visited again"
-    elif company.get("fit") is None and company.get("worth") is None:
-        said = "not rated"
+        said = "Visited again"
+    elif fit is None and company.get("worth") is None:
+        said = "Not rated"
     elif not company.get("worth"):
-        said = "not worth chasing"
+        said = "Company only"
     else:
-        said = RATED.get(fit, "can't tell").split(" ", 1)[-1].lower()
-    return _cut(f"{name}, {said}", 120)
+        said = RATED.get(fit, "Can't tell").split(" ", 1)[-1]
+    name = _cut(company.get("name") or "A company", 60)
+    return [_raw("Unknown visitor"), _raw(""), _raw(name), _raw(said)]
 
 
-def _short(person: dict) -> str:
-    name = _escape(_field(person, "name") or "Someone")
-    headline = _field(person, "headline")
-    return _cut(f"{name}, {_escape(headline)}" if headline else name, 120)
+def _raw(text: str) -> dict:
+    # Slack refuses an empty cell (invalid_blocks), so a missing value reads as a dash.
+    return {"type": "raw_text", "text": text or EMPTY}
+
+
+def _rich(element: dict) -> dict:
+    return {
+        "type": "rich_text",
+        "elements": [{"type": "rich_text_section", "elements": [element]}],
+    }
+
+
+def _bold(text: str) -> dict:
+    return _rich({"type": "text", "text": text, "style": {"bold": True}})
+
+
+def _link(text: str, url: str) -> dict:
+    return _rich({"type": "link", "text": text, "url": url})
+
+
+def _cell_text(cell: dict) -> int:
+    if cell["type"] == "raw_text":
+        return len(cell["text"])
+    element = cell["elements"][0]["elements"][0]
+    return len(element["text"]) + len(element.get("url", ""))
+
+
+def _cell_words(cell: dict) -> str:
+    if cell["type"] == "raw_text":
+        return cell["text"]
+    return cell["elements"][0]["elements"][0]["text"]
+
+
+def _line(row: list[dict]) -> str:
+    """A row as a line of the plain-text fallback: 'Jane Doe, CFO, Acme (Not a fit)'."""
+
+    name, title, company, fit = (_cell_words(cell) for cell in row)
+    # The message's text is mrkdwn, unlike the cells: escaped, so a name can't mention anyone.
+    who = ", ".join(_escape(bit) for bit in (name, title, company) if bit != EMPTY)
+    return f"{who} ({fit})"
 
 
 # Sending, recorded before Slack is called.
