@@ -7004,6 +7004,8 @@ class Database:
             # LinkedIn feed posts: other people's posts, comments and reactors.
             "DELETE FROM linkedin_feed_sightings WHERE project_id = $1",
             "DELETE FROM linkedin_feed_posts WHERE project_id = $1",
+            # Model call logs: full prompts, with people's details in them.
+            "DELETE FROM model_call_logs WHERE project_id = $1",
             "DELETE FROM record_events WHERE project_id = $1",
             "DELETE FROM record_notes WHERE project_id = $1",
             "DELETE FROM record_tags WHERE project_id = $1",

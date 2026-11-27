@@ -28,6 +28,7 @@ from typing import Any
 from uuid import UUID, uuid4
 from zoneinfo import ZoneInfo
 
+from tin_lite import company_site
 from tin_lite import people_records as records
 from tin_lite.integrations import (
     IntegrationDeliveryUnknownError,
@@ -230,8 +231,10 @@ def company_message(
         return None
     name = company.get("name") or "A company"
     size = company.get("employees")
+    site = company.get("site")
     account = [
-        company.get("site"),
+        # Where the site lands now, or that it doesn't open: often a sign it was bought.
+        company_site.shown(company.get("site_check"), site) if site else None,
         company.get("industry"),
         f"{size} employees" if size else None,
         company.get("location"),

@@ -2042,15 +2042,17 @@ BUILTIN_WORKFLOWS = (
             "path through your team's LinkedIn connections, post a good or "
             "strong fit to the project's Slack channel when one is set (the rest go in an "
             "evening digest), and list the latest visitors in people/rb2b-visitors.md. When "
-            "RB2B names only a company, judge with a web search whether it's worth chasing; if "
-            "it is, find up to three people to contact there through Delegate, check each "
-            "still works there, keep and rate them in People, and post a good or strong "
-            "company with them. A good or strong fit with a LinkedIn profile gets the phone "
+            "RB2B names only a company, check whether its site still opens and judge with a web "
+            "search whether it's worth chasing, and who owns it now if it was bought; if it is, "
+            "find people there through Delegate (at the owner when it was bought), read their "
+            "LinkedIn profiles, drop the same person listed twice and abandoned profiles, keep "
+            "up to three and rate them together in People, and post a good or strong company "
+            "with them. A good or strong fit with a LinkedIn profile gets the phone "
             "numbers on file for them (ContactOut, through Delegate), shown in People. Tin starts "
             "it for each visit RB2B posts to your project's webhook, set up under Integrations."
         ),
         executor=rb2b.KEY,
-        version_label="1.4.0",
+        version_label="1.5.0",
         presentation=WorkflowDiagram(
             direction="TD",
             nodes=(
@@ -2065,13 +2067,13 @@ BUILTIN_WORKFLOWS = (
                     "judge",
                     "step",
                     "Judge the company",
-                    "worth chasing? fit and intent, web search",
+                    "its site, who owns it, worth chasing?",
                 ),
                 DiagramNode(
                     "find",
                     "surface",
                     "Find people to contact",
-                    "Delegate's finder, then a profile check",
+                    "finder, profile reads, then a review",
                 ),
                 DiagramNode(
                     "visit",
@@ -2104,7 +2106,7 @@ BUILTIN_WORKFLOWS = (
                 DiagramEdge("people", "visit"),
                 DiagramEdge("visit", "rate"),
                 DiagramEdge("judge", "find", label="worth chasing"),
-                DiagramEdge("find", "rate", label="up to three, kept in People"),
+                DiagramEdge("find", "rate", label="up to three, rated together"),
                 DiagramEdge("judge", "slack", label="not worth chasing: the digest"),
                 DiagramEdge("rate", "slack"),
                 DiagramEdge("slack", "files"),
