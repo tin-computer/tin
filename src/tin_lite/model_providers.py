@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import re
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
 from enum import StrEnum
@@ -152,6 +153,9 @@ class ModelResult:
     service_tier: str | None = None
     stop_reason: str | None = None
     output_truncated: bool | None = None
+    # What a web-searching call searched and grounded its answer in: {"queries": [...],
+    # "sources": [{"title": ..., "uri": ...}]}; None when it didn't search or can't say.
+    grounding: dict[str, Any] | None = None
 
 
 @dataclass(frozen=True)
@@ -522,6 +526,19 @@ class GeminiModelProvider:
         candidates = getattr(response, "candidates", None) or []
         finish = getattr(candidates[0], "finish_reason", None) if candidates else None
         finish = getattr(finish, "name", finish)
+        searches = grounding = None
+        if isinstance(request, WebSearchRequest):
+            searches, grounding = _gemini_searches(candidates), _gemini_grounding(candidates)
+            # A structured answer can cite search results while the response carries no
+            # grounding metadata (11-27: the company judge, with sources and no queries). It
+            # searched at least once: count one, and keep the pages it cited.
+            cited = sorted(set(GROUNDING_LINK.findall(text)))
+            if cited and not (grounding or {}).get("sources"):
+                searches = max(searches or 0, 1)
+                grounding = {
+                    "queries": (grounding or {}).get("queries") or [],
+                    "sources": [{"title": "", "uri": uri} for uri in cited[:GROUNDING_ITEMS]],
+                }
         return _result(
             provider=self.name,
             model=str(getattr(response, "model_version", None) or model),
@@ -531,12 +548,8 @@ class GeminiModelProvider:
             request=request,
             stop_reason=_stop_label(finish),
             capped=finish == "MAX_TOKENS",
-            usage=_gemini_usage(
-                usage,
-                searches=(
-                    _gemini_searches(candidates) if isinstance(request, WebSearchRequest) else None
-                ),
-            ),
+            usage=_gemini_usage(usage, searches=searches),
+            grounding=grounding,
         )
 
     async def close(self) -> None:
@@ -729,6 +742,7 @@ def _result(
     truncated: bool = False,
     capped: bool = False,
     stop_reason: str | None = None,
+    grounding: dict[str, Any] | None = None,
 ) -> ModelResult:
     """`truncated`: the provider said the response stopped at its cap, and that always fails.
     `capped`: the provider said so too, but its partial text may still be usable (it is
@@ -790,6 +804,7 @@ def _result(
         service_tier=service_tier,
         stop_reason=stop_reason,
         output_truncated=stopped_at_cap,
+        grounding=grounding,
     )
 
 
@@ -809,14 +824,49 @@ def _optional_string(value: object) -> str | None:
 
 
 def _gemini_searches(candidates: list) -> int | None:
-    """The searches a grounded Gemini answer ran: its grounding metadata's queries."""
+    """The searches a grounded Gemini answer ran: its grounding metadata's queries. An answer
+    grounded in search results that lists no query still searched at least once (it has been
+    seen: sources and no queries), so it counts one rather than none."""
 
     if not candidates:
         return None
     metadata = getattr(candidates[0], "grounding_metadata", None)
     if metadata is None:
         return 0
-    return len(getattr(metadata, "web_search_queries", None) or [])
+    queries = len(getattr(metadata, "web_search_queries", None) or [])
+    if queries == 0 and (getattr(metadata, "grounding_chunks", None) or []):
+        return 1
+    return queries
+
+
+# The most of a grounded answer's queries and sources Tin keeps.
+GROUNDING_ITEMS = 40
+# Gemini's grounding redirect link: a page a grounded answer rests on (grounding_links).
+GROUNDING_LINK = re.compile(
+    r"https://vertexaisearch\.cloud\.google\.com/grounding-api-redirect/[A-Za-z0-9_\-=]{8,2000}"
+)
+
+
+def _gemini_grounding(candidates: list) -> dict[str, Any] | None:
+    """What a grounded Gemini answer searched for and the pages it rested on. The pages are
+    Google's redirect links (grounding_links turns them into the pages' own addresses)."""
+
+    metadata = getattr(candidates[0], "grounding_metadata", None) if candidates else None
+    if metadata is None:
+        return None
+    queries = [
+        query[:300]
+        for query in getattr(metadata, "web_search_queries", None) or []
+        if isinstance(query, str) and query
+    ]
+    sources = []
+    for chunk in getattr(metadata, "grounding_chunks", None) or []:
+        web = getattr(chunk, "web", None)
+        uri = getattr(web, "uri", None)
+        if isinstance(uri, str) and uri.startswith("https://"):
+            title = getattr(web, "title", None)
+            sources.append({"title": str(title or "")[:200], "uri": uri[:2000]})
+    return {"queries": queries[:GROUNDING_ITEMS], "sources": sources[:GROUNDING_ITEMS]}
 
 
 def _gemini_usage(usage: object, *, searches: int | None = None) -> ModelUsage:

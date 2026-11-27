@@ -10,13 +10,14 @@ bought again either. A check on the answer never fails the run that paid for it.
 from __future__ import annotations
 
 import asyncio
+import dataclasses
 import hashlib
 import logging
 import weakref
 from collections.abc import Callable
 from uuid import UUID
 
-from tin_lite import people_icp
+from tin_lite import grounding_links, model_logs, people_icp
 from tin_lite import people_records as records
 from tin_lite.model_providers import (
     MessageRole,
@@ -113,6 +114,17 @@ async def _ask(
 
     # A call holds a database connection to its end (its receipt and usage record): a slot
     # first, so model calls never take the pool the web server needs.
+    request = WebSearchRequest(
+        system=people_icp.instructions(profiles),
+        messages=(
+            ModelMessage(role=MessageRole.USER, content=people_icp.person_input(text, person)),
+        ),
+        output_schema=people_icp.schema(profiles),
+        output_schema_name="icp_rating",
+        max_output_tokens=people_icp.MAX_OUTPUT_TOKENS,
+        reasoning_effort=reasoning,
+        web_search_calls=searches,
+    )
     async with model_slot(), db.effect_lock(key, operation) as (conn, saved):
         if saved and saved.status == "completed":
             output = (saved.result or {}).get("output")
@@ -120,34 +132,46 @@ async def _ask(
         if saved:
             return None, False
         await db.start_effect(conn, execution_key=key, operation=operation)
-        output = None
+        output, result, failure = None, None, None
         try:
             with model_usage_scope(run_id=run.id, step=usage, conn=conn):
                 async with asyncio.timeout(seconds + 15):
                     result = await router.generate(
-                        people_icp.ROUTE.key,
-                        WebSearchRequest(
-                            system=people_icp.instructions(profiles),
-                            messages=(
-                                ModelMessage(
-                                    role=MessageRole.USER,
-                                    content=people_icp.person_input(text, person),
-                                ),
-                            ),
-                            output_schema=people_icp.schema(profiles),
-                            output_schema_name="icp_rating",
-                            max_output_tokens=people_icp.MAX_OUTPUT_TOKENS,
-                            reasoning_effort=reasoning,
-                            web_search_calls=searches,
-                        ),
-                        timeout_seconds=seconds,
+                        people_icp.ROUTE.key, request, timeout_seconds=seconds
                     )
+            result = await resolved(result)
             output = result.parsed
         except (ModelProviderError, ModelOutputTruncated, TimeoutError) as error:
             # A check on model output never fails the run that paid for it.
             logger.warning("ICP rating failed for run %s: %s", run.id, type(error))
+            failure = error
         await db.complete_effect(conn, execution_key=key, result={"output": output})
-        return output, output is None
+    await model_logs.record(
+        db,
+        project_id=run.project_id,
+        run_id=run.id,
+        step=usage,
+        route=people_icp.ROUTE.key,
+        request=request,
+        result=result,
+        error=failure,
+    )
+    return output, output is None
+
+
+async def resolved(result):
+    """The result with Google's grounding redirect links, in its answer and its grounding,
+    replaced by the pages' own addresses where Google says where they point."""
+
+    links = grounding_links.links_in([result.parsed, getattr(result, "grounding", None)])
+    if not links or not dataclasses.is_dataclass(result):
+        return result
+    found = await grounding_links.resolve(links)
+    return dataclasses.replace(
+        result,
+        parsed=grounding_links.replaced(result.parsed, found),
+        grounding=grounding_links.replaced(result.grounding, found),
+    )
 
 
 async def rate(db, router, run, person, *, text, profiles, definition, operation, step) -> None:

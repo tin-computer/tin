@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 from dataclasses import asdict
 from types import SimpleNamespace
 
@@ -215,6 +216,38 @@ async def test_gemini_adapter_grounds_in_google_search_only_when_asked() -> None
     result = await provider.generate(model="gemini-test", request=plain)
     assert not client.aio.models.parameters["config"].tools
     assert result.usage.web_search_calls is None
+
+
+@pytest.mark.asyncio
+async def test_a_gemini_answer_citing_search_without_metadata_counts_a_search() -> None:
+    """11-27: the company judge cited Google's grounding links with no grounding metadata on
+    the response, and its search was counted as none."""
+
+    link = "https://vertexaisearch.cloud.google.com/grounding-api-redirect/AUZIYQH6nVKt7cvTeQ"
+
+    class Models:
+        async def generate_content(self, **parameters):
+            return SimpleNamespace(
+                text=json.dumps({"answer": f"Bought by Globex ({link}, {link})."}),
+                candidates=[SimpleNamespace(finish_reason="STOP", grounding_metadata=None)],
+                usage_metadata=SimpleNamespace(
+                    prompt_token_count=7, candidates_token_count=3, total_token_count=10
+                ),
+            )
+
+    class AsyncClient:
+        models = Models()
+
+        async def aclose(self):
+            pass
+
+    provider = GeminiModelProvider(api_key="test", client=SimpleNamespace(aio=AsyncClient()))  # noqa: S106
+    plain = _request(structured=True)
+    result = await provider.generate(
+        model="gemini-test", request=WebSearchRequest(**vars(plain), web_search_calls=7)
+    )
+    assert result.usage.web_search_calls == 1
+    assert result.grounding == {"queries": [], "sources": [{"title": "", "uri": link}]}
 
 
 @pytest.mark.asyncio
