@@ -277,7 +277,10 @@ class IntelDailyActivities(IntelActivities):
         select, methods = group(intel_daily.SCOPE, name)
         done = await store.done_sources(self.db.pool, run.id)
         todo = [source for source in select(ready) if source["id"] not in done]
-        if not todo:
+        # Google News items get their publisher's text after their feeds are read, on a retry
+        # too: the pass only touches items that still carry just a headline.
+        news_text = name == "gnews" and bool(select(ready))
+        if not todo and not news_text:
             return {"items": 0, "sources": 0}
         settings = {
             **intel_daily.group_settings(name, config),
@@ -293,19 +296,50 @@ class IntelDailyActivities(IntelActivities):
             await store.record_sources(self.db.pool, run_id=run.id, statuses=[status])
 
         reader = self._reader(intel_daily.GROUP_USER_AGENT[name])
+        texts = None
         try:
-            items, statuses = await run_sources(
-                methods, todo, window, reader, settings=settings, on_done=done_one
-            )
+            items, statuses = [], []
+            if todo:
+                items, statuses = await run_sources(
+                    methods, todo, window, reader, settings=settings, on_done=done_one
+                )
+            if news_text:
+                texts = await self._publisher_text(run, reader, settings)
         finally:
             await reader.aclose()
         # Again with the duplicates each source lost to an earlier one.
-        await store.record_sources(self.db.pool, run_id=run.id, statuses=statuses)
-        return {
+        if statuses:
+            await store.record_sources(self.db.pool, run_id=run.id, statuses=statuses)
+        result = {
             "items": len(items),
             "sources": len(statuses),
             "failed": sum(1 for s in statuses if s["status"] == "failed"),
         }
+        if texts is not None:
+            result["with_text"] = texts["with_text"]
+        return result
+
+    async def _publisher_text(self, run, reader, settings: dict) -> dict[str, int]:
+        """Publisher text for the top headline-only Google News items of each source: the
+        analyst reads an article, not a headline. Bounded in items and time; a link that won't
+        unwrap or a page that won't read keeps the headline, and nothing here fails the group."""
+        per_source = settings.get("google_news_text_items", gnews.TEXT_PER_SOURCE)
+        if not per_source:
+            return {"wanted": 0, "unwrapped": 0, "with_text": 0}
+        try:
+            rows = await store.headline_only_news(
+                self.db.pool, run.id, per_source=per_source, limit=gnews.TEXT_MAX_ITEMS
+            )
+
+            async def save(canon_url: str, text: str) -> None:
+                await store.set_item_text(
+                    self.db.pool, run_id=run.id, canon_url=canon_url, text=text
+                )
+
+            return await gnews.add_publisher_text(self.db.pool, reader, rows, save)
+        except Exception as exc:  # noqa: BLE001 — headlines stay; the day goes on
+            logger.warning("intel.daily publisher text failed: %s", type(exc).__name__)
+            return {"wanted": 0, "unwrapped": 0, "with_text": 0}
 
     async def _fetch_x(self, run, window: Window) -> dict:
         if x_list.SOURCE_ID in await store.done_sources(self.db.pool, run.id):

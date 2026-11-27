@@ -245,7 +245,7 @@ _INTEL_CHECK = (
     "test ! -e /usr/bin/sqlite3 && "
     "python3 -c \"import sqlite3;sqlite3.connect(':memory:').execute("
     "'create virtual table t using fts5(x)')\" && "
-    'test "$(/usr/local/bin/intel --version)" = 1 && '
+    'test "$(/usr/local/bin/intel --version)" = 2 && '
     "install -d -o root -g root -m 0755 /opt/tin-intel"
 )
 

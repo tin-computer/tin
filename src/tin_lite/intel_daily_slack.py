@@ -17,7 +17,6 @@ import re
 from datetime import date
 
 from tin_lite.intel_brief import LINK, story_links
-from tin_lite.intel_fetch import x_list
 from tin_lite.intel_slack import (
     MAX_BLOCKS,
     TEXT_LIMIT,
@@ -85,41 +84,19 @@ def outlets(story: dict | None, links: dict[str, str] | None = None) -> list[tup
     return found
 
 
-# What the brief says when X wasn't fully read, by x_list.REASONS' key (status wording lives
-# there; this is Slack's). A test keeps the two key sets equal.
-X_NOTES = {
-    "x_member": "X List not read: X on Tin's host project changed hands mid-read",
-    "x_reauthorize": "X List not read: reconnect X on Tin's host project",
-    "x_not_connected": "X List not read: X isn't connected on Tin's host project",
-    "x_rate_limited": "X List cut short: X asked Tin to wait",
-    "x_uncertain": "X List cut short: one page wasn't confirmed",
-    "x_invalid": "X List not read: X refused the List ID",
-    "x_spending": "X List cut short: no room left in the run's spending limits",
-    "x_list_unavailable": "X List not read: X didn't find it or won't serve it to Tin's account",
-    "x_list_not_owned": "X List not read: Tin's X account doesn't own it",
-    "x_list_not_enrolled": "X List not read: it isn't the List set up for this client",
-    # A brief with no List pinned says nothing about X; sources.json still records the skip.
-    "x_no_list": None,
-    "x_no_host": "X List not read: no intel host project is set",
-    "x_not_enrolled": "X List not read: this client isn't set up for Tin's X",
-}
 FALLBACK_NOTE = "Tin wrote this brief from the day's top stories"
 
 
 def notes(fetch: dict, *, brief_source: str | None, world_status: str | None) -> list[str]:
-    """Plain lines on what the day lacked: world stories, X, a brief Tin wrote itself. The
-    fallback brief carries no note of its own, so this is the one place that says so."""
-    lines = []
-    if world_status in (None, "missing"):
-        lines.append("World stories unavailable today")
-    for status in fetch.get("source_status") or []:
-        if status.get("id") == x_list.SOURCE_ID and status.get("reason"):
-            line = X_NOTES.get(status["reason"], "X List not fully read")
-            if line:
-                lines.append(line)
-    if brief_source == "fallback":
-        lines.append(FALLBACK_NOTE)
-    return lines
+    """Plain lines the brief adds about itself: only that Tin wrote it, when it did. The
+    fallback brief carries no note of its own, so this is the one place that says so.
+
+    A source the day lacked (X, the world stories) is never a line of the brief: founders read
+    it, and a gap is neither news nor theirs to fix. Gaps are in sources.json and in the
+    report's Source notes, in plain words (Ege, 2026-11-27, after a staging brief said "X List
+    not read: X isn't connected on Tin's host project")."""
+    del fetch, world_status  # kept for callers; gaps no longer reach the brief
+    return [FALLBACK_NOTE] if brief_source == "fallback" else []
 
 
 def client_message(

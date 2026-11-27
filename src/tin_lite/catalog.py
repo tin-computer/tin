@@ -1959,7 +1959,7 @@ BUILTIN_WORKFLOWS = (
             "stories. Runs only on Tin's own intelligence project."
         ),
         executor=intel_world.KEY,
-        version_label="1.0.0",
+        version_label="1.1.0",
         presentation=intel_world.PRESENTATION,
         schedule_modes=("on_demand", "daily"),
         agent_only=True,
@@ -1976,7 +1976,7 @@ BUILTIN_WORKFLOWS = (
             "data. Started by Write today's world stories, never on its own."
         ),
         executor=CODEX_PROCEDURE_EXECUTOR,
-        version_label="1.0.0",
+        version_label="1.1.0",
         presentation=intel_world.JUDGE_PRESENTATION,
         schedule_modes=("on_demand",),
         agent_only=True,
@@ -2014,7 +2014,7 @@ BUILTIN_WORKFLOWS = (
         title=intel_daily.JUDGE_TITLE,
         description=intel_daily.JUDGE_DESCRIPTION,
         executor=CODEX_PROCEDURE_EXECUTOR,
-        version_label="1.1.0",
+        version_label="1.2.0",
         presentation=intel_daily.JUDGE_PRESENTATION,
         schedule_modes=("on_demand",),
         agent_only=True,

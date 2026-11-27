@@ -299,7 +299,10 @@ async def _intel_world_enable(created_by: str, *, paused: bool) -> None:
         )
     finally:
         await database.close()
-    print(f"intel.world saved on {host}: {configured.id} ({configured.status}), daily 06:00 UTC")
+    print(
+        f"intel.world saved on {host}: {configured.id} ({configured.status}), "
+        f"daily {intel_world.SCHEDULE_TIME} UTC"
+    )
     if not settings.intel_world_slack_channel:
         print("TIN_LITE_INTEL_WORLD_SLACK_CHANNEL is unset here, so the summary is not posted")
 

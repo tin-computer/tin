@@ -24,7 +24,7 @@ import urllib.parse
 import urllib.request
 from datetime import UTC, datetime, timedelta
 
-VERSION = "1"
+VERSION = "2"
 SNAPSHOT_FORMAT = "intel-snapshot/1"
 CAP = 9000  # bytes per call: Antigravity cuts tool output past ~10 KB (middle elided)
 MAX_INPUT_BYTES = 64 * 1024 * 1024
@@ -40,17 +40,19 @@ Workflow
   7. intel brief put brief.json        the Slack brief (intel brief schema shows its shape)
 
 Commands
-  status
+  status [--all]                       --all also lists every source that came back empty
   sources                              source keys and item counts
   fronts [--source S] [--n 5] [--offset N]
   search "q" [--source S] [--since 12h] [--sort match|rank|new] [--limit 20] [--offset N]
   count "q" [--by source|hour]
   similar <id> [--limit 15]
   browse <source> [--from N] [--limit 25]
-  read <id> [<id> ...] [--max-words 600] [--from-word N]   several ids share one call's budget
+  read <id> [<id> ...] [--max-words 600] [--from-word N]   several ids share one call's budget:
+                                       read a long or primary source on its own
   stories [--since 7d] [--q "words"] [--json]
   story show <sid>
-  story put --key <slug> --title "..." --summary "..." --items id,id [--relevance high|medium|low]
+  story put --json story.json          one story, or a list of up to 6, as JSON (keeps $ amounts)
+  story put --key <slug> --title '...' --summary '...' --items id,id [--relevance high|medium|low]
             [--tags a,b] [--sensitive | --not-sensitive] [--continues <sid>]
   story attach <sid> id,id
   tags                                 the tags a story may carry
@@ -58,7 +60,7 @@ Commands
   brief put <file.json>                send the brief; Tin checks it and says what to fix
 
 Your shell cuts any single call's output past ~10 KB. Each intel command stays under that, so
-run one or two per call; to read several items, pass them to one intel read rather than a loop.
+run one or two per call; to read several short items, pass them to one intel read, not a loop.
 Rows: id  source  rank  age  title (domain)  [+N dup: same story from N more outlets]
 Rank is the source's own: #3 = third on its front page, 812pts 340c = HN points and comments,
 1.2M views = Wikipedia, 120likes = X.
@@ -66,11 +68,15 @@ Search: plain words are ANDed; also "exact phrase", OR, -exclude, prefix*. Hyphe
 are handled for you (GPT-5, U.S.). --source takes a key or part of one (gn matches every
 Google News source). Ids are 5 characters and stay the same for the same URL across days.
 Stories and the brief go to Tin, not to a file: never edit the database.
+Write story text in a JSON file (story put --json): inside double quotes the shell erases
+$ amounts ("$850M" becomes "50M").
+Story JSON: {"key": "nvidia-ceo-reinstated", "title": "...", "summary": "...",
+  "items": ["k3f9a", "p0qe2"], "relevance": "high", "tags": ["ai", "markets"],
+  "sensitive": false, "continues": "s-nvidia-ceo-fired"}   (title and summary on a new story)
 Examples
   intel search "Zscaler CrowdStrike" --limit 5
   intel count "GTA VI" --by source
-  intel story put --key nvidia-ceo-reinstated --title "Nvidia reinstates Jensen Huang" \\
-      --summary "..." --items k3f9a,p0qe2 --relevance high --tags ai,markets --continues s-nvidia-ceo-fired
+  intel story put --json /home/tin-work/scratch/stories-1.json
 """
 
 STOP = set(
@@ -549,14 +555,24 @@ def cmd_status(a):
             + (f" ({m.get('world_day')})" if m.get("world_day") else "")
         )
     out = Out("\n".join(lines))
-    bad = db.execute(
-        "SELECT id, name, status, error FROM source_status "
-        "WHERE status NOT IN ('ok') ORDER BY status, id"
+    # Failed and skipped sources are gaps worth naming; an empty one usually had a quiet day,
+    # and a client can have hundreds, so they are counted unless --all asks for them.
+    rows = db.execute(
+        "SELECT id, name, status, error FROM source_status WHERE status <> 'ok' ORDER BY status, id"
     ).fetchall()
-    if bad:
-        out.add(f"sources without items ({len(bad)}):")
-        for r in bad:
-            out.add(f"  {r['id']}\t{r['status']}\t{(r['error'] or '')[:160]}")
+    gaps = [r for r in rows if r["status"] != "empty"]
+    empty = [r for r in rows if r["status"] == "empty"]
+    out.add(f"sources failed or skipped\t{len(gaps)}")
+    for r in gaps:
+        out.add(f"  {r['id']}\t{r['status']}\t{(r['error'] or '')[:160]}")
+    if empty:
+        listed = getattr(a, "all", False)
+        out.add(
+            f"sources with nothing in the window\t{len(empty)}"
+            + ("" if listed else " (intel status --all lists them)")
+        )
+        for r in empty if listed else ():
+            out.add(f"  {r['id']}\tempty")
     out.done("-- next: intel fronts, or intel stories --since 7d to see what is already covered")
 
 
@@ -756,6 +772,13 @@ def cmd_read(a):
         for iid in a.ids:
             item(db, iid)
         per = max(60, min(a.max_words, (CAP // len(a.ids) - 600) // 7))
+        if per < a.max_words:
+            # Say so up front: an agent that asked for more otherwise reads each item again.
+            print(
+                f"# {len(a.ids)} items share this call's ~9 KB: at most {per} words each "
+                f"(you asked for {a.max_words}). Read a long or primary source on its own."
+            )
+            print()
         for n, iid in enumerate(a.ids):
             if n:
                 print()
@@ -876,6 +899,76 @@ def item_ids(text):
     return [x.strip() for x in (text or "").split(",") if x.strip()]
 
 
+MAX_STORIES_PER_FILE = 6
+STORY_FIELDS = ("key", "title", "summary", "items", "relevance", "tags", "sensitive", "continues")
+
+
+def story_body(value, where):
+    """One story from a JSON file as the request Tin takes. The shell never sees its text."""
+    if not isinstance(value, dict):
+        raise Usage(f"{where} must be a JSON object with key, title, summary and items")
+    extra = sorted(set(value) - set(STORY_FIELDS))
+    if extra:
+        raise Usage(f"{where} has fields Tin doesn't use: {', '.join(extra[:5])}")
+    key = value.get("key")
+    if not isinstance(key, str) or not re.fullmatch(r"[a-z0-9][a-z0-9-]{2,60}", key):
+        raise Usage(f"{where}: key is a lowercase slug like nvidia-ceo-reinstated")
+    items = value.get("items", [])
+    if isinstance(items, str):
+        items = item_ids(items)
+    if not isinstance(items, list) or not all(isinstance(i, str) for i in items):
+        raise Usage(f'{where}: items is a list of ids such as ["k3f9a", "p0qe2"]')
+    body = {"action": "put", "key": key, "items": [i.strip() for i in items if i.strip()]}
+    for name in ("title", "summary", "relevance", "continues"):
+        if value.get(name) is not None:
+            body[name] = value[name]
+    if value.get("tags") is not None:
+        tags = value["tags"]
+        body["tags"] = item_ids(tags) if isinstance(tags, str) else tags
+    if value.get("sensitive") is not None:
+        body["sensitive"] = value["sensitive"]
+    return body
+
+
+def put_stories_file(path):
+    """`story put --json <file>`: one story or a short list, sent one at a time, so a refused
+    story doesn't stop the others. Exit 2 when any was refused."""
+    try:
+        with open(path, encoding="utf-8") as handle:
+            value = json.load(handle)
+    except FileNotFoundError:
+        raise NotFound(f"no file {path}") from None
+    except ValueError as exc:
+        raise Usage(f"{path} is not valid JSON ({exc})") from None
+    stories = value if isinstance(value, list) else [value]
+    if not stories:
+        raise Usage(f"{path} holds no story")
+    if len(stories) > MAX_STORIES_PER_FILE:
+        raise Usage(
+            f"{path} holds {len(stories)} stories; send at most {MAX_STORIES_PER_FILE} per call "
+            "so each turn stays short"
+        )
+    bodies = [
+        story_body(story, f"story {n}" if len(stories) > 1 else path)
+        for n, story in enumerate(stories, 1)
+    ]
+    refused = 0
+    for body in bodies:
+        try:
+            result = service("POST", "/story", body)
+        except ServiceError as exc:
+            refused += 1
+            print(f"error: {body['key']}: {exc}")
+            continue
+        print_write(result, "created" if result.get("created") else "updated")
+    if refused:
+        print(
+            f"error: {refused} of {len(bodies)} stories were refused; fix them and send again",
+            file=sys.stderr,
+        )
+        sys.exit(2)
+
+
 def cmd_story(a):
     if a.action == "show":
         r = service("GET", "/story/" + urllib.parse.quote(a.sid, safe=""))
@@ -899,6 +992,16 @@ def cmd_story(a):
             "POST", "/story", {"action": "attach", "sid": a.sid, "items": item_ids(a.items)}
         )
         print_write(result, "attached to")
+        return
+    if a.json_file:
+        flags = [
+            n
+            for n in ("key", "title", "summary", "items", "relevance", "tags", "continues")
+            if getattr(a, n)
+        ]
+        if flags or a.sensitive or a.not_sensitive:
+            raise Usage("story put --json takes the story from the file; leave out the other flags")
+        put_stories_file(a.json_file)
         return
     if not re.fullmatch(r"[a-z0-9][a-z0-9-]{2,60}", a.key or ""):
         raise Usage(
@@ -966,7 +1069,8 @@ def main(argv=None):
     s = sub.add_parser("load")
     s.add_argument("--input", required=True)
     s.add_argument("--db", required=True)
-    sub.add_parser("status")
+    s = sub.add_parser("status")
+    s.add_argument("--all", action="store_true")
     sub.add_parser("sources")
     sub.add_parser("tags")
     s = sub.add_parser("fronts")
@@ -1011,6 +1115,7 @@ def main(argv=None):
     s.add_argument("--sensitive", action="store_true")
     s.add_argument("--not-sensitive", dest="not_sensitive", action="store_true")
     s.add_argument("--continues")
+    s.add_argument("--json", dest="json_file")
     s = sub.add_parser("brief")
     s.add_argument("action", choices=["schema", "put"])
     s.add_argument("file", nargs="?")
@@ -1029,8 +1134,8 @@ def main(argv=None):
                 a.items = a.items or a.items_pos
                 if not a.items:
                     raise Usage("intel story attach <sid> id,id")
-            if a.action == "put" and not a.key:
-                raise Usage("intel story put needs --key <slug>")
+            if a.action == "put" and not a.key and not a.json_file:
+                raise Usage("intel story put needs --json <file> (or --key <slug> and flags)")
             if a.sensitive and a.not_sensitive:
                 raise Usage("use --sensitive or --not-sensitive, not both")
         for lim in ("limit", "n", "max_words"):

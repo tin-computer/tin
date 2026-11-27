@@ -205,6 +205,32 @@ async def record_sources(conn, *, run_id: UUID, statuses: list[dict]) -> None:
         )
 
 
+async def headline_only_news(conn, run_id: UUID, *, per_source: int, limit: int) -> list[dict]:
+    """A run's Google News items that still carry only their headline, the top `per_source` of
+    each source, interleaved by rank so a cut-short pass still covers every source's lead."""
+    rows = await conn.fetch(
+        """SELECT canon_url, url, title FROM intel_items
+           WHERE run_id = $1 AND source_type = 'rss'
+             AND url LIKE 'https://news.google.com/rss/articles/%'
+             AND rank <= $2 AND (text = '' OR text = COALESCE(title, ''))
+           ORDER BY rank, source_id, canon_url LIMIT $3""",
+        run_id,
+        per_source,
+        limit,
+    )
+    return [dict(row) for row in rows]
+
+
+async def set_item_text(conn, *, run_id: UUID, canon_url: str, text: str) -> None:
+    """The publisher's text for an item that had only a headline (before the day's snapshot)."""
+    await conn.execute(
+        "UPDATE intel_items SET text = $3 WHERE run_id = $1 AND canon_url = $2",
+        run_id,
+        canon_url,
+        text[:MAX_TEXT],
+    )
+
+
 async def done_sources(conn, run_id: UUID) -> set[str]:
     current = await conn.fetchval(
         "SELECT source_status FROM intel_fetches WHERE run_id = $1", run_id

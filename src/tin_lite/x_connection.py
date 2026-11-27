@@ -1401,7 +1401,11 @@ class XConnection:
         list_id = _id(list_id, name="List ID")
         connection, account = await self._member_connection(LISTS, project_id, clerk_user_id)
         result = await self._request(
-            connection, LISTS, "GET", f"/2/lists/{list_id}", params={"list.fields": "owner_id"}
+            connection,
+            LISTS,
+            "GET",
+            f"/2/lists/{list_id}",
+            params={"list.fields": "owner_id,member_count"},
         )
         data = result.get("data")
         if not isinstance(data, dict):
@@ -1409,7 +1413,14 @@ class XConnection:
         owner = data.get("owner_id")
         if data.get("id") != list_id or not ID.fullmatch(str(owner or "")):
             raise IntegrationUpstreamError("X returned an invalid List")
-        return {"list_id": list_id, "owner_id": owner, "owned": owner == account}
+        members = data.get("member_count")
+        return {
+            "list_id": list_id,
+            "owner_id": owner,
+            "owned": owner == account,
+            # None when X leaves it out: unknown, never read as empty.
+            "member_count": members if type(members) is int and members >= 0 else None,
+        }
 
     async def _public_account(self, connection: Any, username: str) -> dict[str, Any]:
         result = await self._request(

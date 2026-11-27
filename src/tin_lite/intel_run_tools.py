@@ -38,6 +38,10 @@ MAX_STORIES = 400
 MAX_ITEMS_PER_STORY = 400
 LINK_DAYS = 30
 KEY = re.compile(r"^[a-z0-9][a-z0-9-]{2,60}$")
+# What a `$` amount looks like after a shell ate it inside double quotes: "$20 billion" became
+# " 0 billion", "$1.5 billion" ".5 billion" (prod 2026-11-26: 26 stories). A warning back to the
+# agent, never a refusal: the figure may be real.
+EATEN_DOLLARS = re.compile(r"(?:^|[\s(])(?:\.\d+|0{1,2}) ?(?:million|billion|trillion|[MBK]\b)")
 SCHEMA = {"world": intel_brief.WORLD_SCHEMA, "client": intel_brief.CLIENT_SCHEMA}
 
 
@@ -203,10 +207,16 @@ async def put_story(runtime, judge: Judge, body: object) -> dict:
             if sensitive is not None and not isinstance(sensitive, bool):
                 raise Refused("`sensitive` is true or false")
             continues_id = None
-            if body.get("continues"):
-                target = _sid_key(body["continues"])
+            target = _sid_key(body["continues"]) if body.get("continues") else None
+            if target is not None:
                 if target == key:
-                    raise Refused("a story can't continue itself")
+                    # The same development under its own key is an update, which is right.
+                    warnings.append(
+                        f"s-{key} is this story, so Tin updated it; --continues names a different "
+                        "earlier story, only when the development itself changed"
+                    )
+                    target = None
+            if target is not None:
                 continues_id = await conn.fetchval(
                     "SELECT id FROM intel_stories WHERE project_id IS NOT DISTINCT FROM $1 "
                     "AND key = $2",
@@ -249,6 +259,12 @@ async def put_story(runtime, judge: Judge, body: object) -> dict:
                 )
             except ValueError:
                 raise Refused("a new story needs --title and --summary") from None
+            if any(EATEN_DOLLARS.search(text or "") for text in (title, summary)):
+                warnings.append(
+                    "a dollar amount looks cut ('0 billion', '.5 million'): inside double quotes "
+                    "the shell erases $ figures. Send the story with intel story put --json "
+                    "<file> and the full figure."
+                )
         else:
             raise Refused("`action` is put or attach")
         if action == "attach":

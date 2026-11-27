@@ -15,11 +15,11 @@ intel fronts [--source S] [--n 5]     each source's top items in its own order
 intel search "words" [--source S] [--since 12h] [--sort match|rank|new]
 intel count "words" --by source       how widely something is covered
 intel similar <id>                    other items about the same thing
-intel read <id> [<id> ...]            full text; several ids share one call's budget
+intel read <id> [<id> ...]            full text; several ids share one call's budget, so
+                                      each is cut short: read a long item alone
 intel stories --since 7d [--q words]  earlier days' stories and today's
 intel story show <sid>
-intel story put --key <slug> --title "..." --summary "..." --items id,id \
-    --relevance high|medium|low --tags a,b [--sensitive] [--continues s-<key>]
+intel story put --json <file>         one story, or a list of up to 6, from a JSON file
 intel story attach <sid> id,id
 intel tags                            the tags a story may carry
 intel brief schema                    the brief's shape and an example
@@ -35,14 +35,26 @@ Example:
 ```
 intel search "Nvidia CEO" --limit 5
 intel read 6ssrp wus3h
-intel story put --key nvidia-ceo-reinstated --title "Nvidia reinstates Jensen Huang as CEO" \
-  --summary "Nvidia's board reinstated Jensen Huang days after rejecting his offer to return. US chip stocks recovered about half of last week's drop." \
-  --items 6ssrp,wus3h --relevance high --tags ai,business,markets
+intel story put --json /home/tin-work/scratch/stories-3.json
 ```
 
-`intel story put` answers with what it did, item ids it could not find, and warnings (a dropped
-tag). Re-running it with the same key updates the story; fields you leave out keep their value.
-An id it can't find was mistyped or isn't in today's data: check it with `intel search`.
+Write stories in a JSON file in `/home/tin-work/scratch`, never in `--title`/`--summary`
+flags: inside double quotes the shell erases `$` amounts, so "$20 billion" reaches Tin as
+"0 billion". A file holds one story or a list of at most six:
+
+```json
+[{"key": "nvidia-ceo-reinstated",
+  "title": "Nvidia reinstates Jensen Huang as CEO",
+  "summary": "Nvidia's board reinstated Jensen Huang days after rejecting his offer to return. US chip stocks recovered about half of last week's $300 billion drop.",
+  "items": ["6ssrp", "wus3h"],
+  "relevance": "high",
+  "tags": ["ai", "business", "markets"]}]
+```
+
+`intel story put` answers each story with what it did, item ids it could not find, and warnings
+(a dropped tag, a dollar figure that looks cut). Putting the same key again updates the story;
+fields you leave out keep their value. An id it can't find was mistyped or isn't in today's
+data: check it with `intel search`.
 
 ## Story fields
 
@@ -52,7 +64,9 @@ An id it can't find was mistyped or isn't in today's data: check it with `intel 
 - **summary**: two to four sentences: what happened, the key numbers or names, and why people
   care. Only facts the items support. Plain English, no hype, no em dashes.
 - **relevance**: high = a top story most people in tech, business or entertainment will hear
-  about today; medium = notable in its field or region; low = minor but real. Politics,
+  about today (a Hacker News front-page story with several hundred points that is real news
+  counts); medium = notable in its field or region; low = minor but real. Macro, commodities,
+  central banks and old-economy company news are high only when they dominate the day. Politics,
   geopolitics and conflict are high only when they move tech or business (chip or export
   controls, tariffs on tech, AI or platform regulation, state-linked hacks) or are genuinely
   dominant global news; otherwise medium or low. Tech and AI (security incidents and outages
@@ -67,7 +81,8 @@ An id it can't find was mistyped or isn't in today's data: check it with `intel 
   divisive politics, where a brand making a joke or a hook of it would be tasteless.
 - **items**: the items that cover the story, the strongest outlets first (Tin links the first one
   from Slack). Attach copies in other languages too; reach matters.
-- **continues**: when it develops a story from an earlier day under a new key, name that story.
+- **continues**: when it develops a story from an earlier day under a new key, name that story
+  (`"continues": "s-<key>"`). Keeping yesterday's key is usually better.
 
 ## The brief
 
@@ -88,7 +103,8 @@ Send it as JSON with `intel brief put brief.json` after your stories are recorde
   culture), `science_health`, `world`; leave out empty ones.
 - Five to eight stories in total, most important first in each section, and at most two in
   `world`. Tin drops any `world` line past the second. The headline is the day
-  in one line (at most 200 characters); each line at most 240.
+  in one line (at most 200 characters); each line at most 240. Limits count visible text, not
+  link URLs, and Tin lists every problem with a brief at once.
 - A line may link a few words to an item's URL as `[a few words](https://...)`, copied from what
   `intel read` shows. Tin removes any other link, and any bare URL or domain.
 - Plain text only, no Slack markup. No hype, no em dashes. A sensitive story is reported plainly,

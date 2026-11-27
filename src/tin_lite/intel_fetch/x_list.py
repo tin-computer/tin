@@ -63,44 +63,38 @@ OPERATION = "external_usage_v1"
 OWNER_OPERATION = "intel.x_list_owner"
 SOURCE_ID = "x-list"
 
+# Each reason's sentence lands in the client's sources.json and the analyst's `intel status`,
+# both of which founders can read: plain words only, never Tin's plumbing (the host project,
+# connections, operator setup). Operators read the `reason` code next to it, and
+# docs/daily-intelligence.md says what each code means.
+_UNAVAILABLE = "Skipped: X posts weren't available today."
 REASONS = {
-    "x_member": (
-        "Skipped: X on Tin's host project was reconnected by someone else while the List was "
-        "read; the next run reads it as whoever connected X there."
+    "x_member": _UNAVAILABLE,
+    "x_reauthorize": _UNAVAILABLE,
+    "x_not_connected": _UNAVAILABLE,
+    "x_rate_limited": (
+        "Stopped early: X limited how many posts could be read today; the posts before that "
+        "are kept."
     ),
-    "x_reauthorize": "Skipped: X needs to be reconnected on Tin's host project.",
-    "x_not_connected": (
-        "Skipped: X isn't connected on Tin's host project, which reads every client's List."
-    ),
-    "x_rate_limited": "Stopped: X asked Tin to wait before reading more of the List.",
     "x_uncertain": (
-        "Stopped: X didn't confirm one page of the List, so Tin didn't buy it again; the posts "
-        "before it are kept."
+        "Stopped early: one page of X posts wasn't confirmed, so it wasn't read again; the "
+        "posts before it are kept."
     ),
-    "x_invalid": "Skipped: X refused the List ID.",
+    "x_invalid": _UNAVAILABLE,
     "x_spending": (
-        "Stopped: the run's spending limits or credits left no room for another page of the "
-        "List, so Tin didn't buy it; the posts before it are kept."
+        "Stopped early: the run's spending limits left no room for more X posts; the posts "
+        "before that are kept."
     ),
-    "x_list_unavailable": (
-        "Skipped: X didn't find this List, or won't let Tin's X account read it. Check the "
-        "List ID and that the List is on Tin's X account."
+    "x_list_unavailable": _UNAVAILABLE,
+    "x_list_no_members": (
+        "Failed: the X List for this brief has no accounts in it, so there were no posts to read."
     ),
-    "x_list_not_owned": (
-        "Skipped: the List pinned for this client isn't owned by Tin's X account, so Tin didn't "
-        "read it."
-    ),
-    "x_list_not_enrolled": (
-        "Skipped: this run names an X List other than the one an operator pinned for this "
-        "client, so Tin didn't read it."
-    ),
-    "x_no_list": "Skipped: no X List is pinned for this client (tin-lite intel-x-list).",
-    "x_no_host": (
-        "Skipped: no intel host project is set here, so there is no X account to read the List."
-    ),
-    "x_not_enrolled": (
-        "Skipped: Tin reads X Lists only for clients an operator set up for the daily brief."
-    ),
+    "x_list_no_posts": "Failed: X returned no posts at all for this brief's X List today.",
+    "x_list_not_owned": _UNAVAILABLE,
+    "x_list_not_enrolled": _UNAVAILABLE,
+    "x_no_list": "Skipped: no X List is set up for this brief.",
+    "x_no_host": _UNAVAILABLE,
+    "x_not_enrolled": _UNAVAILABLE,
 }
 
 
@@ -374,6 +368,7 @@ async def read_list(
     async with db.effect_lock(key, OWNER_OPERATION) as (conn, receipt):
         if receipt is not None and receipt.status == "completed":
             owned = (receipt.result or {}).get("owned") is True
+            members = (receipt.result or {}).get("member_count")
         elif receipt is not None:
             return stop("x_uncertain")
         else:
@@ -386,6 +381,7 @@ async def read_list(
                     await db.discard_started_effect(conn, execution_key=key)
                 return stop(reason)
             owned = found.get("owned") is True
+            members = found.get("member_count")
             await record_call(
                 db,
                 connection=connection,
@@ -394,12 +390,19 @@ async def read_list(
                 execution_key=key,
                 run_id=run_id,
                 status="completed",
-                response_summary={"owned": owned},
+                response_summary={"owned": owned, "member_count": members},
             )
-            await db.complete_effect(conn, execution_key=key, result={"owned": owned})
+            await db.complete_effect(
+                conn, execution_key=key, result={"owned": owned, "member_count": members}
+            )
     if not owned:
         return stop("x_list_not_owned")
+    # A List with no members has nothing to sell: no page is bought, and the gap is a failure
+    # with its reason rather than a quiet day (prod 2026-11-26, two clients' empty Lists).
+    if members == 0:
+        return stop("x_list_no_members")
     cursor: str | None = None
+    returned_total = 0
     for number in range(1, X_MAX_PAGES + 1):
         if heartbeat is not None:
             heartbeat({"x_page": number})
@@ -495,10 +498,14 @@ async def read_list(
         status["est_supplier_usd"] = round(
             status["est_supplier_usd"] + X_POST_USD * int(result.get("posts", 0)), 3
         )
+        returned_total += int(result.get("posts", 0))
         cursor = result.get("cursor")
         oldest = parse_iso(result.get("oldest"))
         if not cursor or (oldest is not None and oldest < window.since):
             break
-    if not status["items_in_window"]:
+    if not returned_total:
+        # Not one post, in the window or out: the List is empty or unreadable, not quiet.
+        status.update(status="failed", reason="x_list_no_posts", error=REASONS["x_list_no_posts"])
+    elif not status["items_in_window"]:
         status["status"] = "empty"
     return status

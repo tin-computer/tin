@@ -22,7 +22,9 @@ JUDGE_WORKFLOW_ID = UUID("5216b8e8-923b-46d5-9149-238510cb663f")
 POLICY = {"version": "intel-v1"}
 # The world source config, published beside the definition and read at the run's revision.
 SOURCES_PATH = "workflows/intel.world/sources.json"
-SCHEDULE_TIME = "06:00"
+# 05:00 UTC, so the day's world stories are ready before the earliest client briefs (09:00 in
+# Istanbul is 06:00 UTC: a 06:00 world run raced it and the client read yesterday's world).
+SCHEDULE_TIME = "05:00"
 # A world day with this many stories posts even when its judge stopped early.
 PARTIAL_MIN_STORIES = 10
 WINDOW_HOURS = 24

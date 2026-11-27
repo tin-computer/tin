@@ -173,7 +173,7 @@ async def test_no_saved_list_records_x_skipped_with_its_reason(db):
     statuses = (await intel_store.get_fetch(db.pool, f.run_id))["source_status"]
     (x,) = [s for s in statuses if s["id"] == "x-list"]
     assert x["status"] == "skipped" and x["reason"] == "x_no_list"
-    assert "no X List is pinned" in x["error"]
+    assert "no X List is set up" in x["error"]
 
 
 async def test_company_md_missing_refuses_before_any_fetch(db):
@@ -220,6 +220,42 @@ async def test_fetch_reads_the_pinned_revision_and_skips_done_sources(db):
         "items": 0,
         "sources": 0,
     }
+
+
+async def test_google_news_items_carry_the_publishers_text_after_the_fetch(db):
+    """Review 2026-11-27: Google News items reached the analyst as headlines only. The fetch
+    unwraps the top items of each source (the link cache first) and reads the publisher's
+    page (gnews tests cover the item whose page won't read, which keeps its headline)."""
+    from intel_client_fakes import FakeReader
+
+    f = await setup(db)
+    await db.pool.execute(
+        "INSERT INTO intel_link_cache (gid, url) VALUES ('CBMiAAAexampleArticleOne0001', $1)",
+        PUBLISHER,
+    )
+    article = (
+        b"<html><body><article><p>The vendor added on-demand billing and a zero-capacity tier "
+        b"to its warehouse on Monday, both in preview, priced at $0.40 an hour.</p>"
+        b"</article></body></html>"
+    )
+    base = rss_reader()
+    f.acts._reader = lambda agent: FakeReader(
+        lambda url: article if url == PUBLISHER else base.route(url)
+    )
+    await f.acts.prepare(str(f.run_id))
+    result = await f.acts.fetch({"run_id": str(f.run_id), "group": "gnews"})
+    assert result["with_text"] == 1
+    rows = {
+        r["url"]: r["text"]
+        for r in await db.pool.fetch(
+            "SELECT url, text FROM intel_items WHERE run_id = $1 AND source_id = 'gn-lakehouse'",
+            f.run_id,
+        )
+    }
+    assert "$0.40 an hour" in rows[GN]
+    # A retry finds the sources recorded and the text in place: nothing to do twice.
+    again = await f.acts.fetch({"run_id": str(f.run_id), "group": "gnews"})
+    assert again["sources"] == 0 and again["with_text"] == 0
 
 
 class HostX:
@@ -308,7 +344,8 @@ async def test_x_without_a_host_connection_is_skipped_and_the_day_goes_on(db):
     assert x.asked == [("connection", f.host)]
     statuses = (await intel_store.get_fetch(db.pool, f.run_id))["source_status"]
     assert statuses[0]["id"] == "x-list" and statuses[0]["status"] == "skipped"
-    assert "isn't connected on Tin's host project" in statuses[0]["error"]
+    assert statuses[0]["reason"] == "x_not_connected"
+    assert statuses[0]["error"] == "Skipped: X posts weren't available today."
     rss = await f.acts.fetch({"run_id": str(f.run_id), "group": "rss"})
     assert rss["items"] == 3
 
@@ -354,7 +391,7 @@ async def test_a_list_tins_account_doesnt_own_is_never_read(db):
     assert result["x"] == "x_list_not_owned"
     assert [a[0] for a in x.asked] == ["connection", "list_owner"]
     owner = await db.get_effect(f"intel:{f.run_id}:x:{LIST_ID}:owner")
-    assert owner.status == "completed" and owner.result == {"owned": False}
+    assert owner.status == "completed" and owner.result == {"owned": False, "member_count": None}
 
 
 async def test_load_with_no_items_fails_before_the_judge(db):
@@ -549,7 +586,7 @@ async def test_no_brief_from_the_judge_gets_tins_fallback(db):
 
 async def test_an_unusable_brief_keeps_what_is_usable(db):
     """The judge's plausible but unusable output: a link outside the day is dropped, a brief
-    with two items is refused (the judge is told to fix it), and with no brief put Tin's
+    with six items is refused (the judge is told to fix it), and with no brief put Tin's
     fallback carries the day."""
     f = await setup(db)
     await judged(db, f)
@@ -567,7 +604,7 @@ async def test_an_unusable_brief_keeps_what_is_usable(db):
     assert "invented.example" not in json.dumps(kept) and GN in json.dumps(kept)
     assert any("isn't an item from today's data" in w for w in warnings)
     with pytest.raises(BriefError):
-        validate(CLIENT_SCHEMA, {"headline": "A day", "items": [item, item]}, links=links)
+        validate(CLIENT_SCHEMA, {"headline": "A day", "items": [item] * 6}, links=links)
     assert (await f.acts.judge_collect(str(f.run_id)))["brief"] == "fallback"
 
 
@@ -675,7 +712,8 @@ async def test_post_sends_once_through_the_host_project_and_finish_succeeds(db):
     assert text.startswith("Acme Data market brief, Tue 24 Nov")
     rendered = json.dumps(blocks)
     assert PUBLISHER in rendered and GN not in rendered
-    assert "World stories unavailable today" in rendered
+    # A missing world day is a Source notes line in the report, never a line of the brief.
+    assert "World stories unavailable" not in rendered
     await f.acts.finish(str(f.run_id))
     done = await db.get_run(f.run_id)
     assert done.status.value == "succeeded"

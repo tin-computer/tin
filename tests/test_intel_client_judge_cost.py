@@ -35,9 +35,21 @@ def skill_text() -> str:
     return files["procedures/intel.client_judge/skills/client-intel/SKILL.md"]
 
 
-def test_the_cost_fix_is_a_new_version_of_the_analyst():
+def flat(text: str) -> str:
+    """The text with its line wrapping undone, so a test doesn't pin where lines break."""
+    return " ".join(text.split())
+
+
+def test_the_analyst_is_on_its_current_version():
     definition, _files = client_judge_files()
-    assert definition["version"] == "1.1.0"
+    assert definition["version"] == "1.2.0"
+
+
+def test_the_brief_carries_no_verify_notes():
+    """Founders read the brief; notes on what to check belong in the report's Source notes."""
+    prompt, skill = prompt_text(), skill_text()
+    assert '"verify": true' not in prompt + skill
+    assert "No meta comments" in prompt and "No meta comments" in skill
 
 
 def test_every_report_section_has_a_word_plan_that_adds_up_to_the_report():
@@ -59,12 +71,19 @@ def test_every_report_section_has_a_word_plan_that_adds_up_to_the_report():
     assert "About 5,500 words in all" in prompt
 
 
-def test_the_report_is_written_once_in_parts_and_joined():
+def test_the_report_is_written_once_one_section_per_turn_and_joined():
+    """Prod 2026-11-26/27 traces: no cache miss in 174 requests after a turn under 60 s, and
+    most turns over 90 s missed. The four-part report still had 65 to 130 s parts."""
     prompt = prompt_text()
-    for part in ("report-1.md", "report-2.md", "report-3.md", "report-4.md"):
+    assert "one section per turn" in prompt
+    for part in ("report-1.md", "report-8.md", "report-2a.md", "report-2b.md", "report-5a.md"):
         assert f"`{part}`" in prompt
-    assert "one part per turn" in prompt
-    assert "report-[1-4].md > <output path>" in prompt
+    assert "cat <scratch folder>/report-*.md > <output path>" in prompt
+    # The glob joins the parts in section order.
+    parts = ["report-1.md", "report-2a.md", "report-2b.md", "report-3.md", "report-4.md"]
+    parts += ["report-5a.md", "report-5b.md", "report-6.md", "report-7.md", "report-8.md"]
+    assert sorted(reversed(parts)) == parts
+    assert "more than about a minute usually loses the model's cache" in prompt
 
 
 def test_fixes_are_edits_and_length_is_never_a_reason_to_rewrite():
@@ -77,12 +96,14 @@ def test_fixes_are_edits_and_length_is_never_a_reason_to_rewrite():
 
 
 def test_reading_and_stories_stay_small_per_turn():
-    prompt, skill = prompt_text(), skill_text()
+    prompt, skill = flat(prompt_text()), flat(skill_text())
     assert "Read each item once" in prompt
-    assert "one or two per turn" in prompt
+    assert "at most three per turn" in prompt
     assert "Read an item once" in skill
-    assert "one or two per turn" in skill
-    assert "link a source\n  the first time a section uses it" in skill
+    assert "at most three per turn" in skill
+    assert "on its own `intel read` call" in prompt
+    assert "read a primary source or any long item alone" in skill
+    assert "link a source the first time a section uses it" in skill
 
 
 def test_the_rules_that_shape_the_report_and_brief_are_unchanged():
@@ -91,4 +112,52 @@ def test_the_rules_that_shape_the_report_and_brief_are_unchanged():
     assert "Use these eight sections" in prompt
     assert "Section 7 is binding on everything you write" in prompt
     assert "The brief reports; it never advises." in prompt
-    assert "Three to five items, most important first." in skill
+    assert "One to five items, most important first" in skill
+
+
+def test_stories_go_through_a_json_file_so_dollar_amounts_survive():
+    """Prod 2026-11-26: 26 story summaries lost `$` figures to the shell ("0 billion")."""
+    prompt, skill = flat(prompt_text()), flat(skill_text())
+    assert "intel story put --json" in prompt
+    assert "intel story put --json" in skill
+    assert '--title "..."' not in skill and '--summary "..."' not in skill
+    assert "the shell erases `$` amounts" in skill
+
+
+def test_the_brief_bar_follows_the_content_review():
+    """Review 2026-11-27: stale news, 1-point Reddit posts and "validates our position" lines
+    filled fixed five-item briefs, and a skip rule in section 7 only shaped wording."""
+    prompt, skill = flat(prompt_text()), flat(skill_text())
+    assert "One to five developments" in prompt and "fewer is right" in prompt
+    assert "Nothing is news unless today adds a fact." in prompt
+    assert "A low-engagement post never makes the brief on its own" in prompt
+    assert "one concrete consequence" in prompt and "one concrete consequence" in skill
+    assert '"validates"' in prompt and '"validates"' in skill
+    assert "decide which developments you pick, not only how you word them" in prompt
+    assert "at most six" in prompt and "at most six" in skill
+
+
+def test_the_report_reads_briefs_not_prior_reports_and_doesnt_repitch():
+    prompt = flat(prompt_text())
+    assert "last three days' `intel/reports/<day>/brief.md`" in prompt
+    assert "Never print a whole earlier report." in prompt
+    assert '"Still open from <day>: <idea>"' in prompt
+    assert "Open the section with the section 7 rules that apply to today's ideas, once" in prompt
+    assert "don't need the project's brand guide (`BRAND.md`) or design spec" in prompt
+
+
+def test_web_search_is_allowed_sparingly_for_checking_claims():
+    prompt = flat(prompt_text())
+    assert "Web search and reading a page on the web are allowed, sparingly" in prompt
+    assert "primary source" in prompt and "headline only" in prompt
+
+
+def test_founder_facing_text_carries_no_plumbing_and_no_guessed_causes():
+    """Ege 2026-11-27 on a staging brief: "X List not read: X isn't connected on Tin's host
+    project · Holiday volume was light". Gaps go in Source notes in plain words."""
+    prompt, skill = flat(prompt_text()), flat(skill_text())
+    assert "Never write Tin's internals" in prompt
+    assert "never guess why the day was thin" in prompt
+    assert '"X posts weren\'t available today"), never in the brief' in prompt
+    assert "No notes about the day's sources" in prompt
+    assert "No plumbing, no guessed causes." in skill
