@@ -169,6 +169,10 @@ def test_the_digest_is_a_table_of_the_rest_and_says_nothing_for_nobody():
     nameless["fields"]["headline"]["text"] = ""
     (row,) = table_of(rb2b_slack.digest_message([nameless], people_url="u", project_name="A"))[1:]
     assert row == ["Jane Doe", "—", "—", "Not a fit"]
+    loud = person(1)
+    loud["fields"]["name"]["text"] = "<!channel> & <https://evil.example|Jane>"
+    body = rb2b_slack.digest_message([loud], people_url="u", project_name="A")
+    assert "<!channel>" not in body["text"] and "&lt;!channel&gt; &amp;" in body["text"]
 
 
 def test_a_long_digest_stops_and_says_how_many_more():

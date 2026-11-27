@@ -429,7 +429,8 @@ def _line(row: list[dict]) -> str:
     """A row as a line of the plain-text fallback: 'Jane Doe, CFO, Acme (Not a fit)'."""
 
     name, title, company, fit = (_cell_words(cell) for cell in row)
-    who = ", ".join(bit for bit in (name, title, company) if bit != EMPTY)
+    # The message's text is mrkdwn, unlike the cells: escaped, so a name can't mention anyone.
+    who = ", ".join(_escape(bit) for bit in (name, title, company) if bit != EMPTY)
     return f"{who} ({fit})"
 
 
