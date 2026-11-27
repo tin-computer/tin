@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import json
 
 from tin_lite.intel_fetch import gnews
@@ -99,3 +100,65 @@ async def test_resolve_many_is_the_one_unwrap_loop():
     assert found == {LINK: PUBLISHER}
     assert gnews.is_article(LINK) and not gnews.is_article("https://news.google.com/home")
     assert not any("topics" in call for call in reader.calls)
+
+
+class PublisherReader(Reader):
+    """The Reader above, plus the publisher's article page; `paywalled` returns a cookie wall."""
+
+    def __init__(self, page: bytes):
+        super().__init__()
+        self.page = page
+
+    async def get(self, url, *, data=None, headers=None, **kwargs):
+        if url == PUBLISHER:
+            self.calls.append(url)
+            return Response(200, self.page, url)
+        return await super().get(url, data=data, headers=headers, **kwargs)
+
+
+ARTICLE_PAGE = (
+    b"<html><head><meta name='description' content='Workday closes its $850M C1.ai deal.'>"
+    b"</head><body><article><p>Workday said on Tuesday it had closed its acquisition of C1.ai "
+    b"for about $850 million, adding agent tooling to its data cloud.</p></article></body></html>"
+)
+
+
+async def test_headline_only_items_get_the_publishers_text_and_the_link_is_cached():
+    """Review 2026-11-27: Paloma's 81 Google News items were all headlines, and ZeroTB's lead
+    went out "to verify" two days running for want of article text."""
+    cache, reader = Cache(), PublisherReader(ARTICLE_PAGE)
+    saved: dict[str, str] = {}
+
+    async def save(canon_url, text):
+        saved[canon_url] = text
+
+    rows = [
+        {"canon_url": "a", "url": LINK, "title": "Workday closes C1.ai deal"},
+        {"canon_url": "b", "url": BROKEN, "title": "A link that won't unwrap"},
+    ]
+    counts = await gnews.add_publisher_text(cache, reader, rows, save)
+    assert counts == {"wanted": 2, "unwrapped": 1, "with_text": 1}
+    assert list(saved) == ["a"] and "$850 million" in saved["a"]
+    assert cache.rows == {GID: PUBLISHER}
+
+
+async def test_a_paywall_or_a_slow_pass_keeps_the_headline():
+    """Plausible but unusable: the publisher answers 200 with a cookie wall shorter than the
+    headline, so the item keeps its headline; a pass out of time saves nothing it hasn't read."""
+    saved: dict[str, str] = {}
+
+    async def save(canon_url, text):
+        saved[canon_url] = text
+
+    wall = b"<html><body><p>Subscribe</p></body></html>"
+    row = {"canon_url": "a", "url": LINK, "title": "Workday closes C1.ai deal for agents"}
+    counts = await gnews.add_publisher_text(Cache(), PublisherReader(wall), [row], save)
+    assert counts["with_text"] == 0 and saved == {}
+
+    class Slow(PublisherReader):
+        async def get(self, url, **kwargs):
+            await asyncio.sleep(5)
+            return await super().get(url, **kwargs)
+
+    counts = await gnews.add_publisher_text(Cache(), Slow(ARTICLE_PAGE), [row], save, seconds=0.05)
+    assert counts["with_text"] == 0 and saved == {}

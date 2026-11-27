@@ -5,7 +5,7 @@ did in the last day. Two native workflows do the work, and each runs one agent a
 
 | Workflow | Runs on | Its judge | Output |
 |---|---|---|---|
-| `intel.world` | the operator's host project, daily 06:00 UTC | `intel.world_judge` | world stories every client reads; `intel/world/<day>/STORIES.md`; a Slack summary in Tin's workspace |
+| `intel.world` | the operator's host project, daily 05:00 UTC | `intel.world_judge` | world stories every client reads; `intel/world/<day>/STORIES.md`; a Slack summary in Tin's workspace |
 | `intel.daily` | a client project, daily in its time zone | `intel.client_judge` | the client's stories, `intel/reports/<day>/report.md`, and a Slack brief |
 
 This page covers what both share and the world feed, then the client brief in
@@ -57,8 +57,10 @@ happened, records it as stories, and writes a brief. Code renders and posts the 
    project's `messaging.slack` connection, which is Tin's own Slack app. Its sections run Tech
    and AI, Business, Entertainment and culture, Science and health, then World, which holds at
    most two lines: Tin's clients are tech and consumer companies, so the judge weights the day
-   toward tech, business and entertainment and keeps politics to what moves them or dominates
-   the news. Each post is recorded
+   toward tech and AI, what is big on Hacker News (a front-page story with a few hundred points
+   that reports real news makes a story and usually the brief), business and entertainment. It
+   keeps politics, macro, commodities and old-economy company news to what moves them or
+   dominates the news. Each post is recorded
    as `sending` before Slack is called. A post left `sending` becomes `unknown` and is never
    sent again. A refused post is retried for a few hours. Slack never fails the run.
 8. **Finish.** Prune, and give the run its result.
@@ -74,18 +76,26 @@ The judge reads the day with the `intel` command (`sandbox/intel/intel.py`, inst
 - `status`, `fronts`, `search`, `count`, `similar`, `browse` and `read` work over a
   read-only SQLite file with full-text search.
 - `stories` and `story show` show earlier days' stories and today's.
-- `story put`, `story attach` and `brief put` write to Tin.
+- `story put`, `story attach` and `brief put` write to Tin. Judges send stories as JSON
+  (`story put --json <file>`, one story or a list of up to six): inside double quotes the shell
+  erases `$` amounts, which cut dollar figures out of 26 stories on 2026-11-26. Tin warns when a
+  summary still reads like one ("0 billion").
 - `tags` and `brief schema` print the taxonomy and the brief's shape.
 - Each call prints at most 9 KB and says what it left out. Antigravity cuts tool output past
-  about 10 KB.
+  about 10 KB. Several ids in one `read` share that budget, and the call's first line says how
+  many words each got.
+- `status` names failed and skipped sources and counts the empty ones (`status --all` lists
+  them): a client can have hundreds of quiet sources.
 - Ids are five characters, from the item's canonical URL, and stay the same across days.
 - A source is a configured one: its key and name come from the source config, and its ranks
   are its own order. An item's own `source` is what a reader sees, which for a Google News
   item is the outlet that published it.
 
 Before any spend, the runtime asks the image's root helper for `check-intel`. It needs the
-pinned CLI owned by root, SQLite with FTS5, and no `sqlite3` shell, and an older image fails
-closed. The switchboard uploads the snapshot. The helper has the CLI load it as the worker,
+pinned CLI owned by root (version 2 since `story put --json`), SQLite with FTS5, and no `sqlite3`
+shell, and an older image fails closed. A CLI change bumps the version on both sides
+(`sandbox/intel/intel.py`, `sandbox/isolated_procedure.py`, `e2b_runtime.INTEL_CLI_VERSION`), so
+the switchboard and the isolated image are switched together. The switchboard uploads the snapshot. The helper has the CLI load it as the worker,
 with no network settings, and installs the result as `/opt/tin-intel/day.db`, `root:root
 0444`. The worker can read the day and can't change it.
 
@@ -106,7 +116,12 @@ Every write is checked, and a refusal comes back as a sentence the agent can act
 - An item id the run never saw is listed as missing, not refused.
 - A tag outside the taxonomy is dropped with a warning.
 - Bodies over 64 KB are refused.
+- A story that names itself in `continues` is updated, with a warning.
 - Runaway guards: 3,000 writes, 400 stories per run, 400 items per write.
+
+A brief is checked whole: every problem comes back in one answer, so the judge fixes them in one
+more turn. Its character limits count what a reader sees, so a link's URL (a Google News link
+runs to 300 characters) doesn't count against them.
 
 A brief link must lead to an item of the day or of a recent story, or Tin removes it. Bare
 URLs and domains are removed too. The Slack renderer breaks anything Slack could still
@@ -175,8 +190,10 @@ tin-lite intel-world enable --created-by <host member's Clerk user id> [--paused
 tin-lite intel-channel <project-id> <channel-id> [<name>]   # or `none`
 ```
 
-`intel-world enable` saves `intel.world` on the host project with a daily 06:00 UTC schedule,
-and does nothing if one is already saved. `intel-channel` sets the channel in Tin's Slack that
+`intel-world enable` saves `intel.world` on the host project with a daily 05:00 UTC schedule,
+and does nothing if one is already saved. 05:00 keeps the world day ahead of the earliest client
+briefs: 09:00 in Istanbul is 06:00 UTC, the old world time, and such a client read yesterday's
+world stories. `intel-channel` sets the channel in Tin's Slack that
 a managed client's daily brief posts to.
 
 A failed world run shows in the host project's My system under Needs a look, and in Activity.
@@ -270,6 +287,8 @@ own, and one it has is ignored.
   | `x_not_connected`, `x_reauthorize` | X isn't connected on the host, or needs reconnecting |
   | `x_list_unavailable` | X doesn't find the List, or won't serve it to Tin's account |
   | `x_list_not_owned` | Tin's account doesn't own the List |
+  | `x_list_no_members` | The List has no members (X's member count, from the ownership lookup); no page is bought, and X is recorded as failed |
+  | `x_list_no_posts` | X returned no posts at all for the List, not just none in the window; recorded as failed, never as a quiet day |
   | `x_member` | X on the host was reconnected by someone else mid-read |
   | `x_spending` | The run's budget or the project's limits had no room for another page |
 
@@ -286,7 +305,12 @@ own, and one it has is ignored.
    crossref), HN, Reddit and X.
    - Each source has a deadline, longer for a subreddit.
    - A retried group skips the sources it already recorded.
-   - Google News links stay Google News links until after the judge.
+   - Google News gives a headline only. After its feeds are read, the Google News group
+     unwraps the top three items of each source (`google_news_text_items` in `rss.json`, 0 to
+     10; at most 90 a run, within six minutes) and reads the publisher's page for the item's
+     text. Unwrapping goes through the shared link cache and Google's process-wide pacing; a
+     link that won't unwrap or a page that won't read (a paywall, a 403) keeps the headline.
+     Item links stay Google News links until after the judge.
 3. **Load** builds the day the analyst reads:
    - it records any source a fetch group never finished as failed, with the group's reason;
    - it adds the stories of the newest usable world day (`ready` or `partial`), and pins that
@@ -302,15 +326,24 @@ own, and one it has is ignored.
    things:
    - it records the day's stories;
    - it writes the eight-section `report.md`;
-   - it sends the brief as `intel-brief/1` JSON, which Tin checks. Links must lead to the day's
-     items, and the brief carries no notes on its own evidence: a single-source item says
-     who reported it, and what needs checking stays in the report's Source notes.
+   - it sends the brief as `intel-brief/1` JSON, which Tin checks: one to five developments,
+     fewer on a thin day. Links must lead to the day's items, and the brief carries no notes on
+     its own evidence: a single-source item says who reported it, and what needs checking stays
+     in the report's Source notes.
+
+   The analyst picks only developments where today adds a fact, never stands a low-engagement
+   post up as one, and lets company.md section 7's skip rules decide what it picks. It reads the
+   last three days' `brief.md`, not the earlier reports, and marks a content idea it already
+   made "Still open from <day>". It writes the report one section per turn (sections 2 and 5
+   in halves) and puts at most three stories a turn: a turn that streams for more than about a
+   minute usually loses the model's cache. It may use web search sparingly, to check a claim at
+   its primary source or read a headline-only item.
 5. **Publish** unwraps the Google News links that the report and brief use. Then one commit
    adds `intel/reports/<day>/report.md`, `brief.md` and `sources.json` (the status of every
    source).
 6. **Post** sends the brief through Tin's own Slack app (the host project's
    `messaging.slack` connection) to the channel an operator set for the client.
-   - The message has the day's headline, three to five developments with their outlets, and
+   - The message has the day's headline, one to five developments with their outlets, and
      buttons to the report and the source status.
    - Suggestions stay in the report.
    - The post is recorded before Slack is called and is never sent twice.

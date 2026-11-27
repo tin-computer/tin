@@ -1,19 +1,28 @@
-"""Google News article links, unwrapped to the publisher's URL only where a reader sees them.
+"""Google News article links, unwrapped to the publisher's URL only where it pays.
 
-Fetches keep the `news.google.com/rss/articles/<id>` links: unwrapping takes two paced
-requests per link, and a day's fetch holds hundreds. After the judge, code unwraps only the
-links its report and brief use (`unwrap_text`), caching every answer in `intel_link_cache`
-for all runs. A link that won't unwrap stays a Google News link, which still works.
-`is_article` is the one test of what counts as an article link, and `resolve_many` the one
-loop that unwraps a list of them (the world summary, a client's brief and report).
+Items keep their `news.google.com/rss/articles/<id>` links: unwrapping takes two paced requests
+per link, and a day's fetch holds hundreds. Two places unwrap, caching every answer in
+`intel_link_cache` for all runs:
+
+- a client's fetch reads the publisher's page for the top few headline-only items of each
+  Google News source (`add_publisher_text`), so the analyst has article text, not a headline;
+- after the judge, code unwraps the links its report and brief use (`unwrap_text`).
+
+A link that won't unwrap stays a Google News link, which still works, and an item whose page
+won't read keeps its headline. `is_article` is the one test of what counts as an article link,
+and `resolve_many` the one loop that unwraps a list of them (the world summary, a client's
+brief and report).
 """
 
 from __future__ import annotations
 
+import asyncio
 import json
 import re
 import urllib.parse
+from collections.abc import Awaitable, Callable
 
+from tin_lite.intel_fetch.feeds import read_page
 from tin_lite.intel_fetch.http import PublicReader
 
 ARTICLE = re.compile(
@@ -23,6 +32,13 @@ _ID = re.compile(r"/articles/([^?/]+)")
 # Distinct links unwrapped per call: each is two paced requests to Google News.
 UNWRAP_LIMIT = 60
 BATCH = "https://news.google.com/_/DotsSplashUi/data/batchexecute"
+# Publisher text during a client's fetch: the top items of each Google News source, at most
+# TEXT_MAX_ITEMS a run, within TEXT_SECONDS. Google's own requests are paced process-wide
+# (http.HOST_GAP), so an uncached item costs about 3 s; publisher pages read alongside.
+TEXT_PER_SOURCE = 3
+TEXT_MAX_ITEMS = 90
+TEXT_SECONDS = 360
+TEXT_CONCURRENCY = 4
 
 
 def article_id(link: str) -> str | None:
@@ -155,3 +171,56 @@ async def unwrap_text(
         return found[match.group(0)]
 
     return pattern.sub(swap, text), replaced
+
+
+def page_text(page: dict | None) -> str:
+    """A publisher page's description and first paragraphs, as an item's text."""
+    if not page:
+        return ""
+    return "\n".join(part for part in (page.get("description"), page.get("paragraphs")) if part)
+
+
+async def add_publisher_text(
+    conn,
+    reader: PublicReader,
+    rows: list[dict],
+    save: Callable[[str, str], Awaitable[None]],
+    *,
+    seconds: float = TEXT_SECONDS,
+    concurrency: int = TEXT_CONCURRENCY,
+) -> dict[str, int]:
+    """For each headline-only item (`url`, `canon_url`, `title`), unwrap its link (the cache
+    first), read the publisher's page and `save(canon_url, text)`. Each item is saved as it
+    finishes, so running out of `seconds` keeps what was read; an item whose link won't unwrap
+    or whose page won't read (a paywall, a 403) keeps its headline. Never raises for a read."""
+    counts = {"wanted": len(rows), "unwrapped": 0, "with_text": 0}
+    gate = asyncio.Semaphore(concurrency)
+
+    async def one(row: dict) -> None:
+        async with gate:
+            try:
+                publisher = await resolve(conn, reader, row["url"])
+            except Exception:  # noqa: BLE001 — a link that won't unwrap keeps its headline
+                return
+            if not publisher:
+                return
+            counts["unwrapped"] += 1
+            try:
+                page, _error = await read_page(reader, publisher)
+            except Exception:  # noqa: BLE001 — a page that won't read keeps the headline
+                return
+            text = page_text(page).strip()
+            # Less than the headline says nothing: a cookie wall or an empty page.
+            if len(text) <= len(row.get("title") or "") + 20:
+                return
+            await save(row["canon_url"], text)
+            counts["with_text"] += 1
+
+    tasks = [asyncio.create_task(one(row)) for row in rows]
+    if tasks:
+        _done, pending = await asyncio.wait(tasks, timeout=seconds)
+        for task in pending:
+            task.cancel()
+        if pending:
+            await asyncio.gather(*pending, return_exceptions=True)
+    return counts

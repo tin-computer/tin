@@ -101,6 +101,38 @@ class BriefError(ValueError):
     """A brief that breaks the schema, said as a fix the agent can make."""
 
 
+class _Problems:
+    """Every fix a brief needs, so the agent sends it again once rather than once per field
+    (prod 2026-11-26: Tin's analyst was refused three times in a row, one field at a time)."""
+
+    def __init__(self) -> None:
+        self.found: list[str] = []
+
+    def check(self, fn, *args, **kwargs):
+        try:
+            return fn(*args, **kwargs)
+        except BriefError as exc:
+            self.found.append(str(exc))
+            return None
+
+    def add(self, message: str) -> None:
+        self.found.append(message)
+
+    def raise_any(self) -> None:
+        if len(self.found) == 1:
+            raise BriefError(self.found[0])
+        if self.found:
+            raise BriefError(
+                f"The brief needs {len(self.found)} fixes; make them all and send it again: "
+                + " | ".join(self.found)
+            )
+
+
+def visible(text: str) -> str:
+    """What a reader sees: a [words](url) link shows only its words."""
+    return LINK.sub(lambda match: match.group(1), text)
+
+
 class LinkIndex:
     """The canonical URLs a brief may link to: the run's items and earlier stories' items."""
 
@@ -180,10 +212,12 @@ def _text(value: object, *, field: str, limit: int, required: bool = True) -> st
     if not isinstance(value, str) or (required and not value.strip()):
         raise BriefError(f"`{field}` must be text" + (" and can't be empty." if required else "."))
     value = " ".join(value.split())
-    if len(value) > limit:
+    # Limits count what a reader sees: a link's URL can run to 300 characters on its own.
+    shown = len(visible(value))
+    if shown > limit:
         raise BriefError(
-            f"`{field}` is {len(value)} characters; keep it to {limit} or fewer and send the "
-            "brief again."
+            f"`{field}` is {shown} characters of visible text (link URLs not counted); keep it "
+            f"to {limit} or fewer, so cut about {shown - limit}."
         )
     return value
 
@@ -265,10 +299,12 @@ def validate(
 
 def _world(value: dict, *, links: LinkIndex, stories) -> tuple[dict, list[str]]:
     warnings: list[str] = []
-    headline = _text(value.get("headline"), field="headline", limit=200)
+    problems = _Problems()
+    headline = problems.check(_text, value.get("headline"), field="headline", limit=200) or ""
     groups = value.get("groups")
     if not isinstance(groups, list) or not groups:
-        raise BriefError("`groups` must list the sections, each with its stories.")
+        problems.add("`groups` must list the sections, each with its stories.")
+        problems.raise_any()
     seen_groups: set[str] = set()
     seen_stories: set[str] = set()
     kept_groups = []
@@ -276,26 +312,35 @@ def _world(value: dict, *, links: LinkIndex, stories) -> tuple[dict, list[str]]:
     for index, group in enumerate(groups, 1):
         where = f"group {index}"
         if not isinstance(group, dict) or set(group) - {"group", "items"}:
-            raise BriefError(f'{where} must be {{"group": ..., "items": [...]}}.')
+            problems.add(f'{where} must be {{"group": ..., "items": [...]}}.')
+            continue
         name = group.get("group")
         if name not in WORLD_GROUPS:
-            raise BriefError(f"{where}: `group` must be one of {', '.join(WORLD_GROUPS)}.")
+            problems.add(f"{where}: `group` must be one of {', '.join(WORLD_GROUPS)}.")
+            continue
         if name in seen_groups:
-            raise BriefError(f"{where}: the {name} section appears twice; merge them.")
+            problems.add(f"{where}: the {name} section appears twice; merge them.")
+            continue
         seen_groups.add(name)
         items = group.get("items")
         if not isinstance(items, list) or not items:
-            raise BriefError(f"{where} ({name}) has no items; leave out an empty section.")
+            problems.add(f"{where} ({name}) has no items; leave out an empty section.")
+            continue
         kept_items = []
         for number, item in enumerate(items, 1):
             at = f"{name} item {number}"
             if not isinstance(item, dict) or set(item) - {"story", "line"}:
-                raise BriefError(f'{at} must be {{"story": "<key>", "line": "..."}}.')
-            key = _story(item.get("story"), stories, where=at, required=True)
-            if key in seen_stories:
-                raise BriefError(f"{at}: story '{key}' is already in the brief.")
-            seen_stories.add(key)
-            line = _text(item.get("line"), field=f"{at} line", limit=240)
+                problems.add(f'{at} must be {{"story": "<key>", "line": "..."}}.')
+                continue
+            key = problems.check(_story, item.get("story"), stories, where=at, required=True)
+            if key is not None and key in seen_stories:
+                problems.add(f"{at}: story '{key}' is already in the brief.")
+                continue
+            if key is not None:
+                seen_stories.add(key)
+            line = problems.check(_text, item.get("line"), field=f"{at} line", limit=240)
+            if key is None or line is None:
+                continue
             line, found = check_links(line, links, where=at)
             warnings += found + _style(line, at)
             kept_items.append({"story": key, "line": line})
@@ -308,13 +353,15 @@ def _world(value: dict, *, links: LinkIndex, stories) -> tuple[dict, list[str]]:
                 + ". Put tech, entertainment or business stories in their place."
             )
         total += len(kept_items)
-        kept_groups.append({"group": name, "items": kept_items})
-    if not 5 <= total <= 8:
-        raise BriefError(
+        if kept_items:
+            kept_groups.append({"group": name, "items": kept_items})
+    if not problems.found and not 5 <= total <= 8:
+        problems.add(
             f"The brief has {total} stories; pick the 5 to 8 that matter most today, at most "
             f"{MAX_WORLD_ITEMS} of them in the world section."
         )
-    note = _text(value.get("note"), field="note", limit=300, required=False)
+    note = problems.check(_text, value.get("note"), field="note", limit=300, required=False)
+    problems.raise_any()
     order = list(WORLD_GROUPS)
     kept_groups.sort(key=lambda group: order.index(group["group"]))
     warnings += _style(headline, "headline")
@@ -324,12 +371,22 @@ def _world(value: dict, *, links: LinkIndex, stories) -> tuple[dict, list[str]]:
     return brief, warnings
 
 
+MIN_CLIENT_ITEMS, MAX_CLIENT_ITEMS = 1, 5
+
+
 def _client(value: dict, *, links: LinkIndex, stories) -> tuple[dict, list[str]]:
     warnings: list[str] = []
-    headline = _text(value.get("headline"), field="headline", limit=220)
+    problems = _Problems()
+    headline = problems.check(_text, value.get("headline"), field="headline", limit=220) or ""
     items = value.get("items")
-    if not isinstance(items, list) or not 3 <= len(items) <= 5:
-        raise BriefError("`items` must hold the 3 to 5 developments that matter most today.")
+    if not isinstance(items, list) or not MIN_CLIENT_ITEMS <= len(items) <= MAX_CLIENT_ITEMS:
+        # A thin day is one item; a fixed count pushed weak items into the brief.
+        problems.add(
+            f"`items` must hold the {MIN_CLIENT_ITEMS} to {MAX_CLIENT_ITEMS} developments that "
+            "matter most today; on a thin day, fewer is right."
+        )
+        if not isinstance(items, list):
+            problems.raise_any()
     kept = []
     for number, item in enumerate(items, 1):
         at = f"item {number}"
@@ -341,34 +398,40 @@ def _client(value: dict, *, links: LinkIndex, stories) -> tuple[dict, list[str]]
             "verify_note",
             "story",
         }:
-            raise BriefError(f"{at} has fields Tin doesn't use; run `intel brief schema`.")
-        lead = _text(item.get("lead"), field=f"{at} lead", limit=120)
-        body = _text(item.get("body"), field=f"{at} body", limit=450)
-        body, found = check_links(body, links, where=at)
-        warnings += found + _style(lead + body, at) + _suggestion(f"{lead}. {body}", at)
+            problems.add(f"{at} has fields Tin doesn't use; run `intel brief schema`.")
+            continue
+        lead = problems.check(_text, item.get("lead"), field=f"{at} lead", limit=120)
+        body = problems.check(_text, item.get("body"), field=f"{at} body", limit=450)
         kind = item.get("kind", "other")
         if kind not in KINDS:
-            raise BriefError(f"{at}: `kind` must be one of {', '.join(KINDS)}.")
+            problems.add(f"{at}: `kind` must be one of {', '.join(KINDS)}.")
         verify = item.get("verify", False)
         if not isinstance(verify, bool):
-            raise BriefError(f"{at}: `verify` is true or false.")
-        note = _text(item.get("verify_note"), field=f"{at} verify_note", limit=160, required=False)
+            problems.add(f"{at}: `verify` is true or false.")
+        note = problems.check(
+            _text, item.get("verify_note"), field=f"{at} verify_note", limit=160, required=False
+        )
+        story = problems.check(_story, item.get("story"), stories, where=at, required=False)
+        if lead is None or body is None or problems.found:
+            continue
+        body, found = check_links(body, links, where=at)
+        warnings += found + _style(lead + body, at) + _suggestion(f"{lead}. {body}", at)
         if verify and not note:
             warnings.append(f"{at}: say in `verify_note` what needs checking.")
         entry = {"lead": lead, "body": body, "kind": kind, "verify": verify}
         if note:
             entry["verify_note"] = note
-        story = _story(item.get("story"), stories, where=at, required=False)
         if story:
             entry["story"] = story
         kept.append(entry)
+    note = problems.check(_text, value.get("note"), field="note", limit=300, required=False)
+    problems.raise_any()
     if value.get("worth_doing") not in (None, []):
         # Suggestions live in report.md section 5; no brief renders them.
         warnings.append(
             "worth_doing: leave it empty; suggestions go in report.md section 5. Tin dropped "
             "them from the brief."
         )
-    note = _text(value.get("note"), field="note", limit=300, required=False)
     warnings += _style(headline, "headline")
     brief = {
         "schema": CLIENT_SCHEMA,
@@ -531,14 +594,15 @@ WORLD_SCHEMA_TEXT = """intel-world-brief/1: the world summary Tin posts in Slack
 {"schema": "intel-world-brief/1",
  "headline": "<the day in one line, at most 200 characters>",
  "groups": [{"group": "tech_ai|business|culture|science_health|world",
-             "items": [{"story": "<story key>", "line": "<at most 240 characters>"}]}],
+             "items": [{"story": "<story key>", "line": "<at most 240 visible characters>"}]}],
  "note": "<optional, at most 300 characters>"}
 
 5 to 8 stories in total, each once, most important first within a section, at most 2 in
 world (Tin drops the rest). Sections show in the order above: tech and AI, business,
 entertainment and culture (gaming, internet culture, consumer launches), science and health,
 world.
-Leave out empty sections. A line may link a few words to an item URL:
+Leave out empty sections. Limits count visible text, not link URLs. A line may link a few
+words to an item URL:
 [a few words](https://...). Only links to items in today's data (or earlier stories) are
 kept. Tin adds each story's outlets, marks sensitive stories from the story itself and renders
 the Slack message; send plain text, no Slack markup, no em dashes.
@@ -567,18 +631,20 @@ CLIENT_SCHEMA_TEXT = """intel-brief/1: the client's executive brief Tin posts in
 
 {"schema": "intel-brief/1",
  "headline": "<the day in one line, at most 220 characters>",
- "items": [{"lead": "<at most 120>", "body": "<at most 450, may link [a few words](https://...)>",
+ "items": [{"lead": "<at most 120>", "body": "<at most 450 visible characters, may link [a few words](https://...)>",
             "kind": "competitor|platform|buyer|regulation|market|world|other",
             "verify": false,
             "story": "<story key>"}],
  "worth_doing": [],
  "note": "<optional, at most 300 characters>"}
 
-3 to 5 items. Each says what happened and why it matters to the client: no suggestions, no
-to-dos, no "worth doing". Leave worth_doing empty: suggestions go in report.md section 5, and
+1 to 5 items: only developments where today adds a fact, so a thin day has fewer. Each says
+what happened and one concrete consequence for the client: no suggestions, no to-dos, no
+"worth doing". Leave worth_doing empty: suggestions go in report.md section 5, and
 Tin drops any sent here and warns about an item that reads as one. Only links to items in
 today's data (or earlier stories) are kept. No meta comments: keep verify false, send no
 verify_note, and attribute a single-source item in plain words ("one post on X says") or
-leave it out. Tin adds each story's outlets and
-renders the Slack message; send plain text, no Slack markup, no em dashes.
+leave it out. Character limits count what a reader sees, so a link's URL doesn't count. Tin
+adds each story's outlets and renders the Slack message; send plain text, no Slack markup, no
+em dashes. Tin lists every problem with a brief at once.
 """

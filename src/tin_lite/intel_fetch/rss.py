@@ -8,8 +8,10 @@ the status. Methods:
   entry has its page read for a date, at most `undated_page_checks` (5) per feed.
 - `google_news`: a Google News RSS search for `query` over the window. Outlets in the config's
   `exclude_outlets` (names) and `exclude_domains` (part of the publisher's site) are dropped.
-  Links stay Google News links: Tin unwraps only the ones the report and brief use, after the
-  judge (gnews.unwrap_text). Google News gives a headline only, which is all such an item has.
+  Links stay Google News links. Google News gives a headline only; after the feeds are read,
+  the client's fetch unwraps the top `google_news_text_items` (3) of each source and reads the
+  publisher's page for its text (gnews.add_publisher_text). The report and brief links are
+  unwrapped after the judge (gnews.unwrap_text).
 - `html_links`: a listing page `url`; links matching `link_pattern` (on the absolute URL) are
   read for their date, title and first paragraphs, at most `max_links` (20).
 - `sitemap`: a sitemap or sitemap index at `url`; locs matching `url_pattern` with a recent
@@ -54,6 +56,7 @@ HEADERS = {
 }
 MAX_TEXT = 4000
 ENRICH_BELOW = 280
+GOOGLE_NEWS_TEXT_ITEMS = 3
 METHOD_NAMES = ("rss", "google_news", "html_links", "sitemap", "crossref")
 GOOGLE_NEWS = "news.google.com"
 # Runaway guards for untrusted configs: path globs per source and their length, links or
@@ -480,11 +483,16 @@ def settings(config: dict) -> dict:
             return []
         return [str(v)[:200] for v in value[:200] if isinstance(v, str) and v.strip()]
 
-    below = config.get("enrich_text_below_chars", ENRICH_BELOW)
+    def bounded(name: str, default: int, high: int) -> int:
+        value = config.get(name, default)
+        ok = isinstance(value, int) and not isinstance(value, bool) and 0 <= value <= high
+        return value if ok else default
+
     return {
         "exclude_outlets": names(config.get("exclude_outlets")),
         "exclude_domains": names(config.get("exclude_domains")),
-        "enrich_text_below_chars": below
-        if isinstance(below, int) and not isinstance(below, bool) and 0 <= below <= 5000
-        else ENRICH_BELOW,
+        "enrich_text_below_chars": bounded("enrich_text_below_chars", ENRICH_BELOW, 5000),
+        # How many of each Google News source's top items get their publisher's text during
+        # the fetch (gnews.add_publisher_text); 0 keeps every Google News item a headline.
+        "google_news_text_items": bounded("google_news_text_items", GOOGLE_NEWS_TEXT_ITEMS, 10),
     }

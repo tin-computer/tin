@@ -63,7 +63,9 @@ def snapshot(path: Path, rows: list[dict], *, prior=True) -> Path:
             "day": "2026-11-24",
             "now": "2026-11-24T06:00:00Z",
             "sources": [
-                {"id": "ft", "name": "FT", "status": "failed", "items": 0, "error": "HTTP 403"}
+                {"id": "ft", "name": "FT", "status": "failed", "items": 0, "error": "HTTP 403"},
+                {"id": "quiet-one", "name": "Q1", "status": "empty", "items": 0, "error": None},
+                {"id": "quiet-two", "name": "Q2", "status": "empty", "items": 0, "error": None},
             ],
         }
     ]
@@ -178,6 +180,11 @@ def test_read_shares_one_budget_across_ids(day):
     assert "--from-word 600" in one
     many = run(["read", long_id, *others], env=env, check=True).stdout
     assert len(many.encode()) <= CLI.CAP + 600
+    # The agent is told the batch cut each item, so it doesn't read them all again.
+    assert many.startswith("# 6 items share this call's ~9 KB: at most 128 words each")
+    assert "(you asked for 600). Read a long or primary source on its own." in many
+    short = run(["read", *others[:2], "--max-words", "50"], env=env, check=True).stdout
+    assert "share this call" not in short
     missing = run(["read", "zzzzz"], env=env)
     assert missing.returncode == 3 and "no item zzzzz" in missing.stderr
 
@@ -365,6 +372,12 @@ def test_status_and_stories_merge_prior_and_today(service):
     assert "1 touched today, 1 from earlier days" in status
     assert "brief\tmissing (fallback will be used)" in status
     assert "ft\tfailed\tHTTP 403" in status
+    # Empty sources are counted, not listed: Databasin had 225 of them, 3 to 5 KB a call.
+    assert "sources failed or skipped\t1" in status
+    assert "sources with nothing in the window\t2 (intel status --all lists them)" in status
+    assert "quiet-one" not in status
+    every = run(["status", "--all"], env=env, check=True).stdout
+    assert "  quiet-one\tempty" in every and "  quiet-two\tempty" in every
     stories = run(["stories", "--since", "7d"], env=env, check=True).stdout
     assert "s-nvidia-ceo\t2026-11-24\thigh" in stories and "s-chip-curbs\t2026-11-23" in stories
     assert "SCHEMA TEXT" in run(["brief", "schema"], env=env, check=True).stdout
@@ -392,7 +405,81 @@ def test_without_a_grant_the_cli_says_so(day):
 
 
 def test_version():
-    assert run(["--version"], check=True).stdout.strip() == CLI.VERSION == "1"
+    assert run(["--version"], check=True).stdout.strip() == CLI.VERSION == "2"
+
+
+def test_story_put_json_keeps_dollar_amounts_and_sends_a_short_list(service, tmp_path):
+    """Prod 2026-11-26: `--summary "...$850M..."` in double quotes reached Tin as "50M". A
+    story file never passes through the shell."""
+    env, seen = service
+    one = tmp_path / "story.json"
+    one.write_text(
+        json.dumps(
+            {
+                "key": "workday-c1ai",
+                "title": "Workday closes its $850M C1.ai deal",
+                "summary": "Workday paid about $850M; Morgan Stanley cut its target to $175.",
+                "items": ["abcde"],
+                "relevance": "high",
+                "tags": ["competitor", "m-and-a"],
+                "continues": "s-workday-q3",
+            }
+        )
+    )
+    result = run(["story", "put", "--json", str(one)], env=env, check=True)
+    assert result.stdout.startswith("created s-workday-c1ai")
+    assert seen[-1][2] == {
+        "action": "put",
+        "key": "workday-c1ai",
+        "items": ["abcde"],
+        "title": "Workday closes its $850M C1.ai deal",
+        "summary": "Workday paid about $850M; Morgan Stanley cut its target to $175.",
+        "relevance": "high",
+        "tags": ["competitor", "m-and-a"],
+        "continues": "s-workday-q3",
+    }
+    batch = tmp_path / "stories.json"
+    batch.write_text(
+        json.dumps(
+            [
+                {"key": "first-story", "title": "T", "summary": "S", "items": "abcde,fghij"},
+                {"key": "too-many", "title": "T", "summary": "S"},
+                {"key": "third-story", "title": "T", "summary": "S", "sensitive": True},
+            ]
+        )
+    )
+    before = len(seen)
+    refused = run(["story", "put", "--json", str(batch)], env=env)
+    # One refused story doesn't stop the others; the call exits 2 and names it.
+    assert refused.returncode == 2
+    assert [body["key"] for _m, _p, body in seen[before:]] == [
+        "first-story",
+        "too-many",
+        "third-story",
+    ]
+    assert seen[before][2]["items"] == ["abcde", "fghij"]
+    assert "error: too-many: this run has written 400 stories" in refused.stdout
+    assert "1 of 3 stories were refused" in refused.stderr
+
+
+def test_story_put_json_refuses_a_bad_file_before_calling_tin(service, tmp_path):
+    """Plausible but unusable files: too many stories, an unknown field, flags mixed in."""
+    env, seen = service
+    before = len(seen)
+    many = tmp_path / "many.json"
+    many.write_text(
+        json.dumps([{"key": f"story-{n}", "title": "T", "summary": "S"} for n in range(7)])
+    )
+    assert "at most 6 per call" in run(["story", "put", "--json", str(many)], env=env).stderr
+    odd = tmp_path / "odd.json"
+    odd.write_text(json.dumps({"key": "a-story", "headline": "H"}))
+    assert (
+        "fields Tin doesn't use: headline"
+        in run(["story", "put", "--json", str(odd)], env=env).stderr
+    )
+    mixed = run(["story", "put", "--json", str(odd), "--title", "T"], env=env)
+    assert mixed.returncode == 2 and "leave out the other flags" in mixed.stderr
+    assert len(seen) == before
 
 
 def test_a_feed_is_one_source_and_its_items_keep_their_outlets(tmp_path):

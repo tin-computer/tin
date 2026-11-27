@@ -112,6 +112,44 @@ async def test_a_world_judge_writes_world_stories_and_sees_missing_ids(db):
     assert stored["tags"] == ["geopolitics"] and stored["updated_run_id"] == child
 
 
+async def test_a_cut_dollar_figure_warns_and_a_story_continuing_itself_updates(db):
+    """Prod 2026-11-26: "$20 billion" reached a story as "0 billion" (the shell ate `$2`), and
+    `--continues` naming the story's own key was refused although an update was meant."""
+    host = await project(db)
+    _parent, _child, token = await judge(db, project_id=host)
+    key = short_id(canon(URL))
+    async with client(db, host) as http:
+        cut = await http.post(
+            "/intel/story",
+            headers=bearer(token),
+            json={
+                "key": "a16z-fundraising",
+                "title": "a16z in talks to raise a new fund",
+                "summary": "The firm is raising roughly 0 billion across funds.",
+                "items": [key],
+            },
+        )
+        assert cut.status_code == 200
+        assert any("dollar amount looks cut" in w for w in cut.json()["warnings"])
+        whole = await http.post(
+            "/intel/story",
+            headers=bearer(token),
+            json={
+                "key": "a16z-fundraising",
+                "summary": "The firm is raising roughly $20 billion across funds.",
+                "continues": "s-a16z-fundraising",
+            },
+        )
+        assert whole.status_code == 200, whole.text
+        warnings = whole.json()["warnings"]
+        assert not any("dollar" in w for w in warnings)
+        assert any("is this story, so Tin updated it" in w for w in warnings)
+    stored = await db.pool.fetchrow(
+        "SELECT summary, continues_id FROM intel_stories WHERE key = 'a16z-fundraising'"
+    )
+    assert "$20 billion" in stored["summary"] and stored["continues_id"] is None
+
+
 async def test_grants_and_scope_come_from_the_run(db):
     host = await project(db)
     other = await project(db, "Client")

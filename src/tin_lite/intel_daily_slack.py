@@ -96,6 +96,8 @@ X_NOTES = {
     "x_invalid": "X List not read: X refused the List ID",
     "x_spending": "X List cut short: no room left in the run's spending limits",
     "x_list_unavailable": "X List not read: X didn't find it or won't serve it to Tin's account",
+    "x_list_no_members": "X List not read: it has no members",
+    "x_list_no_posts": "X List not read: X returned no posts for it",
     "x_list_not_owned": "X List not read: Tin's X account doesn't own it",
     "x_list_not_enrolled": "X List not read: it isn't the List set up for this client",
     # A brief with no List pinned says nothing about X; sources.json still records the skip.

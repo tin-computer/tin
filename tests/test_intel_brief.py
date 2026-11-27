@@ -147,10 +147,53 @@ def test_a_development_and_why_it_matters_raises_no_suggestion_warning():
     assert warnings == []
 
 
-@pytest.mark.parametrize("count", [2, 6])
-def test_a_client_brief_needs_three_to_five_items(count):
-    with pytest.raises(brief.BriefError, match="3 to 5"):
+@pytest.mark.parametrize("count", [0, 6])
+def test_a_client_brief_holds_one_to_five_items(count):
+    with pytest.raises(brief.BriefError, match="1 to 5"):
         brief.validate(brief.CLIENT_SCHEMA, client(count), links=LINKS)
+
+
+def test_a_thin_day_brief_may_hold_one_item():
+    """Review 2026-11-27: "three to five" filled slots with 1-point Reddit posts on quiet days."""
+    kept, _warnings = brief.validate(brief.CLIENT_SCHEMA, client(1), links=LINKS)
+    assert len(kept["items"]) == 1
+
+
+def test_limits_count_visible_text_not_link_urls():
+    """Prod 2026-11-26: a 308-character Google News URL pushed a 446-character body over 450."""
+    long_url = "https://news.google.com/rss/articles/" + "C" * 280
+    links = brief.LinkIndex([long_url])
+    value = client(1)
+    value["items"][0]["body"] = "x" * 420 + f" [per Reuters]({long_url})."
+    kept, _warnings = brief.validate(brief.CLIENT_SCHEMA, value, links=links)
+    assert long_url in kept["items"][0]["body"]
+    value["items"][0]["body"] = "x" * 460
+    with pytest.raises(brief.BriefError, match="460 characters of visible text.*cut about 10"):
+        brief.validate(brief.CLIENT_SCHEMA, value, links=links)
+    line = world()
+    line["groups"][0]["items"][0]["line"] = "y" * 230 + f" [Reuters]({long_url})"
+    brief.validate(brief.WORLD_SCHEMA, line, links=links, stories=STORIES)
+
+
+def test_every_problem_comes_back_in_one_refusal():
+    """Plausible but unusable: two bodies too long, an unknown kind and a missing story, all
+    named at once so the analyst fixes them in one more turn, not four."""
+    value = client(3)
+    value["items"][0]["body"] = "a" * 512
+    value["items"][1]["kind"] = "rumour"
+    value["items"][2]["body"] = "b" * 472
+    value["items"][2]["story"] = "no-such-story"
+    with pytest.raises(brief.BriefError) as refused:
+        brief.validate(brief.CLIENT_SCHEMA, value, links=LINKS, stories=STORIES)
+    said = str(refused.value)
+    assert said.startswith("The brief needs 4 fixes")
+    for part in ("item 1 body` is 512", "item 2: `kind`", "item 3 body` is 472", "no-such-story"):
+        assert part in said
+    bad_world = world()
+    bad_world["headline"] = "h" * 230
+    bad_world["groups"][0]["items"][1]["line"] = "l" * 300
+    with pytest.raises(brief.BriefError, match="2 fixes.*headline.*tech_ai item 2 line"):
+        brief.validate(brief.WORLD_SCHEMA, bad_world, links=LINKS, stories=STORIES)
 
 
 def test_verify_without_a_note_warns():

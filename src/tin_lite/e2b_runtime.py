@@ -43,7 +43,7 @@ logger = logging.getLogger(__name__)
 CONTEXT_PATH = "/home/user/.tin-lite/procedure-context.json"
 # The intel CLI version an image must carry (sandbox/intel/intel.py VERSION), and where an intel
 # judge's snapshot lands for the root helper to load.
-INTEL_CLI_VERSION = "1"
+INTEL_CLI_VERSION = "2"
 INTEL_INPUT_PATH = "/home/user/.tin-lite/intel-input.jsonl.gz"
 SERVICE_ERROR_EXIT = 3
 """code_runner's exit status when authored code let a forwarded service error escape."""

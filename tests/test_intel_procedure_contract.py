@@ -129,3 +129,52 @@ def test_the_client_judges_brief_example_reports_and_never_suggests():
     assert warnings == []
     # The old rule held the suggestion up as the right way to write.
     assert '"Worth refreshing our pricing page", never' not in skill
+
+
+def world_judge_texts() -> tuple[dict, str, str]:
+    found = next(b for b in BUILTIN_WORKFLOWS if b.key == "intel.world_judge")
+    definition, files = found.definition_and_resource_files()
+
+    def text(path: str) -> str:
+        value = files[path]
+        return " ".join((value.decode() if isinstance(value, bytes) else value).split())
+
+    return (
+        definition,
+        text("procedures/intel.world_judge/PROMPT.md"),
+        text("procedures/intel.world_judge/skills/world-stories/SKILL.md"),
+    )
+
+
+def test_the_world_judge_weights_the_day_toward_tech_and_hacker_news():
+    """Review 2026-11-27: the 11-26 brief left out HN's #1 story (1,219 points) for a parade
+    postponement, and 11-27 ran Altria and the ECB over GPT-6.2 limits and Google's MCP servers."""
+    definition, prompt, skill = world_judge_texts()
+    assert definition["version"] == "1.1.0"
+    assert "about 300 or more" in prompt and "is a story, usually a high one" in prompt
+    assert "the biggest Hacker News stories that are real news belong in it" in prompt
+    assert "tobacco" in prompt and "unless one of those dominates the day" in prompt
+    assert "several hundred points that is real news counts" in skill
+    # Its section order rules are kept.
+    assert "`tech_ai`, `business`, `culture` (entertainment, gaming, internet culture)" in skill
+
+
+def test_the_world_judge_writes_stories_from_json_in_short_turns():
+    _definition, prompt, skill = world_judge_texts()
+    assert "intel story put --json" in prompt and "intel story put --json" in skill
+    assert '--summary "' not in skill
+    assert "files of at most six" in prompt
+
+
+def test_the_world_feed_runs_before_the_earliest_client_brief_without_the_guardian():
+    import json
+    from pathlib import Path
+
+    from tin_lite import intel_world
+
+    assert intel_world.SCHEDULE_TIME == "05:00"
+    config = json.loads(
+        (Path(intel_world.__file__).parent / "intel_sources" / "world.json").read_text()
+    )
+    guardian = [s for s in config["sources"] if s["id"].startswith("guardian_")]
+    assert guardian and all(s.get("enabled") is False for s in guardian)

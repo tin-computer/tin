@@ -135,9 +135,11 @@ class FakeDb:
 class FakeX:
     """The host project's X connection; `projects` records which project each call named."""
 
-    def __init__(self, *, fail=None, connector=MEMBER, owned=True):
+    def __init__(self, *, fail=None, connector=MEMBER, owned=True, members=None, pages=None):
         self.fail = fail or {}
         self.owned = owned
+        self.member_count = members
+        self.pages = PAGES if pages is None else pages
         self.owner_asked: list[str] = []
         self.asked: list[str | None] = []
         self.projects: list = []
@@ -160,7 +162,12 @@ class FakeX:
         self.owner_asked.append(list_id)
         if "owner" in self.fail:
             raise self.fail["owner"]
-        return {"list_id": list_id, "owner_id": "1", "owned": self.owned}
+        return {
+            "list_id": list_id,
+            "owner_id": "1",
+            "owned": self.owned,
+            "member_count": self.member_count,
+        }
 
     async def list_posts(self, project_id, member, *, list_id, max_results, pagination_token):
         self.projects.append(project_id)
@@ -168,7 +175,7 @@ class FakeX:
         self.asked.append(pagination_token)
         if pagination_token in self.fail:
             raise self.fail[pagination_token]
-        return {"list_id": list_id, **PAGES[pagination_token]}
+        return {"list_id": list_id, **self.pages[pagination_token]}
 
 
 async def read(db, x, run_id, *, keep_retweets=False):
@@ -207,7 +214,7 @@ async def test_pages_until_the_window_with_retweets_dropped_and_quotes_kept():
         [x_list.owner_key(run_id, LIST)] + [x_list.page_key(run_id, LIST, n) for n in (1, 2)]
     )
     assert all(r.status == "completed" for r in db.effects.values())
-    assert db.calls[0]["response_summary"] == {"owned": True}
+    assert db.calls[0]["response_summary"] == {"owned": True, "member_count": None}
     assert [c["response_summary"]["est_supplier_usd"] for c in db.calls[1:]] == [
         "0.020",
         "0.010",
@@ -339,7 +346,10 @@ async def test_a_list_tins_account_doesnt_own_is_never_read():
     status, kept = await read(db, x, run_id)
     assert status["status"] == "skipped" and status["reason"] == "x_list_not_owned"
     assert x.asked == [] and kept == []
-    assert db.effects[x_list.owner_key(run_id, LIST)].result == {"owned": False}
+    assert db.effects[x_list.owner_key(run_id, LIST)].result == {
+        "owned": False,
+        "member_count": None,
+    }
     # A retry reuses the answer rather than asking X again.
     again = FakeX()
     again.connected = x.connected
@@ -381,6 +391,41 @@ def test_every_unread_reason_is_a_skip_with_wording():
         status = x_list.skipped(reason)
         assert status["status"] == "skipped" and status["error"] == x_list.REASONS[reason]
     assert x_list.SKIPPED <= set(x_list.REASONS)
+
+
+async def test_a_list_with_no_members_fails_with_its_reason_and_buys_nothing():
+    """Prod 2026-11-26: Paloma's and Tin's Lists came back `empty` every day and the analysts
+    blamed Thanksgiving. A List with no members is a failure with a named reason."""
+    db, run_id = FakeDb(), uuid4()
+    x = FakeX(members=0)
+    status, kept = await read(db, x, run_id)
+    assert status["status"] == "failed" and status["reason"] == "x_list_no_members"
+    assert status["error"] == x_list.REASONS["x_list_no_members"]
+    assert x.asked == [] and kept == []
+    assert x_list.page_key(run_id, LIST, 1) not in db.effects
+    # A retry reads the member count from the lookup's receipt and still buys nothing.
+    again = FakeX(members=5)
+    again.connected = x.connected
+    status, _ = await read(db, again, run_id)
+    assert status["reason"] == "x_list_no_members" and again.asked == []
+
+
+async def test_a_list_x_returns_no_posts_for_fails_rather_than_reads_as_quiet():
+    """Plausible but unusable: X answers page 1 with no posts at all (no member count given)."""
+    x = FakeX(pages={None: {"posts": [], "next_token": None}})
+    status, kept = await read(FakeDb(), x, uuid4())
+    assert status["status"] == "failed" and status["reason"] == "x_list_no_posts"
+    assert status["pages"] == 1 and kept == []
+    # Posts that all fall outside the window are a quiet day, still `empty`.
+    old = {
+        "id": "9",
+        "text": "old",
+        "created_at": "2026-01-01T00:00:00Z",
+        "author": {"username": "a", "id": "1"},
+    }
+    quiet = FakeX(pages={None: {"posts": [old], "next_token": None}})
+    status, _ = await read(FakeDb(), quiet, uuid4())
+    assert status["status"] == "empty" and status["reason"] is None
 
 
 async def test_x_not_connected_is_skipped():

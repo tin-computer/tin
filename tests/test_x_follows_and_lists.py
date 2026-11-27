@@ -83,7 +83,10 @@ class SocialX(X):
         if path in {"/2/lists/1890001", "/2/lists/1890002"} and method == "GET":
             self.calls.append(request)
             owner = self.account if path.endswith("1") else "999"
-            return self.reply(200, {"data": {"id": path.rsplit("/", 1)[1], "owner_id": owner}})
+            data = {"id": path.rsplit("/", 1)[1], "owner_id": owner}
+            if path.endswith("1"):
+                data["member_count"] = 42
+            return self.reply(200, {"data": data})
         if path == "/2/lists/1890003" and method == "GET":
             self.calls.append(request)
             return self.reply(200, {"errors": [{"title": "Not Found Error"}]})
@@ -216,10 +219,15 @@ async def test_list_owner_says_whether_the_connected_account_owns_a_list() -> No
     integrations, _, api = await service(SocialX())
     await connect(integrations, api)
     mine = await integrations.x.list_owner(PROJECT_ID, USER_ID, list_id="1890001")
-    assert mine == {"list_id": "1890001", "owner_id": api.account, "owned": True}
-    assert api.calls[-1].url.params["list.fields"] == "owner_id"
+    assert mine == {
+        "list_id": "1890001",
+        "owner_id": api.account,
+        "owned": True,
+        "member_count": 42,
+    }
+    assert api.calls[-1].url.params["list.fields"] == "owner_id,member_count"
     theirs = await integrations.x.list_owner(PROJECT_ID, USER_ID, list_id="1890002")
-    assert theirs["owned"] is False
+    assert theirs["owned"] is False and theirs["member_count"] is None
     with pytest.raises(IntegrationUpstreamError, match="incomplete result"):
         await integrations.x.list_owner(PROJECT_ID, USER_ID, list_id="1890003")
     with pytest.raises(IntegrationAuthorizationError, match="act as its account|connected"):

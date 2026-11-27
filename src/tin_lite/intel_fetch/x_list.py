@@ -86,6 +86,14 @@ REASONS = {
         "Skipped: X didn't find this List, or won't let Tin's X account read it. Check the "
         "List ID and that the List is on Tin's X account."
     ),
+    "x_list_no_members": (
+        "Failed: the X List pinned for this client has no members, so there were no posts to "
+        "read. Add the market's accounts to the List on Tin's X account."
+    ),
+    "x_list_no_posts": (
+        "Failed: X returned no posts at all for this List, not just none in the window. It may "
+        "have no members, or X won't show their posts to Tin's account."
+    ),
     "x_list_not_owned": (
         "Skipped: the List pinned for this client isn't owned by Tin's X account, so Tin didn't "
         "read it."
@@ -374,6 +382,7 @@ async def read_list(
     async with db.effect_lock(key, OWNER_OPERATION) as (conn, receipt):
         if receipt is not None and receipt.status == "completed":
             owned = (receipt.result or {}).get("owned") is True
+            members = (receipt.result or {}).get("member_count")
         elif receipt is not None:
             return stop("x_uncertain")
         else:
@@ -386,6 +395,7 @@ async def read_list(
                     await db.discard_started_effect(conn, execution_key=key)
                 return stop(reason)
             owned = found.get("owned") is True
+            members = found.get("member_count")
             await record_call(
                 db,
                 connection=connection,
@@ -394,12 +404,19 @@ async def read_list(
                 execution_key=key,
                 run_id=run_id,
                 status="completed",
-                response_summary={"owned": owned},
+                response_summary={"owned": owned, "member_count": members},
             )
-            await db.complete_effect(conn, execution_key=key, result={"owned": owned})
+            await db.complete_effect(
+                conn, execution_key=key, result={"owned": owned, "member_count": members}
+            )
     if not owned:
         return stop("x_list_not_owned")
+    # A List with no members has nothing to sell: no page is bought, and the gap is a failure
+    # with its reason rather than a quiet day (prod 2026-11-26, two clients' empty Lists).
+    if members == 0:
+        return stop("x_list_no_members")
     cursor: str | None = None
+    returned_total = 0
     for number in range(1, X_MAX_PAGES + 1):
         if heartbeat is not None:
             heartbeat({"x_page": number})
@@ -495,10 +512,14 @@ async def read_list(
         status["est_supplier_usd"] = round(
             status["est_supplier_usd"] + X_POST_USD * int(result.get("posts", 0)), 3
         )
+        returned_total += int(result.get("posts", 0))
         cursor = result.get("cursor")
         oldest = parse_iso(result.get("oldest"))
         if not cursor or (oldest is not None and oldest < window.since):
             break
-    if not status["items_in_window"]:
+    if not returned_total:
+        # Not one post, in the window or out: the List is empty or unreadable, not quiet.
+        status.update(status="failed", reason="x_list_no_posts", error=REASONS["x_list_no_posts"])
+    elif not status["items_in_window"]:
         status["status"] = "empty"
     return status

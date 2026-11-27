@@ -610,7 +610,9 @@
    "id": "guardian_intl",
    "name": "The Guardian (international)",
    "method": "rss",
-   "url": "https://www.theguardian.com/international/rss"
+   "url": "https://www.theguardian.com/international/rss",
+   "enabled": false,
+   "disabled_reason": "2026-11-27: the Guardian answers HTTP 403 to Tin's server address every day since 2026-11-25, so the feed only added a failed source."
   },
   {
    "id": "guardian_world",
@@ -624,19 +626,25 @@
    "id": "guardian_business",
    "name": "The Guardian Business",
    "method": "rss",
-   "url": "https://www.theguardian.com/uk/business/rss"
+   "url": "https://www.theguardian.com/uk/business/rss",
+   "enabled": false,
+   "disabled_reason": "2026-11-27: the Guardian answers HTTP 403 to Tin's server address every day since 2026-11-25, so the feed only added a failed source."
   },
   {
    "id": "guardian_tech",
    "name": "The Guardian Technology",
    "method": "rss",
-   "url": "https://www.theguardian.com/uk/technology/rss"
+   "url": "https://www.theguardian.com/uk/technology/rss",
+   "enabled": false,
+   "disabled_reason": "2026-11-27: the Guardian answers HTTP 403 to Tin's server address every day since 2026-11-25, so the feed only added a failed source."
   },
   {
    "id": "guardian_culture",
    "name": "The Guardian Culture",
    "method": "rss",
-   "url": "https://www.theguardian.com/uk/culture/rss"
+   "url": "https://www.theguardian.com/uk/culture/rss",
+   "enabled": false,
+   "disabled_reason": "2026-11-27: the Guardian answers HTTP 403 to Tin's server address every day since 2026-11-25, so the feed only added a failed source."
   },
   {
    "id": "bloomberg_markets",
