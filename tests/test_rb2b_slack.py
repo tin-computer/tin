@@ -129,15 +129,60 @@ def test_only_checked_links_become_buttons():
     assert "*Jane Doe*" in text_of(body)
 
 
-def test_the_digest_groups_the_rest_and_says_nothing_for_nobody():
+def table_of(body):
+    """The digest's table as plain rows, with the link a cell carries."""
+
+    def cell(value):
+        if value["type"] == "raw_text":
+            return value["text"]
+        element = value["elements"][0]["elements"][0]
+        return f"{element['text']} <{element['url']}>" if "url" in element else element["text"]
+
+    (table,) = [block for block in body["blocks"] if block["type"] == "table"]
+    return [[cell(value) for value in row] for row in table["rows"]]
+
+
+def test_the_digest_is_a_table_of_the_rest_and_says_nothing_for_nobody():
     assert rb2b_slack.digest_message([], people_url="u", project_name="Acme") is None
-    people = [person(2), person(1), person(1), person(None)]
+    unrated = person(None, profile="")
+    unrated["fields"]["position"] = {"text": "Controller", "number": None, "reason": ""}
+    people = [person(1), unrated, person(2), person(1)]
     body = rb2b_slack.digest_message(people, people_url="https://tin.test/p", project_name="Acme")
-    text = text_of(body)
-    assert text.startswith("🌙 *4 more visitors today*")
-    assert "🟠 Weak fit (1): Jane Doe, CFO at Acme" in text
-    assert "⚪ Not a fit (2)" in text and "❔ Not rated (1)" in text
+    assert text_of(body) == "🌙 *4 more visitors today*"
+    assert small_of(body).startswith("1 weak fit · 2 not a fit · 1 not rated")
+    jane = "Jane Doe <https://www.linkedin.com/in/jane>"
+    assert table_of(body) == [
+        ["Name", "Title", "Company", "Fit"],
+        [jane, "CFO", "Acme", "Weak fit"],
+        [jane, "CFO", "Acme", "Not a fit"],
+        [jane, "CFO", "Acme", "Not a fit"],
+        ["Jane Doe", "Controller", "Acme", "Not rated"],
+    ]
+    assert body["text"].splitlines()[:2] == [
+        "4 more visitors today",
+        "Jane Doe, CFO, Acme (Weak fit)",
+    ]
     assert buttons(body) == ["See them in Tin"]
+    # Slack refuses an empty cell.
+    nameless = person(1, profile="")
+    nameless["fields"].pop("company")
+    nameless["fields"]["headline"]["text"] = ""
+    (row,) = table_of(rb2b_slack.digest_message([nameless], people_url="u", project_name="A"))[1:]
+    assert row == ["Jane Doe", "—", "—", "Not a fit"]
+
+
+def test_a_long_digest_stops_and_says_how_many_more():
+    body = rb2b_slack.digest_message(
+        [person(1)] * 70, people_url="https://tin.test/p", project_name="Acme"
+    )
+    assert len(table_of(body)) == rb2b_slack.DIGEST_ROWS + 1
+    assert "And 20 more in Tin." in small_of(body)
+    wordy = person(1, profile="https://www.linkedin.com/in/" + "j" * 190)
+    wordy["fields"]["position"] = {"text": "x" * 300, "number": None, "reason": ""}
+    body = rb2b_slack.digest_message([wordy] * 50, people_url="u", project_name="Acme")
+    (table,) = [block for block in body["blocks"] if block["type"] == "table"]
+    assert sum(rb2b_slack._cell_text(c) for row in table["rows"] for c in row) <= 9000
+    assert len(table["rows"]) < 51 and "more in Tin." in small_of(body)
 
 
 def test_the_digest_is_due_from_six_in_the_evening_local_time():
@@ -241,7 +286,7 @@ async def test_a_visitor_who_isnt_a_fit_waits_for_the_digest(collection_db, monk
     assert await rb2b_slack.post_digests(runtime, configured, now=before) == 0
     after = datetime(2026, 11, 20, 19, 0, tzinfo=UTC)
     assert await rb2b_slack.post_digests(runtime, configured, now=after) == 1
-    assert slack.posts[0]["text"] == "1 more visitor today"
+    assert slack.posts[0]["text"].splitlines()[0] == "1 more visitor today"
     assert await rb2b_slack.post_digests(runtime, configured, now=after) == 0
     assert len(slack.posts) == 1
     # The next day has nobody new: nothing is posted.
