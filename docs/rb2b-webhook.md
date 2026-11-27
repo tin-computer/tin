@@ -190,9 +190,13 @@ person in Tin built from the app's address and IDs.
   each person found (their name linked to their LinkedIn profile, headline and fit) and a
   button to People.
 - **Everyone else, at 18:00 in the project's time zone.** One digest of the visitors since the
-  previous one who rated weak, not a fit, or weren't rated, grouped, and the companies without
-  a message of their own (not worth chasing, weak, not judged, visited again), with a button to
-  People.
+  previous one who rated weak, not a fit, or weren't rated, and the companies without a message
+  of their own (not worth chasing, weak, not judged, visited again). A line counts each group,
+  then a Slack table lists one visitor a row: name (linked to their LinkedIn profile), title,
+  company and fit, weak fits first and company-only visits last as "Unknown visitor". The table
+  stops at 50 rows or 9,000 characters and says how many more are in People; a button opens
+  People. Slack refuses an empty cell, so a missing value reads "—". The message's plain text,
+  which notifications show, lists the same visitors as lines.
   A day with nobody posts nothing. A small loop in the app (`rb2b_slack.digest_loop`) checks
   every five minutes; a digest is keyed by its local date, so it goes once.
 - **Once only.** Every message is recorded as `sending` in `rb2b_slack_posts`, and committed,
