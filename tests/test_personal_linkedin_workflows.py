@@ -24,6 +24,7 @@ from test_linkedin_per_member import TEAMMATE, add_teammate
 from test_linkedin_profile_viewers import Cloud, viewers_run, work
 from test_people_view import mcp, structured
 
+from tin_lite import linkedin_feed_store as feed
 from tin_lite import linkedin_profile_viewers as viewers
 from tin_lite.activities import AUTHOR_LEFT, TinActivities
 from tin_lite.api import router as api_router
@@ -34,22 +35,29 @@ from tin_lite.connection_collection import ALREADY_SAVED, NOT_YOURS
 DAILY = {"cadence": "daily", "local_time": "08:00", "timezone": "UTC"}
 
 
-async def saved_viewers(f, *, by=USER):
-    """The profile viewers workflow from the catalog, saved daily on the project by `by`."""
+async def catalog_workflow(f, key, workflow_id):
+    """A catalog workflow's row, as the boot sync writes it; returns its definition."""
 
-    builtin = next(item for item in BUILTIN_WORKFLOWS if item.key == viewers.KEY)
+    builtin = next(item for item in BUILTIN_WORKFLOWS if item.key == key)
     definition, _files = builtin.definition_and_files_with_wiki(WIKI)
     await f.db.pool.execute(
         """INSERT INTO workflows (id,key,title,executor,definition_repo_id,
                 definition_path,current_commit_sha,version_label,definition)
            VALUES ($1,$2,$2,$2,'registry/workflows',$3,$4,'1',$5::jsonb)
            ON CONFLICT DO NOTHING""",
-        viewers.WORKFLOW_ID,
-        viewers.KEY,
+        workflow_id,
+        key,
         builtin.definition_path,
         "e" * 40,
         json.dumps(definition),
     )
+    return builtin, definition
+
+
+async def saved_viewers(f, *, by=USER):
+    """The profile viewers workflow from the catalog, saved daily on the project by `by`."""
+
+    builtin, definition = await catalog_workflow(f, viewers.KEY, viewers.WORKFLOW_ID)
     workflow_id = await f.db.pool.fetchval("SELECT id FROM workflows WHERE key=$1", viewers.KEY)
     configured = uuid4()
     await f.db.pool.execute(
@@ -243,6 +251,28 @@ async def test_each_member_saves_their_own_copy_once(collection_db):
             "SELECT count(*) FROM project_workflows WHERE project_id = $1 AND workflow_id = $2",
             f.project.id,
             viewers.WORKFLOW_ID,
+        )
+        == 2
+    )
+
+
+async def test_a_member_saves_the_feed_more_than_once(collection_db):
+    # A second copy at another time of day reads the feed twice a day.
+    f = await fixture(collection_db)
+    await catalog_workflow(f, feed.KEY, feed.WORKFLOW_ID)
+    body = {"workflow_id": str(feed.WORKFLOW_ID), "inputs": {}}
+    async with http(f) as owner:
+        for name in ("Morning feed", "Evening feed"):
+            saved = await owner.post(
+                f"/api/projects/{f.project.id}/workflows",
+                json={**body, "name": name, "request_id": str(uuid4())},
+            )
+            assert saved.status_code == 201, saved.text
+    assert (
+        await f.db.pool.fetchval(
+            "SELECT count(*) FROM project_workflows WHERE project_id = $1 AND workflow_id = $2",
+            f.project.id,
+            feed.WORKFLOW_ID,
         )
         == 2
     )

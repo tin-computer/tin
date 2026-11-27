@@ -49,9 +49,9 @@ The workflows that act through a member's own session are personal
 The project's ICP file and People stay shared; who runs them, and with whose LinkedIn, doesn't.
 - **Saved copies are the saver's.** Only the member who saved one changes, pauses, resumes,
   skips, runs, retries or removes it, over HTTP or MCP (`owns`); anyone else gets "This uses the
-  LinkedIn of the member who saved it". Each member keeps one saved copy of engagers and of
-  profile viewers (`ONE_PER_MEMBER`); collections, which take profiles to read, can be saved
-  more than once.
+  LinkedIn of the member who saved it". Each member keeps one saved copy of engagers, profile
+  viewers and connections (`ONE_PER_MEMBER`). Collections, which take profiles to read, and the
+  feed, which shows other posts later in the day, can be saved more than once.
 - **A schedule runs as the member who saved it**, with their LinkedIn, as code schedules do. If
   they leave the project, the schedule pauses and says so; a current member saves their own.
 - **My system shows each member their own** (Paper PW-A). Runs and saved workflows carry
