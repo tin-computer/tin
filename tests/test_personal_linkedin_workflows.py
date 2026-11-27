@@ -246,6 +246,14 @@ async def test_each_member_saves_their_own_copy_once(collection_db):
             f"/api/projects/{f.project.id}/workflows", json={**body, "request_id": str(uuid4())}
         )
     assert theirs.status_code == 201, theirs.text
+    assert (
+        await f.db.pool.fetchval(
+            "SELECT count(*) FROM project_workflows WHERE project_id = $1 AND workflow_id = $2",
+            f.project.id,
+            viewers.WORKFLOW_ID,
+        )
+        == 2
+    )
 
 
 async def test_a_member_saves_the_feed_more_than_once(collection_db):
@@ -264,7 +272,7 @@ async def test_a_member_saves_the_feed_more_than_once(collection_db):
         await f.db.pool.fetchval(
             "SELECT count(*) FROM project_workflows WHERE project_id = $1 AND workflow_id = $2",
             f.project.id,
-            viewers.WORKFLOW_ID,
+            feed.WORKFLOW_ID,
         )
         == 2
     )
