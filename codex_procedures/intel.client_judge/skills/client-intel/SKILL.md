@@ -83,7 +83,7 @@ from them.
  "headline": "the day in one line, at most 220 characters",
  "items": [{"lead": "at most 120", "body": "at most 450, may link [a few words](https://...)",
             "kind": "competitor|platform|buyer|regulation|market|world|other",
-            "verify": false, "verify_note": "at most 160, when verify is true",
+            "verify": false,
             "story": "<story key>"}],
  "worth_doing": [],
  "note": "optional, at most 300"}
@@ -105,10 +105,9 @@ Example, for a fictional analytics vendor:
   {"lead": "Analysts ask for HR data next to clinical data",
    "body": "Two threads asked how to join HR records with the warehouse without a custom pipeline; [one has 40 replies](https://example.com/thread/123).",
    "kind": "buyer", "verify": false, "story": "hr-data-in-lakehouse"},
-  {"lead": "A model vendor's new security beta may exclude regulated accounts",
-   "body": "So far only secondary coverage says so, [in one report](https://example.com/news/beta). If the vendor's own docs confirm it, regulated buyers would have one fewer hosted option.",
-   "kind": "platform", "verify": true,
-   "verify_note": "One secondary report; check the vendor's own documentation.",
+  {"lead": "A model vendor's new security beta leaves out regulated accounts",
+   "body": "The beta is closed to healthcare and finance accounts for now, [The Information reports](https://example.com/news/beta). Regulated buyers have one fewer hosted option, which is the gap our private deployment covers.",
+   "kind": "platform", "verify": false,
    "story": "model-vendor-security-beta"}]}
 ```
 
@@ -120,9 +119,12 @@ Example, for a fictional analytics vendor:
   where it pairs them. When news invites a forbidden claim, say what the client may say instead.
   Every reply or comment you suggest carries the disclosure line section 7 asks for, and only
   the people section 7 allows post on community channels.
-- **To verify.** Anything resting on a single secondary or unverified source is marked: in the
-  brief `"verify": true` with a `verify_note` saying what to check; in the report, say so where
-  you use it and list it in Source notes.
+- **No meta comments in the brief.** The brief never talks about its own evidence: no "to
+  verify", "check the primary source", "unconfirmed" or notes on how solid a claim is. Send
+  `"verify": false` and no `verify_note`. Attribute a single-source item in plain words ("one
+  post on X says", "The Information reports"), or leave it out of the brief if it's too thin.
+  In the report, attribute the same way where you use it, and keep what needs checking before
+  anyone publishes on it to Source notes.
 - **The brief reports, the report suggests.** A brief item says what happened and why it
   matters to the client. It never says what to do: no "Worth refreshing our pricing page", no
   "Worth keeping our comparison page sharp", no "we should", "consider" or next steps. Tin warns

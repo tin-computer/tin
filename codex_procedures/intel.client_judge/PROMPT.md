@@ -138,8 +138,11 @@ one.
 
 - Links hide in a few words, never a bare URL, and only to items from today's data or earlier
   stories (`intel read` shows each item's URL). Tin removes any other link and tells you.
-- Anything resting on a single secondary or unverified source gets `"verify": true` and a
-  `verify_note` saying what to check; Tin shows it as "To verify".
+- No meta comments: nothing about checking, verifying or confirming a claim, nothing about how
+  solid the evidence is, no notes to the reader about sources. Always send `"verify": false` and
+  no `verify_note`. When an item rests on one secondary source, say plainly who reported it
+  ("one post on X says", "The Information reports") and write it as that report. If it's too
+  thin to stand on that, leave it out of the brief and keep it in the report.
 - No hype, no em dashes, nothing that breaks company.md section 7.
 - It should be worth reading on a phone in a minute.
 

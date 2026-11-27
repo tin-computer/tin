@@ -35,9 +35,16 @@ def skill_text() -> str:
     return files["procedures/intel.client_judge/skills/client-intel/SKILL.md"]
 
 
-def test_the_cost_fix_is_a_new_version_of_the_analyst():
+def test_the_analyst_is_on_its_current_version():
     definition, _files = client_judge_files()
-    assert definition["version"] == "1.1.0"
+    assert definition["version"] == "1.2.0"
+
+
+def test_the_brief_carries_no_verify_notes():
+    """Founders read the brief; notes on what to check belong in the report's Source notes."""
+    prompt, skill = prompt_text(), skill_text()
+    assert '"verify": true' not in prompt + skill
+    assert "No meta comments" in prompt and "No meta comments" in skill
 
 
 def test_every_report_section_has_a_word_plan_that_adds_up_to_the_report():

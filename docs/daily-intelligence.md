@@ -303,7 +303,8 @@ own, and one it has is ignored.
    - it records the day's stories;
    - it writes the eight-section `report.md`;
    - it sends the brief as `intel-brief/1` JSON, which Tin checks. Links must lead to the day's
-     items, and single-source claims are marked "To verify".
+     items, and the brief carries no notes on its own evidence: a single-source item says
+     who reported it, and what needs checking stays in the report's Source notes.
 5. **Publish** unwraps the Google News links that the report and brief use. Then one commit
    adds `intel/reports/<day>/report.md`, `brief.md` and `sources.json` (the status of every
    source).

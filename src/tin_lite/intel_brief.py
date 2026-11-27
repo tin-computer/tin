@@ -569,7 +569,7 @@ CLIENT_SCHEMA_TEXT = """intel-brief/1: the client's executive brief Tin posts in
  "headline": "<the day in one line, at most 220 characters>",
  "items": [{"lead": "<at most 120>", "body": "<at most 450, may link [a few words](https://...)>",
             "kind": "competitor|platform|buyer|regulation|market|world|other",
-            "verify": false, "verify_note": "<at most 160, when verify is true>",
+            "verify": false,
             "story": "<story key>"}],
  "worth_doing": [],
  "note": "<optional, at most 300 characters>"}
@@ -577,7 +577,8 @@ CLIENT_SCHEMA_TEXT = """intel-brief/1: the client's executive brief Tin posts in
 3 to 5 items. Each says what happened and why it matters to the client: no suggestions, no
 to-dos, no "worth doing". Leave worth_doing empty: suggestions go in report.md section 5, and
 Tin drops any sent here and warns about an item that reads as one. Only links to items in
-today's data (or earlier stories) are kept. Mark anything resting on one secondary or
-unverified source verify: true and say what to check. Tin adds each story's outlets and
+today's data (or earlier stories) are kept. No meta comments: keep verify false, send no
+verify_note, and attribute a single-source item in plain words ("one post on X says") or
+leave it out. Tin adds each story's outlets and
 renders the Slack message; send plain text, no Slack markup, no em dashes.
 """
