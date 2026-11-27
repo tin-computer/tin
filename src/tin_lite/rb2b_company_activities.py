@@ -19,7 +19,9 @@ from uuid import UUID
 from temporalio import activity
 
 from tin_lite import (
+    company_site,
     lead_phones,
+    model_logs,
     people_icp,
     people_rating,
     rb2b,
@@ -68,9 +70,10 @@ def _document(value) -> dict:
 
 
 class RB2BCompanyActivities(RB2BActivities):
-    def __init__(self, *, delegate=None, **kwargs):
+    def __init__(self, *, delegate=None, site_check=company_site.check, **kwargs):
         super().__init__(**kwargs)
         self.delegate = delegate
+        self.site_check = site_check
 
     async def _company(self, run) -> dict:
         return _document(
@@ -118,6 +121,7 @@ class RB2BCompanyActivities(RB2BActivities):
                 """SELECT COALESCE(sum((e.result->>'price_usd')::numeric), 0)
                    FROM workflow_runs r JOIN effect_receipts e ON e.execution_key IN (
                        r.id::text || ':rb2b:company:finder',
+                       r.id::text || ':rb2b:company:unit',
                        r.id::text || ':rb2b:company:search',
                        r.id::text || ':rb2b:company:profiles')
                    WHERE r.project_id = $1 AND r.executor = $2
@@ -140,7 +144,7 @@ class RB2BCompanyActivities(RB2BActivities):
             if saved:
                 return None
             await self.db.start_effect(conn, execution_key=key, operation=KEY)
-            output = None
+            output, result, failure = None, None, None
             try:
                 with model_usage_scope(run_id=run.id, step=f"rb2b:company:{step}", conn=conn):
                     async with (
@@ -150,12 +154,25 @@ class RB2BCompanyActivities(RB2BActivities):
                         result = await self.router.generate(
                             people_icp.ROUTE.key, request, timeout_seconds=people_icp.MODEL_SECONDS
                         )
+                # The pages it cites under their own addresses, not Google's expiring links.
+                result = await people_rating.resolved(result)
                 output = result.parsed
             except (ModelProviderError, ModelOutputTruncated, TimeoutError) as error:
                 # A check on model output never fails the run that paid for it.
                 logger.warning("RB2B company %s failed for run %s: %s", step, run.id, type(error))
+                failure = error
             await self.db.complete_effect(conn, execution_key=key, result={"output": output})
-            return output
+        await model_logs.record(
+            self.db,
+            project_id=run.project_id,
+            run_id=run.id,
+            step=f"rb2b:company:{step}",
+            route=people_icp.ROUTE.key,
+            request=request,
+            result=result,
+            error=failure,
+        )
+        return output
 
     async def _hire(
         self, run, step: str, service: str, task_input: dict, max_usd: float, keep, scope=None
@@ -246,6 +263,7 @@ class RB2BCompanyActivities(RB2BActivities):
         found = rb2b.lead(_payload(await self._visit(run)))
         own = await self._own(run)
         facts = rb2b_company.facts(found, own)
+        site = rb2b_company.domain(found["website"])
         about = {
             "name": found["company"],
             "site": rb2b_company.domain(found["website"]),
@@ -269,6 +287,15 @@ class RB2BCompanyActivities(RB2BActivities):
         if not people_rating.available(self.router) or not icp.get("profiles"):
             await self._keep_company(run, about)
             return {"worth": False}
+        if site:
+            # Whether the site still opens, and where it lands: kept, so a retry asks once.
+            checked = (await self._company(run)).get("site_check")
+            if checked is None:
+                async with _beating({"step": "site"}):
+                    checked = await self.site_check(site)
+                await self._keep_company(run, {"site_check": checked})
+            about["site_check"] = checked
+            facts = rb2b_company.facts(found, own, checked)
         text = await people_rating.icp_text(self.storage, project, icp)
         async with self.db.pool.acquire() as conn:
             known = await rb2b_company.known_people(conn, run.project_id, found["company"])
@@ -304,7 +331,9 @@ class RB2BCompanyActivities(RB2BActivities):
         if isinstance(company.get("people"), list):
             return {"people": len(company["people"])}
         await self._progress(run, "find", 3, "Looking for people to contact there")
-        name, site = company.get("name") or "", company.get("site")
+        name = company.get("name") or ""
+        # Where its people work now: the owner's domain, once the company was bought.
+        site = company.get("people_domain") or company.get("site")
         why = None
         if self.delegate is None:
             why = "no people search"
@@ -329,6 +358,19 @@ class RB2BCompanyActivities(RB2BActivities):
             rb2b_company.candidates,
         )
         people = listed or []
+        if company.get("unit"):
+            # At a large owner, the unit's name in people's titles finds them in it.
+            listed, cost = await self._hire(
+                run,
+                "unit",
+                rb2b_company.FINDER,
+                rb2b_company.unit_input(site, company["unit"]),
+                rb2b_company.FINDER_MAX_USD,
+                rb2b_company.candidates,
+            )
+            seen = {person["linkedin"] for person in people}
+            people += [person for person in listed or [] if person["linkedin"] not in seen]
+            people, spent = people[: rb2b_company.CANDIDATES], spent + cost
         if not people:
             listed, cost = await self._hire(
                 run,
@@ -339,11 +381,17 @@ class RB2BCompanyActivities(RB2BActivities):
                 rb2b_company.candidates,
             )
             people, spent = listed or [], spent + cost
-        chosen = people[: rb2b_company.PICKED]
-        if len(people) > rb2b_company.PICKED:
-            project = await self.db.get_project(run.project_id)
-            icp = await people_icp.read_icp(self.storage, project)
-            text = await people_rating.icp_text(self.storage, project, icp) if icp else ""
+        chosen = people[: rb2b_company.SHORTLIST]
+        project = await self.db.get_project(run.project_id)
+        icp = await people_icp.read_icp(self.storage, project)
+        text = await people_rating.icp_text(self.storage, project, icp) if icp else ""
+        visit = rb2b_company.facts(
+            rb2b.lead(_payload(await self._visit(run))),
+            await self._own(run),
+            company.get("site_check"),
+        )
+        if len(people) > 1:
+            # Even a short list is looked at: the same person can be listed twice.
             output = await self._ask(
                 run,
                 "pick",
@@ -352,15 +400,7 @@ class RB2BCompanyActivities(RB2BActivities):
                     messages=(
                         ModelMessage(
                             role=MessageRole.USER,
-                            content=rb2b_company.pick_input(
-                                text,
-                                rb2b_company.facts(
-                                    rb2b.lead(_payload(await self._visit(run))),
-                                    await self._own(run),
-                                ),
-                                company,
-                                people,
-                            ),
+                            content=rb2b_company.pick_input(text, visit, company, people),
                         ),
                     ),
                     output_schema=rb2b_company.pick_schema(),
@@ -375,37 +415,81 @@ class RB2BCompanyActivities(RB2BActivities):
         reads: dict = {}
         if chosen:
             page = company.get("linkedin_page")
+            owner = company.get("now_part_of")
             reads, cost = await self._hire(
                 run,
                 "profiles",
                 rb2b_company.PROFILES,
                 rb2b_company.profiles_input([person["linkedin"] for person in chosen]),
                 rb2b_company.PROFILES_MAX_USD,
-                lambda payload: rb2b_company.checked(payload, name, page),
+                lambda payload: rb2b_company.checked(payload, name, page, owner),
                 # The profile read prices by how many profiles it reads.
                 scope={"requested_items": len(chosen)},
             )
             reads, spent = reads or {}, spent + cost
-        kept = []
+        here = []
         for person in chosen:
             read = reads.get(person["linkedin"])
             if read is not None and not read["current"]:
                 continue  # their profile shows they left
-            kept.append({**person, **(read or {}), "checked": read is not None})
-        ids = await self._people(run, company, kept)
+            here.append({**person, **(read or {}), "checked": read is not None})
+        kept, ratings, dropped = here[: rb2b_company.PICKED], {}, []
+        if here and icp.get("profiles") and people_rating.available(self.router):
+            decided = rb2b_company.reviewed(
+                await self._ask(
+                    run,
+                    "review",
+                    WebSearchRequest(
+                        system=rb2b_company.review_instructions(icp["profiles"]),
+                        messages=(
+                            ModelMessage(
+                                role=MessageRole.USER,
+                                content=rb2b_company.review_input(text, visit, company, here),
+                            ),
+                        ),
+                        output_schema=rb2b_company.review_schema(icp["profiles"]),
+                        output_schema_name="people_reviewed",
+                        max_output_tokens=people_icp.MAX_OUTPUT_TOKENS,
+                        reasoning_effort=people_icp.REASONING,
+                        web_search_calls=people_icp.SEARCHES,
+                    ),
+                ),
+                len(here),
+                icp["profiles"],
+            )
+            if decided is not None:
+                # Those it would contact, best first; anyone it didn't mention isn't kept.
+                kept = [here[item["index"]] for item in decided if item["contact"]]
+                kept = kept[: rb2b_company.PICKED]
+                ratings = {
+                    here[item["index"]]["linkedin"]: item["values"]
+                    for item in decided
+                    if item["contact"] and item["values"]
+                }
+                dropped = [
+                    {"name": here[item["index"]]["name"], "why": item["why"]}
+                    for item in decided
+                    if not item["contact"]
+                ]
+        definition = people_rating.definition_for(icp) if icp.get("definition") else ""
+        ids = await self._people(run, company, kept, ratings=ratings, definition=definition)
         await self._keep_company(
             run,
             {
                 "people": [str(record_id) for record_id in ids],
                 "found": len(people),
                 "left": sum(1 for read in reads.values() if not read["current"]),
+                "dropped": dropped,
                 "spent_usd": round(spent, 6),
             },
         )
         return {"people": len(ids)}
 
-    async def _people(self, run, company: dict, kept: list[dict]) -> list[UUID]:
-        """Each person in People, with what nobody set yet and the company's visit."""
+    async def _people(
+        self, run, company: dict, kept: list[dict], *, ratings=None, definition: str = ""
+    ) -> list[UUID]:
+        """Each person in People, with what nobody set yet, the company's visit, and the
+        review's rating when it gave one (written after the visit, so it is current)."""
 
         found = rb2b.lead(_payload(await self._visit(run)))
         if found["at"] is None:
@@ -454,6 +538,18 @@ class RB2BCompanyActivities(RB2BActivities):
                     detail=rb2b_company.visit_detail(found, company["name"], company, own),
                     run_id=run.id,
                 )
+                rating = (ratings or {}).get(person["linkedin"])
+                if rating and definition:
+                    await records.set_values(
+                        conn,
+                        run.project_id,
+                        record_id,
+                        rating,
+                        set_by_kind="run",
+                        set_by=str(run.id),
+                        definition=definition,
+                        refresh=True,
+                    )
                 ids.append(record_id)
         return ids
 

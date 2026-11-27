@@ -11,8 +11,16 @@ from test_connection_collection import collection_db as collection_db
 from test_rb2b import SEEN, client, payload, rb2b_fixture, set_up
 from test_rb2b_slack import POSTER, Slack, settings
 
-from tin_lite import lead_phones, people_icp, rb2b, rb2b_company, rb2b_slack
+from tin_lite import (
+    lead_phones,
+    model_logs,
+    people_icp,
+    rb2b,
+    rb2b_company,
+    rb2b_slack,
+)
 from tin_lite import people_records as records
+from tin_lite.model_providers import ModelResult, ModelUsage, ProviderName
 from tin_lite.rb2b_company_activities import RB2BCompanyActivities
 
 COMPANY = {
@@ -188,7 +196,7 @@ def test_the_model_verdict_is_checked_and_an_unusable_one_is_none():
 
 def test_picked_numbers_are_list_positions_best_first():
     assert rb2b_company.picked({"picked": [3, 1, 3, 9, "2"], "reason": "x"}, 4) == [2, 0]
-    assert rb2b_company.picked({"picked": [1, 2, 3, 4]}, 5) == [0, 1, 2]
+    assert rb2b_company.picked({"picked": [1, 2, 3, 4, 5, 6]}, 7) == [0, 1, 2, 3, 4]
     assert rb2b_company.picked({"reason": "x"}, 4) is None
 
 
@@ -398,13 +406,15 @@ def test_the_runs_line_says_the_verdict():
 
 class CompanyRouter:
     """The ICP model: a strong, hot company worth chasing; picks the second and first people;
-    rates the people it gets."""
+    in review, contacts everyone except those `drop` names, rating them strong; rates the
+    people it gets."""
 
     configured_providers = frozenset({people_icp.ROUTE.provider})
 
-    def __init__(self, judge=None):
+    def __init__(self, judge=None, *, pick=(2, 1), drop=()):
         self.requests = []
         self.judge = judge
+        self.pick, self.drop = list(pick), dict(drop)
 
     async def generate(self, route, request, *, timeout_seconds):
         assert route == people_icp.ROUTE.key
@@ -421,7 +431,24 @@ class CompanyRouter:
                 "sources": [],
             }
         elif name == "people_to_contact":
-            parsed = {"picked": [2, 1], "reason": "The buyers."}
+            parsed = {"picked": self.pick, "reason": "The buyers."}
+        elif name == "people_reviewed":
+            listed = json.loads(request.messages[0].content)["people"]
+            parsed = {
+                "people": [
+                    {
+                        "number": person["number"],
+                        "contact": person["name"] not in self.drop,
+                        "why": self.drop.get(person["name"], ""),
+                        "reason": "A buyer at a fitting company.",
+                        "icp": "Software founders",
+                        "fit": None if person["name"] in self.drop else 4,
+                        "intent": None if person["name"] in self.drop else "cold",
+                    }
+                    for person in listed
+                ],
+                "sources": [],
+            }
         else:
             parsed = {
                 "icp": "Software founders",
@@ -431,19 +458,21 @@ class CompanyRouter:
                 "sources": [],
             }
 
-        class Result:
-            pass
-
-        result = Result()
-        result.parsed = parsed
-        return result
+        return ModelResult(
+            provider=ProviderName.GEMINI,
+            model="gemini-4-neon",
+            text=json.dumps(parsed),
+            parsed=parsed,
+            request_id="r",
+            usage=ModelUsage(input_tokens=10, output_tokens=5),
+        )
 
 
 class FakeDelegate:
     """Delegate: the finder lists five people, a profile read finds one has left."""
 
-    def __init__(self, finder=FINDER):
-        self.orders, self.finder = [], finder
+    def __init__(self, finder=FINDER, reads=None):
+        self.orders, self.finder, self.reads = [], finder, reads
 
     async def order(self, service, task_input, *, max_usd, idempotency_key, scope=None):
         if service == rb2b_company.PROFILES:
@@ -464,14 +493,11 @@ class FakeDelegate:
         if service == lead_phones.SERVICE:
             phones = {"artifacts": {"phones": ["+1 415 555 0142"]}}
             return {"state": "delivered", "result": phones, "error": None}
-        return {
-            "state": "delivered",
-            "result": profiles_answer(
-                profile("https://www.linkedin.com/in/kim-mo-061", end="Jan 2026"),
-                profile("https://www.linkedin.com/in/robtonk", position="Chief Financial Officer"),
-            ),
-            "error": None,
-        }
+        reads = self.reads or [
+            profile("https://www.linkedin.com/in/kim-mo-061", end="Jan 2026"),
+            profile("https://www.linkedin.com/in/robtonk", position="Chief Financial Officer"),
+        ]
+        return {"state": "delivered", "result": profiles_answer(*reads), "error": None}
 
 
 async def company_run(f, monkeypatch, **changes):
@@ -486,7 +512,11 @@ async def company_run(f, monkeypatch, **changes):
     )
 
 
-def work_for(f, router, delegate, slack):
+async def site_opens(site):
+    return {"site": site, "opens": True, "lands_on": None, "status": 200}
+
+
+def work_for(f, router, delegate, slack, *, site_check=site_opens):
     return RB2BCompanyActivities(
         database=f.db,
         storage=f.storage,
@@ -494,6 +524,7 @@ def work_for(f, router, delegate, slack):
         integrations=SimpleNamespace(slack=slack),
         settings=settings(),
         delegate=delegate,
+        site_check=site_check,
     )
 
 
@@ -575,6 +606,25 @@ async def test_a_company_worth_chasing_finds_checks_keeps_rates_and_posts(
     assert slack.posts == [
         {"project": POSTER, "channel": "C0CLIENT", "text": "Strong fit: Acme Software"}
     ]
+    # Rob was rated in the review, with the people around him: no rating of his own after.
+    assert [r.output_schema_name for r in router.requests] == [
+        "company_verdict",
+        "people_to_contact",
+        "people_reviewed",
+    ]
+    # Every model call's full prompt and answer is kept for later.
+    async with f.db.pool.acquire() as conn:
+        logged = await model_logs.calls(conn, run_id)
+    assert [call["step"] for call in logged] == [
+        "rb2b:company:judge",
+        "rb2b:company:pick",
+        "rb2b:company:review",
+    ]
+    judged = logged[0]
+    assert judged["request"]["system"].startswith("Someone visited a company's website")
+    assert "Acme Software" in judged["request"]["messages"][0]["content"]
+    assert judged["request"]["web_search_calls"] == rb2b_company.JUDGE_SEARCHES
+    assert judged["response"]["parsed"]["worth_chasing"] is True
     state = await f.db.pool.fetchrow(
         "SELECT status, result_summary FROM workflow_runs WHERE id=$1", UUID(run_id)
     )
@@ -832,8 +882,8 @@ async def test_two_orders_at_once_count_each_others_reservation(collection_db, m
     first = await company_run(f, monkeypatch)
     other = {"Website": "other.test", "Company Name": "Other", "Captured URL": "https://o.test/"}
     second = await company_run(f, monkeypatch, **other)
-    # Room for one $0.05 order today, not two.
-    monkeypatch.setattr(rb2b_company, "DELEGATE_USD_PER_DAY", 0.08)
+    # Room for one $0.10 order today, not two.
+    monkeypatch.setattr(rb2b_company, "DELEGATE_USD_PER_DAY", 0.15)
 
     class SlowDelegate(FakeDelegate):
         async def order(self, *args, **kwargs):
@@ -859,7 +909,7 @@ async def test_two_orders_at_once_count_each_others_reservation(collection_db, m
     )
     assert len(delegate.orders) == 1
     assert sorted(price for _, price in results) == [0.0, 0.008]
-    # The order that went through settled from its $0.05 reservation to its $0.008 quote.
+    # The order that went through settled from its $0.10 reservation to its $0.008 quote.
     assert await work._spent_today(runs[0]) == 0.008
 
 
@@ -913,3 +963,235 @@ async def test_a_person_visit_runs_through_the_class_production_uses(collection_
     assert kept["outcome"] == "person"
     people = await records.people(f.db.pool, f.project.id)
     assert [p["fields"]["name"]["text"] for p in people] == ["Jane Doe"]
+
+
+# Seeing through a dead site, a duplicate and an abandoned profile (11-27).
+
+
+def test_a_profile_read_keeps_what_the_profile_says_about_itself():
+    read = rb2b_company.checked(
+        profiles_answer(
+            {
+                "profile_url": "https://www.linkedin.com/in/bob-m",
+                "headline": "Controller at Northwind Air",
+                "connections": 2,
+                "followers": 2,
+                "experience": [
+                    {
+                        "position": "Controller",
+                        "companyName": "Northwind Air",
+                        "endDate": {"text": "Present"},
+                    }
+                ],
+            },
+            {
+                "profile_url": "https://www.linkedin.com/in/tom-s",
+                "connections": 1815,
+                "profile_image_url": "https://media.licdn.test/p.jpg",
+                "about": "Twenty years in transportation.",
+                "experience": [
+                    {
+                        "position": "Regional Head of Operational Excellence",
+                        "companyName": "Globex Industries Group",
+                        "startDate": {"text": "Oct 2024"},
+                        "endDate": {"text": "Present"},
+                    },
+                    {"position": "Director", "companyName": "Chewy", "endDate": {"text": "2024"}},
+                ],
+            },
+        ),
+        "Northwind Freight",
+        None,
+        "Globex",
+    )
+    bob = read["https://www.linkedin.com/in/bob-m"]
+    assert bob["current"] is False  # "Northwind Air" is neither the name nor the owner
+    tom = read["https://www.linkedin.com/in/tom-s"]
+    assert tom["current"] is True and tom["employer"] == "Globex Industries Group"
+    assert tom["profile"] == {
+        "connections": "1815",
+        "followers": "",
+        "jobs_listed": 2,
+        "current_job_since": "Oct 2024",
+        "photo": True,
+        "about": True,
+    }
+    assert bob["profile"]["connections"] == "2" and bob["profile"]["photo"] is False
+    # A short owner name never matches inside another company's.
+    assert not rb2b_company._part_of("Abbott Laboratories", "Abb")
+
+
+def test_the_review_is_checked_and_puts_those_to_contact_first():
+    good = {
+        "people": [
+            {"number": 2, "contact": False, "why": "Same person, older profile", "reason": "x",
+             "icp": "none", "fit": None, "intent": None},
+            {"number": 1, "contact": True, "why": "", "reason": "Good fit.",
+             "icp": "Finance leaders", "fit": 3, "intent": "cold"},
+            {"number": 3, "contact": True, "why": "", "reason": "Strong fit.",
+             "icp": "Finance leaders", "fit": 4, "intent": "warm"},
+            {"number": 9, "contact": True, "why": "", "reason": "Out of range.",
+             "icp": "Finance leaders", "fit": 4, "intent": "warm"},
+        ],
+        "sources": [],
+    }  # fmt: skip
+    decided = rb2b_company.reviewed(good, 3, PROFILES)
+    assert [(d["index"], d["contact"]) for d in decided] == [(2, True), (0, True), (1, False)]
+    assert decided[0]["values"][1].value == 4 and decided[2]["values"] is None
+    assert decided[2]["why"] == "Same person, older profile"
+    # A plausible answer that can't be used: nobody by a number on the list.
+    assert rb2b_company.reviewed({"people": [{"number": 7, "contact": True}]}, 3, PROFILES) is None
+    assert rb2b_company.reviewed({"sources": []}, 3, PROFILES) is None
+    # A contact whose rating is off the scale is kept, for the one rater to rate.
+    off = {**good["people"][1], "fit": 8}
+    (kept,) = rb2b_company.reviewed({"people": [off]}, 3, PROFILES)
+    assert kept["contact"] is True and kept["values"] is None
+
+
+def test_the_judge_reads_the_site_check_and_says_where_people_work_now():
+    found = rb2b.lead(company_payload())
+    checked = {"site": "acme.test", "opens": True, "lands_on": "freight.globex.test"}
+    facts = rb2b_company.facts(found, OWN, checked)
+    assert facts["website_check"] == "acme.test redirects to freight.globex.test"
+    prompt = rb2b_company.judge_instructions(PROFILES)
+    assert "bought, merged or renamed" in prompt and "network_location" in prompt
+    judged = rb2b_company.verdict(
+        {
+            "reason": "Acme was bought by Globex in 2022; its site redirects there.",
+            "worth_chasing": True,
+            "icp": "Finance leaders",
+            "fit": 2,
+            "intent": "cold",
+            "titles": ["CFO"],
+            "now_part_of": "Globex",
+            "people_domain": "https://www.globex.test/",
+            "unit": "Globex Freight",
+            "sources": ["https://www.globex.test/news", "not a link"],
+        },
+        PROFILES,
+    )
+    assert judged["people_domain"] == "globex.test" and judged["unit"] == "Globex Freight"
+    assert judged["now_part_of"] == "Globex" and judged["sources"] == [
+        "https://www.globex.test/news"
+    ]
+    # An older answer without the new fields still reads.
+    older = {k: v for k, v in judged.items() if k not in ("now_part_of", "people_domain", "unit")}
+    assert (
+        rb2b_company.verdict({**older, "worth_chasing": True, "titles": ["CFO"]}, PROFILES)[
+            "people_domain"
+        ]
+        == ""
+    )
+    message = rb2b_slack.company_message(
+        verdict(site_check=checked), [], people_url="u", project_name="A"
+    )
+    assert "acme.test → freight.globex.test" in text_of(message)
+
+
+LOWES = {
+    "artifacts": {
+        "result": {
+            "data": [
+                {
+                    "first_name": "Robert",
+                    "last_name": "Lowe",
+                    "title": "Corporate Controller",
+                    "employee_linkedin": "https://www.linkedin.com/in/robert-lowe",
+                    "company_name": "Acme Software",
+                },
+                {
+                    "first_name": "Bob",
+                    "last_name": "Lowe",
+                    "title": "Controller",
+                    "employee_linkedin": "https://www.linkedin.com/in/bob-lowe",
+                    "company_name": "Acme Software",
+                },
+            ]
+        }
+    }
+}
+
+
+async def test_the_same_person_twice_is_kept_once_and_the_review_says_why(
+    collection_db, monkeypatch
+):
+    f = await rb2b_fixture(collection_db)
+    run_id = await company_run(f, monkeypatch)
+    reads = [
+        {**profile("https://www.linkedin.com/in/robert-lowe", position="Corporate Controller"),
+         "connections": 48},
+        {**profile("https://www.linkedin.com/in/bob-lowe", position="Controller"),
+         "connections": 2},
+    ]  # fmt: skip
+    router = CompanyRouter(pick=(1, 2), drop={"Bob Lowe": "Same person as Robert; old profile"})
+    delegate = FakeDelegate(finder=LOWES, reads=reads)
+    await through(work_for(f, router, delegate, Slack(f.db)), run_id)
+    # Two people listed are still looked at, and both profiles read.
+    assert "people_to_contact" in [r.output_schema_name for r in router.requests]
+    review = next(r for r in router.requests if r.output_schema_name == "people_reviewed")
+    listed = json.loads(review.messages[0].content)["people"]
+    assert [p["profile"]["connections"] for p in listed] == ["48", "2"]
+    people = await records.people(f.db.pool, f.project.id)
+    assert [p["fields"]["name"]["text"] for p in people] == ["Robert Lowe"]
+    company = await f.db.pool.fetchval("SELECT company FROM rb2b_visits")
+    company = json.loads(company) if isinstance(company, str) else company
+    assert company["dropped"] == [{"name": "Bob Lowe", "why": "Same person as Robert; old profile"}]
+
+
+async def test_a_company_bought_by_another_is_looked_up_where_its_people_work_now(
+    collection_db, monkeypatch
+):
+    f = await rb2b_fixture(collection_db)
+    run_id = await company_run(f, monkeypatch)
+    judge = {
+        "reason": "Acme was bought by Globex; its site redirects there. A unit of a large owner.",
+        "worth_chasing": True,
+        "icp": "Software founders",
+        "fit": 3,
+        "intent": "warm",
+        "titles": ["Head of Operations"],
+        "now_part_of": "Globex",
+        "people_domain": "globex.test",
+        "unit": "Globex Freight",
+        "sources": [],
+    }
+    tom = {
+        "first_name": "Tom",
+        "last_name": "Ruiz",
+        "title": "Regional Head of Operational Excellence - Globex Freight",
+        "employee_linkedin": "https://www.linkedin.com/in/tom-s",
+        "company_name": "Globex",
+    }
+    read = {
+        "profile_url": "https://www.linkedin.com/in/tom-s",
+        "headline": "Supply chain executive",
+        "connections": 1815,
+        "experience": [
+            {
+                "position": "Regional Head of Operational Excellence",
+                "companyName": "Globex Industries Group",
+                "endDate": {"text": "Present"},
+            }
+        ],
+    }
+
+    async def redirects(site):
+        return {"site": site, "opens": True, "lands_on": "freight.globex.test", "status": 200}
+
+    router, slack = CompanyRouter(judge), Slack(f.db)
+    delegate = FakeDelegate(finder={"artifacts": {"result": {"data": [tom]}}}, reads=[read])
+    await through(work_for(f, router, delegate, slack, site_check=redirects), run_id)
+    assert "acme.test redirects to freight.globex.test" in router.requests[0].messages[0].content
+    finders = [o["input"] for o in delegate.orders if o["service"] == rb2b_company.FINDER]
+    assert [x["company_url"]["include"] for x in finders] == [["globex.test"], ["globex.test"]]
+    assert [x["title"]["include"] for x in finders] == [
+        ["Head of Operations"],
+        ["Globex Freight"],
+    ]
+    # Still working there: at the owner, under its own name.
+    people = await records.people(f.db.pool, f.project.id)
+    assert [p["fields"]["company"]["text"] for p in people] == ["Globex Industries Group"]
+    company = await f.db.pool.fetchval("SELECT company FROM rb2b_visits")
+    company = json.loads(company) if isinstance(company, str) else company
+    assert company["site_check"]["lands_on"] == "freight.globex.test"
+    assert slack.posts[0]["text"] == "Good fit: Acme Software"

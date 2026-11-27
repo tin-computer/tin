@@ -93,35 +93,61 @@ receipts.
 RB2B often matches a visit's network to an organisation and to nobody in it. The same run then
 (`rb2b_company.py`, `rb2b_company_activities.py`, behind the `rb2b-company-v1` patch):
 
-1. **Judge** (`rb2b_company_judge`): the ICP model (`people.icp`, Gemini 4 Neon, web search
-   on) reads the ICP file, what RB2B said (name, website, industry, size, revenue, the page and
-   referrer) and the people People already holds at that company, with their rating and
-   whether the team marked them a customer. It decides whether the company is worth chasing,
-   rates it on the person scales (fit 1 to 4, intent) and names the job titles to look for.
+1. **Judge** (`rb2b_company_judge`): Tin first checks whether the company's website still
+   opens and where it lands (`company_site.py`: `https://site` then `https://www.site`, every
+   hop resolved and refused unless all its addresses are public, only the status and redirect
+   headers read). A site that doesn't resolve, or redirects to another company's, often means
+   it was bought or renamed (a bought company's `northwindfreight.com` landing on
+   `freight.globex.com`). The check is kept on the visit (`site_check`) and shown in Slack
+   ("northwindfreight.com → freight.globex.com", "a.com (doesn't open)").
+   The ICP model (`people.icp`, Gemini 4 Neon, web search on) then reads the ICP file, what
+   RB2B said (name, website, industry, size, revenue, the page and referrer), the site check,
+   and the people People already holds at that company, with their rating and whether the
+   team marked them a customer. It checks whether the company was bought, merged or renamed or
+   is now a unit of a larger one, and judges size and who decides against the owner when it
+   is. It decides whether the company is worth chasing, rates it on the person scales (fit 1
+   to 4, intent) and names the job titles to look for, who owns it now (`now_part_of`), the
+   domain its people work under now (`people_domain`) and the unit's name when people put it
+   in their titles (`unit`, "Globex Freight"). The prompt says RB2B's location is the
+   visitor's network, not the company's office. The sources it cites are kept on the visit
+   under the pages' own addresses (see [Neon's calls, kept](#neons-calls-kept)).
    The model searches the web and the visit is the visitor's to write, so it reads the page
    only as a path of at most 120 characters on the project's own site (the product address of
    its Start here plan; elsewhere, none), where the visit came from only as a channel label
    ("Organic search: Google", "Referral: another site"), and every URL in what it reads cut to
    host and path. The prompt calls all of it untrusted data.
-   Code skips nothing: an internet provider's or hosting network, a company too small, an
-   existing customer are the model's call, and its reason says which. A company judged in the
-   last seven days (same website) keeps that verdict and its people: nothing is judged,
-   bought or posted again. Without an ICP file or `GEMINI_API_KEY` it isn't judged.
+   Code skips nothing: an internet provider's or hosting network, a company too small or too
+   large, an existing customer are the model's call, and its reason says which. A company
+   judged in the last seven days (same website) keeps that verdict and its people: nothing is
+   judged, bought or posted again. Without an ICP file or `GEMINI_API_KEY` it isn't judged.
 2. **Find** (`rb2b_company_find`, only when worth chasing): through
-   [Delegate](https://dlgt.io) with Tin's `DELEGATE_API_KEY`:
-   - QuickEnrich's contact finder by the company's domain and the model's titles (free);
+   [Delegate](https://dlgt.io) with Tin's `DELEGATE_API_KEY`, at `people_domain` when the
+   model gave one, else at the company's own:
+   - QuickEnrich's contact finder by that domain and the model's titles (free), and when there
+     is a `unit`, once more for people with the unit's name in their title (free);
    - when that lists nobody with a LinkedIn profile, one ContactOut people search (three
      people at most, $0.10 each);
-   - with more than three candidates, the model picks up to three to contact (no web search);
-   - an Apify LinkedIn profile read of those (under a cent each) keeps only people whose current
-     position is at the company. A read that doesn't answer keeps them unchecked.
+   - with more than one candidate, the model shortlists up to five (no web search), preferring
+     the unit and country the visit points to, and listing the same person once (a Bob and a
+     Robert with the same surname and role are often one person with two profiles);
+   - an Apify LinkedIn profile read of those (about a cent each) keeps only people whose
+     current position is at the company or at its owner, and brings what the profile says
+     about itself: connections, followers, jobs listed, when the current job started, a photo
+     and an about section. A read that doesn't answer keeps them unchecked;
+   - **review**: one model call (web search on) with the shortlist and their profiles decides
+     whom to contact and rates them against each other. It drops the same person twice
+     (keeping the profile that looks used), a profile that looks abandoned (2
+     connections, one undated job, no photo) and anyone who neither buys nor feels the
+     problem. Up to three are kept, best first; the others are on the visit as `dropped`, each
+     with why. An answer that can't be used keeps the first three, rated by the shared rater.
 
    Every LinkedIn URL comes from a data service, never from the model. Each order has a receipt
    whose key is also Delegate's idempotency key, so an order repeated after a crash is the same
    order; a refused quote buys nothing and Delegate refunds a failed job. The people kept go
    into People (source `rb2b`) with a `visited` event (`source: rb2b_company`) saying the visit
-   was matched to their company, not to them.
-3. **Rate** (`rb2b_company_rate`): each person by the shared ICP rating.
+   was matched to their company, not to them, their employer as their profile names it, and
+   the review's rating, written after the event so it is current.
+3. **Rate** (`rb2b_company_rate`): anyone the review couldn't rate, by the shared ICP rating.
 4. **Post** (`rb2b_company_notify`): a company worth chasing rated 4 or 3 gets its own Slack
    message (below); the rest go in the digest.
 
@@ -144,6 +170,23 @@ The verdict, the people kept, how many the services listed, how many had left an
 Delegate charged are on the visit (`rb2b_visits.company`, migration 089). The run's line says
 the verdict ("RB2B named only Acme: worth chasing (4 · Strong fit); 2 people to contact
 there."). Without `DELEGATE_API_KEY` a company is still judged and posted, with nobody found.
+
+## Neon's calls, kept
+
+Every call to the ICP model (`people.icp`: the company's judge, shortlist and review, and each
+person's rating, here and in the LinkedIn reads) is kept in `model_call_logs` (migration 095,
+`model_logs.py`): the instructions and messages sent, the schema and settings, the answer's
+text and parsed answer, the searches it ran and the pages it rested on, or the kind of error
+when nothing came back. `model_logs.calls(conn, run_id)` reads a run's calls in order. Prompts
+hold people's names, headlines and the team's notes, so rows are kept 90 days (older ones are
+deleted a batch at a time on each write) and go with their project. Writing a log never fails
+the call.
+
+Gemini names the pages it searched by redirect links on `vertexaisearch.cloud.google.com`
+that expire, and the model copies them into its `sources`. Tin asks Google where each one
+points (a HEAD request to that host only, reading the Location header; `grounding_links.py`)
+and keeps the page's own address in the answer, its receipt and the log. A grounded answer that
+cites pages but lists no search query counts one search, not none.
 
 ## Phone numbers for leads
 
@@ -240,8 +283,9 @@ have run `social.linkedin_connections`; tier 2 needs cloud reading on a member's
 Tin funds it (`tin-funded-rb2b-visitors-v1`), as it does the LinkedIn reads' rating: the
 PostHog reads, the model calls and Delegate's orders cost the founder nothing. Model usage is
 still recorded per call; Delegate's charge is on the visit and in each order's receipt. A
-company worth chasing costs about $0.10 to $0.15 in model calls and up to $0.35 at Delegate
-(nothing when the free finder finds people).
+company worth chasing costs about $0.15 to $0.20 in model calls (the judge, the shortlist and
+the review) and up to $0.45 at Delegate (about $0.05 for five profile reads when the free
+finder finds people).
 
 ## Next
 
