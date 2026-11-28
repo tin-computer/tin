@@ -207,6 +207,31 @@ List change whose result X didn't return is reported as uncertain, never sent ag
 these is a gateway operation, so workflow code can't follow anyone or change a List. Each
 write and read is paid on Tin's X app.
 
+## One account's posts
+
+`read_x_user_posts(project_id, username, max_results, start_time, end_time, since_id,
+exclude_replies, exclude_reposts, pagination_token)` reads one public account's posts, newest
+first, one page of 5-100 (25 by default), through the project's X connection. Public posts
+aren't one member's, so any member of the project can read them, as workflow code can through
+the `x.user.posts` gateway operation.
+
+- `username` is the handle, with or without `@`. A missing, suspended or protected account is
+  refused by name before any posts are read.
+- `start_time` and `end_time` are UTC times such as `2025-11-27T00:00:00Z`; `since_id` reads
+  only posts newer than one already seen. Pass `next_token` back as `pagination_token` until
+  it is null. X keeps only an account's latest 3,200 posts (800 when replies are left out),
+  so a window further back comes back short.
+- `exclude_replies` and `exclude_reposts` map to X's `exclude`. A repost comes back as the
+  post it reposts, with `reposted_by`, as in `read_x_feed`.
+- `user` holds the account's name, bio, verified flag, join date and counts. Posts have the
+  `read_x_feed` shape plus `conversation_id` (the thread's first post, to group threads) and
+  `article` (an X Article's title, preview and text, else null). `meta` has X's result count
+  and newest and oldest post IDs.
+
+A connection made before Tin asked for public reads is told to reconnect, before X is asked.
+The account lookup and each page are paid reads on Tin's X app, so an agent reads only as far
+as its task needs and says so before a long read.
+
 ## Verification
 
 ### Design references
