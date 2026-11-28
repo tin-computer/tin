@@ -1,6 +1,6 @@
-"""How AI assistants answer buyer questions, measured through DataForSEO AI Optimization.
+"""How AI assistants answer buyer questions, measured through DataForSEO and cloro.
 
-One call asks a bounded prompt panel on up to six answer engines and returns one row per
+One call asks a bounded prompt panel on up to ten answer engines and returns one row per
 prompt and engine: the trimmed answer, the URLs it cites, whether the brand is mentioned,
 cited or recommended first, and what the call cost.
 
@@ -8,7 +8,10 @@ Two kinds of measurement are kept apart on every row:
 
 - ``consumer_app_answer``: what a person sees in the product. DataForSEO's LLM Scraper
   collects ChatGPT and Gemini from their consumer interfaces; its SERP API collects Google
-  AI Mode and the AI Overview on a Google results page.
+  AI Mode and the AI Overview on a Google results page. cloro's monitor API is a second
+  source for ChatGPT, Gemini and Google AI Mode, as the engines ``chatgpt_cloro``,
+  ``gemini_cloro`` and ``google_ai_mode_cloro``. Bing AI Mode has only a cloro source,
+  ``bing_ai_mode_cloro``.
 - ``api_model_answer``: what the vendor's API model says. DataForSEO's LLM Responses API
   asks Claude and Perplexity Sonar models, with web search on. claude.ai and
   perplexity.ai are not measured.
@@ -18,6 +21,11 @@ https://docs.dataforseo.com/v3/ai_optimization/llm_scraper/overview/
 https://docs.dataforseo.com/v3/ai_optimization/llm_responses/overview/
 https://docs.dataforseo.com/v3/serp/google/ai_mode/task_post/
 https://docs.dataforseo.com/v3/serp/google/organic/live/advanced/
+Contracts (read 2026-11-05):
+https://cloro.dev/docs/api-reference/endpoint/monitor-chatgpt?utm_source=tin&utm_medium=byok
+https://cloro.dev/docs/api-reference/endpoint/monitor-gemini?utm_source=tin&utm_medium=byok
+https://cloro.dev/docs/api-reference/endpoint/monitor-aimode?utm_source=tin&utm_medium=byok
+https://cloro.dev/docs/api-reference/endpoint/monitor-bing-aimode?utm_source=tin&utm_medium=byok
 
 Paid requests are never retried automatically. A caller-supplied ledger makes each paid
 request at most once per run; an attempt whose outcome is unknown is reported, not repeated.
@@ -47,6 +55,7 @@ from tin_lite.organic_audit import MARKETS
 from tin_lite.usage_capture import begin_observation, observe_tool
 
 API_ORIGIN = "https://api.dataforseo.com/v3"
+CLORO_ORIGIN = "https://api.cloro.dev"
 CONSUMER_APP_ANSWER = "consumer_app_answer"
 API_MODEL_ANSWER = "api_model_answer"
 
@@ -70,7 +79,10 @@ POLL_SECONDS = 20
 LIVE_CONCURRENCY = 4
 POLL_CONCURRENCY = 8
 LIVE_TIMEOUT_SECONDS = 150  # LLM Responses live calls take up to 120 s.
+# cloro starts no new attempt after 5 minutes and asks clients to wait at least 300 s.
+CLORO_TIMEOUT_SECONDS = 310
 PRIORITIES = {"standard": 1, "high": 2}
+CLORO_USD_PER_CREDIT = Decimal("0.0008")
 
 
 @dataclass(frozen=True)
@@ -82,6 +94,7 @@ class Engine:
     post: str
     collect: str | None = None
     model: str | None = None
+    provider: str = "dataforseo"
     # USD per request, by queue priority. Live LLM Responses prices are Tin's per-call bound:
     # the vendor charges $0.0006 plus the model provider's cost, which it does not publish.
     price: dict[str, Decimal] = field(default_factory=dict)
@@ -149,7 +162,50 @@ ENGINES: dict[str, Engine] = {
         model="sonar",
         price={"standard": Decimal("0.02"), "high": Decimal("0.02")},
     ),
+    # cloro charges credits, not dollars: the base cost plus 2 for a sync /v1/monitor call.
+    # The USD price uses the highest self-serve credit rate, Lite's $0.0008 (checked
+    # 2026-11-05 on https://cloro.dev/docs/guides/providers?utm_source=tin&utm_medium=byok and
+    # https://cloro.dev/pricing/?utm_source=tin&utm_medium=byok).
+    "chatgpt_cloro": Engine(
+        key="chatgpt_cloro",
+        measurement=CONSUMER_APP_ANSWER,
+        surface="ChatGPT app (cloro)",
+        mode="live",
+        post="v1/monitor/chatgpt",
+        provider="cloro",
+        price={"standard": 7 * CLORO_USD_PER_CREDIT, "high": 7 * CLORO_USD_PER_CREDIT},
+    ),
+    "gemini_cloro": Engine(
+        key="gemini_cloro",
+        measurement=CONSUMER_APP_ANSWER,
+        surface="Gemini app (cloro)",
+        mode="live",
+        post="v1/monitor/gemini",
+        provider="cloro",
+        price={"standard": 6 * CLORO_USD_PER_CREDIT, "high": 6 * CLORO_USD_PER_CREDIT},
+    ),
+    "google_ai_mode_cloro": Engine(
+        key="google_ai_mode_cloro",
+        measurement=CONSUMER_APP_ANSWER,
+        surface="Google AI Mode (cloro)",
+        mode="live",
+        post="v1/monitor/aimode",
+        provider="cloro",
+        price={"standard": 6 * CLORO_USD_PER_CREDIT, "high": 6 * CLORO_USD_PER_CREDIT},
+    ),
+    "bing_ai_mode_cloro": Engine(
+        key="bing_ai_mode_cloro",
+        measurement=CONSUMER_APP_ANSWER,
+        surface="Bing AI Mode (cloro)",
+        mode="live",
+        post="v1/monitor/bing/aimode",
+        provider="cloro",
+        price={"standard": 6 * CLORO_USD_PER_CREDIT, "high": 6 * CLORO_USD_PER_CREDIT},
+    ),
 }
+# cloro engines are asked only when a caller names them, so the default panel stays the same
+# for a deployment without a cloro key.
+DEFAULT_ENGINES = tuple(key for key, spec in ENGINES.items() if spec.provider == "dataforseo")
 MAX_OUTPUT_TOKENS = 1024
 PENDING = {40601, 40602, 20100}
 NO_RESULTS = {40102}
@@ -201,7 +257,7 @@ class AIAnswersRequest:
         cleaned = tuple(_text(p, "prompt", LIMITS["prompt_chars"]) for p in prompts)
         if len({p.casefold() for p in cleaned}) != len(cleaned):
             raise ValueError("Prompts must not repeat.")
-        engines = inputs.get("engines", list(ENGINES))
+        engines = inputs.get("engines", list(DEFAULT_ENGINES))
         if (
             not isinstance(engines, list)
             or not engines
@@ -327,6 +383,15 @@ def _cited(values: list[Any]) -> list[str]:
     return urls
 
 
+def _google_goto(url: Any) -> bool:
+    try:
+        parts = urlsplit(url) if isinstance(url, str) else None
+    except ValueError:
+        return False
+    host = (parts.hostname or "") if parts else ""
+    return (host == "google.com" or host.endswith(".google.com")) and parts.path == "/goto"
+
+
 def _result(task: dict) -> dict:
     results = task.get("result")
     if not isinstance(results, list) or len(results) != 1 or not isinstance(results[0], dict):
@@ -336,6 +401,32 @@ def _result(task: dict) -> dict:
 
 def parse_answer(engine: str, task: dict) -> dict:
     """Answer text and cited URLs from one completed task. No answer gives empty text."""
+    if ENGINES[engine].provider == "cloro":
+        # A cloro task is the response body itself: {"success": true, "result": {...}}.
+        body = task.get("result")
+        if not isinstance(body, dict) or body.get("success") is not True:
+            raise DataForSEOError("Answer result envelope is invalid.")
+        result = body.get("result")
+        if not isinstance(result, dict):
+            raise DataForSEOError("Answer result envelope is invalid.")
+        text = result.get("markdown") or result.get("text") or ""
+        if not isinstance(text, str):
+            raise DataForSEOError("Answer text is not text.")
+        sources = [
+            # Gemini links one page once per quoted passage, as #:~:text= fragments.
+            {"url": url.split("#:~:", 1)[0] if isinstance(url, str) else url}
+            for source in result.get("sources") or []
+            # Every source counts, as on the DataForSEO path. ChatGPT's footnote flag is not
+            # used: live answers link footnote: true pages inline. AI Mode leaves a link cloro
+            # has not resolved as a google.com/goto URL.
+            if isinstance(source, dict) and not _google_goto(url := source.get("url"))
+        ]
+        model = result.get("model")  # ChatGPT only, and empty on its mobile-web answers.
+        return {
+            "text": text,
+            "cited_urls": _cited(sources),
+            "model": str(model)[:100] if model else None,
+        }
     if task.get("status_code") in NO_RESULTS or (
         task.get("result") is None and task.get("result_count") == 0
     ):
@@ -462,11 +553,23 @@ _SESSION: ContextVar[tuple[AIAnswersClient, httpx.AsyncClient] | None] = Context
 )
 
 
-class AIAnswersClient:
-    """Bounded DataForSEO AI Optimization and SERP answer calls. No retries, no caller URLs."""
+async def _bounded_body(response: httpx.Response) -> bytes:
+    body = bytearray()
+    async for chunk in response.aiter_bytes():
+        body.extend(chunk)
+        if len(body) > LIMITS["response_bytes"]:
+            raise DataForSEOError("Answer response exceeded its size bound.")
+    return bytes(body)
 
-    def __init__(self, login: str, password: str, *, transport=None) -> None:
+
+class AIAnswersClient:
+    """Bounded DataForSEO and cloro answer calls. No retries, no caller URLs."""
+
+    def __init__(
+        self, login: str, password: str, *, cloro_api_key: str | None = None, transport=None
+    ) -> None:
         self._auth = httpx.BasicAuth(login, password)
+        self._cloro_key = cloro_api_key
         self._transport = transport
 
     def _client(self) -> httpx.AsyncClient:
@@ -492,33 +595,34 @@ class AIAnswersClient:
             finally:
                 _SESSION.reset(token)
 
-    async def _call(
-        self, method: str, path: str, payload: list | None = None, *, observation=None
-    ) -> dict:
-        """One request. A refusal of the whole request is a known outcome, raised as
-        ProviderRejected after `observation` is receipted at the cost DataForSEO reported."""
+    @asynccontextmanager
+    async def _stream(self, method: str, url: str, *, wait=LIVE_TIMEOUT_SECONDS, **kwargs):
+        """One bounded request on the shared client when there is one."""
         shared = _SESSION.get()
         async with AsyncExitStack() as stack:
-            await stack.enter_async_context(asyncio.timeout(LIVE_TIMEOUT_SECONDS + 10))
+            await stack.enter_async_context(asyncio.timeout(wait + 10))
             client = (
                 shared[1]
                 if shared is not None and shared[0] is self
                 else await stack.enter_async_context(self._client())
             )
-            response = await stack.enter_async_context(
-                client.stream(method, f"{API_ORIGIN}/{path}", json=payload)
+            yield await stack.enter_async_context(
+                client.stream(method, url, timeout=wait, **kwargs)
             )
+
+    async def _call(
+        self, method: str, path: str, payload: list | None = None, *, observation=None
+    ) -> dict:
+        """One request. A refusal of the whole request is a known outcome, raised as
+        ProviderRejected after `observation` is receipted at the cost DataForSEO reported."""
+        async with self._stream(method, f"{API_ORIGIN}/{path}", json=payload) as response:
             if response.status_code in HTTP_REFUSALS:
                 # Refused at the door (credentials, balance, rate): nothing was bought.
                 code = HTTP_REFUSALS[response.status_code]
                 await observe_tool(observation, {"cost": 0})
                 raise ProviderRejected(f"DataForSEO refused the request (status {code}).")
             response.raise_for_status()
-            body = bytearray()
-            async for chunk in response.aiter_bytes():
-                body.extend(chunk)
-                if len(body) > LIMITS["response_bytes"]:
-                    raise DataForSEOError("Answer response exceeded its size bound.")
+            body = await _bounded_body(response)
         data = json.loads(body)
         status = data.get("status_code") if isinstance(data, dict) else None
         if type(status) is int and status != 20000 and not data.get("tasks"):
@@ -586,6 +690,8 @@ class AIAnswersClient:
         spec = ENGINES[engine]
         if spec.mode != "live":
             raise ValueError("This engine posts tasks; it has no live call here.")
+        if spec.provider == "cloro":
+            return await self._cloro(spec, request)
         observation = await begin_observation("dataforseo", "tool", spec.post)
         try:
             data = await self._call("POST", spec.post, [request], observation=observation)
@@ -604,6 +710,49 @@ class AIAnswersClient:
         except DataForSEOError:
             raise
         except (httpx.HTTPError, ValueError, TypeError, KeyError, TimeoutError) as exc:
+            raise DataForSEOError("Live answer outcome could not be confirmed.") from exc
+
+    async def _cloro(self, spec: Engine, request: dict) -> dict:
+        """One cloro sync answer, returned as a task: id, cost and the response body.
+
+        cloro charges only a 200 response, by its X-Credits-Charged header. A response in its
+        error envelope ({"success": false, "error": {"code": ...}}) costs nothing and is a
+        refusal; any other failure leaves the outcome unknown.
+        """
+        if not self._cloro_key:
+            raise ProviderRejected("cloro is not configured.")
+        observation = await begin_observation("cloro", "tool", spec.post)
+        try:
+            async with self._stream(
+                "POST",
+                f"{CLORO_ORIGIN}/{spec.post}",
+                json=request,
+                wait=CLORO_TIMEOUT_SECONDS,
+                auth=None,  # The shared client's DataForSEO credentials must not go to cloro.
+                headers={"Authorization": f"Bearer {self._cloro_key}"},
+            ) as response:
+                body = await _bounded_body(response)
+            if response.status_code != 200:
+                data = json.loads(body)
+                error = data.get("error") if isinstance(data, dict) else None
+                code = error.get("code") if isinstance(error, dict) else None
+                if not isinstance(code, str) or data.get("success") is not False:
+                    raise DataForSEOError("cloro answered without its error envelope.")
+                await observe_tool(observation, {"cost": 0})
+                raise ProviderRejected(f"cloro refused the request ({code[:60]}).")
+            credits = response.headers.get("X-Credits-Charged", "")
+            if not re.fullmatch(r"\d{1,6}", credits):
+                raise DataForSEOError("cloro answer has invalid credit metadata.")
+            cost = int(credits) * CLORO_USD_PER_CREDIT
+            await observe_tool(observation, {"cost": str(cost)})
+            try:
+                result = json.loads(body)
+            except ValueError:
+                result = None  # Paid for but unreadable: the row fails as unreadable_result.
+            return {"id": response.headers.get("X-Request-ID"), "cost": str(cost), "result": result}
+        except DataForSEOError:
+            raise
+        except (httpx.HTTPError, ValueError, TypeError, AttributeError, TimeoutError) as exc:
             raise DataForSEOError("Live answer outcome could not be confirmed.") from exc
 
 
@@ -657,6 +806,29 @@ def task_request(request: AIAnswersRequest, engine: str, index: int, tag: str) -
             "web_search_country_iso_code": request.market,
             "tag": tag,
         }
+    # cloro has no tag field. Markdown keeps the answer's lists for recommended_first and
+    # costs no extra credits.
+    if engine == "chatgpt_cloro":
+        # Like the chatgpt engine: the answer ChatGPT gives without a forced web search.
+        # ChatGPT has no language field.
+        return {
+            "prompt": prompt,
+            "country": request.market,
+            "disableWebSearch": True,
+            "include": {"markdown": True},
+        }
+    if engine == "gemini_cloro":  # Gemini has no language field.
+        return {"prompt": prompt, "country": request.market, "include": {"markdown": True}}
+    if engine == "google_ai_mode_cloro":
+        return {
+            "prompt": prompt,
+            "country": request.market,
+            "hl": request.language_code,
+            "device": "desktop",
+            "include": {"markdown": True},
+        }
+    if engine == "bing_ai_mode_cloro":  # Bing AI Mode has no language field.
+        return {"prompt": prompt, "country": request.market, "include": {"markdown": True}}
     raise ValueError("Unknown answer engine.")
 
 
