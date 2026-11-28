@@ -103,10 +103,14 @@ def not_yours(capability: str) -> str:
 
 
 def allow_first(capability: str) -> str:
-    what = OWN_LISTS[capability][0] if capability in OWN_LISTS else "follows and Lists"
-    verb = "read its" if capability in OWN_LISTS else "manage"
+    if capability == PUBLIC_READ:
+        action = "read public posts"
+    elif capability in OWN_LISTS:
+        action = f"read its {OWN_LISTS[capability][0]}"
+    else:
+        action = "manage follows and Lists"
     return (
-        f"X hasn't allowed Tin to {verb} {what} yet. Reconnect X on the X card in "
+        f"X hasn't allowed Tin to {action} yet. Reconnect X on the X card in "
         "Integrations; connecting asks for everything Tin reads and publishes."
     )
 
@@ -147,6 +151,18 @@ POST_METRICS = (
 # The same field names timeline() sends; X's OpenAPI document names them post.fields.
 PUBLIC_POST_FIELDS = "created_at,public_metrics,entities,attachments,note_post"
 PUBLIC_MEDIA_FIELDS = "type,url,preview_image_url,width,height"
+# One account's posts over MCP also carry the thread each belongs to and an X Article's words.
+ACCOUNT_POST_FIELDS = f"{PUBLIC_POST_FIELDS},conversation_id,article"
+PROFILE_FIELDS = "created_at,description,protected,public_metrics,verified"
+PROFILE_METRICS = (
+    "followers_count",
+    "following_count",
+    "tweet_count",
+    "listed_count",
+    "like_count",
+    "media_count",
+)
+MAX_ARTICLE_CHARACTERS = 100_000
 
 
 class _XUnauthorized(IntegrationAuthorizationError):
@@ -406,6 +422,23 @@ def _user_posts_params(
     return params
 
 
+def _filters(since_id: Any, exclude_replies: Any, exclude_reposts: Any) -> dict[str, str]:
+    """`since_id` and X's `exclude` for a timeline read; X calls reposts retweets."""
+    filters: dict[str, str] = {}
+    if since_id is not None:
+        filters["since_id"] = _id(since_id, name="since_id")
+    if type(exclude_replies) is not bool or type(exclude_reposts) is not bool:
+        raise IntegrationInputError("exclude_replies and exclude_reposts must be true or false")
+    exclude = [
+        name
+        for name, wanted in (("replies", exclude_replies), ("retweets", exclude_reposts))
+        if wanted
+    ]
+    if exclude:
+        filters["exclude"] = ",".join(exclude)
+    return filters
+
+
 def check_arguments(operation: str, arguments: Any) -> None:
     """Gateway hook: reject a malformed call before any receipt or X request exists."""
     if operation not in OPERATIONS:
@@ -502,10 +535,32 @@ def _post_urls(*sources: Any) -> list[dict[str, Any]]:
     return list(found.values())
 
 
+def _article(value: Any) -> dict[str, Any] | None:
+    """An X Article's title and words, when the post is one. X leaves the shape of `article`
+    open, so anything without a title or text reads as no Article rather than an error."""
+    if not isinstance(value, dict):
+        return None
+    words = next(
+        (value[key] for key in ("plain_text", "text") if isinstance(value.get(key), str)), None
+    )
+    article = {
+        "title": bounded(value.get("title"), 300),
+        "preview": bounded(value.get("preview_text"), 1000),
+        "text": bounded(words, MAX_ARTICLE_CHARACTERS),
+    }
+    return article if any(article.values()) else None
+
+
 def _public_post(
-    post: Any, authors: dict[str, dict], media: dict[str, dict], account: dict | None
+    post: Any,
+    authors: dict[str, dict],
+    media: dict[str, dict],
+    account: dict | None,
+    *,
+    threads: bool = False,
 ) -> dict[str, Any] | None:
-    """One cleaned post, or None for a post whose author protects their posts."""
+    """One cleaned post, or None for a post whose author protects their posts. `threads` adds
+    the conversation it belongs to and any X Article it carries."""
     if not isinstance(post, dict) or not isinstance(post.get("id"), str):
         raise IntegrationUpstreamError("X returned an invalid post")
     post_id = post["id"]
@@ -529,7 +584,7 @@ def _public_post(
     metrics = post.get("public_metrics")
     metrics = metrics if isinstance(metrics, dict) else {}
     created = post.get("created_at")
-    return {
+    clean = {
         "id": post_id,
         "url": f"https://x.com/i/web/status/{post_id}",
         "text": body,
@@ -545,6 +600,13 @@ def _public_post(
             if isinstance(key, str) and key in media
         ],
     }
+    if threads:
+        thread = post.get("conversation_id")
+        clean["conversation_id"] = (
+            thread if isinstance(thread, str) and ID.fullmatch(thread) else None
+        )
+        clean["article"] = _article(post.get("article"))
+    return clean
 
 
 def _public_page(
@@ -578,7 +640,9 @@ def _referenced(item: dict[str, Any], kind: str) -> Any:
     )
 
 
-def _own_list_page(result: dict[str, Any], *, limit: int, what: str) -> dict[str, Any]:
+def _own_list_page(
+    result: dict[str, Any], *, limit: int, what: str, threads: bool = False
+) -> dict[str, Any]:
     """Bookmarked, liked or Following-feed posts with the post each quotes; protected authors'
     posts are counted only.
 
@@ -600,7 +664,7 @@ def _own_list_page(result: dict[str, Any], *, limit: int, what: str) -> dict[str
     }
     clean, protected = [], 0
     for item in posts:
-        post = _public_post(item, authors, media, None)
+        post = _public_post(item, authors, media, None, threads=threads)
         if post is None:
             protected += 1
             continue
@@ -608,7 +672,9 @@ def _own_list_page(result: dict[str, Any], *, limit: int, what: str) -> dict[str
         original_id = _referenced(item, "retweeted")
         if original_id in included:
             try:
-                original = _public_post(included[original_id], authors, media, None)
+                original = _public_post(
+                    included[original_id], authors, media, None, threads=threads
+                )
             except IntegrationUpstreamError:
                 original = None
             if original is None:
@@ -619,7 +685,7 @@ def _own_list_page(result: dict[str, Any], *, limit: int, what: str) -> dict[str
         quoted = None
         if quoted_id in included:
             try:
-                quoted = _public_post(included[quoted_id], authors, media, None)
+                quoted = _public_post(included[quoted_id], authors, media, None, threads=threads)
             except IntegrationUpstreamError:
                 quoted = None
         clean.append({**post, "quoted": quoted, "reposted_by": reposted_by})
@@ -1144,18 +1210,7 @@ class XConnection:
 
         X keeps the latest 3,200 posts or seven days. `since_id` reads only posts newer than
         one already seen. A repost is returned as the post it reposts, with `reposted_by`."""
-        filters: dict[str, Any] = {}
-        if since_id is not None:
-            filters["since_id"] = _id(since_id, name="since_id")
-        if type(exclude_replies) is not bool or type(exclude_reposts) is not bool:
-            raise IntegrationInputError("exclude_replies and exclude_reposts must be true or false")
-        exclude = [
-            name
-            for name, wanted in (("replies", exclude_replies), ("retweets", exclude_reposts))
-            if wanted
-        ]
-        if exclude:
-            filters["exclude"] = ",".join(exclude)
+        filters = _filters(since_id, exclude_replies, exclude_reposts)
         return await self._own_list(
             FEED, project_id, clerk_user_id, max_results, pagination_token, filters
         )
@@ -1422,13 +1477,17 @@ class XConnection:
             "member_count": members if type(members) is int and members >= 0 else None,
         }
 
-    async def _public_account(self, connection: Any, username: str) -> dict[str, Any]:
+    async def _public_account(
+        self, connection: Any, username: str, *, profile: bool = False
+    ) -> dict[str, Any]:
+        """A public account by username; refused, by name, when it is missing, suspended or
+        protected. `profile` adds its bio, verified flag, join date and counts."""
         result = await self._request(
             connection,
             PUBLIC_READ,
             "GET",
             f"/2/users/by/username/{username}",
-            params={"user.fields": "protected"},
+            params={"user.fields": PROFILE_FIELDS if profile else "protected"},
             problems=True,
         )
         user = result.get("data")
@@ -1461,7 +1520,78 @@ class XConnection:
                 f"@{name} protects its posts; Tin reads only public posts.",
                 code="protected_account",
             )
-        return {"id": user["id"], "username": name, "name": bounded(user.get("name"), 100)}
+        account = {"id": user["id"], "username": name, "name": bounded(user.get("name"), 100)}
+        if not profile:
+            return account
+        metrics = user.get("public_metrics")
+        metrics = metrics if isinstance(metrics, dict) else {}
+        created = user.get("created_at")
+        return {
+            **account,
+            "description": bounded(user.get("description"), 500),
+            "verified": user.get("verified") if type(user.get("verified")) is bool else None,
+            "created_at": created if isinstance(created, str) and len(created) <= 40 else None,
+            "public_metrics": {
+                key: metrics[key] for key in PROFILE_METRICS if _count(metrics.get(key)) is not None
+            },
+        }
+
+    async def account_posts(
+        self,
+        project_id: UUID,
+        *,
+        username: str,
+        max_results: int = 25,
+        start_time: str | None = None,
+        end_time: str | None = None,
+        since_id: str | None = None,
+        exclude_replies: bool = False,
+        exclude_reposts: bool = False,
+        pagination_token: str | None = None,
+    ) -> dict[str, Any]:
+        """One page of a public account's posts, newest first, through the project's X
+        connection, for any member: the posts are public and the read is Tin's.
+
+        Every argument is checked before X is asked. A repost is returned as the post it
+        reposts, with `reposted_by`; each post carries its thread and any X Article. The
+        account lookup and the page are each a paid read on Tin's X app.
+        """
+        name = username.strip().removeprefix("@") if isinstance(username, str) else username
+        name = _username(name)
+        params: dict[str, Any] = {
+            "max_results": _limit(max_results, 5),
+            "post.fields": ACCOUNT_POST_FIELDS,
+            "expansions": "author_id,attachments.media_keys,referenced_posts",
+            "user.fields": "protected",
+            "media.fields": PUBLIC_MEDIA_FIELDS,
+            **_window(start_time, end_time),
+            **_filters(since_id, exclude_replies, exclude_reposts),
+        }
+        if _cursor(pagination_token, "pagination_token"):
+            params["pagination_token"] = pagination_token
+        connection = await self.connection(project_id)
+        granted = connection.configuration.get("granted_capabilities")
+        if not isinstance(granted, list) or PUBLIC_READ not in granted:
+            raise IntegrationAuthorizationError(allow_first(PUBLIC_READ))
+        account = await self._public_account(connection, name, profile=True)
+        result = await self._request(
+            connection, PUBLIC_READ, "GET", f"/2/users/{account['id']}/tweets", params=params
+        )
+        page = _own_list_page(result, limit=max_results, what="posts", threads=True)
+        meta = result.get("meta", {})
+        return {
+            "user": account,
+            **page,
+            "meta": {
+                "result_count": _count(meta.get("result_count")),
+                **{
+                    key: meta[key]
+                    if isinstance(meta.get(key), str) and ID.fullmatch(meta[key])
+                    else None
+                    for key in ("newest_id", "oldest_id")
+                },
+            },
+        }
 
     async def call(
         self,
